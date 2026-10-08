@@ -166,6 +166,7 @@ impl Analyzer<'_, '_> {
         &mut self,
         statements: &[CheckedStatement],
         state: &mut ProofFlowState,
+        frontier: &mut Vec<FlowEdge>,
     ) -> bool {
         self.frames.scopes.push(Vec::new());
         let mut continues = true;
@@ -173,11 +174,11 @@ impl Analyzer<'_, '_> {
             if !continues {
                 break;
             }
-            continues = self.walk_statement(statement, state);
+            continues = self.walk_statement(statement, state, frontier);
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
-            self.exit_scopes_to(state, depth);
+            self.exit_frontier_scopes(state, frontier, depth);
         }
         self.frames.scopes.pop();
         continues
@@ -467,7 +468,16 @@ impl Analyzer<'_, '_> {
         &mut self,
         statement: &CheckedStatement,
         state: &mut ProofFlowState,
+        frontier: &mut Vec<FlowEdge>,
     ) -> bool {
+        // Every checked statement is a real source action (docs are erased).
+        // Continue and break route the pending inputs to their own sinks.
+        if !matches!(
+            statement,
+            CheckedStatement::Continue { .. } | CheckedStatement::Break { .. }
+        ) {
+            self.seal_frontier(state, frontier);
+        }
         let permission_site = match statement {
             CheckedStatement::Proof(proof) => Some(&proof.node_path),
             CheckedStatement::Let { node_path, .. }
@@ -1255,6 +1265,8 @@ impl Analyzer<'_, '_> {
                                     .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
                             });
                         let held = CheckedMatchArm {
+                            node_path: node_path.clone(),
+                            label: "atomic guard".to_owned(),
                             tag: 1,
                             binders: Vec::new(),
                             covered: Vec::new(),
@@ -1287,9 +1299,10 @@ impl Analyzer<'_, '_> {
                     if !continues {
                         break;
                     }
-                    continues = self.walk_statement(statement, state);
+                    continues = self.walk_statement(statement, state, frontier);
                 }
                 if continues {
+                    self.seal_frontier(state, frontier);
                     self.judge_atomic_exit(node_path, state);
                     self.exit_scopes_to(state, outer_scope_depth);
                 }
@@ -1298,31 +1311,57 @@ impl Analyzer<'_, '_> {
                 continues
             }
             CheckedStatement::Break {
-                node_path,
-                target,
-                drops: _,
+                node_path, target, ..
+            }
+            | CheckedStatement::Continue {
+                node_path, target, ..
             } => {
+                let is_continue = matches!(statement, CheckedStatement::Continue { .. });
                 if let Some(position) = self
                     .frames
                     .loops
                     .iter()
                     .rposition(|frame| frame.id == *target)
                 {
-                    // [TYPE-11] a break of a loop around an atomic block
-                    // leaves the block.
+                    // Atomic restoration is a real judgment, so it seals a
+                    // pending frontier before the transfer leaves that block.
                     if self
                         .frames
                         .atomic
                         .as_ref()
                         .is_some_and(|frame| position < frame.loop_depth)
                     {
+                        self.seal_frontier(state, frontier);
                         self.judge_atomic_exit(node_path, state);
                     }
-                    let depth = self.frames.loops[position].scope_depth;
-                    let mut exit = state.clone();
-                    self.exit_scopes_to(&mut exit, depth);
-                    self.exit_counted_loops_from(&mut exit, position);
-                    self.frames.loops[position].breaks.push(exit);
+                    let mut edges = std::mem::take(frontier);
+                    if edges.is_empty() {
+                        edges.push(FlowEdge {
+                            site: node_path.clone(),
+                            branch: self.frames.branches.join(" / "),
+                            route: super::super::LoopInductionRoute::Fallthrough,
+                            state: state.clone(),
+                        });
+                    }
+                    let depth = self.frames.loops[position].scope_depth
+                        + usize::from(
+                            is_continue && self.frames.loops[position].counted_binder.is_some(),
+                        );
+                    for mut edge in edges {
+                        self.exit_scopes_to(&mut edge.state, depth);
+                        self.exit_counted_loops_from(
+                            &mut edge.state,
+                            position + usize::from(is_continue),
+                        );
+                        if is_continue {
+                            edge.route = super::super::LoopInductionRoute::Continue {
+                                statement: node_path.clone(),
+                            };
+                            self.frames.loops[position].continues.push(edge);
+                        } else {
+                            self.frames.loops[position].breaks.push(edge.state);
+                        }
+                    }
                 }
                 false
             }
@@ -1353,15 +1392,12 @@ impl Analyzer<'_, '_> {
                 let mut exits = Vec::new();
                 for arm in arms {
                     let payload = payload.iter().find(|payload| payload.tag == arm.tag);
-                    if let Some(exit) = self.walk_arm(arm, state, &facts, payload, result.as_ref())
-                    {
-                        exits.push(exit);
-                    }
+                    exits.extend(self.walk_arm(arm, state, &facts, payload, result.as_ref()));
                 }
                 if exits.is_empty() {
                     false
                 } else {
-                    *state = self.judging().join_flows(&exits);
+                    *frontier = exits;
                     true
                 }
             }
@@ -1416,7 +1452,7 @@ impl Analyzer<'_, '_> {
                 if frame.gives.is_empty() {
                     return false;
                 }
-                *state = self.judging().join_flows(&frame.gives);
+                *state = self.join_with_transport(&frame.gives, &frame.delivery_edges);
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*result_type)
                 {
@@ -1428,6 +1464,7 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::Loop {
                 id,
+                node_path,
                 invariants,
                 body,
                 ..
@@ -1440,7 +1477,7 @@ impl Analyzer<'_, '_> {
                     .prove_loop_invariant_bases(invariants, state);
                 let base_batch = base
                     .iter()
-                    .all(|disposition| *disposition == TargetDisposition::Proved);
+                    .all(|batch| batch.disposition == TargetDisposition::Proved);
 
                 // The generic header starts from the preheader minus every
                 // fact a continuing kill may invalidate. Invariants then add
@@ -1450,7 +1487,7 @@ impl Analyzer<'_, '_> {
                 self.input.collect_continuing_loop_kills(
                     body,
                     true,
-                    &mut LoopReachability::default(),
+                    &mut LoopReachability::for_loop(*id),
                     &mut kills,
                 );
                 self.reasoning().apply_loop_kills(state, &kills, None);
@@ -1467,30 +1504,42 @@ impl Analyzer<'_, '_> {
                         .iter()
                         .map(|invariant| invariant.declaration)
                         .collect(),
+                    templates: if base_batch {
+                        invariants.clone()
+                    } else {
+                        Vec::new()
+                    },
                     scope_depth: self.frames.scopes.len(),
                     counted_binder: None,
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    continues: Vec::new(),
                 });
                 let mut body_state = state.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
-                let body_falls_through = self.walk_block(body, &mut body_state);
-                if body_falls_through {
-                    debug_assert_summarized(&body_state, &kills);
-                }
+                let mut body_frontier = Vec::new();
+                let body_falls_through = self.walk_block(body, &mut body_state, &mut body_frontier);
 
-                let mut step = vec![None; invariants.len()];
+                let mut backedges = std::mem::take(
+                    &mut self.frames.loops.last_mut().expect("active loop").continues,
+                );
                 if body_falls_through {
-                    for (index, invariant) in invariants.iter().enumerate() {
-                        step[index] = Some(
-                            self.reasoning()
-                                .prove_affine_relation_batch(&invariant.relation, &mut body_state),
-                        );
+                    if body_frontier.is_empty() {
+                        body_frontier.push(FlowEdge {
+                            site: node_path.clone(),
+                            branch: self.frames.branches.join(" / "),
+                            route: super::super::LoopInductionRoute::Fallthrough,
+                            state: body_state,
+                        });
                     }
+                    backedges.extend(body_frontier);
                 }
+                backedges.sort_by(|a, b| a.site.components().cmp(b.site.components()));
+                let batches =
+                    self.prove_induction_frontier(*id, invariants, &backedges, None, &kills);
                 self.judging()
-                    .record_loop_invariant_outcomes(*id, invariants, &base, &step, None);
+                    .record_loop_invariant_outcomes(*id, invariants, &base, &batches, None);
 
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
@@ -1501,7 +1550,7 @@ impl Analyzer<'_, '_> {
                 // break it is the contradictory all-derivable state, matching
                 // an unreachable-in-truth continuation the conservative graph
                 // keeps reachable [ENT-5].
-                *state = self.judging().join_flows(&breaks);
+                *state = self.join_with_transport(&breaks, &[]);
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
@@ -1602,13 +1651,13 @@ impl Analyzer<'_, '_> {
                     .prove_loop_invariant_bases(invariants, state);
                 let base_batch = base
                     .iter()
-                    .all(|disposition| *disposition == TargetDisposition::Proved);
+                    .all(|batch| batch.disposition == TargetDisposition::Proved);
 
                 let mut kills = LoopKills::default();
                 let body_reaches_head = self.input.collect_continuing_loop_kills(
                     body,
                     true,
-                    &mut LoopReachability::default(),
+                    &mut LoopReachability::for_loop(*id),
                     &mut kills,
                 );
                 if body_reaches_head {
@@ -1662,11 +1711,17 @@ impl Analyzer<'_, '_> {
                 self.frames.loops.push(LoopFrame {
                     id: *id,
                     invariant_declarations: invariant_declarations.clone().into_boxed_slice(),
+                    templates: if base_batch {
+                        invariants.clone()
+                    } else {
+                        Vec::new()
+                    },
                     scope_depth: outer_scope_depth,
                     counted_binder: Some(*binder),
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    continues: Vec::new(),
                 });
                 let mut body_state = head.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
@@ -1681,113 +1736,50 @@ impl Analyzer<'_, '_> {
                 );
                 self.judging()
                     .retain_counted_derivations(occurrence, counted);
-                let body_falls_through = self.walk_block(body, &mut body_state);
+                let mut body_frontier = Vec::new();
+                let body_falls_through = self.walk_block(body, &mut body_state, &mut body_frontier);
+
+                let mut backedges = std::mem::take(
+                    &mut self
+                        .frames
+                        .loops
+                        .last_mut()
+                        .expect("active counted loop")
+                        .continues,
+                );
                 if body_falls_through {
-                    debug_assert_summarized(&body_state, &kills);
-                }
-
-                let mut step = vec![None; invariants.len()];
-                let mut hidden_update = !body_falls_through;
-                // A body reaching the backedge normally should still carry the
-                // header binder's affine image. Where this walk has lost it,
-                // the hidden `binder + 1` update is unproved and every
-                // next-header target with it: [OWN-8]'s conservative reading,
-                // which withholds the exhaustion rule and the step batch and
-                // never widens acceptance.
-                let current_binder = body_state.affine.values.get(binder).cloned();
-                if body_falls_through && current_binder.is_none() {
-                    step = vec![Some(TargetDisposition::Unproved); invariants.len()];
-                }
-                if let (true, Some(current_binder)) = (body_falls_through, current_binder) {
-                    let next_binder = current_binder
-                        .add(&AffineForm::constant(1), &mut AffineCheckState::new())
-                        .ok();
-                    let hidden_target = next_binder.as_ref().and_then(|next| {
-                        AffineInequality::from_forms(
-                            next,
-                            &AffineForm::constant(u64::MAX as i128),
-                            &mut AffineCheckState::new(),
-                        )
-                        .ok()
-                    });
-                    let counter_limit = self
-                        .vocabulary
-                        .terms
-                        .intern(TermKind::Constant(u64::MAX as i128));
-                    hidden_update = hidden_target.as_ref().is_some_and(|target| {
-                        self.reasoning()
-                            .prove(
-                                ProofContext::new(&body_state.facts, &body_state.affine),
-                                ProofGoal::Affine {
-                                    inequality: target,
-                                    right: Some(counter_limit),
-                                },
-                            )
-                            .disposition
-                            == ProofDisposition::Proved
-                    });
-                    // Normalize the next-header target with `binder :=
-                    // binder_head + 1`, but retain the old header binding in
-                    // the proof state.  The true-header S11 relation constrains
-                    // `binder_head`; replacing the live binding first would
-                    // make that exact old value unreachable while proving the
-                    // backedge target.
-                    let mut next_affine = body_state.affine.clone();
-                    if let Some(next_binder) = next_binder {
-                        next_affine.values.insert(*binder, next_binder);
-                    }
-
-                    for (index, invariant) in invariants.iter().enumerate() {
-                        let next_target = self.reasoning().checked_loop_invariant_inequality(
-                            invariant,
-                            &mut next_affine,
-                            &mut AffineCheckState::new(),
-                        );
-                        // [INV-1] both bounds of an `==` next-header target
-                        // are proved, in the same substituted state.
-                        let next_partner = self
-                            .reasoning()
-                            .checked_affine_relation_partner(
-                                &invariant.relation,
-                                &mut next_affine,
-                                &mut AffineCheckState::new(),
-                            )
-                            .map(|partner| partner.ok());
-                        let right = self
-                            .reasoning()
-                            .checked_affine_right_term(&invariant.relation.right);
-                        let left = self
-                            .reasoning()
-                            .checked_affine_right_term(&invariant.relation.left);
-                        let mut members = vec![(next_target, right, left)];
-                        if let Some(partner) = next_partner {
-                            members.push((partner, left, right));
-                        }
-                        let disposition = self.reasoning().affine_target_disposition(
-                            &members,
-                            &body_state.facts,
-                            &body_state.affine,
-                        );
-                        // An unrepresentable hidden update fails the step
-                        // without refuting the target it would reach.
-                        step[index] = Some(if hidden_update {
-                            disposition
-                        } else {
-                            TargetDisposition::Unproved
+                    if body_frontier.is_empty() {
+                        body_frontier.push(FlowEdge {
+                            site: node_path.clone(),
+                            branch: self.frames.branches.join(" / "),
+                            route: super::super::LoopInductionRoute::Fallthrough,
+                            state: body_state,
                         });
                     }
+                    backedges.extend(body_frontier);
                 }
-
+                backedges.sort_by(|a, b| a.site.components().cmp(b.site.components()));
+                let batches = self.prove_induction_frontier(
+                    *id,
+                    invariants,
+                    &backedges,
+                    Some(*binder),
+                    &kills,
+                );
                 self.judging().record_loop_invariant_outcomes(
                     *id,
                     invariants,
                     &base,
-                    &step,
+                    &batches,
                     Some(*binder),
                 );
-                let step_batch = step.iter().all(|disposition| {
-                    disposition.is_none_or(|disposition| disposition == TargetDisposition::Proved)
+                let step_batch = batches.iter().all(|batch| {
+                    batch
+                        .members
+                        .iter()
+                        .all(|member| member.disposition == TargetDisposition::Proved)
                 });
+                let hidden_update = batches.iter().all(|batch| batch.hidden_update.is_some());
                 let export = lower_le_upper && base_batch && step_batch && hidden_update;
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
@@ -1849,7 +1841,7 @@ impl Analyzer<'_, '_> {
                 exits.push(exhaustion);
                 exits.extend(breaks);
                 self.frames.scopes.pop();
-                *state = self.judging().join_flows(&exits);
+                *state = self.join_with_transport(&exits, &[]);
                 record_continuing(&mut state.continuing, &outer_continuing);
                 true
             }
@@ -1866,8 +1858,10 @@ impl Analyzer<'_, '_> {
         facts: &ArmFacts,
         payload: Option<&PayloadPlacement>,
         result: Option<&ResultEvidence>,
-    ) -> Option<ProofFlowState> {
+    ) -> Vec<FlowEdge> {
         let mut state = entry.clone();
+        let mut frontier = Vec::new();
+        self.frames.branches.push(arm.label.clone());
         let s1_event = (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
             self.vocabulary
                 .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
@@ -1917,14 +1911,25 @@ impl Analyzer<'_, '_> {
             if !continues {
                 break;
             }
-            continues = self.walk_statement(statement, &mut state);
+            continues = self.walk_statement(statement, &mut state, &mut frontier);
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
-            self.exit_scopes_to(&mut state, depth);
+            // [ENT-5] compiler-derived releases and lexical kills preserve
+            // each pending input; cleanup does not publish a joined theorem.
+            self.exit_frontier_scopes(&mut state, &mut frontier, depth);
+            if frontier.is_empty() {
+                frontier.push(FlowEdge {
+                    site: arm.node_path.clone(),
+                    branch: self.frames.branches.join(" / "),
+                    route: super::super::LoopInductionRoute::Fallthrough,
+                    state,
+                });
+            }
         }
         self.frames.scopes.pop();
-        continues.then_some(state)
+        self.frames.branches.pop();
+        if continues { frontier } else { Vec::new() }
     }
 }
 

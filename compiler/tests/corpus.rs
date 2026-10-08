@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod canonical_corpus;
+mod checker_work;
 #[cfg(windows)]
 mod native_windows;
 mod support;
@@ -21,6 +22,7 @@ mod programs {
     #[cfg(unix)]
     mod contexts;
     mod file_replacement;
+    mod stop_signals;
     #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]

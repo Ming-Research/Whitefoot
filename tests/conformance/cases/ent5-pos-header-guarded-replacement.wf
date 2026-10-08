@@ -1,0 +1,37 @@
+enum Op {
+  Set(v: u64);
+  Keep();
+  Halt();
+}
+
+fn run(code: &Box<Slots<Op>>, limit: u64) -> r: u64 reads(code) {
+  doc "A guarded replacement and an untouched input each prove the written current relation at the induction frontier.";
+  let pc = 0_u64;
+  let x = 0_u64;
+  if pc < code^.inner.len {
+    loop (
+      invariant xb: x <= limit
+    ) {
+      match code^.inner[pc] {
+        Set(v: vv) => {
+          if vv^ <= limit {
+            set x = vv^;
+          } else {
+            return x;
+          }
+        }
+        Keep() => {
+        }
+        Halt() => {
+          return x;
+        }
+      }
+    }
+  }
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the source relation without executing the probe.";
+  return std::process::exit_status(code: 0_u8);
+}

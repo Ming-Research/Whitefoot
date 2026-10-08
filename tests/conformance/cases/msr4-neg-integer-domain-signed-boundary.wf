@@ -1,0 +1,32 @@
+fn touch(stack: &Box<Array<u64>>) -> result: unit writes(stack.inner) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Exercises the declared descriptor write while preserving its length.";
+  if 0_u64 < stack^.inner.len {
+    set stack^.inner[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn walk(stack: &Box<Array<u64>>, fp0: i64) -> result: u64 writes(stack.inner) contract {
+  requires fp0 <= -4_i64;
+} {
+  doc "A signed frame pointer may be negative four at an empty length. Its full signed interval must not be treated as nonnegative to prove the subtraction.";
+  let fp = fp0;
+  loop (
+    invariant frame_bound: fp + 4_i64 <= stack^.inner.len
+  ) {
+    touch(stack: stack);
+    let remaining = stack^.inner.len - 4_u64;
+    set stack^.inner[0_u64] = remaining;
+    if remaining == 7_u64 {
+      return remaining;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The function body is the conformance obligation.";
+  return std::process::exit_status(code: 0_u8);
+}

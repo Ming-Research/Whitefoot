@@ -3395,7 +3395,22 @@ static void wf_bridge_join(wf_completion_record *record) {
         uint64_t epoch = wf_completion_wake_epoch(&wf_bridge_runtime);
         if (wf_bridge_record_state(record) != WF_COMPLETION_DONE
             && !wf_bridge_spin_for_completion(record)) {
-            wf_bridge_park(epoch, UINT32_MAX);
+            uint32_t timeout = UINT32_MAX;
+            if (record->route == WF_COMPLETION_ROUTE_STOP) {
+                uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_acquire);
+                if (deadline != 0) {
+                    uint64_t now = wf_file_monotonic_ns();
+                    if (deadline == WF_COMPLETION_DEADLINE_FIRED || now >= deadline) {
+                        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                                              memory_order_release);
+                        wf__stop_cancel(record);
+                        continue;
+                    }
+                    uint64_t left = (deadline - now) / 1000000u + 1u;
+                    timeout = left < UINT32_MAX ? (uint32_t)left : UINT32_MAX - 1u;
+                }
+            }
+            wf_bridge_park(epoch, timeout);
         }
     }
 }
@@ -3982,6 +3997,24 @@ void wf__completion_sleep_submit(
     held->route = WF_COMPLETION_ROUTE_TIMER;
 }
 
+void wf__completion_stop_next_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_NEXT;
+    held->route = WF_COMPLETION_ROUTE_STOP;
+    wf__stop_next(held);
+}
+
+void wf__completion_stop_close_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_CLOSE;
+    held->route = WF_COMPLETION_ROUTE_INLINE;
+    int error = wf__stop_close();
+    held->result.kind = held->request.kind;
+    held->result.value = error == 0 ? 0 : -1;
+    held->result.error_code = error;
+    wf_completion_record_complete(held);
+}
+
 /* The six TCP submits.
  *
  * Each fills one arm of the request union and falls into the one routing
@@ -4268,6 +4301,9 @@ static int wf_bridge_cancel(wf_completion_record *record) {
             wf_windows_iocp_cancel(record);
             return 0;
 #endif
+        case WF_COMPLETION_ROUTE_STOP:
+            wf__stop_cancel(record);
+            return 0;
         case WF_COMPLETION_ROUTE_FILE_ADAPTER:
             return wf_file_adapter_cancel(&wf_bridge_adapter, record);
         default:

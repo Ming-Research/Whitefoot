@@ -1,0 +1,28 @@
+fn probe(table: &Slots<Slots<u8, 2>, 2>) -> result: unit reads(table) contract {
+  requires 2_u64 <= table^.len;
+} {
+  doc "view names table exactly, so the next slot's length read through view and through table is one target-instance term.";
+  let view = &table^;
+  for (
+    i in 0_u64..1_u64,
+    invariant same: view^[i].len == table^[i].len
+  ) {
+    if 1_u64 <= table^[i].len {
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The two slots have lengths one and zero.";
+  let first = slots_new::<u8, 2>();
+  place_back(window: &first, value: 7_u8);
+  let second = slots_new::<u8, 2>();
+  let table = slots_new::<Slots<u8, 2>, 2>();
+  place_back(window: &table, value: move first);
+  place_back(window: &table, value: move second);
+  probe(table: &table);
+  return std::process::exit_status(code: 0_u8);
+}

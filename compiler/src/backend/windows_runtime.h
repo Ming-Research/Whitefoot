@@ -6,6 +6,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+/* Host callback implemented by completion/stop_signals.c. */
+BOOL WINAPI wf__stop_console_handler(DWORD event);
 #endif
 
 #if defined(__cplusplus)

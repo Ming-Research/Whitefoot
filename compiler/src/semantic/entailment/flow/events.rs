@@ -624,7 +624,8 @@ impl Vocabulary {
     pub(super) fn scope_kills_term(&self, term: TermId, exited: &HashSet<BindingId>) -> bool {
         match self.terms.kind(term) {
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
-            TermKind::CountedCapture { .. }
+            TermKind::TargetMeasure { .. }
+            | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
@@ -713,7 +714,8 @@ impl Reasoning<'_, '_, '_> {
             // capture dies with its construct-scope exit, handled separately
             // from source-place write/consume events; a commit value names one
             // evaluated value that no later event can change.
-            TermKind::CountedCapture { .. }
+            TermKind::TargetMeasure { .. }
+            | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }

@@ -16,6 +16,7 @@ mod floating;
 mod floor;
 mod frames;
 mod frontier;
+mod indexed;
 mod integer;
 mod operations;
 mod parallel;
@@ -2344,6 +2345,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 captures,
                 weight,
                 work,
+                indexed,
             } => self.emit_loop_split(
                 result,
                 ty,
@@ -2356,6 +2358,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     captures,
                     weight: *weight,
                     work: work.as_ref(),
+                    indexed,
                 },
             ),
             IrOperation::Integer {

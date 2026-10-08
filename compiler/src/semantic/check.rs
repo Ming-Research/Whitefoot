@@ -2017,7 +2017,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedStatement::Proof(_)
             | CheckedStatement::Return { .. }
             | CheckedStatement::Give { .. }
-            | CheckedStatement::Break { .. } => false,
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => false,
         })
     }
 
@@ -2265,7 +2266,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
                 CheckedStatement::Proof(_) => {}
-                CheckedStatement::Break { .. } => {}
+                CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => {}
             }
         }
         Ok(())

@@ -1553,7 +1553,7 @@ impl Reasoning<'_, '_, '_> {
         let operands = arguments
             .iter()
             .map(|argument| IntegerDomainOperand {
-                term: self.read_operand(argument),
+                term: self.copy_operand(argument),
                 constant: checked_integer_constant(argument),
             })
             .collect::<Vec<_>>();
