@@ -432,10 +432,13 @@ def fused_arm(name, op, sign):
 # A value that the operation just before its single consumer computed into a
 # temporary passes in the interpreter function's acc parameter instead of a
 # frame slot. A form's letters name what moves: D its result goes to acc
-# only, A (B, V, C) its a (b, v, c) operand comes from acc. Every form keeps
-# its base operation's fields, so the compare and address fusions and the
-# patching of forward branches carry a form; the field a form reads from acc
-# holds the sentinel 65535, never a slot.
+# only, SD its result goes to slot d and to acc (wasmi's SlotAndReg forms,
+# chosen by a local.set or local.tee taking the result, so that the
+# operations after it read that local from acc), A (B, V, C) its a (b, v, c)
+# operand comes from acc. Every form keeps its base operation's fields, so
+# the compare and address fusions and the patching of forward branches carry
+# a form; the field a form reads from acc holds the sentinel 65535, never a
+# slot.
 ACC = {}
 for nm in ["I32Add", "I32Mul", "I32And", "I32Or", "I32Xor"]:
     ACC[nm] = ["A", "D", "AD"]
@@ -458,6 +461,13 @@ for nm in ["I32Store", "I32Store8", "I32Store16"]:
 ACC["BrIf"] = ["C"]
 ACC["BrUnless"] = ["C"]
 ACC["Select"] = ["C", "D", "CD"]
+# The operations with SD forms: one for the slot-reading form and one for
+# each form reading an operand from acc.
+SLOT_ACC = ["I32Add", "I32Sub", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Shl", "I32ShrU", "I32ShrS"]
+for nm in ["I32Load", "I32Load8U", "I32Load8S", "I32Load16U", "I32Load16S"]:
+    SLOT_ACC += [nm, nm + "Ix"]
+for nm in SLOT_ACC:
+    ACC[nm] = ACC[nm] + [f + "SD" for f in ["", "A", "B"] if f == "" or f in ACC[nm]]
 # Operations whose a and b may trade places: a b operand from acc becomes
 # the A form with the operands swapped (an indexed address is a + b).
 SWAPS = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne", "BrI32Eq", "BrI32Ne",
@@ -474,6 +484,15 @@ def acc_inputs(name):
     return [l for l in "ABVC" if l in ACC[name]]
 
 
+def base_form(name):
+    """The operation and form a variant's name combines, the form empty for an operation."""
+    for b in ACC:
+        for f in ACC[b]:
+            if name == b + f:
+                return b, f
+    return name, ""
+
+
 def word(var, field, letter, form):
     """Binds {var}w to the operand in field, from acc when the form reads it there."""
     if letter in form:
@@ -482,11 +501,15 @@ def word(var, field, letter, form):
 
 
 def result(form, ind):
-    """Stores zw in slot d, unless the form leaves it in acc, and advances."""
+    """Stores zw in slot d, unless the form leaves it in acc only (D), sets
+    acc to it for a form leaving it there (D, SD), and advances."""
     p = " " * ind
+    store = [p + l for l in slot("d", "dv^") + ["set stack^.inner[dt] = zw;"]]
+    if form.endswith("SD"):
+        return store + advance(ind, "zw")
     if "D" in form:
         return advance(ind, "zw")
-    return [p + l for l in slot("d", "dv^") + ["set stack^.inner[dt] = zw;"]] + advance(ind)
+    return store + advance(ind)
 
 
 def acc_numeric_arm(name, ins, out, lines, form, fields):
@@ -558,7 +581,8 @@ def acc_functions(fields_of):
     """The translator's view of the forms: acc_norm turns an operation with
     the sentinel in a field into the form reading acc there; acc_input
     turns one reading slot s into that form; acc_dest gives the form
-    leaving the result in acc; has_sentinel finds a sentinel no form took."""
+    leaving the result in acc, acc_slot_dest the form writing slot d and
+    acc; has_sentinel finds a sentinel no form took."""
     w = []
     w.append("fn acc_norm(op: Op) -> o: Op pure {")
     w.append('  doc "The form of op reading acc where a field holds the sentinel 65535, or op itself.";')
@@ -594,22 +618,20 @@ def acc_functions(fields_of):
                   "        return Some<Op>(value: n);", "      }"]
         w += ["      return None<Op>();", "    }"]
     w += ["  }", "}", ""]
-    w.append("fn acc_dest(op: Op) -> found: Option<Op> pure {")
-    w.append('  doc "The form of op leaving its result in acc instead of slot d, or None.";')
-    w.append("  match op {")
-    for name, fields in fields_of:
-        base, form = name, ""
-        for b in ACC:
-            for f in ACC[b]:
-                if name == b + f:
-                    base, form = b, f
-        target = form + "D"
-        if base in ACC and "D" not in form and target in ACC[base]:
-            binds = ", ".join(f"{f}: x_{f}" for f in fields)
-            w += [f"    {name}({binds}) => {{", f"      let o = Op::{base}{target}({binds});", "      return Some<Op>(value: o);", "    }"]
-        else:
-            w += [f"    {name}(..) => {{", "      return None<Op>();", "    }"]
-    w += ["  }", "}", ""]
+    for fn, doc, suffix in [("acc_dest", "The form of op leaving its result in acc instead of slot d, or None.", "D"),
+                            ("acc_slot_dest", "The form of op writing slot d and leaving its result in acc as well, or None.", "SD")]:
+        w.append(f"fn {fn}(op: Op) -> found: Option<Op> pure {{")
+        w.append(f'  doc "{doc}";')
+        w.append("  match op {")
+        for name, fields in fields_of:
+            base, form = base_form(name)
+            target = form + suffix
+            if base in ACC and "D" not in form and target in ACC[base]:
+                binds = ", ".join(f"{f}: x_{f}" for f in fields)
+                w += [f"    {name}({binds}) => {{", f"      let o = Op::{base}{target}({binds});", "      return Some<Op>(value: o);", "    }"]
+            else:
+                w += [f"    {name}(..) => {{", "      return None<Op>();", "    }"]
+        w += ["  }", "}", ""]
     w.append("fn has_sentinel(op: Op) -> yes: Bool pure {")
     w.append('  doc "Whether an operation reading only slots holds the sentinel where it reads one.";')
     w.append("  match op {")

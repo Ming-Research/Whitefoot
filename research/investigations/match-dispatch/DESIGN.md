@@ -1459,3 +1459,23 @@ at `9b9f14ac3`):
   32.0M, `I32Load` 30.0M, `BrIf` 29.9M, `I32LoadD` 21.2M, `BrI32Ne` 20.9M,
   `Copy2` 17.0M, `I32Store` 15.3M; `Call` 3.0M. Calls are about 0.6% of
   dispatches, so step 3 is worth little on CoreMark; step 1 goes first.
+
+**Step 1, the change** (`gen.py`'s `SLOT_ACC` and `acc_slot_dest`;
+`interp_tail.wf`'s `set_local`, `acc_feed` and `acc_claim`):
+- `I32Add`, `I32Sub`, `I32Mul`, `I32And`, `I32Or`, `I32Xor`, the three
+  shifts and the five `i32` loads with their indexed forms gain `SD` forms
+  (and `ASD`, `BSD` where an `A` or `B` form exists) that write slot `d` and
+  set `acc` in one operation.
+- `local.set` and `local.tee` that take over the last operation's
+  destination choose its `SD` form and record in the translator state that
+  `acc` holds that local.
+- An operation reading that local, which has a form reading the operand
+  from `acc`, takes it from `acc`; so does a `br_if` or `if` condition. The
+  fresh-temporary path keeps priority.
+- The record is cleared when `acc` changes (an operation turned into a `D`
+  form), at every label (block and loop starts, `else`, `end`), after calls
+  (the callee changes `acc`), host calls and `memory.grow` (the interpreter
+  is re-entered with `acc` zero), and when the local is written. Between those points control reaches
+  the reader only by falling through from the `SD` operation, and the slot
+  always holds the same value, so the slot stays correct for every other
+  reader.
