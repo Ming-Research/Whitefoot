@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Writable subdirectories, moving files and names below a root
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: The node gains three decisions beside its unchanged ones: a program opens the write half of a directory below a write half, created when missing and reading its root as `open_append` does, instead of a separate creation or a flat layout in the program; a file moves between two directories' write halves through a second operation, since a rename writes the directories it changes and one handle cannot fill two written roots of a call, instead of a `rename_file` with two roots; and a name given with a root denotes only an entry directly below it, so `.` and `..` are refused and a write half cannot reach the directory above it ([design](../research/investigations/writable-subdirectories/README.md)).
+
 ## 2026-10-07 Element loops may read the written storage's measures
 
 Nodes: language/parallelism/loop-permission

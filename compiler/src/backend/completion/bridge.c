@@ -3446,7 +3446,8 @@ void wf__completion_file_open_join(
         );
     }
     wf_bridge_join(held);
-    if (held->result.kind != WF_FILE_OPEN_AT) {
+    if (held->result.kind != WF_FILE_OPEN_AT
+        && held->result.kind != WF_FILE_OPEN_DIRECTORY_WRITE) {
         wf_bridge_fail(
             "an open join was given a record that is not an open"
         );
@@ -3906,12 +3907,33 @@ void wf__completion_file_sync_submit(
     wf_bridge_dispatch(held);
 }
 
+void wf__completion_directory_write_open_submit(int directory, const void *path, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_OPEN_DIRECTORY_WRITE;
+    held->request.operation.open_at.directory = directory;
+    held->request.operation.open_at.path = path;
+    wf_bridge_dispatch(held);
+}
+
 void wf__completion_file_rename_submit(
     int directory, const void *from, const void *to, void *record
 ) {
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_RENAME;
     held->request.operation.rename.directory = directory;
+    held->request.operation.rename.to_directory = directory;
+    held->request.operation.rename.from = from;
+    held->request.operation.rename.to = to;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_file_move_submit(
+    int from_directory, const void *from, int to_directory, const void *to, void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_MOVE;
+    held->request.operation.rename.directory = from_directory;
+    held->request.operation.rename.to_directory = to_directory;
     held->request.operation.rename.from = from;
     held->request.operation.rename.to = to;
     wf_bridge_dispatch(held);
