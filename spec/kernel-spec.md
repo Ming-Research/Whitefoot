@@ -1,4 +1,4 @@
-# Kernel Specification v0.98
+# Kernel Specification v0.103
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -592,16 +592,15 @@ Field suffixes introduce no runtime evaluation.
 This rule judges a value target; a `set` whose target is a reference variable and whose right-hand side is a `borrow_expr` rebinds that name and is judged by [REF-1] instead.
 A `set` whose target is a reference variable and whose right-hand side is a value is not a rebinding: it is a hard error citing TYPE-7 at the target `place`, with a repair [DIAG-1].
 The value target's final selected type is T.
-The target is writable exactly when it is rooted in a live own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
-Fields and indices inherit the writability of their selected base.
+The target satisfies the writable-root condition exactly when it is rooted in an own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
+Fields and indices inherit the writable-root condition of their selected base.
 A named const is never writable [CONST-2], and a target path that ends at or passes through a readonly field is refused by [TYPE-2].
 A `for_stmt` binder is compiler-updated state and is never source-writable; a target rooted there is a SET-1 rejection at the complete target `place`.
-A place projected, dereferenced, or subscripted from a dead root is never writable; a dead binding is writable only as the complete binding, and that commit reinitializes it [OWN-1, OWN-11].
+A target satisfying the writable-root condition is writable exactly when its root is live or it is the complete own-mode value binding [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
-T is copy or affine under [OWN-1].
 The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
-The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable and that the target root is live.
+The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
 If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
 If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
 This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
@@ -610,8 +609,8 @@ No root-liveness or writability fact from before the right-hand side bypasses th
 On successful revalidation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
 A commit derives no drop, release, finalizer, or cleanup edge beyond that disposition.
-The new value occupies the same place and the target root is live after the commit.
-The store occurs only after right-hand-side evaluation completes; until that commit point the target retains its previous value.
+The new value occupies the same place and the target root is live after the commit, reinitializing a dead complete binding [OWN-1, OWN-11].
+The store occurs only after right-hand-side evaluation completes; until that commit point a live target retains its previous value.
 The checked program retains the exact target path, each required target check, the right-hand-side value, the post-right-hand-side liveness and writability judgments, and the single store before lowering [DIAG-2].
 
 [CONST-1] The grammar production `const` of the fence below is usable at `Array<T, N>` sizes and `const` targs, and, being the `const` alternative of `targ` [GRAM-3], at every const argument of a compiler-owned storage nominal [TYPE-9].
@@ -823,7 +822,8 @@ This vocabulary is ordinary: a user function may declare the same rows a built-i
 A move out of a field or out of `Box` content consumes the whole owner: the owner ceases to exist, its other affine parts take their compiler-derived release [STOR-3], and a remaining linear part is a hard error citing WIN-3 at the complete consumed `place`, with a repair [DIAG-1].
 A destructuring consume binds the fields it names and covers the rest with `..` [GRAM-4], and an own-place `arm` does the same [GRAM-10].
 A move out of a window slot or an array element is a hard error citing WIN-3 at that `place`, with a repair [DIAG-1].
-Assigning over any owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
+Assigning over a live owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
+A dead binding holds no old value, and its reinitialization [SET-1] releases nothing.
 At scope exit the compiler releases the slots inside the window recursively and frees the block; an `Array` releases every slot.
 No operation releases a linear element: a storage whose element type is linear is itself linear [PROV-6] and the program must take every element out and consume it, and then, with the storage proved empty, call `free_empty` [OP-14].
 That one route also consumes a `Box` whose content is such a window, freeing the cell with it [OP-14].
@@ -1206,7 +1206,7 @@ Its effect is `writes(p)`.
 Nothing is said about termination.
 A failure is an enum in the place, not a second result.
 A call that fails the result condition is not an atomic update and is judged as an ordinary `set` [SET-1], in which the consumed argument would kill the target root [OWN-1]; the resulting rejection cites OWN-1 at the argument `atom`.
-An atomic update is not a [PAR-2] accumulator form: that rule's accumulator combines by one operation fixed for it from a closed associative and commutative set, and `f` is not a member of that set.
+The parallel-permission classification of an atomic update is governed by [PAR-2].
 
 [OP-13] Construction.
 The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
@@ -1377,7 +1377,7 @@ Two predicates are equal only by exact typed-tree equality: there is no commutat
 Signed decomposition, exact comparison-root L0 projection, and the fixed query-time Boolean introduction over independently proved children remain exactly [ENT-3, ENT-4, ENT-6].
 
 At an ordinary source call, resolution, concrete instantiation, named arguments, exact types, borrow feasibility, and all actual-expression obligations complete first.
-For every GoalTemplate in requires-clause source order, substitute each formal with that actual's Goal value identity in the same pre-transfer fact state: a borrow formal uses its resolved referent and an own actual its value before transfer.
+For every GoalTemplate in requires-clause source order, substitute each formal with that actual's Goal value identity in the same pre-transfer fact state: a borrow formal uses the place its actual names, identified by its [ENT-2] proof path, and an own actual its value before transfer.
 A literal, named const, or place with field and `^` projections remains an ordinary datum.
 After every actual-expression obligation succeeds, an own actual whose complete
 checked value belongs to [ENT-2]'s admitted exact-operation or index tree uses
@@ -1435,7 +1435,7 @@ At a selected return, each result datum the clause names evaluates to one [ENT-2
 For an ordinary inhabited instance, each clause's selected-return set is independently nonempty; an empty set rejects at that `ensures_clause`.
 An [FN-8] uninhabited instance still checks route, type, expression, and return-shape source judgments, but is exempt from nonempty and proof requirements and publishes no relation.
 
-A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over that parameter's resolved referent immediately before each selected return, after the return's ordinary effects and kills; a write of that referent changes this exit term and never retargets the entry datum. Every other parameter datum retains the entry-image stability rule below.
+A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over the storage that parameter received, as it stands immediately before each selected return, after the return's ordinary effects and kills; a write of that storage changes this exit term and never retargets the entry datum. When some `set` in the body rebinds that parameter, a place written through it names its current target rather than that storage [ENT-2], no term of the body names that storage, and a relation over such an exit term is unproved at every selected return. Every other parameter datum retains the entry-image stability rule below.
 Every other referenced parameter entry image creates no snapshot term.
 Its stability begins live at body entry and becomes permanently unavailable on the first structural edge whose [ENT-5] kill overlaps the datum, a holder used by it, or its support; join is intersection and contradiction never restores it.
 An element write does not invalidate such an image, while a write to the place's own descriptor storage or to any prefix of it, or killing its root or holder, does [MSR-2]; at a call, which of the two a projected callee write is, is [CALL-1] through [CALL-3]'s classification and never the argument's shape [CALL-5].
@@ -2150,11 +2150,16 @@ Every construct of this specification defines one total sequential order over it
 This rule uses [CAP-1]'s ordinary ownership boundary directly; it introduces no additional sharing classification.
 The counted permission [PAR-2] forms every statement's read and write paths exactly as this rule does.
 
-[PAR-2] An implementation may execute two iterations of one `for_stmt` body with overlapping execution, and may recombine that loop's accumulator across them, only when the permission this rule defines holds for that counted loop.
+[PAR-2] An implementation may execute two iterations of one `for_stmt` body with overlapping execution, and may recombine that loop's scalar accumulator and indexed accumulators across them, only when the permission this rule defines holds for that counted loop.
 Permission holds for a `for_stmt` L exactly when all of the following hold, writing B for L's body and forming every written, read, and operand-read footprint of a statement of B exactly as [PAR-1] forms one.
 Among whole-place writes of B, at most one place is rooted in a binding declared outside L; that binding is L's accumulator, and every occurrence of it in B is one operand of one `set` statement whose target is that whole binding and whose right-hand side is one operation applied to that operand and to a second operand reaching the accumulator nowhere.
 That operation is one operation fixed for the accumulator across the whole of B, and is exactly one of `+wrap`, `*wrap`, `iand`, `ior`, `ixor`, `imin`, `imax`, `band`, `bor`, and `bxor` [OP-1].
-Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, a place in one proved single-binder affine element, a place in one proved range reference, or a place in one certified element.
+An indexed accumulator is a family of cells of one binding declared outside L, selected through a fixed field and `Box` content path R whose indexed storage is an `Array` or `Slots` of one integer or `Bool` element type [TYPE-9].
+Every occurrence of that binding in B belongs to an update `set R[e] = R[e] op x` or `set R[e] = x op R[e]`, with the operation's [OP-1] spelling: the target and the accumulator operand name the same subscripted place [REF-1, OWN-7], and e and x read nothing of that binding or its resolved storage.
+One operation from the scalar accumulator's admitted set is fixed for each indexed accumulator throughout B; every write to its binding is such an update, and its storage path and current length remain unchanged throughout B.
+Each update's ordinary [OP-4] subscript bound is discharged as for any write; this family imposes no injectivity condition on e.
+A loop may have any number of indexed accumulators alongside its scalar accumulator, each governed independently by these conditions.
+Every place a footprint of B writes is iteration-own storage, the scalar accumulator's whole place, a cell of an indexed accumulator, a place in one proved single-binder affine element, a place in one proved range reference, or a place in one certified element.
 A proved single-binder affine element is one subscript whose base is an `Array`, a `Slots`, the run a range reference names [OP-4], or a `Segments` [TYPE-9], rooted in an own binding declared outside L or reached through `^` of a reference parameter whose row declares the write [EFF-5], whose exact [OP-4] bounds obligation at that subscript is discharged in the current ProofContext and retains the offset's canonical exact value `a*i + b`: i is L's compiler-owned binder, a and b are mathematical integer constants, a is nonzero, and no other symbolic term occurs. The place that subscript selects from is the element's mapped root.
 A place is in that element when its resolved path [REF-1] is the element's path or continues it by any further field, payload, `Box` content, index, or range steps, and it is in the element of the outermost such subscript of its path. Every aggregate holds only owned values [TYPE-8] and a `Box` has one owner [TYPE-9], so nothing in one element of a root is reachable from another element of it.
 A footprint reaches a place in an element through a `set_stmt` target, an operand read, and a reference argument, whose callee row is projected onto the argument's actual path exactly as [EFF-5] projects it.
@@ -2163,7 +2168,7 @@ For permission only, this fixed form refines the ordinary whole-collection footp
 The counted recurrence of [FN-1] gives distinct binder values to distinct iterations, and multiplication by the same nonzero integer a preserves distinctness, so their refined ranges do not overlap; statement order within one iteration is unchanged.
 This refinement proves only the source element-range and cross-iteration disjointness. The selected-target [STOR-6] check must still prove the concrete element stride, layout, and address domain before emission; that later target check consumes the already-permitted source access and never grants PAR-2 permission retroactively.
 Every write by B to one mapped root must be to a place in a proved single-binder affine element of it carrying exactly the same a and b; different resolved roots may carry different maps. Every read through that same root binding must be a measure read [MSR-1] or a place in a proved single-binder affine element of it carrying exactly the same a and b. A measure read of the mapped root touches its descriptor storage, disjoint from its element storage under [MSR-2]; the write condition confines every write by B to an element, so no iteration writes that descriptor storage. For permission only, an element read footprint is refined to the same single-element range, so it overlaps writes of its own iteration in source order and no access of another iteration. A whole-root read, a subscript carrying a different or unavailable map, any other access overlapping the resolved root, or an unresolved place denies.
-The element family admits one affine map per root, including same-index read-modify-write and writes reached through `^` of a reference parameter whose row declares the write. A constant element image, two different element maps of one root, and every other element injectivity argument deny permission rather than starting proof search. A `Ring` in an element-map position denies permission, because a `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a wrapping map onto storage rather than a linear offset.
+The element family admits one affine map per root, including same-index read-modify-write and writes reached through `^` of a reference parameter whose row declares the write. A constant element image, two different element maps of one root, and every other element injectivity argument establish no affine-element permission and start no proof search. A `Ring` in an element-map position denies permission, because a `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a wrapping map onto storage rather than a linear offset.
 
 A proved range reference is a range reference `&r[s*i+b..s*i+b+s]` [REF-4] passed as an ordinary argument, whose discharged endpoint domain retains the exact mathematical images `[s*i+b, s*i+b+s)`, where i is L's binder, and s and b are fixed throughout L with proved `0 <= s` and `0 <= b`. The indexable place or range reference it is formed from is declared outside B and retains its resolved origin; a range reference formed inside B instead inherits an existing proved range reference only when its complete origin path is a descendant of that range reference. Each further formation's own [REF-4] endpoint obligation establishes containment. No child call, read, or write gains a wider extent than its actual origin path.
 The automatic image family is finite and fixed. At L's preheader after continuing kills, the immutable numeric value atoms still available to surviving scalar bindings and measures are fixed. Canonical checked affine sums and scalar multiples preserve exact value images. A recorded admitted exact multiplication may be expanded through its two operand value images, including the checked transparent images behind copied-value handles. A product of two fixed operands is fixed. Otherwise exactly one operand may depend on i, and multiplying its coefficient and constant part by the fixed operand must leave both parts affine: each such multiplication has a mathematical constant on at least one side. This rule recursively traverses the finite checked value graph, rejects a cyclic or unknown image, and introduces no arbitrary-degree polynomial or injectivity search. Normalized constants and coefficients use [ENT-6]'s checked mathematical integer domain. Each active counted binder is considered once, endpoint coefficients must agree, and the ending constant part must equal the starting constant part plus s. Both sign goals are submitted to the existing ProofContext and their successful derivations are retained with the formation's bounds result. Permission consumes those checked images and proofs; it neither reinterprets source spelling nor reruns arithmetic proof.
@@ -2182,6 +2187,7 @@ An implementation may instead apply that operation over any binary tree whose le
 Every admitted operation is a total function on the complete value set of its type, carries no domain obligation, and is associative and commutative on that set with a two-sided identity element — `+wrap` and `*wrap` are the ring operations of the integers modulo two to the width, with identities zero and one; `iand`, `ior`, and `ixor` are the meet, join, and group operations of the bit vector, with identities the all-ones vector, zero, and zero; `imin` and `imax` are the meet and join of that type's total order, with identities the type's greatest and least values; and `band`, `bor`, and `bxor` are the two-element cases of the same three, with identities `true`, `false`, and `false` — so every such tree denotes one value of that type and the accumulator's value at L's continuation is that one value in every execution.
 No further operation is admitted: `+`, `+defined`, and `+checked` each attach a domain obligation or a `Result` route to every application, `+sat` is not associative, and no float operation of [OP-1] is associative, so recombining a `fadd.strict` or `fmul.strict` fold could change published bytes.
 This rule uses associativity, commutativity, and the identity together: commutativity is what admits any leaf order and the fold of the second operand position, and the identity is what lets an implementation seed a subrange of iterations before knowing whether that subrange writes, so a range of iterations that writes the accumulator not at all contributes either nothing or identity leaves that change nothing.
+For an indexed accumulator, the same combination argument applies independently to each cell, using that cell's incoming value and exactly the contributions whose subscripts select it; the occurrence restriction keeps both that selection and those contributions independent of partial results. Associativity, commutativity and the two-sided identity therefore preserve the sequential value of every cell, including cells receiving no contributions, independently of the scalar accumulator's recombination.
 That identity is conditional on contract compliance exactly as [PAR-1]'s is; every partial operation in the admitted loop has already been discharged before lowering.
 Both endpoint atoms are still evaluated exactly once each in [FN-1]'s order before any iteration begins, and the binder still takes each value of the half-open range exactly once; this rule relaxes only the order in which iterations execute and the shape of the accumulator's combination, never the set of iterations, the values the binder takes, or either endpoint evaluation.
 The number of workers, the identity of the host thread that executes an iteration, the schedule, how the index range is divided, and whether any overlap or recombination was performed at all are not observable, and no rule of this specification is stated in terms of them.
@@ -2479,9 +2485,10 @@ A host handle is an opaque struct [TYPE-2] a host module declares with no fields
 An opaque struct a host module declares with fields, `Instant` alone, has the representation and capabilities its fields give it [PROV-6]; its fields are private to a module with no implementation record [MOD-6], and only a host function returns one.
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(d)` has completed, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
+A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
-A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is replaced by `rename_file` or removed by `remove_file`.
+A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
+A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 
@@ -2688,6 +2695,11 @@ public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
+public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(root), reads(name), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Opens the write half of the directory that the bytes of name from start to end name below root, as open_append names a file [PRE-2], creating it empty when no entry has that name. An existing directory is opened with its entries kept. A host refusal, including a name that names a file or other non-directory entry, is an IoError.";
+
 public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits doc "Opens the listing of the entries of directory.";
 
 public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
@@ -2724,6 +2736,13 @@ public fn rename_file(factory: &HandleFactory, root: &DirectoryWrite, from: &[u8
   requires to_start <= to_end;
   requires to_end <= to^.len;
 } doc "Renames the file selected by from[from_start..from_end] to to[to_start..to_end], both names below root as open_append names a file [PRE-2], replacing any entry at the destination atomically: an observer sees the whole old file or the whole renamed file at the destination, with no absent or partial intermediate state. Ok reports that the host renamed the file; a host refusal, including a missing source name, is an IoError.";
+
+public fn move_file(factory: &HandleFactory, from_root: &DirectoryWrite, from: &[u8], from_start: u64, from_end: u64, to_root: &DirectoryWrite, to: &[u8], to_start: u64, to_end: u64) -> result: Result<unit, IoError> reads(from), reads(to), writes(factory), writes(from_root), writes(to_root) waits contract {
+  requires from_start <= from_end;
+  requires from_end <= from^.len;
+  requires to_start <= to_end;
+  requires to_end <= to^.len;
+} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, each name below its root as open_append names a file, with the atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
 
 public fn remove_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<unit, IoError> reads(name), writes(factory), writes(root) waits contract {
   requires start <= end;
@@ -2804,9 +2823,13 @@ public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result:
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
 ```
 
+`StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
+
 `std::process`, the record `process/module.wfm`:
 
 ```
+alias IoError = pkg::io::IoError;
+alias Instant = pkg::time::Instant;
 alias HandleFactory = pkg::io::HandleFactory;
 alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
@@ -2818,6 +2841,17 @@ alias WallClock = pkg::time::WallClock;
 public opaque nocopy struct ExitStatus {
 }
 
+public opaque nocopy struct StopSignals {
+}
+
+public opaque nodrop struct StopListener {
+}
+
+public enum StopKind {
+  Interrupt();
+  Terminate();
+}
+
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -2827,9 +2861,16 @@ public struct Inputs {
   public stdin: InputStream;
   public clock: Clock;
   public wall_clock: WallClock;
+  public stops: StopSignals;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+
+public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
+
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+
+public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
 ```
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
@@ -2872,11 +2913,11 @@ A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root 
 
 Alternative (j) is a compiler-owned target-instance measure term used while forming or proving an [INV-1] counted next-header relation.
 For a measure factor whose place contains the counted binder in a subscript offset, each measure of that selected measured place, and each measure prefix needed to discharge its subscripts, has a target-instance term when its own path contains that offset.
-The term is identified by the concrete function instance, the for statement, the incoming induction edge, the ordinary source root's declaration event and canonical source path with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
+The term is identified by the concrete function instance, the for statement, the incoming induction edge, the selected place's proof path, as a place is identified below, with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
 That selector denotes [INV-1]'s checked current-binder plus one value; all its occurrences on the edge denote that one value.
 Prefixes without a substituted offset use their ordinary terms.
-Other source offsets keep their ordinary declaration and spelling identities.
-Resolved storage paths serve validity and support checking, and establish no additional equality between different source spellings.
+Other offsets keep their ordinary index-step identities, so a place written through an exact reference variable and the place it names share one target-instance term.
+Resolved storage paths serve validity and support checking, and establish no equality beyond proof-path identity.
 
 A target-instance place is formed from base to leaf, proving each [OP-4] bound in the frozen incoming state using these substituted operands before the selected measure term becomes available.
 The term has the measure's ordinary u64 type, a current affine image belonging to this target instance, and exactly [MSR-1] and [MSR-2]'s applicable standing images and relations for that measured place.
@@ -2893,7 +2934,12 @@ Their identities and proofs remain in the retained derivation.
 They evaluate no runtime expression and introduce no writer-visible binding or offset form.
 
 The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the corresponding term of the private payload root of ENT-5's conditional context. That typed root denotes only the success payload of the value associated with its context; roots of distinct contexts have no shared value identity. Its terms are compiler-owned, unwritable, carry their fragment type's standing bounds, and are substituted away at an ordinary success delivery. Neither symbolic datum creates runtime storage.
-Two places are the same term exactly when their roots resolve to the same declaration event [TYPE-6, DIAG-1] and their canonical source spellings [FORM-2] are byte-identical; a fresh binding legally reusing an expired spelling is a distinct term, and distinct spellings are distinct terms even when they resolve to overlapping storage.
+A place is identified, as a term and as a Goal datum, by its proof path, formed where the place is evaluated; admission under clauses (a) and (b) is judged on the place as written, and the proof path only identifies an admitted place.
+A path [REF-1] is exact when it has no `R.**` cover, each of its index steps selects by a literal, a const or a binding its formation read and each of its range steps by endpoints its formation evaluated, so that no step is a loop header's opaque identity, a keyed entry's position [SHARE-2] or a run of every segment, and it starts at a local variable, a named const, or a parameter or `atomic_stmt` binder that no `set` in its function body rebinds, reachable or not.
+A `&T` reference variable is exact at a point when no `set` in its function body rebinds it, reachable or not, and its path set there is one exact path.
+The proof path of a place written through a reference variable exact at that point is that path followed by the place's steps below the variable's `^`; the proof path of every other place is its root declaration event [TYPE-6, DIAG-1] with its canonical source spelling [FORM-2], so a place written through a rebound reference variable, through one whose path set is not one exact path, or through a `&[T]` reference, whose `len` is the value its formation captured [REF-4], is identified through that variable.
+Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, or when they are one formation's evaluation; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
+These conditions keep apart two places one declaration event could otherwise name: a rebound variable names one storage before a rebinding and another after it, and a rebound parameter or `atomic_stmt` binder also roots the path of every reference formed from it.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
 A readonly field below a subscript is a term because every event that changes one writes a place containing its storage: outside its declaring module it is never a write target [TYPE-2], so the event is a replaced value holding it [SET-1], an element exchanged or updated with it [OP-11, OP-12], a window part an [OP-10] operation moves, or the field itself under a row that writes it [EFF-2], and inside that module an assignment to it writes its own place; the ordinary [ENT-5] kill reaches every term over it in either case.
 Each subscript in a clause (b) place is an [OP-4] occurrence like every other and owes that rule's own obligation against the base it indexes, submitted to [MSR-4] where the place is formed; a place whose subscripts are not all discharged is no term, exactly as an undischarged subscript in read position is no value.
@@ -2918,7 +2964,7 @@ An FN-9 parameter datum denotes its function-entry image in the RelationTemplate
 Local proof may reuse the ordinary parameter term only while FN-9's entry-image stability remains live; caller publication substitutes the corresponding pre-transfer actual image independently for each referenced formal.
 
 A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, or as the canonical total predicate of an [ENT-6] operation obligation.
-A concrete place datum retains the resolved root declaration event and its ordered field, enum-payload, and `^` projections, and the subscripts of a clause (b) place; an actual substituted for a reference formal uses the resolved referent datum, while an own actual uses its pre-transfer datum.
+A concrete place datum is identified by its proof path above, the subscripts of a clause (b) place included; an actual substituted for a reference formal uses the proof path of the place it names, which for a reference-variable actual is that variable's path when it is exact and its own spelling when it is not, while an own actual uses its pre-transfer datum.
 Named consts and typed literals retain the identities FN-8 fixes.
 
 A direct value expression is the finite typed tree formed from those datums and the pure total operation rows admitted by [FN-8].
@@ -3301,7 +3347,7 @@ It establishes no L0 relation and no signed goal; it is an ownership-side refine
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
 This rule states that route's four points once, so no rule computes a fact at one program point and uses it at another without naming both.
 
-A declared relation is **instantiated at the call**, by substituting each operand at the denotation [MSR-3]'s table gives it: an `own` measure or an explicitly entry-qualified measure or fragment-integer place of a written reference parameter by that call's pre-transfer datum [ENT-3.S13], a measure at a reference parameter the row only reads by its live resolved referent, a bare measure or fragment-integer place at a written reference parameter by the actual's resolved exit place, and a referenced result datum by its destination below. Entry and exit terms are distinct even when they name one formal.
+A declared relation is **instantiated at the call**, by substituting each operand at the denotation [MSR-3]'s table gives it: an `own` measure or an explicitly entry-qualified measure or fragment-integer place of a written reference parameter by that call's pre-transfer datum [ENT-3.S13], a measure at a reference parameter the row only reads by its live resolved referent, a bare measure or fragment-integer place at a written reference parameter by the actual's resolved exit place, and a referenced result datum by its destination below; each place an actual names is identified by its [ENT-2] proof path. Entry and exit terms are distinct even when they name one formal.
 Its **support** is the ordinary L0 support of the substituted terms. The immutable call datums have empty support; an exit term at a written reference parameter has the support of the resolved place after the call's projected write kills. Those writes kill pre-call facts, not the exit relation that the verified callee establishes afterwards. A later target commit or other write to that place kills the exit relation normally.
 It is **established** on the call's normal continuation, after the call's ordinary transfer, consumes, borrow commits, target commit and kills, exactly in [ENT-5]'s call-boundary order.
 A relation routed to a success variant is instantiated at the call in the same order and is **restricted** to that value's conditional success context [ENT-5]. A later success selection activates surviving evidence; it never performs the call substitution again. An intervening event therefore kills the conclusions whose support it removes before they can be selected.
@@ -3343,7 +3389,7 @@ These three dispositions are complete and exclusive [FN-8, FN-9].
 The least closure is unique and finite up to L0 subsumption because only the finite terms and goals [ENT-2] participate and the rules are monotone.
 Implementations may compute lazily or incrementally, but every derivability and disposition answer must equal this least-closure answer.
 
-[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
+[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] the proof path [ENT-2] of any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
 A counted capture is immutable and can die only on an edge leaving its compiler-owned construct scope.
 
@@ -3885,7 +3931,7 @@ A written instance joins the instances [RANGE-3] forms for each of the certifica
 In L's entry state, after its endpoints are evaluated, the walk executes L's body once with its binder at i and once at j, each within L's range, and records every element read and write each makes of storage that exists before L's body runs.
 The certificate holds when, for every write of the i-execution and every access of the j-execution to the same location, the two index tuples are proved different by [RANGE-3]'s derivation under both executions' path conditions and `i != j`, with the entry state's facts and the written instances [RANGE-4] active; because i and j are any two distinct iterations, this covers both orders.
 An access to storage some iteration writes that is not one element — a write of a whole place, a call through a reference argument naming a run or a place that the callee's row reads or writes [EFF-5], an `atomic_stmt` or a write the walk cannot place — leaves the certificate unproved, as does a written instance whose fact is not active at L's entry.
-Writes of bindings declared outside L, which [PAR-2] judges as an accumulator, are no part of the certificate.
+Whole-binding writes that [PAR-2] judges as the scalar accumulator are no part of the certificate.
 A certificate that does not hold is a hard error citing RANGE-5 at the `apart_clause`, naming the first pair of accesses left overlapping, with a repair [DIAG-1].
 A holding certificate is retained for [PAR-2]'s certified elements and grants nothing by itself; like every proof form it is erased before lowering and evaluates, reads, writes and calls nothing.
 

@@ -265,7 +265,7 @@ fn serve_one(listener: &uniq TcpListener, handles: &uniq HandleFactory, scratch:
 
 fn main(inputs: own Inputs) -> status: own ExitStatus pure {
   doc "The ordinary-call TCP echo control serves the requested number of connections sequentially. All peers and payloads match the retained workload; C2 removes PAR-3 overlap over the shared listener and factory.";
-  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, ..) = move inputs;
   region {
     close_directory(factory: &uniq handles, directory: move unused_cwd);
   }

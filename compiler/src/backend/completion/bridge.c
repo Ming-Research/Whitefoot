@@ -3395,7 +3395,22 @@ static void wf_bridge_join(wf_completion_record *record) {
         uint64_t epoch = wf_completion_wake_epoch(&wf_bridge_runtime);
         if (wf_bridge_record_state(record) != WF_COMPLETION_DONE
             && !wf_bridge_spin_for_completion(record)) {
-            wf_bridge_park(epoch, UINT32_MAX);
+            uint32_t timeout = UINT32_MAX;
+            if (record->route == WF_COMPLETION_ROUTE_STOP) {
+                uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_acquire);
+                if (deadline != 0) {
+                    uint64_t now = wf_file_monotonic_ns();
+                    if (deadline == WF_COMPLETION_DEADLINE_FIRED || now >= deadline) {
+                        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                                              memory_order_release);
+                        wf__stop_cancel(record);
+                        continue;
+                    }
+                    uint64_t left = (deadline - now) / 1000000u + 1u;
+                    timeout = left < UINT32_MAX ? (uint32_t)left : UINT32_MAX - 1u;
+                }
+            }
+            wf_bridge_park(epoch, timeout);
         }
     }
 }
@@ -3446,7 +3461,8 @@ void wf__completion_file_open_join(
         );
     }
     wf_bridge_join(held);
-    if (held->result.kind != WF_FILE_OPEN_AT) {
+    if (held->result.kind != WF_FILE_OPEN_AT
+        && held->result.kind != WF_FILE_OPEN_DIRECTORY_WRITE) {
         wf_bridge_fail(
             "an open join was given a record that is not an open"
         );
@@ -3906,12 +3922,33 @@ void wf__completion_file_sync_submit(
     wf_bridge_dispatch(held);
 }
 
+void wf__completion_directory_write_open_submit(int directory, const void *path, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_OPEN_DIRECTORY_WRITE;
+    held->request.operation.open_at.directory = directory;
+    held->request.operation.open_at.path = path;
+    wf_bridge_dispatch(held);
+}
+
 void wf__completion_file_rename_submit(
     int directory, const void *from, const void *to, void *record
 ) {
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_RENAME;
     held->request.operation.rename.directory = directory;
+    held->request.operation.rename.to_directory = directory;
+    held->request.operation.rename.from = from;
+    held->request.operation.rename.to = to;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_file_move_submit(
+    int from_directory, const void *from, int to_directory, const void *to, void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_MOVE;
+    held->request.operation.rename.directory = from_directory;
+    held->request.operation.rename.to_directory = to_directory;
     held->request.operation.rename.from = from;
     held->request.operation.rename.to = to;
     wf_bridge_dispatch(held);
@@ -3958,6 +3995,24 @@ void wf__completion_sleep_submit(
         return;
     }
     held->route = WF_COMPLETION_ROUTE_TIMER;
+}
+
+void wf__completion_stop_next_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_NEXT;
+    held->route = WF_COMPLETION_ROUTE_STOP;
+    wf__stop_next(held);
+}
+
+void wf__completion_stop_close_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_CLOSE;
+    held->route = WF_COMPLETION_ROUTE_INLINE;
+    int error = wf__stop_close();
+    held->result.kind = held->request.kind;
+    held->result.value = error == 0 ? 0 : -1;
+    held->result.error_code = error;
+    wf_completion_record_complete(held);
 }
 
 /* The six TCP submits.
@@ -4246,6 +4301,9 @@ static int wf_bridge_cancel(wf_completion_record *record) {
             wf_windows_iocp_cancel(record);
             return 0;
 #endif
+        case WF_COMPLETION_ROUTE_STOP:
+            wf__stop_cancel(record);
+            return 0;
         case WF_COMPLETION_ROUTE_FILE_ADAPTER:
             return wf_file_adapter_cancel(&wf_bridge_adapter, record);
         default:

@@ -81,7 +81,7 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Runs three equivalence byte walks, publishes their recorded positions, then runs one argument-selected boundary walk with a typed exhaustion status.";
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);

@@ -9874,7 +9874,12 @@ fn main() -> status: std::process::ExitStatus pure {
         let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
             panic!("expected FN-8 detail, got {:?}", issue.kind());
         };
-        assert_eq!(detail.disposition, CallRequirementDisposition::Unproved);
+        // [ENT-2] `holder` names `limit` exactly, so the commit to
+        // `holder^.upper` and the actual read through it are one term: the
+        // requirement `i < 0` is refuted, not merely left unproved. Had the
+        // write not killed the captured endpoint, `i < upper` would be
+        // discharged and no issue raised.
+        assert_eq!(detail.disposition, CallRequirementDisposition::Refuted);
     });
 }
 

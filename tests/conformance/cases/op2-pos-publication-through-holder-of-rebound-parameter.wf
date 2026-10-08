@@ -1,0 +1,27 @@
+fn set_one(x: &u64) -> result: unit writes(x) contract {
+  ensures x^ == 1_u64;
+} {
+  doc "Writes one to the cell x names.";
+  set x^ = 1_u64;
+  return unit;
+}
+
+fn probe(p: &u64) -> result: u64 writes(p) {
+  doc "The control for op2-neg-publication-through-holder-of-rebound-parameter: set_one's postcondition is published on the actual saved, and the division reads through saved too.";
+  let saved = &p^;
+  let zero = 0_u64;
+  set p = &zero;
+  set_one(x: saved);
+  let r = 10_u64 / saved^;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "set_one writes one to the caller's cell, so the division returns ten.";
+  let five = 5_u64;
+  let r = probe(p: &five);
+  if r == 10_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

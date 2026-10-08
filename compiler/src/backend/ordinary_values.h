@@ -78,6 +78,7 @@ typedef wf_read_stop wf_list_stop;
 WF_RESULT_UNION(wf_list_status, uint8_t, wf_list_stop);
 typedef struct { wf_list_status result; uint64_t next; uint64_t entries; } wf_list_result;
 WF_RESULT_UNION(wf_close_result, uint8_t, wf_io_error);
+WF_RESULT_UNION(wf_stop_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
@@ -90,7 +91,7 @@ typedef struct { uint32_t tag; wf_value value; } wf_deadline;
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
 typedef struct {
-    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock;
+    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -112,7 +113,9 @@ _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
 _Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
                "ordinary Option<Instant> layout");
-_Static_assert(sizeof(wf_inputs) == 288, "ordinary Inputs layout");
+_Static_assert(sizeof(wf_inputs) == 320, "ordinary Inputs layout");
+
+_Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
 
 /* A host function's link name is its standard library identity [MOD-10],
  * `wf_std.<module>.<name>`, which no program function can take and no C
@@ -130,6 +133,7 @@ void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline);
 void wf__body_exit_status(wf_value *result, uint8_t code);
 void wf__body_open_directory(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
+void wf__body_open_directory_write(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_open_directory_source(wf_open_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_directory_next(wf_list_result *result, wf_value *source, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
@@ -154,6 +158,9 @@ void wf__body_sync_file(wf_close_result *result, wf_value *factory, wf_value *fi
 void wf__body_rename_file(wf_close_result *result, wf_value *factory, wf_value *root,
                           const wf_view *from, uint64_t from_start, uint64_t from_end,
                           const wf_view *to, uint64_t to_start, uint64_t to_end);
+void wf__body_move_file(wf_close_result *result, wf_value *factory, wf_value *from_root,
+                          const wf_view *from, uint64_t from_start, uint64_t from_end,
+                          wf_value *to_root, const wf_view *to, uint64_t to_start, uint64_t to_end);
 void wf__body_remove_file(wf_close_result *result, wf_value *factory, wf_value *root,
                           const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_sync_directory(wf_close_result *result, wf_value *factory, wf_value *root);
@@ -168,6 +175,12 @@ uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *late
 _Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant);
 int64_t wf__body_unix_nanoseconds(const wf_value *clock);
 void wf__body_sleep_until(uint8_t *result, const wf_value *deadline);
+
+void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops);
+void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,
+                        const wf_deadline *deadline);
+void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
+                                  const wf_value *listener);
 
 /* Build launcher support: constructs ordinary argument representations. The
  * supplied argument backing remains valid until the selected call returns.

@@ -721,6 +721,8 @@ struct IrBuilder<'program> {
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
+    /// Root prefixes redirected into this leaf's private range.
+    indexed_roots: Vec<(crate::semantic::CheckedContainerRoot, IrValueId)>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -787,6 +789,7 @@ impl<'program> IrBuilder<'program> {
             atomics: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
+            indexed_roots: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -1870,6 +1873,26 @@ impl<'program> IrBuilder<'program> {
                 target_domain,
                 ..
             } => {
+                if let CheckedArrayRoot::Binding { binding, fields } = root {
+                    let path = fields
+                        .iter()
+                        .copied()
+                        .map(crate::semantic::CheckedPlaceStep::Field)
+                        .collect::<Vec<_>>();
+                    if let Some(slice) = self
+                        .indexed_slice(crate::semantic::CheckedPlaceRoot::Binding(*binding), &path)
+                    {
+                        let offset = self.expression(offset)?;
+                        return self.define(
+                            lower_type(self.erasure, *element_type)?,
+                            IrOperation::SliceIndex {
+                                slice,
+                                offset,
+                                target_domain: (*target_domain).into(),
+                            },
+                        );
+                    }
+                }
                 let (root, ty) = self.array_root(root)?;
                 let IrType::Array {
                     element,
@@ -2099,6 +2122,7 @@ impl<'program> IrBuilder<'program> {
                         root: crate::semantic::CheckedPlaceRoot::Binding(*binding),
                         path,
                         ty: *ty,
+                        proof_base: None,
                     };
                     let address = self.lower_place_address(&root)?;
                     return self.load_storage_value(address);

@@ -1565,6 +1565,7 @@ impl<'program> Walker<'program> {
                 carrier,
                 binding,
                 ty,
+                ..
             } => match state.values.get(binding).cloned() {
                 Some(Value::Ref(View::Place(location))) => {
                     self.read_location(state, &location, *ty)

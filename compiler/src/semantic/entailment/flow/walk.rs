@@ -1224,6 +1224,7 @@ impl Analyzer<'_, '_> {
                         root: PlaceRoot::Binding(entry.binding),
                         path: Vec::new(),
                         ty: entry.referent,
+                        proof_base: None,
                     };
                     let left = self.reasoning().place_measure_term(
                         CheckedMeasure::Length,

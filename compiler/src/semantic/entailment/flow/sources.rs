@@ -1154,7 +1154,7 @@ impl Reasoning<'_, '_, '_> {
             {
                 (
                     *measure,
-                    ResolvedPlace::from_path(root.binding, root.place_path()),
+                    root.proof_place(),
                     MeasuredKind::RuntimeArray,
                     None,
                 )

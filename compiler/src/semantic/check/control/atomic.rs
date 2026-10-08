@@ -346,6 +346,7 @@ impl Checker<'_, '_> {
             ReferenceInfo::formed(ReferenceKind::Single, ResolvedPlace::binding(binding));
         self.body
             .record_reference_origins(binding, &reference.paths);
+        self.body.note_anchor(binding, declaration.id());
         bindings.insert(
             declaration.id(),
             LocalBinding {

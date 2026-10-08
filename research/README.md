@@ -67,6 +67,10 @@ the work-branch and merge boundary.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.
+- [Indexed reductions](investigations/indexed-reductions/DESIGN.md): PAR-2
+  permission for histogram-like loops whose iterations combine into shared
+  indexed cells, the lowering choices and the criterion recorded before
+  implementation.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.

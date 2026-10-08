@@ -40,3 +40,60 @@ finish:
 done:
   ret void
 }
+
+declare i32 @wf_std.fs.open_directory_write.start(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+declare void @wf_std.fs.open_directory_write.finish(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+
+define void @wf_test_public_open_directory_write(ptr %result, ptr %factory, ptr %root, ptr %name, i64 %start, i64 %end) {
+entry:
+  %operation = alloca [1216 x i8], align 16
+  %view = load { ptr, i64 }, ptr %name
+  %data = extractvalue { ptr, i64 } %view, 0
+  %len = extractvalue { ptr, i64 } %view, 1
+  %state = call i32 @wf_std.fs.open_directory_write.start(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  %answered = icmp eq i32 %state, 0
+  br i1 %answered, label %done, label %finish
+finish:
+  call void @wf_std.fs.open_directory_write.finish(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  br label %done
+done:
+  ret void
+}
+
+declare void @wf_std.process.stop_listen(ptr, ptr, ptr)
+declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr)
+declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf_std.process.close_stop_listener.start(ptr, ptr, ptr, ptr)
+declare void @wf_std.process.close_stop_listener.finish(ptr, ptr, ptr, ptr)
+
+define void @wf_test_public_stop_listen(ptr %result, ptr %factory, ptr %stops) {
+entry:
+  call void @wf_std.process.stop_listen(ptr %result, ptr %factory, ptr %stops)
+  ret void
+}
+
+define void @wf_test_public_stop_next(ptr %result, ptr %factory, ptr %listener, ptr %deadline) {
+entry:
+  %operation = alloca [1216 x i8], align 16
+  %state = call i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  %answered = icmp eq i32 %state, 0
+  br i1 %answered, label %done, label %finish
+finish:
+  call void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  br label %done
+done:
+  ret void
+}
+
+define void @wf_test_public_close_stop_listener(ptr %result, ptr %factory, ptr %listener) {
+entry:
+  %operation = alloca [1216 x i8], align 16
+  %state = call i32 @wf_std.process.close_stop_listener.start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  %answered = icmp eq i32 %state, 0
+  br i1 %answered, label %done, label %finish
+finish:
+  call void @wf_std.process.close_stop_listener.finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  br label %done
+done:
+  ret void
+}

@@ -280,14 +280,9 @@ impl Reasoning<'_, '_, '_> {
         proofs: &mut Vec<DerivationId>,
     ) -> Result<(), Option<LoopFormationFailure>> {
         let (mut base, steps) = match expression {
-            CheckedExpression::ContainerMeasure { root, .. } => (
-                ResolvedPlace {
-                    root: root.root,
-                    path: Vec::new(),
-                    atomic_aliases: Vec::new(),
-                },
-                root.path.as_slice(),
-            ),
+            CheckedExpression::ContainerMeasure { root, .. } => {
+                (root.proof_prefix(), root.path.as_slice())
+            }
             CheckedExpression::RangeElementMeasure { place, .. } => {
                 let mut base = bound_place(place.root.binding);
                 self.form_relation_subscript(

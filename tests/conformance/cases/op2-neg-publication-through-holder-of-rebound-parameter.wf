@@ -1,0 +1,27 @@
+fn set_one(x: &u64) -> result: unit writes(x) contract {
+  ensures x^ == 1_u64;
+} {
+  doc "Writes one to the cell x names.";
+  set x^ = 1_u64;
+  return unit;
+}
+
+fn probe(p: &u64) -> result: u64 writes(p) {
+  doc "set_one's postcondition concerns the caller's cell, which saved names. After p is rebound to zero, p^ reads zero, so the published fact does not prove the divisor nonzero.";
+  let saved = &p^;
+  let zero = 0_u64;
+  set p = &zero;
+  set_one(x: saved);
+  let r = 10_u64 / p^;
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The division would read the local zero.";
+  let five = 5_u64;
+  let r = probe(p: &five);
+  if r == 10_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
