@@ -161,33 +161,113 @@ moved the limit rather than removing the class of problem.
 
 ## Criteria
 
-A direction is chosen on these, measured on one suite:
+`--par` is meant to become how nearly every Whitefoot program is built, so
+the criteria are about programs in general, not the projects measured so
+far. Two are hard: a direction that fails either is refused, whatever else
+it does well. Each criterion says what is claimed, how it is tested, what
+counts as covering it, and what result refutes a direction.
 
-1. **Never slower**: on every workload, more workers are never slower than
-   one by more than the twin's noise; today the small-loop case is 10x
-   slower and the hosted SMT edit 1.44x slower.
-2. **Speedup where work exists**: the formal kernels, the recursion
-   kernels (quadrature, merge sort, quick sort) and Snowghost's setup,
-   style and layout at four and eight workers, against today.
-3. **Robust to shape**: unbalanced trees (apollo11 style shape B) and
-   data-dependent costs (the phased DAG, first-index records) without
-   per-workload tuning.
-4. **CPU spent**: wall-time gains reported with CPU time, as earlier
-   trials repeatedly traded one for the other.
-5. **Weak targets**: nothing that needs timers, signals or more than
-   word-sized atomics on the hot path, since embedded targets with weak
-   cores are a goal.
-6. **Understandable**: one place decides, and the ledger can say why a
-   site did or did not hand out work.
+### H1. Never slower than one thread
 
-The suite is the first thing the plan builds, because no earlier
-experiment had one: the five formal kernels, the three recursion kernels,
-the small-loop microbenchmark, the DAG and scatter controls, Snowghost's
-setup, style, layout and edit on html5, ecma262 and apollo11, at one, two,
-four, eight and sixteen workers on the i9-14900K, and at one, two and four
-on a hosted two-core SMT runner, each with an identical-image twin.
+**Claim.** For every accepted program, every input and every worker count
+the host can be given, including the default of one per logical CPU and
+counts above the number of cores, the `--par` build's wall time `T_W` is at
+most `(1 + e) * T_seq + d`, where `T_seq` is the same program built without
+`--par` on the same host and input. `e` is the allowed proportional cost and
+`d` a fixed per-process cost (pool start-up); proposed values are `e` = 2
+percent and `d` measured once per host, both fixed before any direction is
+measured. One-worker runs already execute the sequential world, so the
+claim is about two or more workers.
+
+**Argument as well as measurement.** No suite covers every program, so a
+direction must come with a bound on what it adds: the cost at a fork or
+split point that hands nothing out, the cost of a hand-out, and the rule
+that keeps the second rare enough relative to the work it moves. A direction
+whose bound depends on a price being right must say what happens when the
+price is wrong by any factor; one with no bound fails H1 by default. The
+measurements test the bound's constants and its assumptions.
+
+**Coverage.**
+
+- A generated grid that no direction is tuned on in advance, crossing: the
+  work of one task from about a nanosecond to ten milliseconds in
+  logarithmic steps; the shape (flat counted loop, balanced recursion,
+  recursion skewed so one side holds most of the work, a deep spine with
+  side leaves, a bounded DAG); how often a site runs inside sequential code
+  (from once to hundreds of millions of times, with a few iterations each);
+  cost that depends on data, with spread up to ten thousand to one between
+  tasks of one site; and what bounds the work (arithmetic, memory bandwidth,
+  allocation).
+- Input sizes from one element to about 10^8, so that every site is seen
+  both below and above the size where splitting starts to pay.
+- Real programs: every maintained program under `tests/programs`, the
+  formal compute kernels, Snowghost's setup, style, layout and edits, Halo
+  (an interpreter, mostly sequential, which must simply not get slower),
+  firn (compute workers beside I/O drivers) and wfgrep.
+- A held-out part: half the grid's points and two real programs are not
+  looked at while a direction is designed or its constants chosen, and are
+  measured only for the verdict.
+- Hosts: the i9-14900K (mixed performance and efficiency cores with SMT) at
+  1, 2, 4, 8, 16 and 32 workers and the default; a hosted two-core SMT
+  runner; an Apple Silicon runner; one and two cores through CPU affinity,
+  as a stand-in for weak targets; and a busy host, with another process
+  using the cores.
+
+**Refutation.** Any cell beyond the allowance by more than its
+identical-image twin's spread, after one rerun, refutes the direction as
+built. A failing class that the direction's bound does not cover refutes
+the bound.
+
+### H2. Use the cores
+
+**Claim.** Where a program has parallel work, the speedup `T_seq / T_W`
+approaches what the program and the host allow: for the generated grid,
+where work and critical path are known by construction, at least 0.8 times
+the smaller of the usable cores and the work divided by the critical path,
+at sizes where a task outweighs a hand-out; for real programs and kernels,
+at least 0.8 times the speedup of a reference implementation of the same
+algorithm in Rayon or OpenMP with its grain tuned by hand, on the same host.
+Speedup grows with the worker count up to the physical cores, without a
+point where adding workers makes the program slower.
+
+**Coverage.** The same grid, programs and hosts as H1, at the sizes where
+the work is large enough to pay; the references are written for the formal
+kernels, the recursion kernels and the grid's shapes.
+
+**Refutation.** A class where the references reach at least 1.25 times the
+direction's speedup, unless the shortfall is shown to come from what
+permission admits rather than from how work is handed out (permission gaps
+are a separate line).
+
+### Secondary criteria
+
+1. **No tuning per program or host**: one set of constants, chosen before
+   the held-out measurements.
+2. **CPU spent**: every wall time is reported with CPU time; a program
+   with no parallel work burns at most a fixed small amount of extra CPU,
+   since a busy machine pays for spinning.
+3. **Weak targets**: the hot path needs no timers, signals or atomics wider
+   than a word, and the policy works on one core.
+4. **Composes**: nested parallel work, waiting contexts and I/O drivers in
+   the same process.
+5. **Understandable and buildable**: one place decides, the ledger can say
+   why a site did or did not hand out work, and the lowering keeps the two
+   worlds and erases proofs as today.
+
+### The suite
+
+The suite is the first thing any direction needs, because no earlier
+experiment had one: the generator and real programs above, the references,
+a runner that measures every cell with its twin on CI hosts and the
+i9-14900K, and the held-out split recorded before any direction is
+measured.
 
 ## Recommendation and stages
+
+This section is this author's position. The owner asked, before a
+direction is chosen, for two further independent studies of the same
+question against the same criteria; the comparison of the three is added
+below when they are done.
 
 Recommended: **B, with A's single decision pass as its first stage.**
 B addresses the two problem groups that static pricing has failed on
