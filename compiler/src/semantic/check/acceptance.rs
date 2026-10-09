@@ -184,10 +184,16 @@ impl<'unit> DeclarationInventory<'unit> {
                 kind: SemanticIssueKind::UndischargedBoundsObligation {
                     residual: failure.required.clone(),
                     disposition,
-                    mechanical_fix: format!(
-                        "prove this subscript bound on every incoming instance of invariant `{}`",
-                        outcome.name
-                    ),
+                    mechanical_fix: match &outcome.element {
+                        Some(element) if failure.offset == Some(element.binder) => {
+                            repairs::counted_element_invariant(
+                                &outcome.name,
+                                element,
+                                &failure.extent,
+                            )
+                        }
+                        _ => repairs::loop_invariant_formation(&outcome.name),
+                    },
                 },
                 request: None,
             });
@@ -389,6 +395,15 @@ impl<'unit> TypeContext<'unit> {
     /// judgment answering none, are the checker and the engine disagreeing,
     /// and the function is not accepted.
     pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
+        self.entailment_rejection_after_range(function, &[], &[])
+    }
+
+    pub(super) fn entailment_rejection_after_range(
+        &self,
+        function: &CheckedFunction,
+        discharged: &[usize],
+        inconclusive: &[usize],
+    ) -> Result<(), CheckStop> {
         let entailment = &function.entailment;
         if entailment.answers.len() != function.obligations.len()
             || !entailment.unrecorded.is_empty()
@@ -397,7 +412,17 @@ impl<'unit> TypeContext<'unit> {
         }
         let mut body = Vec::new();
         let mut relations = Vec::new();
-        for (record, answer) in function.obligations.iter().zip(&entailment.answers) {
+        for (index, (record, answer)) in function
+            .obligations
+            .iter()
+            .zip(&entailment.answers)
+            .enumerate()
+        {
+            // The range walk reports a capability gap or structural ceiling
+            // separately; neither is an ordinary unproved-source verdict.
+            if discharged.contains(&index) || inconclusive.contains(&index) {
+                continue;
+            }
             let Some(answer) = *answer else {
                 continue;
             };
@@ -434,7 +459,7 @@ impl<'unit> TypeContext<'unit> {
                 self.undischarged_issue(function, record, answer)?,
             ));
         }
-        if entailment.answers.iter().any(Option::is_none) {
+        if inconclusive.is_empty() && entailment.answers.iter().any(Option::is_none) {
             return Err(SemanticCompilerFailure::ObligationContract.into());
         }
         Ok(())

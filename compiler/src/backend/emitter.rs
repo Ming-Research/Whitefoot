@@ -11,7 +11,7 @@ mod buffer;
 mod cleanup;
 mod contexts;
 mod conversion;
-mod dispatch;
+pub(super) mod dispatch;
 mod floating;
 mod floor;
 mod frames;
@@ -1192,6 +1192,7 @@ impl FunctionFramePlan {
             if Some(slot) != result_slot
                 && storage.destination(slot).is_none()
                 && storage.field_destination(slot).is_none()
+                && storage.needs_snapshot_backing(slot)
             {
                 push_function_slot(
                     &mut specifications,
@@ -1517,6 +1518,8 @@ struct FunctionEmitter<'program, 'state> {
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
+    /// Read-through slots privately captured for the current operation only.
+    snapshot_copies: BTreeSet<usize>,
     /// Arguments a split part hands to a callee through its pin slot
     /// instead of the reference itself, for the duration of that call
     /// (compiler/match-dispatch-lowering).
@@ -1665,6 +1668,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             result_slot,
             incoming_places: HashMap::new(),
             materialized: HashMap::new(),
+            snapshot_copies: BTreeSet::new(),
             pin_names: HashMap::new(),
             temporary: 0,
             parallel,
@@ -2188,8 +2192,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ty = public.result().ty();
         let (mut parameters, mut references) = self.signature_parameters(body)?;
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
-        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.target, self.program, &mut references)?;
+        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
+            self.target,
+            self.program,
+            &mut references,
+        )?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
@@ -2316,6 +2323,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         index: usize,
         instruction: &IrInstruction,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, index)?;
         match instruction {
             IrInstruction::StoreSlice {
                 slice,
@@ -2746,8 +2754,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 table,
                 key,
                 read,
+                inserts,
                 stable_absence,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
+            } => self.emit_table_lock_entry(
+                result,
+                *record,
+                *table,
+                *key,
+                *read,
+                *inserts,
+                *stable_absence,
+            ),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
@@ -2894,6 +2911,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         block: IrBlockId,
         terminator: &IrTerminator,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
         match terminator {
             IrTerminator::Unreachable => {
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)
