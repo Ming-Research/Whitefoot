@@ -1107,6 +1107,24 @@ pub enum IrOperation {
         start: IrValueId,
         end: IrValueId,
     },
+    /// Address a checked indexed family cell. Private storage is dense;
+    /// source storage uses the projection's element stride and field offset.
+    IndexedAddress {
+        slice: IrValueId,
+        offset: IrValueId,
+        private: IrValueId,
+        projection: IrIndexedProjection,
+        private_type: IrType,
+        target_domain: IrTargetDomainObligation,
+    },
+    /// Split a private slab using its dense value stride, irrespective of the
+    /// source element type recorded on the descriptor.
+    IndexedRange {
+        slice: IrValueId,
+        start: IrValueId,
+        end: IrValueId,
+        private_type: IrType,
+    },
     SliceMeasure {
         slice: IrValueId,
     },
@@ -1471,20 +1489,56 @@ pub enum IrOperation {
     },
 }
 
-/// One indexed accumulator in a LoopSplit capture list. `capture` is a range
-/// descriptor and `count` its entry length. The site owns identity-filled
-/// private ranges through all leaf joins, combines in leaf order, then frees.
+/// One family in a LoopSplit. Its range descriptor carries a pointer and
+/// count; `private` distinguishes dense slab storage from projected source
+/// elements. Only indexed operations may address this descriptor. The root
+/// element type and field ordinals determine its target byte stride/offset.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrIndexedReduction {
     pub capture: usize,
+    pub private: usize,
     pub count: usize,
-    pub element_type: IrType,
-    pub identity: IrConstant,
-    pub operation: Result<IrIntegerOperation, IrBooleanOperation>,
+    pub projection: IrIndexedProjection,
+    pub kind: IrIndexedFamilyKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedProjection {
+    pub root_element: IrType,
+    pub fields: Vec<u32>,
+    pub value_type: IrType,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrIndexedFamilyKind {
+    Reduce {
+        op: Result<IrIntegerOperation, IrBooleanOperation>,
+        identity: IrConstant,
+    },
+    Mark {
+        constant: IrConstant,
+    },
+}
+
+impl IrIndexedReduction {
+    pub(crate) fn private_type(&self) -> IrType {
+        match self.kind {
+            IrIndexedFamilyKind::Reduce { .. } => self.projection.value_type,
+            IrIndexedFamilyKind::Mark { .. } => IrType::Bool,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrInstruction {
+    /// Set a private Bool mask or the source constant according to the
+    /// storage mode captured by the outlined family. No source test is added.
+    IndexedMark {
+        address: IrValueId,
+        private: IrValueId,
+        constant: IrConstant,
+        value_type: IrType,
+    },
     Define {
         result: IrValueId,
         ty: IrType,
