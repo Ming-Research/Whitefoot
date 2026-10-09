@@ -935,8 +935,23 @@ impl Analyzer<'_, '_> {
             // nothing more.
             CheckedExpression::BorrowSegment { root, segment, .. } => {
                 let obligation_start = self.output.obligations.len();
-                let mut reached = self.judge_place_subscripts(root, states);
-                if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                let mut reached = match root {
+                    crate::semantic::CheckedSegmentSource::Storage(root) => {
+                        self.judge_place_subscripts(root, states)
+                    }
+                    crate::semantic::CheckedSegmentSource::Element(place) => {
+                        self.judge_range_element_place(place, states)
+                    }
+                };
+                let place = match root {
+                    crate::semantic::CheckedSegmentSource::Storage(root) => judged_place(root),
+                    crate::semantic::CheckedSegmentSource::Element(place) => {
+                        ResolvedPlace::from_path(place.root.binding, place.place_path())
+                    }
+                };
+                if let crate::semantic::CheckedSegmentSelect::One(index)
+                | crate::semantic::CheckedSegmentSelect::Page(index) = segment
+                {
                     let reaches_offset =
                         self.judge_children_reach_parent(std::iter::once(&index.offset), states);
                     if reached && reaches_offset {
@@ -945,10 +960,21 @@ impl Analyzer<'_, '_> {
                             &index.offset,
                             states,
                         );
-                        self.judge_obligation(
-                            judged_place(root),
-                            MeasuredKind::Segments,
+                        let page =
+                            matches!(segment, crate::semantic::CheckedSegmentSelect::Page(_));
+                        self.judge_index_measure(
+                            place,
+                            if page {
+                                MeasuredKind::Paged
+                            } else {
+                                MeasuredKind::Segments
+                            },
                             None,
+                            if page {
+                                CheckedMeasure::Pages
+                            } else {
+                                CheckedMeasure::Length
+                            },
                             &index.offset,
                             index.obligation.clone(),
                             states,
@@ -1322,14 +1348,33 @@ impl Analyzer<'_, '_> {
         node_path: crate::NodePath,
         states: &ProofFlowState,
     ) {
-        // [OP-4] the obligation is against `len_of(p)` in logical coordinates
-        // [MSR-1], never against `cap_of(p)`.
-        let length_term = self.reasoning().place_measure_term(
-            CheckedMeasure::Length,
-            base.clone(),
+        self.judge_index_measure(
+            base,
             measured,
             array_length,
+            CheckedMeasure::Length,
+            offset,
+            node_path,
+            states,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn judge_index_measure(
+        &mut self,
+        base: ResolvedPlace,
+        measured: MeasuredKind,
+        array_length: Option<CheckedConst>,
+        measure: CheckedMeasure,
+        offset: &CheckedExpression,
+        node_path: crate::NodePath,
+        states: &ProofFlowState,
+    ) {
+        // [OP-4] the obligation is against `len_of(p)` in logical coordinates
+        // [MSR-1], never against `cap_of(p)`.
+        let length_term =
+            self.reasoning()
+                .place_measure_term(measure, base.clone(), measured, array_length);
         let offset_term = self.reasoning().read_operand(offset);
         let affine_offset = self
             .input
@@ -1347,9 +1392,10 @@ impl Analyzer<'_, '_> {
             self.reasoning()
                 .affine_fixed_array_index_target(offset, array_length, &states.affine);
         let rendered_residual = format!(
-            "{} < {}.len",
+            "{} < {}.{}",
             self.input.render_expression(offset),
-            self.input.render_place(&base)
+            self.input.render_place(&base),
+            measure.spelling()
         );
         let request = BoundsRequest {
             left: offset_term,

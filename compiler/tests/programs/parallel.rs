@@ -504,17 +504,20 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
 /// indexed split test separately forces and observes the private-buffer path.
 #[test]
 fn indexed_histogram_and_extrema_preserve_sequential_results() {
-    let plain = build_program(&compile_program("parallel/indexed_reductions.wf"));
-    let reference = plain.run_with_workers(Some("1"));
-    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
-    assert!(reference.stderr.is_empty());
-    let parallel = build_program(&compile_program_with_overlap(
+    for path in [
         "parallel/indexed_reductions.wf",
-    ));
-    for workers in ["1", "4"] {
-        let output = parallel.run_with_workers(Some(workers));
-        assert_eq!(output.status.code(), Some(0), "{workers}: {output:?}");
-        assert_eq!(output.stdout, reference.stdout);
-        assert!(output.stderr.is_empty(), "{workers}: {output:?}");
+        "parallel/indexed_marks_fields.wf",
+    ] {
+        let plain = build_program(&compile_program(path));
+        let reference = plain.run_with_workers(Some("1"));
+        assert_eq!(reference.status.code(), Some(0), "{reference:?}");
+        assert!(reference.stderr.is_empty());
+        let parallel = build_program(&compile_program_with_overlap(path));
+        for workers in ["1", "4"] {
+            let output = parallel.run_with_workers(Some(workers));
+            assert_eq!(output.status.code(), Some(0), "{workers}: {output:?}");
+            assert_eq!(output.stdout, reference.stdout);
+            assert!(output.stderr.is_empty(), "{workers}: {output:?}");
+        }
     }
 }

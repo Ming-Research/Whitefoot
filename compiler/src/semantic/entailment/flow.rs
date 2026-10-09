@@ -36,6 +36,7 @@ mod invariants;
 mod judge;
 mod loop_summary;
 mod operation_facts;
+mod origin_transport;
 mod postconditions;
 mod prover;
 mod relations;
@@ -103,7 +104,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
@@ -465,12 +466,22 @@ struct CountedValueImage {
     base: AffineForm,
 }
 
+/// Whether an outer query still needs its ordinary-first origin view.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OriginView {
+    Pending,
+    Ordinary,
+    Prepared,
+}
+
 /// The numeric/logical proof state at one exact control-flow point.
 #[derive(Clone, Copy)]
 struct ProofContext<'a> {
     facts: &'a FactState,
     affine: &'a AffineFlowState,
     closed: Option<&'a ProofClosure>,
+    /// Internal components share their enclosing query's finite origin view.
+    origin_view: OriginView,
 }
 
 impl<'a> ProofContext<'a> {
@@ -479,6 +490,7 @@ impl<'a> ProofContext<'a> {
             facts,
             affine,
             closed: None,
+            origin_view: OriginView::Pending,
         }
     }
 
@@ -533,6 +545,7 @@ impl ProofClosure {
 /// postcondition. Either consumer may additionally provide the unique affine
 /// inequality for a direct-root proposition; the proof entry never invents
 /// another formula.
+#[derive(Clone, Copy)]
 enum ProofGoal<'a> {
     /// One canonical affine target with the right operand retained by its
     /// source normalization for the complete MSR-4 disposition.
@@ -597,6 +610,7 @@ struct NumericAffineTarget {
     right: Option<TermId>,
 }
 
+#[derive(Clone, Copy)]
 struct IntegerDomainGoal<'a> {
     canonical: Option<GoalId>,
     operation: CheckedIntegerOperation,
@@ -628,6 +642,7 @@ enum TargetDisposition {
 /// query.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProofRoute {
+    OriginTransport,
     Contradiction,
     SignedOrdinary {
         opaque: bool,
@@ -726,7 +741,6 @@ struct AffineL0Entry {
     bound: i128,
 }
 
-#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
@@ -743,22 +757,14 @@ struct AffineL0Cache {
     index: Rc<LazyAffineL0Index>,
 }
 
-/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
-/// the ordered final AUTO family fill independent memos: querying a vector
-/// early must not move its first occurrence in the final family's order.
+/// Candidate grouping is linear in the inventory. Early DIRECT lookups are
+/// lazy; final-family entry or N cold demands promotes to the complete index.
+/// Demand order never changes the final family's first-occurrence order.
 struct LazyAffineL0Index {
     candidates: Vec<AffineL0Candidate>,
     by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
     exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
-    ordered: RefCell<AffineL0Order>,
-}
-
-#[derive(Default)]
-struct AffineL0Order {
-    left: usize,
-    right: usize,
-    terms: Vec<Box<[AffineCoefficient]>>,
-    seen: WordHashSet<Box<[AffineCoefficient]>>,
+    complete: RefCell<Option<AffineL0Index>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
@@ -1883,6 +1889,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         for _ in 0..3 {
             let view = context.close(&terms, &goals, &mut ledger);
@@ -1907,6 +1914,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         assert!(!Rc::ptr_eq(
             &context.close(&terms, &goals, &mut ledger),
@@ -1921,6 +1929,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         let view = context.close(&terms, &goals, &mut ledger);
         assert!(!Rc::ptr_eq(&view, &closed.state));
@@ -1955,6 +1964,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         assert!(!Rc::ptr_eq(
             &context.close(&terms, &goals, &mut ledger),
@@ -1986,6 +1996,7 @@ mod indexed_goal_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,
@@ -2217,6 +2228,7 @@ mod range_argument_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,
@@ -2376,7 +2388,7 @@ mod range_argument_kill_tests {
 
 #[cfg(test)]
 mod goal_origin_kill_tests {
-    use super::super::state::{FactState, GoalId};
+    use super::super::state::{DerivationId, FactState, GoalId, GoalOrigin};
     use super::invalidate_goal_origin_for_set;
     use crate::semantic::model::{BindingId, CheckedSetTarget, CheckedType, CheckedWritablePlace};
 
@@ -2384,7 +2396,13 @@ mod goal_origin_kill_tests {
     fn a_projected_set_invalidates_the_aggregate_ordinary_let_origin() {
         let binding = BindingId(0);
         let mut state = FactState::default();
-        state.goal_origins.insert(binding, GoalId(0));
+        state.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: GoalId(0),
+                proof: DerivationId(0),
+            },
+        );
         let target = CheckedSetTarget::Place(CheckedWritablePlace {
             binding,
             fields: vec![1],

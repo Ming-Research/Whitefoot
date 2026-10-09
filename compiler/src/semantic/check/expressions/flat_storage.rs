@@ -409,7 +409,16 @@ impl<'unit> Checker<'_, 'unit> {
         let FunctionContext { check_context, .. } = context;
         // [MSR-1] the measure selects no storage below itself, so the place it
         // is read over is everything written before it.
-        let base = &suffixes[..suffixes.len() - 1];
+        let page_count = measure == CheckedMeasure::Length
+            && suffixes.len() >= 2
+            && self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[suffixes.len() - 2])?
+                == ".pages";
+        let mut measure = measure;
+        let base = &suffixes[..suffixes.len() - if page_count { 2 } else { 1 }];
         let anchor = base[subscript];
         let indexed = self
             .check_indexed_place(
@@ -440,7 +449,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
                 };
                 let captured = self.body.note_capture(captured, bindings);
-                let (path, selected_type, carried) = self.resolve_storage_path(
+                let (mut path, mut selected_type, carried) = self.resolve_storage_path(
                     context,
                     &base[subscript + 1..],
                     range.element_type,
@@ -448,6 +457,25 @@ impl<'unit> Checker<'_, 'unit> {
                     options.loop_depth,
                     true,
                 )?;
+                if page_count {
+                    if matches!(
+                        selected_type,
+                        CheckedType::Window {
+                            shape: super::super::super::model::WindowShape::Paged,
+                            ..
+                        }
+                    ) {
+                        measure = CheckedMeasure::Pages;
+                    } else {
+                        let member = self.types.elaborate_place_member(
+                            check_context,
+                            suffixes[suffixes.len() - 2],
+                            selected_type,
+                        )?;
+                        path.push(member.storage_step());
+                        selected_type = member.ty();
+                    }
+                }
                 let Some(measured) = measured_kind_of(selected_type) else {
                     return self.check_index_use(
                         context, use_node, place, suffixes, subscript, bindings, options,
@@ -533,13 +561,32 @@ impl<'unit> Checker<'_, 'unit> {
                 ),
             );
         };
-        let container = self.extend_storage_place(
+        let mut container = self.extend_storage_place(
             context,
             container,
             &base[subscript..],
             bindings,
             options.loop_depth,
         )?;
+        if page_count {
+            if matches!(
+                container.root.ty,
+                CheckedType::Window {
+                    shape: super::super::super::model::WindowShape::Paged,
+                    ..
+                }
+            ) {
+                measure = CheckedMeasure::Pages;
+            } else {
+                container = self.extend_storage_place(
+                    context,
+                    container,
+                    &suffixes[suffixes.len() - 2..suffixes.len() - 1],
+                    bindings,
+                    options.loop_depth,
+                )?;
+            }
+        }
         let Some(measured) = measured_kind_of(container.root.ty) else {
             let field = self.extend_storage_place(
                 context,

@@ -1,0 +1,20 @@
+fn probe(x: u64, side: Bool) -> result: unit pure contract {
+  requires 2_u64 * x <= 8_u64;
+} {
+  doc "Distinct invariant declarations publish the same bound on every input of the join.";
+  if side {
+    invariant left: x <= 4_u64;
+  } else {
+    invariant right: x <= 4_u64;
+  }
+  let boundary = 0_u64;
+  if x == 4_u64 {
+    return unit;
+  }
+  invariant tightened: x <= 3_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

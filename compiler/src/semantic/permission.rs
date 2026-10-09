@@ -457,10 +457,101 @@ pub(super) fn call_projection(value: &CheckedExpression) -> Option<CallProjectio
     }
 }
 
+/// A Bool dispatch whose only action can be transported as one guarded call.
+/// Permission and lowering share this shape test so argument speculation has
+/// exactly the same boundary in both consumers.
+pub(crate) struct ConditionalCall<'check> {
+    pub(crate) scrutinee: &'check CheckedExpression,
+    pub(crate) statement: &'check CheckedStatement,
+    pub(crate) value: &'check CheckedExpression,
+    pub(crate) site: &'check NodePath,
+    pub(crate) tag: u32,
+}
+
+pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<ConditionalCall<'_>> {
+    let CheckedStatement::Match {
+        scrutinee,
+        enum_type: super::model::CheckedEnumType::Bool,
+        arms,
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    if matches!(scrutinee, CheckedExpression::UserCall { .. }) {
+        return None;
+    }
+    let mut found = None;
+    for arm in arms {
+        if !arm.binders.is_empty() || !arm.covered.is_empty() || !arm.fallthrough_drops.is_empty() {
+            return None;
+        }
+        if arm.body.is_empty() {
+            continue;
+        }
+        let [
+            statement @ CheckedStatement::Evaluate {
+                value:
+                    value @ CheckedExpression::UserCall {
+                        call, arguments, ..
+                    },
+                ..
+            },
+        ] = arm.body.as_slice()
+        else {
+            return None;
+        };
+        if found.is_some() || !arguments.iter().all(unconditional_argument) {
+            return None;
+        }
+        found = Some(ConditionalCall {
+            scrutinee,
+            statement,
+            value,
+            site: call,
+            tag: arm.tag,
+        });
+    }
+    found
+}
+
+/// Only total place reads, references to those places, and constants may move
+/// outside the arm. Checked own-place reads carry their copy/consume judgment;
+/// reference holders do not consume, and non-copy Box takes have another form.
+/// Reject operators and every subscript even when its proof holds in the arm.
+fn unconditional_argument(value: &CheckedExpression) -> bool {
+    match value {
+        CheckedExpression::Constant(_)
+        | CheckedExpression::NamedConstant { .. }
+        | CheckedExpression::Binding {
+            consume_root: false,
+            ..
+        }
+        | CheckedExpression::DerefAddressed { .. } => true,
+        CheckedExpression::Project {
+            consume_root: false,
+            residual_drops,
+            ..
+        } => residual_drops.is_empty(),
+        CheckedExpression::ProjectValue { value, .. }
+        | CheckedExpression::BoxDeref { value, .. } => unconditional_argument(value),
+        CheckedExpression::ReadStorage { root, .. }
+        | CheckedExpression::BorrowAddressed { root, .. } => root.path.iter().all(|step| {
+            matches!(
+                step,
+                super::model::CheckedPlaceStep::Field(_)
+                    | super::model::CheckedPlaceStep::BoxReferent(_)
+            )
+        }),
+        _ => false,
+    }
+}
+
 /// One statement of a block, classified once for every adjacency it takes
 /// part in.
 ///
-/// A call-rooted match uses its scrutinee call's node as its site. Other
+/// Call-rooted and conditional matches use their call's node as their site.
+/// Refused conditional calls use an inner statement only to report the refusal; other
 /// statements without a node of their own remain unreported run boundaries.
 struct Classified {
     site: Option<PermissionSite>,
@@ -943,6 +1034,7 @@ impl<'check> Program<'check> {
     /// permission. Every form is either given a footprint here or refused
     /// here.
     fn classify(&self, places: &PlaceMap, statement: &'check CheckedStatement) -> Classified {
+        let conditional = conditional_call(statement);
         let (node, binding, call, label, footprint) = match statement {
             // A source proof is checked before permission and erased before
             // lowering: no runtime evaluation, effect, exit edge, or
@@ -1047,8 +1139,59 @@ impl<'check> Program<'check> {
                     result.map(|()| footprint),
                 )
             }
-            CheckedStatement::Match { .. } => (
-                None,
+            CheckedStatement::Match { .. } if conditional.is_some() => {
+                let conditional = conditional.expect("matched conditional call");
+                let footprint =
+                    self.classify(places, conditional.statement)
+                        .footprint
+                        .map(|child| {
+                            let mut footprint = self.value_footprint(
+                                places,
+                                conditional.scrutinee,
+                                conditional.site,
+                            );
+                            footprint.absorb(&child);
+                            footprint
+                        });
+                (
+                    Some(conditional.site),
+                    None,
+                    Some(conditional.site.clone()),
+                    "a conditional call",
+                    footprint,
+                )
+            }
+            CheckedStatement::Match {
+                enum_type, arms, ..
+            } => (
+                // Report a refused Bool conditional only when its sole acting
+                // arm is one call statement, including a discarded result that
+                // needs release. It gets a diagnostic site, not a call member.
+                // Multi-statement arms, multiple acting arms and other matches
+                // keep their existing unreported boundary.
+                matches!(enum_type, super::model::CheckedEnumType::Bool)
+                    .then(|| {
+                        let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
+                        let arm = acting.next()?;
+                        if acting.next().is_some() {
+                            return None;
+                        }
+                        match arm.body.as_slice() {
+                            [
+                                CheckedStatement::Evaluate {
+                                    node_path,
+                                    value: CheckedExpression::UserCall { .. },
+                                }
+                                | CheckedStatement::DropExpression {
+                                    node_path,
+                                    value: CheckedExpression::UserCall { .. },
+                                    ..
+                                },
+                            ] => Some(node_path),
+                            _ => None,
+                        }
+                    })
+                    .flatten(),
                 None,
                 None,
                 "a match statement",
@@ -1419,6 +1562,7 @@ fn substituted_steps(path: &CheckedStatePath) -> Vec<PlaceStep> {
                 field: *field,
             },
             super::model::CheckedEffectStep::Index(_) => PlaceStep::Index(CapturedValue::unknown()),
+            super::model::CheckedEffectStep::Page(_) => PlaceStep::Page(CapturedValue::unknown()),
             super::model::CheckedEffectStep::Range { .. } => PlaceStep::Range(CapturedRange {
                 start: CapturedValue::unknown(),
                 end: CapturedValue::unknown(),
@@ -1957,7 +2101,6 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::BoxTake { binding, .. }
         | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         CheckedExpression::BorrowAddressed { root, .. }
-        | CheckedExpression::BorrowSegment { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.binding(),
         CheckedExpression::BufferMeasure { root, .. }
@@ -1966,6 +2109,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => Some(place.root.binding),
+        CheckedExpression::BorrowSegment { root, .. } => root.binding(),
         CheckedExpression::RangeOf { source, .. } => source.binding(),
         CheckedExpression::ArrayMeasure { root, .. }
         | CheckedExpression::ArrayIndex { root, .. } => match root {
@@ -2012,7 +2156,8 @@ fn push_reference_holder_read(
 /// This is the storage the *caller* touches while building an actual: a value
 /// read out of a binding, a field, a `^` [TYPE-7], a subscript. Forming a
 /// reference names a path and reads no content beyond its own index and
-/// endpoint atoms [REF-1, REF-4], so it contributes nothing here — the
+/// endpoint atoms [REF-1, REF-4], except that forming a Paged page also reads
+/// its length word. Other formation contributes nothing here — the
 /// callee's declared row already covers whatever it reaches through that
 /// reference. Naming a local reference variable, to pass it, read through
 /// it or form a range from it, reads that variable's own binding as well,
@@ -2058,7 +2203,14 @@ fn collect_operand_reads(
         // Naming a path reads no content: a reference formation evaluates its
         // index and endpoint atoms, which are this expression's own children
         // and are walked below [REF-1, REF-4].
-        CheckedExpression::BorrowAddressed { .. } | CheckedExpression::BorrowSegment { .. } => {}
+        CheckedExpression::BorrowAddressed { .. } => {}
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            if matches!(segment, super::CheckedSegmentSelect::Page(_)) {
+                let (root, mut path) = root.place();
+                path.push(PlaceStep::Measure(CheckedMeasure::Length));
+                read(footprint, places.resolve(root, &path));
+            }
+        }
         CheckedExpression::Binding { binding, .. } => {
             read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
         }

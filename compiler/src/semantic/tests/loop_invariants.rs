@@ -1432,29 +1432,16 @@ fn main() -> status: std::process::ExitStatus pure {
         let root = index
             .derivation
             .expect("the accepted OP-4 index retains a derivation root");
-        let mut seen = vec![false; function.entailment.derivations.nodes.len()];
-        let mut stack = vec![root];
-        let mut used_invariant = false;
-        while let Some(node) = stack.pop() {
-            let index = node.0 as usize;
-            if seen[index] {
-                continue;
-            }
-            seen[index] = true;
-            let retained = &function.entailment.derivations.nodes[index];
-            used_invariant |= matches!(
-                retained,
-                DerivationNode::AffineConsequence {
-                    premises,
-                    ..
-                } if !premises.is_empty()
-            );
-            stack.extend(retained.parent_ids());
-        }
-        assert!(
-            used_invariant,
-            "the OP-4 root must descend from the source invariant"
-        );
+        // [ENT-3.S16, MSR-4] this exact difference-bound header now
+        // reaches OP-4 through L0 before the affine route is considered.
+        let [invariant] = function.entailment.loop_invariants.as_slice() else {
+            panic!("the index has one owning source invariant");
+        };
+        assert!(super::entailment::root_has_invariant_source(
+            &function.entailment,
+            root,
+            &invariant.node_path,
+        ));
     });
 }
 
@@ -1649,29 +1636,16 @@ fn main() -> status: std::process::ExitStatus pure {
         let root = index
             .derivation
             .expect("the accepted OP-4 retains a derivation root");
-        let mut seen = vec![false; function.entailment.derivations.nodes.len()];
-        let mut stack = vec![root];
-        let mut used_invariant = false;
-        while let Some(node) = stack.pop() {
-            let position = node.0 as usize;
-            if seen[position] {
-                continue;
-            }
-            seen[position] = true;
-            let retained = &function.entailment.derivations.nodes[position];
-            used_invariant |= matches!(
-                retained,
-                DerivationNode::AffineConsequence {
-                    premises,
-                    ..
-                } if !premises.is_empty()
-            );
-            stack.extend(retained.parent_ids());
-        }
-        assert!(
-            used_invariant,
-            "the OP-4 proof must descend from the active source invariant"
-        );
+        // [ENT-3.S16, MSR-4] this exact difference-bound header now
+        // reaches OP-4 through L0 before the affine route is considered.
+        let [invariant] = function.entailment.loop_invariants.as_slice() else {
+            panic!("the index has one owning source invariant");
+        };
+        assert!(super::entailment::root_has_invariant_source(
+            &function.entailment,
+            root,
+            &invariant.node_path,
+        ));
     });
 }
 
@@ -1733,6 +1707,22 @@ fn main() -> status: std::process::ExitStatus pure {
             let root = range
                 .derivation
                 .expect("each accepted CALL-6 requirement retains a derivation root");
+            if ordinal == 0 {
+                // S16's start <= end survives binder expiry unchanged. The
+                // second header, end <= i, still needs its affine export.
+                let ordered = function
+                    .entailment
+                    .loop_invariants
+                    .iter()
+                    .find(|invariant| invariant.source_ordinal == 0)
+                    .expect("the ordered header is retained");
+                assert!(super::entailment::root_has_invariant_source(
+                    &function.entailment,
+                    root,
+                    &ordered.node_path,
+                ));
+                continue;
+            }
             let mut seen = vec![false; function.entailment.derivations.nodes.len()];
             let mut stack = vec![root];
             let mut used_expected_invariant = false;
@@ -1816,28 +1806,21 @@ fn main() -> status: std::process::ExitStatus pure {
             panic!("the product root must be an integer-domain conclusion");
         };
         assert_eq!(parents.len(), 4, "one proof per closed-interval endpoint");
-        let mut premise_ordinals = parents
-            .iter()
-            .filter_map(|parent| {
-                let DerivationNode::AffineConsequence { premises, .. } =
-                    &function.entailment.derivations.nodes[parent.0 as usize]
-                else {
-                    panic!("each product-domain parent must prove one affine endpoint");
-                };
-                premises.iter().find_map(|premise| match premise.source {
-                    SourceAffineFactRef::LoopInvariant(source) => Some(source.source_ordinal),
-                    SourceAffineFactRef::SourceProof { .. }
-                    | SourceAffineFactRef::JoinedSourceProof { .. } => None,
-                })
-            })
-            .collect::<Vec<_>>();
-        premise_ordinals.sort_unstable();
-        premise_ordinals.dedup();
-        assert_eq!(
-            premise_ordinals,
-            vec![0, 1],
-            "both independent source invariants must supply their operand upper bound"
-        );
+        // S16 supplies the two exact L0 bounds. Keep all four validated
+        // endpoint roots and require each distinct header in their ancestry.
+        assert_eq!(function.entailment.loop_invariants.len(), 2);
+        for invariant in &function.entailment.loop_invariants {
+            assert!(
+                parents.iter().any(|parent| {
+                    super::entailment::root_has_invariant_source(
+                        &function.entailment,
+                        *parent,
+                        &invariant.node_path,
+                    )
+                }),
+                "each operand upper bound must retain its own invariant"
+            );
+        }
     });
 }
 

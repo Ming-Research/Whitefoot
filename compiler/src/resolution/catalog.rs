@@ -3,7 +3,7 @@ use super::{
     ReservedNameClass,
 };
 
-pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 24] = [
+pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 25] = [
     prelude(
         BuiltinPreludeId::BOOL,
         "Bool",
@@ -99,6 +99,11 @@ pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 24] = [
         BuiltinPreludeId::FLOAT,
         "Float",
         Some(DeclarationClass::NumericBound),
+    ),
+    prelude(
+        BuiltinPreludeId::RUN,
+        "Run",
+        Some(DeclarationClass::NominalType),
     ),
 ];
 
@@ -258,7 +263,7 @@ mod tests {
 
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
-        assert_eq!(PRELUDE_DECLARATIONS.len(), 24);
+        assert_eq!(PRELUDE_DECLARATIONS.len(), 25);
         assert_eq!(OPERATION_FAMILIES.len(), 90);
         assert_eq!(
             OPERATION_FAMILIES
@@ -426,6 +431,8 @@ mod tests {
         assert!(after.contains("The two built-in numeric bounds `Int` and `Float`"));
         records.push(("Int".to_owned(), Some(DeclarationClass::NumericBound)));
         records.push(("Float".to_owned(), Some(DeclarationClass::NumericBound)));
+        assert!(after.contains("the reference-kind name `Run`"));
+        records.push(("Run".to_owned(), Some(DeclarationClass::NominalType)));
         records
     }
 

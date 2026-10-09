@@ -1,0 +1,32 @@
+struct Item {
+  field: u64;
+}
+
+fn write_fields(p: &Paged<Item>) -> result: unit writes(p) contract {
+  ensures p^.len == entry(p)^.len;
+} {
+  let count = p^.len;
+  for (i in 0_u64..count) {
+    set p^[i].field = i;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "PAR-2 permits write_fields because iteration i writes only a field below its own affine Paged element.";
+  let p = box_paged_new::<Item>(capacity: 1025_u64);
+  for (
+    i in 0_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
+    let item = Item(field: 0_u64);
+    place_back(window: &p.inner, value: item);
+  }
+  write_fields(p: &p.inner);
+  for (i in 0_u64..1025_u64) {
+    if p.inner[i].field != i {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

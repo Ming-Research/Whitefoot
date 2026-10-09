@@ -592,10 +592,12 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         (MeasuredKind::RuntimeSlots, "Slots<T>"),
         (MeasuredKind::ConstantRing, "Ring<T, N>"),
         (MeasuredKind::RuntimeRing, "Ring<T>"),
+        (MeasuredKind::Paged, "Paged<T>"),
         (MeasuredKind::Segments, "Segments<T>"),
         (MeasuredKind::KeySet, "KeySet"),
         (MeasuredKind::Entries, "Entries<V>"),
         (MeasuredKind::Range, "&[T]"),
+        (MeasuredKind::Range, "&Run<T>"),
     ];
     assert_eq!(
         rows.iter()

@@ -403,9 +403,9 @@ const fn step_shapes_agree(left: PlaceStep, right: PlaceStep) -> bool {
         ) => left_variant == right_variant && left_field == right_field,
         // An index or a range step is exactly what a loop-carried rebinding
         // may move, so two of them agree in shape whatever they captured.
-        (PlaceStep::Index(_), PlaceStep::Index(_)) | (PlaceStep::Range(_), PlaceStep::Range(_)) => {
-            true
-        }
+        (PlaceStep::Index(_), PlaceStep::Index(_))
+        | (PlaceStep::Page(_), PlaceStep::Page(_))
+        | (PlaceStep::Range(_), PlaceStep::Range(_)) => true,
         (PlaceStep::Part(left), PlaceStep::Part(right)) => matches!(
             (left, right),
             (
@@ -492,7 +492,27 @@ impl<'unit> Checker<'_, 'unit> {
     /// its path", and an effect path is a root formal plus a complete step
     /// list, so "below" is exactly the prefix order on those steps.
     pub(super) fn effect_path_covers(entry: &CheckedStatePath, access: &CheckedStatePath) -> bool {
-        entry.root == access.root && access.steps.starts_with(&entry.steps)
+        if entry.root != access.root {
+            return false;
+        }
+        for (index, step) in entry.steps.iter().enumerate() {
+            let Some(access) = access.steps.get(index) else {
+                return false;
+            };
+            if matches!(
+                (step, access),
+                (
+                    CheckedEffectStep::Part(super::super::places::WindowPart::Filled),
+                    CheckedEffectStep::Page(_)
+                )
+            ) {
+                return index + 1 == entry.steps.len();
+            }
+            if step != access {
+                return false;
+            }
+        }
+        true
     }
 
     /// [EFF-2]'s two-way judgment over a complete row.
@@ -1013,7 +1033,7 @@ impl<'unit> Checker<'_, 'unit> {
         if written_deref
             && root_binding
                 .as_ref()
-                .is_some_and(|local| local.mode == CheckedMode::Range)
+                .is_some_and(|local| local.mode.is_range())
             && let Some(first) = suffixes.first()
             && let Some(offset_node) = self.types.declarations.tree.subscript_offset(*first)?
         {
@@ -1037,13 +1057,12 @@ impl<'unit> Checker<'_, 'unit> {
             for place in &mut places {
                 place.path.push(PlaceStep::Index(captured));
             }
-            let (path, ty, carried) = self.resolve_storage_path(
+            let (path, ty, mut carried, selection) = self.resolve_borrow_storage(
                 context,
                 &suffixes[1..],
                 local.ty,
                 bindings,
                 loop_depth,
-                true,
             )?;
             for place in &mut places {
                 place
@@ -1051,21 +1070,40 @@ impl<'unit> Checker<'_, 'unit> {
                     .extend(path.iter().map(CheckedPlaceStep::place_step));
             }
             let element = self.types.intern_element(local.ty)?;
+            let place = Box::new(crate::semantic::CheckedRangeElementPlace {
+                root: CheckedRangeRoot {
+                    binding: local.binding,
+                    element,
+                    element_type: local.ty,
+                },
+                offset: offset.expression,
+                path,
+                ty,
+                obligation: self.types.declarations.tree.path(*first)?.clone(),
+                target_domain: CheckedTargetDomainObligation::ElementAddress,
+                captured,
+            });
+            if let Some(selection) = selection {
+                let element = place
+                    .element()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                carried.effects = offset.effects.union(carried.effects);
+                carried.accesses.extend(offset.accesses);
+                return self.check_segment_borrow(
+                    context,
+                    carrier,
+                    selection,
+                    crate::semantic::CheckedSegmentSource::Element(place),
+                    element,
+                    carried,
+                    Some(local),
+                    bindings,
+                    loop_depth,
+                );
+            }
             let expression = CheckedExpression::BorrowRangeIndex {
                 carrier: self.types.declarations.tree.path(carrier)?.clone(),
-                place: Box::new(crate::semantic::CheckedRangeElementPlace {
-                    root: CheckedRangeRoot {
-                        binding: local.binding,
-                        element,
-                        element_type: local.ty,
-                    },
-                    offset: offset.expression,
-                    path,
-                    ty,
-                    obligation: self.types.declarations.tree.path(*first)?.clone(),
-                    target_domain: CheckedTargetDomainObligation::ElementAddress,
-                    captured,
-                }),
+                place,
             };
             let effects = offset.effects.union(carried.effects);
             let mut accesses = offset
@@ -1087,54 +1125,34 @@ impl<'unit> Checker<'_, 'unit> {
                 accesses,
             });
         }
-        // [TYPE-9, REF-4] the last suffix over a `Segments<T>` place selects
-        // a segment, `&s[i]`, or the run of every element, `&s.all`; each is
-        // a range reference and no storage walk continues below it.
-        let (prefix, last) = match suffixes.split_last() {
-            Some((last, prefix)) => (prefix, Some(*last)),
-            None => (suffixes, None),
-        };
-        let (mut path, ty, mut carried) =
-            self.resolve_storage_path(context, prefix, root_type, bindings, loop_depth, true)?;
-        // [ENT-2] a place written through a reference variable whose
-        // description is exact here is identified by that description.
+        // [ENT-2] retain the exact reference root for proof identity.
         let proof_base = root_binding
             .as_ref()
             .and_then(|local| self.body.exact_description(local));
-        let ty = match (last, ty) {
-            (Some(last), CheckedType::Segments { element })
-                if self.segment_selection(last)?.is_some() =>
-            {
-                return self.check_segment_borrow(
-                    context,
-                    carrier,
-                    last,
-                    CheckedContainerRoot {
-                        root,
-                        path,
-                        ty,
-                        proof_base,
-                    },
-                    element,
-                    carried,
-                    root_binding.as_ref(),
-                    bindings,
-                    loop_depth,
-                );
-            }
-            (Some(last), ty) => {
-                let previous = self.body.table_set_borrow.replace(last);
-                let resolved =
-                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true);
-                self.body.table_set_borrow = previous;
-                let (rest, ty, more) = resolved?;
-                path.extend(rest);
-                carried.effects = carried.effects.union(more.effects);
-                carried.accesses.extend(more.accesses);
-                ty
-            }
-            (None, ty) => ty,
-        };
+        let (path, ty, carried, selection) =
+            self.resolve_borrow_storage(context, suffixes, root_type, bindings, loop_depth)?;
+        if let Some(selection) = selection {
+            let element = match ty {
+                CheckedType::Segments { element } | CheckedType::Window { element, .. } => element,
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            };
+            return self.check_segment_borrow(
+                context,
+                carrier,
+                selection,
+                crate::semantic::CheckedSegmentSource::Storage(CheckedContainerRoot {
+                    root,
+                    path,
+                    ty,
+                    proof_base,
+                }),
+                element,
+                carried,
+                root_binding.as_ref(),
+                bindings,
+                loop_depth,
+            );
+        }
         let place = ResolvedPlace {
             atomic_aliases: Vec::new(),
             root,
@@ -1217,6 +1235,100 @@ impl<'unit> Checker<'_, 'unit> {
         })
     }
 
+    /// Resolve storage and leave a terminal segment/page selector to REF-4.
+    fn resolve_borrow_storage(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        suffixes: &[NodeId],
+        root_type: CheckedType,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<
+        (
+            Vec<CheckedPlaceStep>,
+            CheckedType,
+            super::expressions::flat_storage::CarriedOperands,
+            Option<NodeId>,
+        ),
+        CheckStop,
+    > {
+        let (prefix, last) = match suffixes.split_last() {
+            Some((last, prefix)) => (prefix, Some(*last)),
+            None => (suffixes, None),
+        };
+        let page_prefix = prefix.last().is_some_and(|suffix| {
+            self.types
+                .declarations
+                .tree
+                .source_spelling(*suffix)
+                .is_ok_and(|text| text == ".pages")
+        });
+        let storage_prefix = if page_prefix {
+            &prefix[..prefix.len() - 1]
+        } else {
+            prefix
+        };
+        let (mut path, mut ty, mut carried) = self.resolve_storage_path(
+            context,
+            storage_prefix,
+            root_type,
+            bindings,
+            loop_depth,
+            true,
+        )?;
+        if page_prefix {
+            if let (
+                Some(last),
+                CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                },
+            ) = (last, ty)
+                && self
+                    .types
+                    .declarations
+                    .tree
+                    .subscript_offset(last)?
+                    .is_some()
+            {
+                return Ok((path, ty, carried, Some(last)));
+            }
+            // An ordinary source field named pages keeps the ordinary member walk.
+            let (rest, selected, more) = self.resolve_storage_path(
+                context,
+                &prefix[prefix.len() - 1..],
+                ty,
+                bindings,
+                loop_depth,
+                true,
+            )?;
+            path.extend(rest);
+            carried.effects = carried.effects.union(more.effects);
+            carried.accesses.extend(more.accesses);
+            ty = selected;
+        }
+        let ty = match (last, ty) {
+            (Some(last), CheckedType::Segments { .. })
+                if self.segment_selection(last)?.is_some() =>
+            {
+                return Ok((path, ty, carried, Some(last)));
+            }
+            (Some(last), ty) => {
+                let previous = self.body.table_set_borrow.replace(last);
+                let resolved =
+                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true);
+                self.body.table_set_borrow = previous;
+                let (rest, ty, more) = resolved?;
+                path.extend(rest);
+                carried.effects = carried.effects.union(more.effects);
+                carried.accesses.extend(more.accesses);
+                ty
+            }
+            (None, ty) => ty,
+        };
+        Ok((path, ty, carried, None))
+    }
+
     fn replace_reference_roots_for_entries(
         &self,
         place: ResolvedPlace,
@@ -1274,7 +1386,7 @@ impl<'unit> Checker<'_, 'unit> {
         context: FunctionContext<'_, '_>,
         carrier: NodeId,
         suffix: NodeId,
-        base: CheckedContainerRoot,
+        base: crate::semantic::CheckedSegmentSource,
         element: crate::semantic::CheckedElement,
         mut carried: super::expressions::flat_storage::CarriedOperands,
         root_binding: Option<&LocalBinding>,
@@ -1295,13 +1407,22 @@ impl<'unit> Checker<'_, 'unit> {
                 let captured = self.body.note_capture(captured, bindings);
                 carried.effects = carried.effects.union(offset.effects);
                 carried.accesses.extend(offset.accesses);
-                crate::semantic::CheckedSegmentSelect::One(Box::new(
-                    crate::semantic::CheckedSegmentIndex {
-                        offset: offset.expression,
-                        obligation: self.types.declarations.tree.path(suffix)?.clone(),
-                        captured,
-                    },
-                ))
+                let index = Box::new(crate::semantic::CheckedSegmentIndex {
+                    offset: offset.expression,
+                    obligation: self.types.declarations.tree.path(suffix)?.clone(),
+                    captured,
+                });
+                if matches!(
+                    base.ty(),
+                    CheckedType::Window {
+                        shape: WindowShape::Paged,
+                        ..
+                    }
+                ) {
+                    crate::semantic::CheckedSegmentSelect::Page(index)
+                } else {
+                    crate::semantic::CheckedSegmentSelect::One(index)
+                }
             } else {
                 // Bounds no program states: two unknown values never prove
                 // equality or order, so no range or index is proved apart from
@@ -1312,15 +1433,12 @@ impl<'unit> Checker<'_, 'unit> {
                 })
             };
         let step = segment.place_step();
+        let (root, mut path) = base.place();
+        path.push(step);
         let formed = ResolvedPlace {
             atomic_aliases: Vec::new(),
-            root: base.root,
-            path: base
-                .path
-                .iter()
-                .map(CheckedPlaceStep::place_step)
-                .chain(std::iter::once(step))
-                .collect(),
+            root,
+            path,
         };
         let places =
             if let Some(reference) = root_binding.and_then(|local| local.reference.as_ref()) {
@@ -1336,6 +1454,29 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 vec![formed]
             };
+        if matches!(segment, crate::semantic::CheckedSegmentSelect::Page(_)) {
+            // [REF-4] a page's initialized extent is selected by the current
+            // length word; forming the ordinary slice reads that word.
+            for page in &places {
+                let mut descriptor = page.clone();
+                descriptor.path.pop();
+                for path in self.effect_paths_for_descriptor(
+                    carrier,
+                    &descriptor,
+                    bindings,
+                    CheckedMeasure::Length,
+                )? {
+                    carried.effects.add_read(path);
+                }
+                descriptor
+                    .path
+                    .push(PlaceStep::Measure(CheckedMeasure::Length));
+                carried.accesses.push(PlaceAccess {
+                    place: descriptor,
+                    selected: false,
+                });
+            }
+        }
         let element_type = self.types.element_type(element)?;
         let expression = CheckedExpression::BorrowSegment {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
@@ -1389,8 +1530,7 @@ impl<'unit> Checker<'_, 'unit> {
         };
         // [REF-4] re-slicing: the base is the run another range names, whose
         // element type the `^` already selected [TYPE-7].
-        let range_base =
-            written_deref && root_binding.is_some_and(|local| local.mode == CheckedMode::Range);
+        let range_base = written_deref && root_binding.is_some_and(|local| local.mode.is_range());
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
         let (source, base_places, element_type) = if range_base && !base_suffixes.is_empty() {
             // [REF-4, OP-4] an indexable place below one element of the run
@@ -1593,6 +1733,25 @@ impl<'unit> Checker<'_, 'unit> {
                 element,
             )
         };
+        let run = match &source {
+            CheckedRangeSource::Storage(root) => matches!(
+                root.ty,
+                CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                }
+            ),
+            CheckedRangeSource::Element(place) => matches!(
+                place.ty,
+                CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                }
+            ),
+            CheckedRangeSource::Range(_) => {
+                root_binding.is_some_and(|local| local.mode == CheckedMode::Run)
+            }
+        };
         let element = self.types.intern_element(element_type)?;
         let mut endpoints = Vec::with_capacity(2);
         for node in [start_node, end_node] {
@@ -1666,7 +1825,11 @@ impl<'unit> Checker<'_, 'unit> {
         }));
         Ok(TypedExpression {
             expression,
-            mode: CheckedMode::Range,
+            mode: if run {
+                CheckedMode::Run
+            } else {
+                CheckedMode::Range
+            },
             reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
             reference_value: true,
             effects: carried.effects,
@@ -1708,6 +1871,16 @@ impl<'unit> Checker<'_, 'unit> {
                 },
                 PlaceStep::Part(part) => CheckedEffectStep::Part(*part),
                 PlaceStep::Measure(measure) => CheckedEffectStep::Measure(*measure),
+                PlaceStep::Page(captured) => {
+                    if let Some(parameter) = self.captured_parameter(*captured, bindings) {
+                        CheckedEffectStep::Page(parameter)
+                    } else {
+                        steps.push(CheckedEffectStep::Part(
+                            super::super::places::WindowPart::Filled,
+                        ));
+                        break;
+                    }
+                }
                 PlaceStep::Index(captured) => {
                     let Some(parameter) = self.captured_parameter(*captured, bindings) else {
                         break;
@@ -1840,7 +2013,9 @@ impl<'unit> Checker<'_, 'unit> {
         measure: CheckedMeasure,
     ) -> Result<Vec<EffectPath>, CheckStop> {
         let mut descriptor = place.clone();
-        descriptor.path.push(PlaceStep::Measure(measure));
+        descriptor
+            .path
+            .push(PlaceStep::Measure(measure.support_word()));
         self.effect_paths_for_place(node, &descriptor, bindings)
     }
 
@@ -2008,6 +2183,13 @@ impl<'unit> DeclarationInventory<'unit> {
             .has_fixed(node, crate::FixedTerminal::LeftBracket)?
         {
             return Ok(CheckedMode::Range);
+        }
+        if let Some(ty) = self.tree.first_child_with(node, Production::Type)?
+            && self.resolved.lexical_uses_at(ty).any(|usage| {
+                usage.target() == ResolvedTarget::Prelude(crate::BuiltinPreludeId::RUN)
+            })
+        {
+            return Ok(CheckedMode::Run);
         }
         Ok(CheckedMode::Reference)
     }

@@ -1067,22 +1067,14 @@ fn a_float_accumulator_is_denied_by_condition_one() {
     assert_eq!(permitted(integral, "main").combines, vec!["+wrap"]);
 }
 
-/// An integer operation that is associative over the integers is still
-/// refused when each application carries an obligation or a clamp that
-/// regrouping moves. `+sat` is the pointed one: it is not even associative.
+/// Signed saturation can move its clamp under regrouping. Unsigned
+/// saturation is covered with both accumulator forms in conformance below.
 #[test]
-fn a_saturating_accumulator_is_denied_by_condition_one() {
-    let source = b"fn main() -> status: std::process::ExitStatus pure {
-  let total = 0_u64;
-  for @sum (i in 0_u64..16_u64) {
-    let step = 1_u64;
-    set total = total +sat step;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-";
+fn a_signed_saturating_accumulator_is_denied_by_condition_one() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-neg-signed-saturating.wf");
     assert!(matches!(
-        denied(source, "main", 1),
+        denied(source, "reduce", 1),
         LoopDenial::NotAReduction { .. }
     ));
 }
@@ -3178,7 +3170,10 @@ fn indexed_operations_and_scalar_composition_are_permitted() {
         assert!(!judged.advises_split);
         assert!(judged.actualization.is_some());
         assert_eq!(judged.indexed.len(), 1);
-        assert_eq!(judged.indexed[0].combine.spelling(), combine);
+        let super::super::IndexedFamilyKind::Reduce { op } = judged.indexed[0].kind else {
+            panic!("expected a reduction family");
+        };
+        assert_eq!(op.spelling(), combine);
     }
 }
 
@@ -3251,11 +3246,6 @@ fn indexed_denials_name_the_failed_condition_after_ordinary_checking() {
             include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-mixed-write.wf")
                 .as_slice(),
             "each indexed write",
-        ),
-        (
-            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-constant-mark.wf")
-                .as_slice(),
-            "constant mark",
         ),
         (
             include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-length-change.wf")
@@ -3348,4 +3338,274 @@ fn continue_keeps_the_counted_update_but_an_outer_continue_leaves_the_range() {
         panic!("expected the counted-loop exit denial");
     };
     assert_eq!(edge, "a continue to an enclosing loop");
+}
+
+const PAGED_SOURCE: &str = r#"fn fill(page: &[u64]) -> result: unit writes(page) {
+  let count = page^.len;
+  for (j in 0_u64..count) {
+    set page^[j] = 9_u64;
+  }
+  return unit;
+}
+
+fn elements(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.len;
+  for (i in 0_u64..count) {
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn pages(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.pages.len;
+  for (i in 0_u64..count) {
+    fill(page: &p^.pages[i]);
+  }
+  return unit;
+}
+
+fn mixed(p: &Paged<u64>, n: u64) -> result: unit writes(p) contract {
+  requires n <= p^.pages.len;
+  requires n <= p^.len;
+} {
+  for (i in 0_u64..n) {
+    fill(page: &p^.pages[i]);
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn run(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (i in 0_u64..count) {
+    set part^[i] = i;
+  }
+  return unit;
+}
+
+fn partition(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let lo = i * 2_u64;
+    let hi = lo + 2_u64;
+    run(part: &p^[lo..hi]);
+  }
+  return unit;
+}
+
+fn overlapping(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let hi = i + 2_u64;
+    run(part: &p^[i..hi]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn paged_elements_pages_and_run_elements_are_independent_maps() {
+    for function in ["elements", "pages", "run"] {
+        let judged = permitted(PAGED_SOURCE.as_bytes(), function);
+        assert_eq!(
+            judged.actualization,
+            Some(LoopActualization::IndependentMap),
+            "{function}"
+        );
+    }
+}
+
+#[test]
+fn indexed_measures_temporaries_and_unsigned_saturation_are_permitted() {
+    for (source, names, combine) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-measures.wf")
+                .as_slice(),
+            &["reduce", "capacities"][..],
+            "+wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-temporary.wf")
+                .as_slice(),
+            &["reduce", "commuted"][..],
+            "+wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-temporary.wf")
+                .as_slice(),
+            &["boolean_temporary"][..],
+            "bor",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-unsigned-saturating.wf")
+                .as_slice(),
+            &["reduce", "scalar"][..],
+            "+sat",
+        ),
+    ] {
+        let table = permission_of(source);
+        for name in names {
+            let judged = only_loop(&table, name);
+            assert_eq!(
+                judged.verdict,
+                LoopVerdict::PermittedEligible,
+                "{name}: {judged:?}"
+            );
+            assert_eq!(judged.combines, vec![combine], "{name}");
+            assert!(judged.actualization.is_some(), "{name}");
+            assert_eq!(
+                judged.indexed.len(),
+                usize::from(*name != "scalar"),
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn indexed_temporary_denials_report_the_temporary_contract() {
+    for (source, reason_fragment) in [
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-twice.wf").as_slice(), "used exactly once"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-borrow.wf").as_slice(), "used exactly once"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-rebound.wf").as_slice(), "immutable"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-root-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-root-read.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-index-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-contribution-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-chain.wf").as_slice(), "single-use temporary"),
+    ] {
+        let refused = denied(source, "reduce", 1);
+        let LoopDenial::IndexedReduction { reason, .. } = refused else {
+            panic!("expected an indexed temporary denial, got {refused:?}");
+        };
+        assert!(reason.contains(reason_fragment), "{reason_fragment}: {reason}");
+        assert!(!reason.contains("constant mark"), "{reason}");
+    }
+}
+
+#[test]
+fn a_page_index_and_a_logical_index_are_different_parallel_maps() {
+    let refused = denied(PAGED_SOURCE.as_bytes(), "mixed", 2);
+    assert!(
+        matches!(refused, LoopDenial::SharedWrite { .. }),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn disjoint_paged_runs_are_proved_range_partitions() {
+    let judged = permitted(PAGED_SOURCE.as_bytes(), "partition");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+    let table = permission_of(PAGED_SOURCE.as_bytes());
+    let overlapping = only_loop(&table, "overlapping");
+    assert!(
+        matches!(overlapping.verdict, LoopVerdict::Denied(_)),
+        "runs [i, i + 2) of two iterations overlap: {overlapping:?}"
+    );
+}
+
+#[test]
+fn indexed_marks_and_record_fields_retain_their_family_contracts() {
+    use super::super::{CheckedValue, IndexedFamilyKind};
+    let marks = permitted(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-marks.wf"),
+        "reduce",
+    );
+    assert_eq!(marks.indexed.len(), 2);
+    for (family, bits) in marks.indexed.iter().zip([1, 0]) {
+        assert!(family.fields.is_empty());
+        assert!(
+            matches!(&family.kind, IndexedFamilyKind::Mark { constant: CheckedValue::Integer { bits: actual, .. } } if *actual == bits)
+        );
+    }
+    let boolean = permitted(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-constant-mark.wf"),
+        "reduce",
+    );
+    assert!(matches!(
+        boolean.indexed[0].kind,
+        IndexedFamilyKind::Mark {
+            constant: CheckedValue::Bool(true)
+        }
+    ));
+    let table = permission_of(include_bytes!(
+        "../../../../tests/conformance/cases/par2-pos-indexed-fields.wf"
+    ));
+    let maps = only_loop(&table, "different_maps");
+    assert_eq!(maps.verdict, LoopVerdict::PermittedEligible);
+    assert_eq!(maps.indexed.len(), 2);
+    let families = loops(&table, "reduce");
+    let judged = families[0];
+    assert_eq!(judged.verdict, LoopVerdict::PermittedEligible);
+    assert_eq!(judged.indexed.len(), 2);
+    assert_eq!(judged.indexed[0].root, judged.indexed[1].root);
+    assert_eq!(judged.indexed[0].fields, vec![1]);
+    assert_eq!(judged.indexed[1].fields, vec![2]);
+    assert!(matches!(
+        judged.indexed[0].kind,
+        IndexedFamilyKind::Reduce {
+            op: LoopCombine::AddWrap
+        }
+    ));
+    assert!(matches!(
+        judged.indexed[1].kind,
+        IndexedFamilyKind::Reduce {
+            op: LoopCombine::Or
+        }
+    ));
+}
+
+#[test]
+fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
+    for (source, expected) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-constants.wf"
+            )
+            .as_slice(),
+            "one fixed operation or one constant",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-operation.wf"
+            )
+            .as_slice(),
+            "one fixed operation or one constant",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-subscript-read.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-field-whole-write.wf"
+            )
+            .as_slice(),
+            "integer or Bool cell",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-field-sibling-read.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+    ] {
+        let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
+            panic!("expected an indexed denial");
+        };
+        assert!(reason.contains(expected), "{reason}");
+    }
 }

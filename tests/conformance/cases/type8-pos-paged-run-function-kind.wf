@@ -1,0 +1,16 @@
+fn count(run: &Run<u64>) -> result: u64 reads(run) {
+  return run^.len;
+}
+
+fn apply<fn visit(run: &Run<u64>) -> result: u64 reads(run)>(run: &Run<u64>) -> result: u64 reads(run) {
+  return visit(run: run);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 0_u64);
+  let got = apply::<fn count>(run: &p.inner[0_u64..0_u64]);
+  if got != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

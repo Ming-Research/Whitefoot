@@ -1,0 +1,22 @@
+fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let at = order^[k];
+    if at < out^.len {
+      set out^[at] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "scatter is checked as written: integer elements of Paged runs are RANGE-1 terms, and its apart certificate discharges from the left-inverse requirement. No caller here establishes that requirement over a window filled by place_back, a gap docs/todo.md records for Slots and Paged alike.";
+  return std::process::exit_status(code: 0_u8);
+}

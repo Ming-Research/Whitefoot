@@ -1,0 +1,8 @@
+fn inspect<T>() -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  inspect::<Run<u64>>();
+  return std::process::exit_status(code: 0_u8);
+}
