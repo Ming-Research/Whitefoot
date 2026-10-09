@@ -356,7 +356,6 @@ fn bad_continue_is_not_assumed() {
     }
     set pc = targets^[pc];
   }
-  return unit;
 }", Some(SemanticRule::Inv1));
 }
 
