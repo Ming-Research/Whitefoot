@@ -318,8 +318,17 @@ existing cross-thread heap-counter test in backend `tests/completion.rs`
 remains the evidence path for the shared counter mechanism.
 
 No build, test, static gate, formatter or performance experiment was run
-locally for this correction, as requested. Compilation, execution of the new
-observations, their runtime budget and platform results remain for CI; no
-passing result or measured hot-path cost is claimed. The specification and
-design choices are unchanged; the retained-spare classification above is the
-allocation-lifetime interpretation used by this fix.
+locally for this correction. CI on 037ca30b1 compiled it and ran the new
+observations on Linux and macOS (Whitefoot PR #298's validation section); no
+hot-path cost was measured. The specification and design choices are
+unchanged.
+
+The owner ruled on the retained spare on the shared status board on
+2026-10-09 (card `firn-spare-table`, option A): the spare counts, because
+maxmemory-style limits must bound real memory and Redis 7.0.15 counts every
+live allocation, its rehash tables included. The same ruling requires the
+costs of counting it to be addressed separately: keeping only a spare of the
+current table's capacity (the concurrent map's owner's change, also ruled A),
+releasing a map's spare before a program evicts data under memory pressure,
+and letting a program defer table growth near its limit. The last two need
+new Whitefoot capabilities and are not part of this correction.
