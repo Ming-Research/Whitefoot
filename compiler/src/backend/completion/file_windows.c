@@ -23,7 +23,8 @@
  * `file_posix.c`'s in exactly the sense this unit is that unit's twin: the
  * address conversion, the backlog, the send flags and the pair's two-count are
  * shared (`socket_address.h`, `file_adapter.c`), and what is written here is
- * the call.  A socket reached from this unit is a *blocking* socket:
+ * the call. A socket reached from this unit is normally a blocking socket;
+ * bounded sends temporarily use nonblocking mode and return the first prefix:
  * `WSA_FLAG_OVERLAPPED` says the completion port may carry a request issued
  * with an `OVERLAPPED`, and says nothing about a call made without one, so
  * `recv`, `send`, `accept` and `connect` here wait on the helper thread the
@@ -503,28 +504,32 @@ static wf_file_result wf_file_windows_socket_connect(
  * blocking Winsock accept, receive or send is not one `CancelSynchronousIo`
  * ends, so a helper making one for a bounded record -- a deadline, or a
  * watch [PRE-2] -- waits for readiness in bounded polls and gives up itself
- * once the deadline passes or the driver marks the bound fired.  An
- * unbounded record makes its call at once, as before. */
-static int wf_file_windows_await_socket(SOCKET target, SHORT events) {
+ * once the deadline passes or the driver marks the bound fired. A bounded
+ * send must also use nonblocking mode: writability promises some space, not
+ * space for the entire buffer. An unbounded record normally calls at once;
+ * after WSAEWOULDBLOCK it waits for readiness even without a bound. */
+static int wf_file_windows_await_socket(SOCKET target, SHORT events, int retry) {
     for (;;) {
         uint64_t deadline = wf_file_running_deadline();
         uint64_t now;
-        uint64_t milliseconds;
+        int milliseconds = -1;
         WSAPOLLFD entry;
         int ready;
-        if (deadline == 0) return 0;
+        if (deadline == 0 && !retry) return 0;
         if (deadline == WF_COMPLETION_DEADLINE_FIRED) return (int)ERROR_OPERATION_ABORTED;
-        now = wf_file_monotonic_ns();
-        if (now >= deadline) {
-            wf_file_running_fire();
-            return (int)ERROR_OPERATION_ABORTED;
+        if (deadline != 0) {
+            now = wf_file_monotonic_ns();
+            if (now >= deadline) {
+                wf_file_running_fire();
+                return (int)ERROR_OPERATION_ABORTED;
+            }
+            uint64_t remaining = (deadline - now + 999999u) / 1000000u;
+            milliseconds = remaining > 50u ? 50 : (int)remaining;
         }
-        milliseconds = (deadline - now + 999999u) / 1000000u;
-        if (milliseconds > 50u) milliseconds = 50u;
         memset(&entry, 0, sizeof(entry));
         entry.fd = target;
         entry.events = events;
-        ready = WSAPoll(&entry, 1, (INT)milliseconds);
+        ready = WSAPoll(&entry, 1, milliseconds);
         if (ready > 0) return 0;
         if (ready < 0) return wf_file_windows_socket_error();
     }
@@ -552,7 +557,7 @@ static wf_file_result wf_file_windows_socket_accept(wf_file_request *request) {
     {
         /* The listener is this program's alone, so a connection it reports
          * is still there for the accept. */
-        int waited = wf_file_windows_await_socket(listener, POLLRDNORM);
+        int waited = wf_file_windows_await_socket(listener, POLLRDNORM, 0);
         if (waited != 0) {
             result.head.error_code = waited;
             return result;
@@ -606,6 +611,8 @@ static wf_file_result wf_file_windows_socket_transfer(
     int descriptor = receiving ? request->operation.receive.descriptor
                                : request->operation.send.descriptor;
     int transferred;
+    int bounded_send;
+    int retry = 0;
 
     memset(&result, 0, sizeof(result));
     result.head.kind = request->kind;
@@ -623,38 +630,63 @@ static wf_file_result wf_file_windows_socket_transfer(
         result.head.error_code = (int)ERROR_INVALID_HANDLE;
         return result;
     }
-    {
-        /* A receive this direction's reader alone makes finds the bytes or
-         * the end the poll reported still there; a send may still wait for
-         * buffer space beyond what the poll reported, and then completes
-         * with the host's own outcome. */
-        int waited = wf_file_windows_await_socket(
-            connection,
-            receiving ? POLLRDNORM : POLLWRNORM
-        );
-        if (waited != 0) {
-            result.head.error_code = waited;
+    bounded_send = !receiving && wf_file_running_deadline() != 0;
+    if (bounded_send) {
+        u_long nonblocking = 1;
+        if (ioctlsocket(connection, FIONBIO, &nonblocking) == SOCKET_ERROR) {
+            result.head.error_code = wf_file_windows_socket_error();
             return result;
         }
     }
-    transferred = receiving
-        ? recv(
-              connection,
-              (char *)request->operation.receive.buffer,
-              (int)count,
-              0
-          )
-        : send(
-              connection,
-              (const char *)request->operation.send.buffer,
-              (int)count,
-              WF_SOCKET_SEND_FLAGS
-          );
-    if (transferred == SOCKET_ERROR) {
-        result.head.error_code = wf_file_windows_socket_error();
-        return result;
+    for (;;) {
+        /* There is only one reader of this direction, and recv without
+         * MSG_WAITALL returns the available prefix rather than waiting to
+         * fill the buffer. Only the sender changes the shared socket's mode.
+         * An unbounded receive overlapping that change may see WSAEWOULDBLOCK;
+         * it must wait and retry instead of exposing that temporary mode. */
+        int waited = wf_file_windows_await_socket(
+            connection,
+            receiving ? POLLRDNORM : POLLWRNORM,
+            retry
+        );
+        if (waited != 0) {
+            result.head.error_code = waited;
+            break;
+        }
+        transferred = receiving
+            ? recv(
+                  connection,
+                  (char *)request->operation.receive.buffer,
+                  (int)count,
+                  0
+              )
+            : send(
+                  connection,
+                  (const char *)request->operation.send.buffer,
+                  (int)count,
+                  WF_SOCKET_SEND_FLAGS
+              );
+        if (transferred != SOCKET_ERROR) {
+            /* A prefix is already an ordinary outcome. Never retry its
+             * suffix or replace its byte count with a racing bound. */
+            result.head.value = (int64_t)transferred;
+            break;
+        }
+        int error = WSAGetLastError();
+        if (error != WSAEWOULDBLOCK) {
+            result.head.error_code = wf__windows_error_from_socket(error);
+            break;
+        }
+        retry = 1;
     }
-    result.head.value = (int64_t)transferred;
+    if (bounded_send) {
+        u_long blocking = 0;
+        /* Restore the ordinary mode without replacing the outcome already
+         * produced above, especially a transferred prefix. A host refusal
+         * (for example WSAENETDOWN) can leave the socket nonblocking; the
+         * WSAEWOULDBLOCK retry also covers later unbounded transfers. */
+        (void)ioctlsocket(connection, FIONBIO, &blocking);
+    }
     return result;
 }
 

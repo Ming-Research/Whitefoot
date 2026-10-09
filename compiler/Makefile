@@ -606,6 +606,12 @@ $(COMPLETION_TMP)/windows-default-route-probe.exe: $(WINDOWS_OBJECTS) $(WINDOWS_
 $(COMPLETION_TMP)/windows-adapter-probe.exe: $(WINDOWS_NATIVE_OBJECTS) $(WINDOWS_OBJECT_DIR)/completion/native_adapter_probe.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
 
+# Like cancel-test, this probe owns the bridge/ordinary translation unit so
+# it can hold completion harvesting until a real firing or deadline.
+$(WINDOWS_OBJECT_DIR)/completion/windows_bounded_send_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c
+$(COMPLETION_TMP)/windows-bounded-send-test.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/bridge.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/completion/windows_bounded_send_test.o
+	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
+
 $(COMPLETION_TMP)/windows-ordinary-values-probe.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/file_windows.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/file-windows-observed.o $(WINDOWS_OBJECT_DIR)/ordinary_values.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe.o $(WINDOWS_OBJECT_DIR)/ordinary_values_ir.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe_ir.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
 
@@ -650,6 +656,7 @@ windows-runtime-sources:
 
 completion-windows-route-build: $(COMPLETION_TMP)/windows-default-route-probe.exe $(COMPLETION_TMP)/windows-adapter-probe.exe
 completion-windows-cross: completion-windows-route-build \
+    $(COMPLETION_TMP)/windows-bounded-send-test.exe \
     $(COMPLETION_TMP)/windows-ordinary-values-probe.exe \
     $(COMPLETION_TMP)/windows-bridge-init-fail-stop-probe.exe \
     $(WINDOWS_OBJECT_DIR)/wf_floor_windows.o \

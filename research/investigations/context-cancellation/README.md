@@ -221,3 +221,69 @@ no cancellation query or atomic-guard integration is added. The
 records the shape, mechanism and rejected alternatives. The Results above
 support parity with polling on the measured firn workload, not zero cost
 against unbounded receives in every cell.
+
+## Windows helper sends
+
+Review of [cross-context cancellation PR #296](https://github.com/Ming-Research/Whitefoot/pull/296)
+found that polling for writability before a blocking `send` did not make
+the helper interruptible: a large send could remain inside Winsock after
+the watch fired or the deadline passed. The fix makes only bounded helper
+sends nonblocking, retries `WSAEWOULDBLOCK` through the existing 50 ms bound
+checks, and returns the first successful byte count, including a short
+prefix. The runtime does not try to finish the suffix, so a later bound
+cannot discard transferred bytes. This follows PRE-2's existing outcome
+rule; no specification rule or existing verdict changes.
+
+This choice follows Winsock's documented distinction: nonblocking stream
+[`send`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-send)
+returns what fits, whereas a blocking send can wait for buffer space.
+[`recv`](https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-recv)
+without `MSG_WAITALL` returns the available bytes up to the requested count.
+Whitefoot has one reader per receive half, so another reader cannot consume
+its readiness. The helper attempts to restore blocking mode on every exit
+after a successful mode change. A host refusal such as `WSAENETDOWN` from
+[`ioctlsocket`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-ioctlsocket)
+does not replace the outcome already produced, especially a sent prefix;
+subsequent unbounded transfers also retry `WSAEWOULDBLOCK` if the mode remains
+nonblocking. Since both halves share the native socket, an
+unbounded receive can encounter the temporary nonblocking mode; it retries
+`WSAEWOULDBLOCK` after readiness instead of exposing it as an IO error.
+Only the sender changes the mode, so simultaneous send/receive calls cannot
+restore it underneath a bounded send. [Overlapped IOCP operations](https://learn.microsoft.com/en-us/windows/win32/winsock/socket-attribute-flags-and-modes-2)
+do not use the socket's blocking mode. After successful restoration, unbounded sends
+retain their blocking call.
+
+The runtime regression `windows_bounded_send_test.c` runs in the Windows
+`io-hosts` job with the native ring disabled. It sends an 8 MiB buffer into
+a small-window loopback peer, observes that bytes have reached the peer
+without reading them, then fires the watch or separately waits for the
+deadline. The call must return a positive short count, and the peer checks
+that prefix only after completion. A second call on full buffers must end
+with `Cancelled` or `DeadlinePassed`; draining the independently counted
+fixture bytes through EOF detects any unreported transfer. The old blocking
+send stalls the first observation until the external watchdog fails; the
+watchdog does not close or read the peer to release it.
+
+The review also identified an unverified, pre-existing question about a
+Windows helper's blocking `connect`: unlike accept/receive/send, it has no
+bounded readiness loop. Its interruption behavior and a separate connection
+regression are deferred in [the maintained TODO](../../../docs/todo.md),
+under "Windows helper connects have no demonstrated cancellation bound".
+This fix makes no claim about that distinct path.
+
+## Cancellation conformance observations
+
+The four added runnable `cancel-run-*` cases observe PRE-2 through
+`sleep_until`'s `Err` cancellation result: a fired-before-wait watch;
+`cancel_never` remaining independent of a fired state; every watch of shared
+sources, including one created after firing and one used repeatedly; and
+closing both kinds of handle neither firing nor clearing the retained state.
+Each case requires at least one fired watch to return `Err`, so a no-op `cancel_fire`
+cannot satisfy it. The never and unfired-close controls also require `Ok`
+and a clock reading at or after the supplied deadline. These are language
+observations; helper schedules and transfer races remain in the runtime
+probe. The previous handle-lifetime case remains as ownership evidence.
+
+These review fixes have not been built or executed locally, as requested.
+CI must validate native Windows behavior, strict C compilation, WF acceptance
+and the complete conformance run after the owner commits the edits.
