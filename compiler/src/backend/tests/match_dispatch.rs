@@ -305,10 +305,10 @@ fn split_dispatch_keeps_one_struct_and_passes_its_pointer_to_every_part() {
 
 fn run(first: Step) -> result: u64 pure {
   let step = first;
-  loop {
+  loop @steps {
     match step {
       Again(left: n) => {
-        let left = n^;
+        let left = n;
         if left == 0_u64 {
           return 0_u64;
         }
@@ -317,11 +317,11 @@ fn run(first: Step) -> result: u64 pure {
         continue;
       }
       Done() => {
-        return 1_u64;
+        break @steps;
       }
     }
   }
-  return 2_u64;
+  return 1_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

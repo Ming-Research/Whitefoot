@@ -1376,6 +1376,29 @@ impl FunctionFramePlan {
     }
 }
 
+/// Ordinary roots before call hand-out emission, for fixtures without split
+/// dispatch, context groups or shared records. This deliberately does not run
+/// the emitter: an allocation added while actualizing a call is not a root.
+#[cfg(test)]
+pub(super) fn ordinary_frame_prelude_for_test(
+    program: &IrProgram,
+    target: TargetLayout,
+    function: &IrFunction,
+) -> Result<String, BackendFailure> {
+    let storage = FunctionStoragePlan::build(program, function)?;
+    let frame = FunctionFramePlan::build(
+        target,
+        program,
+        function,
+        FunctionFrameContents {
+            storage: &storage,
+            result_slot: places::returned_storage_slot(function, &storage),
+            spills: &[],
+        },
+    )?;
+    frame.render(target, program, &mut References::default())
+}
+
 /// Reserves one logical frame slot under its semantic key.
 ///
 /// `alignment` is `None` for the ordinary case, where the storage type's own

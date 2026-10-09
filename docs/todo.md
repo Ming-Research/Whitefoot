@@ -1187,6 +1187,20 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **Overlap conservatively prevents reuse of unrelated return storage.**
+  `FlowGraph::from_function` in `compiler/src/backend/storage.rs` disables
+  coalescing throughout a function with overlap because refused calls read
+  their operands at join. In `tests/programs/parallel/tree.wf`, this also
+  leaves both of `main`'s `ExitStatus` results in separate ordinary roots;
+  sequential lowering shares the caller's result destination. The Linux and
+  macOS failure dumps for [PR #292's separate frame allocations](https://github.com/Ming-Research/Whitefoot/pull/292)
+  expose these as two 32-byte allocas after
+  frame splitting, each immediately copied to the result. They are not lane
+  frames; their surviving machine cost is unmeasured. Defer narrower reuse
+  until a program's measured frame cost warrants it: represent deferred
+  operand lifetimes, then validate reuse after joins and refusal-path reads
+  before comparing machine frames with and without overlap.
+
 - **PAR-1 operand footprints treat a copied reference as its referent.**
   `collect_operand_reads` in `compiler/src/semantic/permission.rs` resolves
   every `CheckedExpression::Binding` to the storage it names, including a
