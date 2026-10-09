@@ -1153,12 +1153,13 @@ struct PlannedFunctionSlot {
     pointer: String,
 }
 
-/// The one physical frame an ordinary generated function owns.
+/// The planned allocation roots an ordinary generated function owns.
 ///
 /// Planning walks the already-selected IR schedule before emission and gives
-/// every actual materialization a semantic key. Target layout then turns the
-/// logical slots into one explicitly padded struct. Emission can only obtain a
-/// pointer by that key; it has no string-shaped `alloca` escape hatch.
+/// each planned materialization a semantic key. Target layout then turns the
+/// logical slots into an explicitly padded struct or qualified independent
+/// allocations. Emission obtains each planned pointer by that key; context
+/// groups, shared records, dispatch pins and cleanup temporaries are separate.
 struct FunctionFramePlan {
     target: TargetFramePlan,
     slots: HashMap<FunctionSlot, PlannedFunctionSlot>,
@@ -1371,6 +1372,7 @@ impl FunctionFramePlan {
 
     fn render(
         &self,
+        target: TargetLayout,
         program: &IrProgram,
         references: &mut References,
     ) -> Result<String, BackendFailure> {
@@ -1384,10 +1386,15 @@ impl FunctionFramePlan {
             .map(|field| llvm_storage_type_with_references(program, field, &mut references.types))
             .collect::<Result<Vec<_>, _>>()?;
         let mut output = String::new();
-        if let Some(alignment) = self.target.independent_slot_alignment() {
-            // The complete frame was qualified before this representation
-            // choice. Keep each full allocation root, including parents of
-            // reused result fields; only unrelated roots gain distinct LLVM
+        if self
+            .target
+            .independent_extent(target)
+            .map_err(BackendFailure::TargetLayout)?
+            .is_some()
+        {
+            // The bound uses each root's emitted alignment. Keep each full
+            // allocation root, including parents of reused result fields;
+            // only unrelated roots gain distinct LLVM
             // allocation provenance. Storage interference is unchanged.
             for key in &self.ordered {
                 let slot = self.slots.get(key).ok_or(BackendFailure::InvalidIr)?;
@@ -1398,6 +1405,7 @@ impl FunctionFramePlan {
                 let ty = fields
                     .get(field.physical_index() as usize)
                     .ok_or(BackendFailure::InvalidIr)?;
+                let alignment = field.alignment();
                 writeln!(
                     output,
                     "  {} = alloca {ty}, align {alignment}",
@@ -1411,7 +1419,7 @@ impl FunctionFramePlan {
         writeln!(
             output,
             "  %wf.frame = alloca {frame_type}, align {}",
-            self.target.layout().align()
+            self.target.struct_layout().align()
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         for key in &self.ordered {
@@ -1430,6 +1438,29 @@ impl FunctionFramePlan {
         }
         Ok(output)
     }
+}
+
+/// Ordinary roots before call hand-out emission, for fixtures without split
+/// dispatch, context groups or shared records. This deliberately does not run
+/// the emitter: an allocation added while actualizing a call is not a root.
+#[cfg(test)]
+pub(super) fn ordinary_frame_prelude_for_test(
+    program: &IrProgram,
+    target: TargetLayout,
+    function: &IrFunction,
+) -> Result<String, BackendFailure> {
+    let storage = FunctionStoragePlan::build(program, function)?;
+    let frame = FunctionFramePlan::build(
+        target,
+        program,
+        function,
+        FunctionFrameContents {
+            storage: &storage,
+            result_slot: places::returned_storage_slot(function, &storage),
+            spills: &[],
+        },
+    )?;
+    frame.render(target, program, &mut References::default())
 }
 
 /// Reserves one logical frame slot under its semantic key.
@@ -1620,10 +1651,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 spills: &[],
             },
         )?;
-        let mut output = FunctionBody::default();
-        let mut entry_prelude = frame.render(program, &mut output.references)?;
-        entry_prelude.push_str(&contexts::context_group_prelude(function));
-        entry_prelude.push_str(&shared::record_prelude(function));
         Ok(Self {
             program,
             function,
@@ -1631,8 +1658,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             window_address_facts,
             intrinsics,
             incoming: Vec::new(),
-            output,
-            entry_prelude,
+            output: FunctionBody::default(),
+            entry_prelude: String::new(),
             frame,
             storage,
             result_slot,
@@ -1932,6 +1959,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 abi.result().uses_destination(),
                 &result,
             )?;
+            if self.dispatch.is_none() {
+                // Select split dispatch first: its shared struct does not
+                // need the bound for independently reordered allocations.
+                self.entry_prelude =
+                    self.frame
+                        .render(self.target, self.program, &mut self.output.references)?;
+                self.entry_prelude
+                    .push_str(&contexts::context_group_prelude(self.function));
+                self.entry_prelude
+                    .push_str(&shared::record_prelude(self.function));
+            }
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
@@ -2151,7 +2189,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let (mut parameters, mut references) = self.signature_parameters(body)?;
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
         let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.program, &mut references)?;
+            .render(self.target, self.program, &mut references)?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
