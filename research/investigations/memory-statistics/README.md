@@ -28,13 +28,17 @@ before every write command.
   size and released with `wf__heap_give` (`compiler/src/backend/emitter/boxes.rs`),
   and runtime-capacity storage, runs and segments do the same
   (`emitter/buffer.rs`, `runs.rs`, `segments.rs`, `cleanup.rs`).
-  `Paged<T>` is absent from this checkout; its page and directory allocations
-  must adopt these wrappers when it lands. Each release site knows the size it frees:
+  `Paged<T>` page and directory allocations also use these wrappers
+  (`emitter/paged.rs` and `cleanup.rs`). Each release site knows the size it frees:
   the type for a `Box`, the stored capacity for the others.
 - **The runtime's pool** (`completion/bridge.c`, `wf_pool_take`/`give`).
   Under one spin lock it grants size classes and maps larger blocks. It
-  holds context frames, timers, concurrent-map tables and nodes, key sets,
+  holds context frames, timers, concurrent-map metadata, small cell arrays
+  and large nodes, key sets,
   and shared objects. The granted size is known at both ends.
+- **The map's direct host mappings.** Large cell arrays and small entry
+  nodes use the accounting described in the
+  [concurrent-map correction](#concurrent-map-accounting-correction).
 - **The host heap,** for one descriptor registry on Windows
   (`windows_runtime.c`).
 
@@ -156,9 +160,9 @@ adds their counters, the sum can be below zero, which shows as a total above
 bytes on A, transfer and free them on B, then sample B at minus eight: the
 result is zero rather than a value near 2^64.
 
-This checkout has no Paged implementation. Its existing direct-allocation
-sites are boxes, runtime-capacity windows, buffers and segments. Adoption of
-Paged must use the same counted allocation and size-aware release ABI.
+The initial implementation covered boxes, runtime-capacity windows, buffers
+and segments, before Paged was implemented. The current allocation inventory
+is listed above.
 
 The resident-set paths use `/proc/self/statm` on Linux, `task_info` on macOS
 and `GetProcessMemoryInfo` on Windows. The selected result is `Option<u64>`:
@@ -211,3 +215,111 @@ wave could still count its final record. The draft returns that record before
 publishing the join; the group resides in the starter's frame and survives the
 released record. This is covered by the program's exact post-join balance,
 with execution still pending CI.
+
+## Concurrent-map accounting correction
+
+Source inspection at base `f887e82c46119dedf20e364c73461cb14fb2dfb3`
+found that the map's direct host mappings bypassed both counted allocation
+paths. This is an implementation defect against the existing
+[PRE-2 memory holding](../../../spec/kernel-spec.md), not a specification
+amendment. The question for the regression is whether a presized shared map
+reports its live entry storage separately from its table and allocator
+reserves. The unfixed prediction is zero growth during insertion; a corrected
+reading must grow by at least the entries' requested bytes, then lose those
+bytes on removal even though chunks remain mapped. Failure of either
+observation rejects the correction.
+
+### Lifetimes and counter path
+
+`concurrent_map.c` reports direct cell requests and small node requests through
+the host-supplied `WF_CMAP_HEAP_CHANGE`. `keyed_table.c` connects it to
+`wf__heap_change`, the same function `heap.c` calls: after first registration,
+one thread-local addition and a relaxed atomic publication, without a shared
+read-modify-write or pool lock. The standalone C test supplies an independent
+counter; the two standalone throughput adapters explicitly supply no observer
+because they do not implement MemoryMeter. Their timings therefore do not
+qualify the production accounting cost.
+
+- Cell arrays at least 2 MiB count `count * sizeof(cell)` from successful
+  allocation until `free_cells` unmaps them. Alignment overmapping and its
+  immediate prefix/tail unmaps count nothing. Current tables, successors
+  during moves and retired tables still reachable by users remain live.
+  Reclamation releases old tables or retains one cell array as the map's
+  spare. That spare remains a live map-owned allocation until replacement or
+  destruction, like a small spare whose pool block has not been returned;
+  it is not an allocator free-list block or unused capacity inside an entry
+  chunk. Reuse has no accounting delta. Every whole-array unmap goes through
+  `free_cells`, including pending successors, retired tables and the final
+  spare at destruction.
+- Nodes through 512 bytes count their `new_node` request when carved or
+  reused, and lose it on `free_node`. Chunk headers, untouched chunk capacity
+  and free-list nodes are reserves, not live requests. Nodes over 512 bytes
+  continue through `take`/`WF_CMAP_GIVE`: `wf__runtime_take`/`give` already
+  count the pool's granted sizes, so no second delta is added.
+- A drain keeps its returned node live until the next call, after the caller
+  releases its value; then a small node becomes uncounted chunk storage and
+  a large one returns to the pool. Swapping maps transfers ownership without
+  changing process totals. Clear uses swap, drain and destruction. Destruction
+  also drains any remaining native slots whose payload needs no release;
+  previously a direct native destroy leaked undrained large pool nodes.
+  That adjacent defect is fixed in the same path. Emitted drops already drain
+  their values before destruction.
+
+### Host-allocation audit
+
+The audit searched the C sources in `compiler/src/backend/` and its
+`completion/` directory for host mapping and allocation calls, then traced
+their callers and release paths. No additional omitted program-storage
+allocation was found:
+
+| Source | Disposition under PRE-2 |
+| --- | --- |
+| `heap.c` | Already counts successful malloc/realloc request deltas and matching frees through `wf__heap_change`. |
+| `completion/bridge.c` | Host reservations feed the runtime pool. `wf_pool_take`/`give` already count granted live blocks under the pool lock; region tails and returned blocks remain excluded. |
+| `windows_runtime.c` | Descriptor-registry HeapAlloc/HeapReAlloc requests already publish their byte count, which `wf__heap_in_use` sums separately. |
+| `completion/linux_io_uring.c` | Submission/completion ring and submission-entry mappings are kernel-interface bookkeeping, not emitted program storage or pool blocks; excluded. |
+| `wf_floor.c` | Alternate signal stacks are excluded stacks. Windows floor and IOCP code introduce no corresponding host storage allocation. |
+| `floor_probe.c`, `concurrent_map_test.c` | Probe reservations and native test/reference/history allocations are test machinery, not emitted program storage. |
+| Other C sources in scope | No additional direct host mapping/allocator call for program storage. No executable mapping allocation site was found in this scope. |
+
+### Regression observations and limits
+
+The existing `memory_statistics.wf` program, registered in
+`compiler/tests/programs/memory.rs` through `compiler/tests/corpus.rs`, now
+presizes a shared map for 200,000 keys. It inserts distinct three-byte keys
+with inline u64 values twice, with individual removal between waves. A node
+needs at least 8 bytes of length, 3 of key and 8 of value, rounded up to the
+16-byte request grain: at least 32 bytes, so each wave must add at least
+6,400,000 bytes over the empty map. The current Option<u64> slot layout also
+fits that request. The presized table is 524,288 cells of 16 bytes, or
+8,388,608 bytes, checked separately against the pre-map reading. Presizing
+keeps moves from hiding an absent node delta. On the unfixed base the expected
+insertion delta is exactly zero and the program exits with status 8; this is
+a source-derived prediction, not an executed measurement.
+
+After individual removal, the allowed difference from the empty-map reading
+is zero bytes: the table remains live but the chunk nodes do not. The second
+wave exercises free-list reuse, then clears the map to exercise bulk drain;
+a final live entry is dropped with the map, after which the reading must
+equal the pre-map reading exactly. Map counts independently check distinct
+insertion and complete removal. No helper key storage is heap allocated.
+
+The existing `concurrent-map-test` target also checks exact direct-request
+deltas at the 2 MiB mapping threshold; fresh, freed and reused 32-byte nodes;
+absence of a second count for a large pool node; pinned retirement, spare
+retention/replacement/reuse; delayed drain release; and complete destruction,
+including native undrained slots. Suite-end counter balance extends that
+observation across the existing swap, clear and interleaving cases. The
+scripted competing-removal hooks now release the displaced node and live
+count, and the node-free synthetic claim is returned before destruction;
+these fixture repairs preserve their race observations while making their
+allocation lifetimes match real operations. The
+existing cross-thread heap-counter test in backend `tests/completion.rs`
+remains the evidence path for the shared counter mechanism.
+
+No build, test, static gate, formatter or performance experiment was run
+locally for this correction, as requested. Compilation, execution of the new
+observations, their runtime budget and platform results remain for CI; no
+passing result or measured hot-path cost is claimed. The specification and
+design choices are unchanged; the retained-spare classification above is the
+allocation-lifetime interpretation used by this fix.
