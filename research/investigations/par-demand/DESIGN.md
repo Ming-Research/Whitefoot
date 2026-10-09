@@ -99,3 +99,52 @@ candidate twin's spread and 1 percent.
 A pass sends the work to the second experiment (does demand-driven hand-out
 keep today's speedups?). A fail goes back to the owner with the attribution
 before any further building.
+
+## Results of the first run
+
+Run: [compute-bench 37986473421](https://github.com/Ming-Research/Whitefoot/actions/runs/37986473421),
+branch `claude/par-demand` at f548108a5, i9-14900K self-hosted runner (32
+logical CPUs), 10 interleaved rounds of every arm, width and workload, two
+samples each, 2026-10-09. A hosted sizing run first
+([37937492878](https://github.com/Ming-Research/Whitefoot/actions/runs/37937492878),
+4-vCPU EPYC, sizing repetitions) found the four arms' outputs equal and every
+maintained `--par` module byte-identical to the pre-prototype compiler.
+
+Median wall time of the candidate (`demand`) and of today's `--par` (`par`)
+over the sequential build, at 1 / 4 / 8 workers; `twin` is a copy of the
+candidate image:
+
+| workload | demand | par | twin |
+|---|---|---|---|
+| small_constant | 1.000 / 1.001 / 1.024 | 1.000 / 1.021 / 1.012 | 1.001 / 0.999 / 1.001 |
+| small_split | 1.001 / 3.923 / 3.955 | 0.992 / 5.318 / 5.317 | 0.993 / 3.929 / 3.953 |
+| recursion | 1.007 / 1.005 / 1.005 | 1.007 / 0.273 / 0.143 | 1.005 / 1.007 / 1.008 |
+| spine | 0.997 / 1.024 / 1.035 | 0.994 / 3.652 / 4.371 | 0.994 / 1.025 / 1.017 |
+| hot_helper | 0.985 / 0.992 / 0.993 | 1.001 / 0.999 / 0.999 | 0.986 / 0.992 / 0.993 |
+| large_helper | 0.997 / 1.055 / 1.055 | 0.996 / 0.525 / 0.525 | 0.997 / 1.056 / 1.054 |
+| mandelbrot | 0.998 / 0.998 / 1.000 | 1.001 / 0.372 / 0.207 | 0.998 / 0.999 / 1.000 |
+| records | 1.005 / 1.077 / 1.072 | 1.003 / 0.415 / 0.183 | 1.002 / 1.079 / 1.073 |
+| fir | 0.942 / 1.082 / 1.111 | 0.945 / 0.459 / 0.333 | 0.943 / 1.085 / 1.125 |
+| stencil | 0.999 / 0.954 / 1.014 | 1.002 / 0.538 / 0.470 | 1.007 / 0.945 / 1.011 |
+| prefix | 0.985 / 1.001 / 1.055 | 1.005 / 0.891 / 1.433 | 0.995 / 1.041 / 1.047 |
+| histogram | 0.997 / 0.988 / 0.982 | 0.961 / 0.897 / 0.901 | 0.971 / 1.016 / 0.980 |
+
+Verdict under the rule above as `summarize.py` applies it: every workload is
+inconclusive. Its spread is the range of all forty candidate and twin samples
+over their median, which exceeded 2 percent in at least one width of every
+workload; the 14900K's spreads ran from 0.5 to 71 percent.
+
+Read per cell, one workload fails beyond that question. `small_split` at four
+and eight workers exceeded its bound in the first attempt and in the rerun
+(3.92 to 3.96 times sequential, spread 1.0 to 1.7 percent), while its
+one-worker cell ran at 1.00. The rule names pruning for it. The candidate's IR
+for its three-iteration `mark` loop is a slice driver whose loop calls
+`wf__par_demand_requested()` on every slice before it tests whether the
+remaining range is worth handing out (149,999 / 7 + 1 iterations): the literal
+pruning does not cover a runtime extent, and every call reads the request
+word, which costs nothing at one worker and about 2.8 ns per call once idle
+workers exist. `records`, `fir` and `large_helper` ran 5 to 11 percent slower
+at four and eight workers, within the noise bound in most cells; `spine` 2 to
+4 percent; the group-call check on `recursion`, `hot_helper` and `mandelbrot`
+stayed within 1 percent. The optimized-site inspection the rule requires was
+not done, so no cell could pass.
