@@ -25,6 +25,12 @@ fn owned_element_assignments_release_displaced_boxes_at_commit_and_scope_exit() 
         "interface-generic whole element",
         "inline Slots, Array, Ring, boxed Ring and range targets",
         "local, struct field and Box content targets",
+        "direct Slots struct with releasing enum and Option fields",
+        "reference Slots struct with releasing enum and Option fields",
+        "direct Slots concrete generic Holder<Payload>",
+        "reference Slots concrete generic Holder<Payload>",
+        "direct Slots struct with nonempty releasing container",
+        "reference Slots struct with nonempty releasing container",
     ]
     .iter()
     .enumerate()
