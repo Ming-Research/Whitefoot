@@ -1,4 +1,4 @@
-# Kernel Specification v0.108
+# Kernel Specification v0.107
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1247,7 +1247,7 @@ The written templates are ordinary interface propositions. A Whitefoot definitio
 The written effect paths state which reference-parameter-supplied state the function observes or changes. The checker derives the exact same set from body accesses and calls and checks it in both directions under [EFF-2].
 Strengthening a requirement GoalTemplate or RelationTemplate is a caller-visible interface change.
 A generic function carries the same boundary with its written type, const, and function parameters, and each concrete [FN-2] instance substitutes them before its calls and body are re-checked.
-A `fn_sig` may carry the same requirement and postcondition templates. FN-4 checks their formation and refinement at binding; the selected actual satisfies its own boundary under FN-9, PRE-1 or PRE-2.
+A `fn_sig` may carry the same requirement and postcondition templates. FN-4 checks their formation and refinement at binding; its selected ordinary definition supplies their proof under FN-9, PRE-1 or PRE-2.
 Function-signature visibility is the [TYPE-6] table.
 Every explicit `return e1, ..., en;` writes exactly as many expressions as the enclosing declaration writes results, and expression i must produce exactly result ordinal i's `rtype`; there is no result-mode or result-type conversion [TYPE-4].
 A written count other than the declared result count is a hard error citing FN-1 at the `return_stmt` node.
@@ -1330,13 +1330,11 @@ A binding group's member may be forwarded by its explicitly qualified name. Its 
 [FN-4] Every function-kind binding is checked against the instantiated formal signature before use. Named groups check all members at declaration; raw arguments receive the same check at their written argument.
 A supplied function may refine the formal signature rather than match it.
 Parameter and result counts, modes, and exact types must agree in order; parameter and result binder spellings are not signature identity.
-The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization, including a proper subset or `pure`; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
+The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
 The actual's own declaration must independently satisfy EFF-1 and exhibit exactly its own row under EFF-2.
 An actual that waits [WAIT-1] requires a formal that waits; a formal that waits admits an actual that does not.
-The actual's `requires` must be weaker than the formal's, and each formal `ensures` must be discharged by the actual's frame or its stronger `ensures`; each actual's requirements and ensures retain the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
-A formal relation is discharged by frame exactly when its FN-9-normalized comparison is equality, its two displacements are equal, and its datums are the exit and explicit entry values of the same fragment-integer place P, or the same measure of the same place P, in either operand order; parameter ordinal, complete projection, datum type and measure identity must agree. This includes affine expressions that FN-9 reduces to those terms and displacements, on any admitted result route.
-For that discharge, P is rooted at a reference parameter, and no `writes` path in the actual's declared row overlaps P after parameter-ordinal and path normalization [EFF-1, OWN-7]; for a measure datum, P is the measured place. This declaration-only comparison uses the structural and literal-value separations of [OWN-7, WIN-2], with no assumed inequalities between parameter positions: writes at, above or below P overlap it, and different index or range parameter names do not prove separation. When the actual row writes through another parameter, the formal row must contain a `reads` or `writes` path covering P, so [EFF-5] separates P from that argument's writes at every call. The frame check uses these declared paths, not body inspection or an unwritten contract, and adds no effect or runtime action.
-The remaining refinement is decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual `requires` goal, the formal's `requires` set must discharge it under [MSR-4]'s disposition with the formal's own set as the only premises; for each formal `ensures` relation not discharged by frame, the actual's `ensures` set must discharge it with the actual's own set as the only premises. A frame discharge supplies no premise to another relation's query.
+The actual's `requires` must be weaker than the formal's and its `ensures` stronger, and each actual's requirements and ensures have the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
+Weaker and stronger are decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual `requires` goal, the formal's `requires` set must discharge it under [MSR-4]'s disposition with the formal's own set as the only premises; for each formal `ensures` relation, the actual's `ensures` set must discharge it with the actual's own set as the only premises.
 The check is deterministic and terminating because both sets are finite and each query exhausts [ENT-6]'s fixed families.
 
 A mismatch names the member or raw argument and the differing signature, row, clause, or result ordinal, and carries a repair [DIAG-1].
