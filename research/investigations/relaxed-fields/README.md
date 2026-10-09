@@ -13,9 +13,10 @@ The selected direction is the owner's A: a basic-type field updated atomically
 under a read-only hold. This selects the problem to solve, not a spelling,
 effect rule, memory model or instruction-width policy. This investigation is
 a proposal checked against Whitefoot `9f078d16f65987841fc812e90dbf9046e7090152`, branch
-`claude/relaxed-fields`, active specification v0.108. It changes no language
-rule or implementation. No new compilation, concurrency test or performance
-measurement has been run for it.
+`claude/relaxed-fields`, active specification v0.108. Only this README has
+changed since that check revision, including through review head `a476697d8`.
+It changes no language rule or implementation. No new compilation,
+concurrency test or performance measurement has been run for it.
 
 The owner's additional requirement is that Whitefoot's targets remain open
 to security applications on embedded devices with weak CPUs. The five ABIs
@@ -379,7 +380,8 @@ write. "Exact" means every declared entry is exhibited and every exhibited
 formal-rooted access is covered, not that a row must name the narrowest field.
 Locals, transferred owners, allocation/release and held shared state have
 specified treatment rather than an implicit all-memory effect. These are
-EFF-1/2, [spec/kernel-spec.md:1554–1585][spec]; the recorded reason is to tell
+EFF-1/2, [spec/kernel-spec.md:1554–1585][spec], and, for held shared state,
+SHARE-2 ([spec/kernel-spec.md:2286][spec]); the recorded reason is to tell
 the caller which storage it still owns the callee reaches, independently of
 owned-value history ([design/language/effects.md:1–5,25,29][effects-node]).
 
@@ -387,7 +389,7 @@ owned-value history ([design/language/effects.md:1–5,25,29][effects-node]).
 |---|---|
 | EFF-1, [spec/kernel-spec.md:1538–1564][spec] | Only `reads(path)` and `writes(path)`, rooted at reference parameters. A read observes; a write covers observation, mutation, replacement, moving out and freeing at/below the path. A by-value parameter has no row entry. Opaque types do not create an alternative row algebra. |
 | EFF-2, [spec/kernel-spec.md:1566–1585][spec] | Syntactic body/callee union, with both coverage directions checked even for unexecuted source branches. Local-only paths frame out of the enclosing signature but retain their checked ordinary footprints. Projecting a call's row never requires its body. SHARE-2 defines the special footprint of the atomic statement itself. |
-| EFF-3, [spec/kernel-spec.md:1587–1591][spec] | `pure` is the empty row, not a promise of termination. Its allocation and transformation conditions must be read with EFF-2's retained actions and ordinary control semantics (line 1581). An empty enclosing row is not evidence that a waiting Shared action has no observable effect or may ignore SHARE-3 order. |
+| EFF-3, [spec/kernel-spec.md:1587–1591][spec] | `pure` is the empty row, not a promise of termination. The intended reading combines its allocation and transformation conditions with EFF-2's retained actions and ordinary control semantics (line 1581): an empty enclosing row does not make a waiting Shared action unobservable or permit ignoring SHARE-3 order. This is not a settled guarantee: EFF-3's licence conflicts with SHARE-3/WAIT-2, with no stated precedence; see the defect below. |
 | EFF-5, [spec/kernel-spec.md:1597–1608][spec] | Substitute actual reference paths and argument indices; compare the specified pairs and reject overlapping demands with a write unless separated. A value argument contributes its move/consumption or copy/read at the call site. This is call-argument compatibility, not a test that different Shared handles name different objects. |
 | CAP-1, PAR-1/2, [spec/kernel-spec.md:2142–2171,2203–2220][spec] | Ownership, paths and effects supply the interference vocabulary; Shared adds no implicit overlap permission. Adjacent statements and counted iterations may overlap only under the rules, preserving source-order state observables (and the specified accumulator equivalences). Waiting calls deny that permission. |
 | HOST-1, [spec/kernel-spec.md:2222–2225][spec] | Host operations in one context have the prescribed order through overlapping state footprints with a write. Disjoint footprints do not order the host. Rows do not describe host scheduling or globally identify every external object two handles might affect. |
@@ -448,21 +450,37 @@ expressly excludes general race conditions from its data-race guarantee
 boundary together with EFF-2's framing, SHARE-2's removal and WAIT-1's separate
 callable kind. Clarify the enclosing scope of the shared-objects node's
 wording and EFF-3's empty-row wording so neither is read as referential
-transparency for a `pure waits` function. The explicit SHARE rules settle
-the owner's example; they do not establish a general theorem that arbitrary
-hidden, nonwaiting interior mutation is safe. This is more than wording. As written, EFF-3
-([spec/kernel-spec.md:1587][spec]) licenses deduplicating and reordering a
-`pure` call that allocates nothing with equal arguments, and no rule exempts
-waiting calls; yet `fn bump(counter: Shared<u8>) -> result: unit pure waits`
-changes shared state (conformance `share-pos-counter`), so two bumps of one
-object could literally be merged, or moved past a later read. It does not
-miscompile today only because the backend emits no function attributes from
-rows (`compiler/src/backend/tests/effect_attributes.rs`), which that test
-expects to change. The repair (exclude waiting calls from EFF-3 and the
-effects node's `pure`, or define `pure` over caller-reachable state only) is
-tracked as board item `proof-bl-eff3-pure-waits`; it is independent of this
-proposal but constrains any relaxed design that would keep operations out of
-rows.
+transparency for a `pure waits` function. The explicit SHARE rules explain
+the owner's row-boundary example; they do not establish a general theorem
+that arbitrary hidden, nonwaiting interior mutation is safe. A rule conflict
+also remains: EFF-3 ([spec/kernel-spec.md:1587][spec]) licenses deduplicating
+and reordering a `pure` call that allocates nothing with equal arguments,
+without qualifying that licence for waiting calls, while SHARE-3 and WAIT-2
+require one context's statements and unspawned calls to take effect in source
+order ([spec/kernel-spec.md:2227–2230,2288–2290][spec]). The specification does
+not say which prevails; the defect is conflicting rules, not absent ordering
+rules.
+
+`fn bump(counter: Shared<u8>) -> result: unit pure waits` changes shared state
+in [conformance `share-pos-counter`](../../../tests/conformance/cases/share-pos-counter.wf).
+Its `nocopy` argument is consumed: two calls need two distinct handles, and
+that case's three spawned calls use three handles made by `shared_share`.
+EFF-3 does not define whether distinct `nocopy` handles to one object count
+as "equal arguments", so it does not establish literal source-level merging
+of two bumps. The concrete risk is in lowering: `emit_shared_retain` returns
+the same pointer for the new handle
+([compiler/src/backend/emitter/shared.rs:855–875][shared-emitter]). If a future
+pass derives `memory(none)`/`readnone` from `pure` for such calls, LLVM could
+merge calls with equal pointer arguments or reorder shared observations and
+updates. This is a potential miscompile, not an observed one: the current
+emitter supplies no such row-derived function attributes. The
+[effect-attribute test](../../../compiler/src/backend/tests/effect_attributes.rs)
+asserts only absence of `willreturn`, has no waiting-function sample, and
+would not catch this attribute error. Board item `proof-bl-eff3-pure-waits`
+tracks the repair: reconcile EFF-3 and the effects node's `pure` with the
+waiting/shared-state boundary and explicitly limit transformations that
+change those observations. It is independent of this proposal but constrains
+any relaxed design that would keep operations out of rows.
 
 ### 2. What was rejected when handles were chosen
 
@@ -480,9 +498,24 @@ investigation, not a blanket rejection of reference-based mutation:
 [shared-state/DESIGN.md:60–74][shared-state-research] records the owner's
 objection: eliminating the count eliminates neither runtime exclusion nor
 the runtime identity problem; a spawned call lasts the context's life, so
-`writes(store)` prevents the second overlapping use. This is a reason about
-the proposed *spawn/reference boundary*, not a proof that a temporary
-reference to an inline scalar can never be useful. Today WAIT-3 requires
+`writes(store)` prevents the second overlapping use. Each reason has a
+different consequence for the proposed inline scalar:
+
+1. **Runtime exclusion.** The relaxed proposal removes exclusive access for
+   exactly the designated scalar, replacing it with indivisible scalar
+   operations; ordinary entry state retains its existing hold discipline.
+2. **A row excludes other accesses for the whole call.** S1-W's
+   `writes(cell)` appears on helpers inside one context's atomic block, not
+   on a spawned call borrowing the starter's state for its whole lifetime.
+   Rows are not compared across contexts; WAIT-3 moves or copies the spawn's
+   arguments into its context ([spec/kernel-spec.md:2239–2242][spec]).
+3. **Runtime identity checks.** A keyed lookup already fixes the entry's
+   identity and returns its slot, so accessing that slot's inline scalar
+   needs no second shared-object identity check
+   ([compiler/src/backend/concurrent_map.c:1256–1276][cmap]).
+
+These are reasons about the proposed *spawn/reference boundary*, not a
+refusal of temporary references to inline scalars. Today WAIT-3 requires
 value parameters, and REF-3 forbids stored/returned references
 ([spec/kernel-spec.md:2239–2241,693–697][spec]).
 
@@ -540,6 +573,11 @@ These are proposed representations and interfaces, not accepted WF syntax.
 Both must keep per-cell coherence, snapshot-only proofs and the no-publication
 contract in [the proposed event model](#proposed-event-model-for-s1s3).
 
+A uniquely owned heap cell such as `Box<Relaxed<u32>>` is included as a
+storage variant of S1-W, because its `.inner` remains visible in rows: it adds
+allocation and indirection, but no reference count or hidden state
+(EFF-1, STOR-1, OP-9, [spec/kernel-spec.md:1554–1558,810,1170][spec]).
+
 **(a) S1-H: a separately allocated, reference-counted handle.** An entry stores
 `access: RelaxedCell<u32>`. A new constructor allocates the scalar state; an
 explicit share makes another owned handle; last release destroys the state.
@@ -551,9 +589,10 @@ continued use (EFF-1/5, [spec/kernel-spec.md:1558,1603][spec]). Moving a handle
 is not itself a retain, and borrowing it need not retain for each access when
 its owner/entry hold already keeps it live. Current Shared's analogous
 count-elision reason is [design/compiler/waiting-contexts.md:19][waiting-backend].
-This is the owner's "an owned object is also a pointer" case: the current
-Shared emitter and layout do represent a handle by a pointer
-([compiler/src/backend/emitter/shared.rs:811–875][shared-emitter];
+This is one reading of the owner's "an owned object is also a pointer": the current
+Shared emitter and layout do represent a handle by a pointer, as OP-9
+specifies: `(8,8)`, one pointer ([spec/kernel-spec.md:1170][spec];
+[compiler/src/backend/emitter/shared.rs:811–875][shared-emitter];
 [compiler/src/target.rs:206,1631–1635][targets]).
 
 The scalar access after obtaining that pointer could use the same qualified
@@ -594,7 +633,7 @@ size-class crossings must be measured on the actual Entry and key lengths.
 |---|---:|---:|
 | S1-W or S1-I, inline u32 with no extra cell metadata; entry padding excluded | 4 | 4 MB scalar storage; no separate cell allocation |
 | S1-H, hypothetical compact object: 8-byte handle plus an assumed 16-byte allocation containing an 8-byte count, 4-byte scalar and 4-byte padding; allocator overhead excluded | 24 | 24 MB, 20 MB above the inline component |
-| Literal reuse of current Shared object layout and pool for u32: 8-byte handle plus a 512-byte granted block | 520 | 520 MB, 516 MB above the inline component |
+| Literal reuse of current Shared object layout and pool for u32: 8-byte handle plus a 512-byte granted block; each allocation/free also takes the pool spin lock | 520 | 520 MB, 516 MB above the inline component |
 
 The compact 16-byte object is an **assumption, unverified**, not an existing
 allocator class or an intrinsic minimum for reference counting. Literal
@@ -604,6 +643,9 @@ plus state bytes ([compiler/src/backend/completion/bridge.h:331–337][shared-br
 rounds to powers of two starting at 512
 ([compiler/src/backend/completion/bridge.c:992–1004,1057–1062,1098–1123][shared-runtime]).
 Thus a requested 68-byte u32 object occupies a 512-byte granted block here.
+Each `shared_new`/final free also passes through the pool's spin lock
+([compiler/src/backend/completion/bridge.c:997–999,1088–1096,1145–1164,2666–2696][shared-runtime]);
+the table's byte totals do not quantify this synchronization cost.
 This illustrates reuse cost, not a lower bound on a new relaxed-cell runtime.
 Replacing a preexisting stamp changes entry size by its actual aligned layout
 delta, not necessarily four bytes; pool reserves and map/node overheads are
@@ -628,11 +670,17 @@ Overlapping the stores could leave 1 instead of source order's 2, contradicting
 PAR-1's required result, not demonstrating that current PAR authorizes a wrong
 result ([spec/kernel-spec.md:2146–2157][spec]). The same footprint formation is
 used by PAR-2 (lines 2168–2171). `writes(h)` is no general repair: two different
-handle slots may name the same cell, and writing a row for an unchanged slot
-also fails EFF-2 exactness (SHARE-2's alias premise, EFF-2,
-[spec/kernel-spec.md:2276,1584][spec]). Taking a handle by value can order uses
-of that one consumed place, but cannot make two separately owned handles
-prove distinct state.
+handle slots may name the same cell (SHARE-2,
+[spec/kernel-spec.md:2276][spec]). Padding a merely read slot with `writes(h)`
+also fails the compiler's category-sensitive exactness check
+([compiler/src/semantic/tests/contracts.rs:443–447](../../../compiler/src/semantic/tests/contracts.rs)).
+EFF-2's wording is broader: "exhibited" requires only an access at or below
+the path, without distinguishing read and write categories, literally
+allowing that padding ([spec/kernel-spec.md:1584][spec]). This is the separate
+wording defect recorded in proof's backlog; the no-padding argument here
+uses the compiler's intended exactness, not that literal definition.
+Taking a handle by value can order uses of that one consumed place, but
+cannot make two separately owned handles prove distinct state.
 
 Shared avoids this conflict through `waits` and atomic-statement order.
 Giving new cell operations `waits` would prohibit their use inside the
@@ -700,9 +748,9 @@ PRE-1, OWN-1, STOR-3/8 and SHARE-1
 effect, ordering and proof anchors are given above. S1-H's independently lived
 state additionally needs its own initialization/publication and last-use
 handoff rules: a copied handle may outlive the map entry, unlike an inline
-cell whose lifetime the entry hold bounds. Borrowing an existing
-`Shared<u32>` cannot supply the proposal unchanged: opening it waits and
-cannot nest, and a target cannot use a binder created by the same header
+cell whose lifetime follows the entry and whose access the hold scopes.
+Borrowing an existing `Shared<u32>` cannot supply the proposal unchanged:
+opening it waits and cannot nest, and a target cannot use a binder created by the same header
 (SHARE-2, [spec/kernel-spec.md:2274,2282–2283][spec]).
 
 ### 4. Conclusion and decision consequences
@@ -2098,9 +2146,9 @@ for a shape. These are open research decisions, not approvals or spec edits.
 
    **A (recommended): S1, an explicit inline scalar cell type, paired with
    S1-W in decision 4.** Its declared type carries the discipline through
-   helpers and arrays, and its lifetime follows the entry hold without a
-   second allocation/count. It still needs the mixed-event, alias, proof and
-   PAR work; no implementation or performance result is claimed.
+   helpers and arrays, and its lifetime follows the entry; the hold scopes
+   access, without a second allocation/count. It still needs the mixed-event,
+   alias, proof and PAR work; no implementation or performance result is claimed.
 
    **B: S3, a field modifier.** Keeps the scalar inline and could have the same
    storage cost, but needs a modular projection rule that retains the field's
@@ -2124,17 +2172,22 @@ for a shape. These are open research decisions, not approvals or spec edits.
 
    **Confidence 3/5.** Source inspection establishes the representation and
    boundary distinctions; the relative performance and complete semantics of
-   the new handle are unverified. This replaces the earlier 4/5 confidence
-   limited to type-versus-modifier interfaces, without claiming new timings.
+   the new handle are unverified. A need for independent lifetime, a matched
+   experiment showing a handle's locality/alias benefit outweighs its costs,
+   or a demonstrated modular advantage for a field modifier would overturn
+   the recommendation.
 
-4. **What do rows promise, and how should a callable expose relaxed access?**
+4. **How should a callable expose relaxed access?**
 
    **Background.** EFF-1/2 describe reference-rooted ordinary state at a
    callable boundary; SHARE-2 removes target-state paths while retaining
-   handle/index reads and other effects. Waiting and SHARE-3 order make that
-   boundary coherent. The [effect-row answer](#1-what-rows-guarantee-today)
-   recommends clarifying it, not redefining reads as arbitrary mutation or
-   claiming rows describe all memory. Inside atomic blocks relaxed operations
+   handle/index reads and other effects. Waiting and SHARE-3 order supply the
+   intended complementary boundary, but EFF-3's transformation licence
+   conflicts with SHARE-3/WAIT-2 without stated precedence; board item
+   `proof-bl-eff3-pure-waits` tracks that defect. The
+   [effect-row answer](#1-what-rows-guarantee-today) recommends clarifying it,
+   not redefining reads as arbitrary mutation or claiming rows describe all
+   memory. Inside atomic blocks relaxed operations
    cannot wait; the store/store and load/load counterexamples therefore still
    require an explicit nonwaiting interference rule.
 
@@ -2159,7 +2212,9 @@ for a shape. These are open research decisions, not approvals or spec edits.
    A transitive summary must prevent PAR overlap and invalid EFF-3
    transformations through every helper, including those whose handle
    accesses frame out. Handle-path writes alone cannot detect two handles
-   naming one object and cannot be padded into an unchanged handle's row.
+   naming one object and cannot be padded into a merely read handle's row
+   under the compiler's intended exactness (the EFF-2 wording defect is noted
+   in the [owned-handle comparison](#3-two-meanings-of-an-owned-relaxed-cell)).
    C is a conditional alternative, not an existing Shared permission;
    its full checking/alias algebra is unverified. Not recommended for the
    inline hint because it hides the useful write without eliminating the
@@ -2175,6 +2230,9 @@ for a shape. These are open research decisions, not approvals or spec edits.
    have rule-level support; none of the extensions has a complete verified
    model. Embedded instruction or interrupt lowering does not select among
    these contracts; operation requirements must compose separately from rows.
+   A sound modular model showing S1-W cannot preserve the required ordering
+   or generic composition, or that B or C does so with a demonstrated
+   interface or optimization advantage, would overturn the recommendation.
 5. **Must relaxed values exclude cyclic thin-air justification?**
 
    **Background.** With `x=y=0`, A does `r=load(x); store(y,r)` and B does
@@ -2308,9 +2366,12 @@ The static owned-root replacement rule is a proposal, and the alias audit
 distinguishes inline relaxed storage from pointers loaded out of a handle.
 The owner's effect-row question now has a checkout-grounded answer: SHARE-2
 explicitly removes held-state paths from the outer footprint, and waiting
-plus SHARE-3 order supplies the complementary interference boundary. The
-historical refusal of spawns borrowing their starter's state is recovered
-separately from the refusal of implicit transaction scopes and atomic fields.
+plus SHARE-3 order supplies the intended complementary interference boundary,
+subject to the unresolved conflict with EFF-3's transformation licence and
+its lack of stated precedence over SHARE-3/WAIT-2
+(`proof-bl-eff3-pure-waits`). The historical refusal of spawns borrowing their
+starter's state is recovered separately from the refusal of implicit
+transaction scopes and atomic fields.
 The new handle comparison establishes current Shared allocation/count code
 and gives conditional per-million-key component arithmetic; it does not
 measure a compact relaxed handle, actual firn layout/RSS or cache behavior.
