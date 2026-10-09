@@ -823,33 +823,6 @@ rarely insert at the same place.
   before merging this conformance change, settle diagnostic ownership, and
   validate both false blockless invariants and failed range-use blocks in CI.
 
-- **Set the scope of range proof in a generic source schema.**
-  `validate_generic_body_entailment` in `compiler/src/semantic/check.rs`
-  now runs the range judgment over canonical symbolic instances.
-  `range1-pos-generic-instance` fails on the symbolic `filled_with<T>`:
-  RANGE-1 forms T-valued atoms as integers, but the range walk represents
-  an own T parameter as storage, so the callee's `value` and the caller's
-  return obligation receive unrelated unknown integer values.
-  `range1-pos-generic-unformed-postcondition` fails the symbolic
-  `first_of<T>` with NoSelectedNormalExit before the concrete Mark instance
-  can leave its noninteger clause unformed. RANGE-1 specifies symbolic
-  formation and concrete noninteger omission, while ENT-1/FN-2 still require
-  a source-schema judgment. The range-field-terms investigation's proposed
-  wording assigns facts and obligations to concrete instances, but the
-  active RANGE-3 wording does not explicitly delimit the symbolic proof
-  sites. Choose whether symbolic range clauses are formed only, or also
-  proved wherever representable. The recommended repair retains symbolic
-  discharge of representable ordinary obligations and postpones range-clause
-  proof and selected-exit obligations to concrete instances; a narrower
-  type-dependent postponement is another choice. Do not remove symbolic
-  ordinary checking: `symbolic_generic_body_defers` in
-  `compiler/src/semantic/tests/range_ordinary.rs` depends on it.
-  Reopen immediately when that scope is settled. Validate both unchanged
-  conformance cases, the symbolic deferral case, malformed symbolic clauses,
-  concrete invalid integer postconditions and unformed noninteger clauses
-  in CI. These two regressions remain unfixed pending that scope decision;
-  no verdict or proof check has been weakened to make them pass.
-
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**

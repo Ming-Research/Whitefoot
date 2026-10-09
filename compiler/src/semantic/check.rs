@@ -1249,6 +1249,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &self.types.nominals,
             &ordinary,
             &self.types.checked_constants,
+            super::range_judgment::JudgmentScope::Concrete,
         );
         if self.reject_entailment {
             let mut rejections = Vec::new();
@@ -2119,6 +2120,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &self.types.nominals,
             &judged,
             &self.types.checked_constants,
+            super::range_judgment::JudgmentScope::Symbolic,
         );
         for (index, declaration) in canonical {
             let checked = functions

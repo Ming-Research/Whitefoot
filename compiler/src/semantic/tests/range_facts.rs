@@ -1111,6 +1111,95 @@ fn field_range_subscript_of_scalar_rejects_at_range1() {
 }
 
 #[test]
+fn generic_range_postcondition_is_judged_at_concrete_instances() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/range1-pos-generic-instance.wf");
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("integer and noninteger instances must check: {outcome:?}");
+        };
+        let instances = program
+            .data
+            .executable_functions()
+            .filter(|function| function.name == "filled_with")
+            .collect::<Vec<_>>();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(
+            instances
+                .iter()
+                .filter(|function| function
+                    .range_facts
+                    .postconditions
+                    .iter()
+                    .any(|post| post.owed && post.clause.name == "same"))
+                .count(),
+            1,
+            "only the integer instance owes the content postcondition"
+        );
+    });
+}
+
+#[test]
+fn generic_noninteger_range_postcondition_owes_no_selected_exit() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/range1-pos-generic-unformed-postcondition.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the noninteger instance owes no selected exit: {outcome:?}");
+        };
+        let instance = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "first_of")
+            .expect("first_of's concrete instance is checked");
+        assert!(instance.range_facts.postconditions.is_empty());
+    });
+}
+
+#[test]
+fn generic_call_range_requirement_is_owed_at_the_integer_instance() {
+    let source = |ty: &str, value: &str| {
+        format!(
+            "fn require_same<T: copy>(values: &[T], value: T) -> result: unit pure contract {{
+  requires forall same(k in 0_u64..values^.len): values^[k] == value;
+}} {{
+  return unit;
+}}
+
+fn forward<T: copy>(values: &[T], value: T) -> result: unit pure {{
+  require_same::<T>(values: values, value: value);
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let cells = box_array_filled::<{ty}>(count: 2_u64, value: {value});
+  forward::<{ty}>(values: &cells.inner[0_u64..2_u64], value: {value});
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    with_semantics(source("Bool", "true").as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "a noninteger instance owes no range requirement: {outcome:?}"
+        );
+    });
+    with_semantics(source("u64", "7_u64").as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("the integer forward instance owes the requirement: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, site, .. } = issue.kind() else {
+            panic!("expected an undischarged range requirement: {issue:?}");
+        };
+        assert_eq!(fact, "same");
+        assert_eq!(*site, "a call");
+    });
+}
+
+#[test]
 fn field_range_generic_declared_leaf_forms_and_noninteger_instance_is_empty() {
     let source = field_range_program(
         "struct Record<T> {

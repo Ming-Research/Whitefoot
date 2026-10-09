@@ -42,7 +42,7 @@ use super::world::{
     Cond, ContainerId, FactId, Location, Modified, Origin, ReadSource, Slot, State, Step, Value,
     VersionDef, View, World, join, join_states, join_values, negated,
 };
-use super::{ApartFailure, CertifiedLoop, RangeIssue};
+use super::{ApartFailure, CertifiedLoop, JudgmentScope, RangeIssue};
 
 /// One element access recorded while a certificate's iteration runs.
 #[derive(Clone, Debug)]
@@ -78,6 +78,7 @@ pub(super) struct Walker<'program> {
     nominals: &'program [CheckedNominal],
     pub(super) function: &'program CheckedFunction,
     constants: &'program [super::super::model::CheckedConstant],
+    scope: JudgmentScope,
     pub(super) world: World,
     pub(super) facts: Vec<Fact>,
     pub(super) issues: Vec<RangeIssue>,
@@ -174,6 +175,7 @@ impl<'program> Walker<'program> {
         function: &'program CheckedFunction,
         deferred: Vec<(usize, Option<bool>)>,
         constants: &'program [super::super::model::CheckedConstant],
+        scope: JudgmentScope,
     ) -> Self {
         Self {
             functions,
@@ -181,6 +183,7 @@ impl<'program> Walker<'program> {
             function,
             deferred,
             constants,
+            scope,
             world: World::default(),
             facts: Vec::new(),
             issues: Vec::new(),
@@ -257,7 +260,9 @@ impl<'program> Walker<'program> {
         self.block(state, body);
         // [RANGE-3] an inhabited instance selects each postcondition at
         // some exit.
-        if function.body_disposition == CheckedBodyDisposition::Inhabited {
+        if self.scope == JudgmentScope::Concrete
+            && function.body_disposition == CheckedBodyDisposition::Inhabited
+        {
             for (post, selected) in function
                 .range_facts
                 .postconditions
@@ -483,7 +488,9 @@ impl<'program> Walker<'program> {
         node: &NodePath,
         site: &'static str,
     ) {
-        if self.dry > 0 {
+        // Every caller owes a range clause. Deferred ordinary obligations
+        // use ordinary_goal and must still be proved in symbolic bodies.
+        if self.dry > 0 || self.scope == JudgmentScope::Symbolic {
             return;
         }
         match self.holds(state, clause, frame) {

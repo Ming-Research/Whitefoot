@@ -91,6 +91,15 @@ pub(crate) struct RangeJudgment {
     pub(crate) discharged: Vec<usize>,
 }
 
+/// Range clauses are formed in both scopes [RANGE-1]. Deferred ordinary
+/// obligations are judged in both; range-clause obligations wait for the
+/// concrete instance, where a noninteger substitution can omit the clause.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum JudgmentScope {
+    Symbolic,
+    Concrete,
+}
+
 /// Whether a function takes part: it states a range clause, or it calls a
 /// function with range requirements or postconditions.
 pub(crate) fn takes_part(
@@ -187,6 +196,7 @@ pub(crate) fn judge_program(
     nominals: &[CheckedNominal],
     selected: &[bool],
     constants: &[super::model::CheckedConstant],
+    scope: JudgmentScope,
 ) -> Vec<RangeJudgment> {
     functions
         .iter()
@@ -209,6 +219,7 @@ pub(crate) fn judge_program(
                 function,
                 deferred_records(function).unwrap_or_default(),
                 constants,
+                scope,
             );
             walker.run();
             // A walk that forgot more than RANGE-2 does cannot reject: what
