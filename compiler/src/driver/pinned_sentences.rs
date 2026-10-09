@@ -331,7 +331,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let wide = payload.len;
   let view = &header[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -1022,7 +1024,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let bytes = array_filled::<u8, 1>(value: 3_u8);
+  let bytes = array_filled::<u8, 1>(value: 10_u8);
   let raw = bytes[0_u64];
   let s = cvt::<u8, u32>(raw);
   let r = need(x: s);
@@ -1030,11 +1032,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         rule: "FN-8",
-        // The actual is read from a buffer element rather than written as a
-        // literal: a conversion of a known constant is now discharged by the
-        // affine route, which reaches a call goal that projects to no L0
-        // relation, so a literal actual would prove the requirement and print
-        // no diagnostic. The pinned sentence is unchanged.
+        // PRE-1's filled fact and RANGE-2's exact integer conversions now
+        // prove this element's value. At the strict upper boundary, the
+        // converted actual still fails the requirement and pins its spelling.
         sentences: &["\n  instantiated_goal: cvt::<u32, u64>(s) < 10_u64\n"],
     },
     Probe {
@@ -1081,7 +1081,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let data = array_filled::<u8, 4>(value: 0_u8);
+  let data = array_filled::<u8, 4>(value: 10_u8);
   let r = need(x: data[0_u64]);
   return std::process::exit_status(code: 0_u8);
 }

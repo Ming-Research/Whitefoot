@@ -1,0 +1,36 @@
+enum Flow {
+  Open(block: u64);
+  Close(block: u64);
+}
+
+fn damage(b: &u64) -> result: unit writes(b) {
+  set b^ = 5_u64;
+  return unit;
+}
+
+fn need(order: &[Flow]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..order^.len): order^[k].Open.block == 0_u64;
+} {
+  return unit;
+}
+
+fn forward(order: &[Flow]) -> result: unit writes(order) contract {
+  requires forall held(k in 0_u64..order^.len): order^[k].Open.block == 0_u64;
+} {
+  if 0_u64 < order^.len {
+    let r = &order^[0_u64];
+    match r^ {
+      Open(block: b) => {
+        damage(b: b);
+      }
+      Close(block: b) => {
+      }
+    }
+  }
+  need(order: order);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

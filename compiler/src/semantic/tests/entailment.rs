@@ -3182,7 +3182,11 @@ fn invariant_l0_equality_retains_both_source_bounds() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(bounds.len(), 2, "the contradiction needs both equality bounds");
+    assert_eq!(
+        bounds.len(),
+        2,
+        "the contradiction needs both equality bounds"
+    );
     let (left, right, bound, event) = bounds[0];
     assert_eq!(bounds[1], (right, left, -bound, event));
 }
@@ -3817,7 +3821,11 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
             "fn retain_bound(value: {ty}) -> result: unit pure contract {{\n  requires value < {limit};\n}} {{\n  return unit;\n}}\n\n"
         );
         assert_eq!(source.matches(target).count(), 1);
-        consumer + &source.replace(target, &format!("retain_bound(value: cursor);\n    {target}"))
+        consumer
+            + &source.replace(
+                target,
+                &format!("retain_bound(value: cursor);\n    {target}"),
+            )
     }
     let source = with_retained_bound(
         include_str!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf"),
@@ -3874,7 +3882,10 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         "4_u64",
         "invariant tightened: cursor <= 3_u64;",
     );
-    validate_derivations(&accepted_entailment(delivery_source.as_bytes(), "avoid_four"));
+    validate_derivations(&accepted_entailment(
+        delivery_source.as_bytes(),
+        "avoid_four",
+    ));
     let delivery = accepted_entailment(delivery_source.as_bytes(), "probe");
     validate_derivations(&delivery);
     for join in [false, true] {
@@ -5696,23 +5707,207 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A computed give forms no delivery image. A bare outer atom given under
+fn computed_grid_delivery(expression: &str) -> String {
+    format!(
+        "fn pick_line(lines: &Box<Slots<u64, 8>>, flag: Bool) -> result: u64 reads(lines) {{
+  let count = lines^.inner.len;
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  let line = lines^.inner[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+/// The nonzero edge tightens the unsigned count to at least one. S7's
+/// subtraction offset reaches the new receiver before the two gives join.
+#[test]
+fn computed_give_delivers_the_grid_index_bound() {
+    let source = computed_grid_delivery("count - 1_u64");
+    let summary = accepted_entailment(source.as_bytes(), "pick_line");
+    validate_derivations(&summary);
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: -1, .. })
+    )));
+}
+
+/// S7 need not establish an operation image in a contradictory state. Its
+/// give edge must nevertheless stay neutral when the delivery images join,
+/// exactly as spelling the computation with an ordinary let does.
+#[test]
+fn a_computed_give_on_a_contradictory_edge_is_neutral_at_the_join() {
+    for delivery in [
+        "    give value + 0_i32;",
+        "    let copied = value + 0_i32;\n    give copied;",
+    ] {
+        let source = format!(
+            "fn pick(value: i32) -> result: i32 pure contract {{
+  requires value < 8_i32;
+  ensures result < 8_i32;
+}} {{
+  let picked = if value >= 8_i32 {{
+{delivery}
+  }} else {{
+    give value;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+#[test]
+fn a_give_at_the_length_does_not_deliver_a_strict_index_bound() {
+    let source = computed_grid_delivery("count");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+            if residual == "line_at < lines^.inner.len")
+    });
+}
+
+/// Each expression uses the same S5/S7 image as an ordinary let. The wrap
+/// spelling here is exact over the guarded interval, so S7 relates it too.
+#[test]
+fn computed_give_reuses_let_sources_before_leaving_its_operand_scope() {
+    for expression in [
+        "local + 1_u64",
+        "local - 1_u64",
+        "local * 2_u64",
+        "cvt::<u32, u64>(narrow_value)",
+        "local +wrap 0_u64",
+    ] {
+        let source = format!(
+            "fn pick(value: u64, flag: Bool) -> result: u64 pure contract {{
+  requires value >= 1_u64;
+  requires value <= 3_u64;
+  ensures result < 7_u64;
+}} {{
+  let picked = if flag {{
+    let local = value;
+    let narrow_value = cvt::<u64, u32>(local);
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+/// Only the relation to the live count can bound an index into the range
+/// formed afterwards. Writing that operand must kill the relation; the
+/// receiver still denotes its old computed value.
+#[test]
+fn writing_a_computed_carriers_operand_kills_its_index_relation() {
+    for write in ["", "  set count = 0_u64;\n"] {
+        let source = format!(
+            "fn pick_line(lines: &[u64], count: u64, flag: Bool) -> result: u64 reads(lines) contract {{
+  requires count <= lines^.len;
+}} {{
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give count - 1_u64;
+  }} else {{
+    give 0_u64;
+  }}
+{write}  let prefix = &lines^[0_u64..count];
+  let line = prefix^[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        if write.is_empty() {
+            validate_derivations(&accepted_entailment(source.as_bytes(), "pick_line"));
+        } else {
+            assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+                    if residual == "line_at < prefix^.len")
+            });
+        }
+    }
+}
+
+/// A wrapping conversion has no S5 equality. Wrapping addition whose
+/// mathematical interval leaves the type has no S7 bounds or offsets.
+#[test]
+fn computed_gives_without_a_let_image_form_no_delivery_image() {
+    for expression in ["cvt.wrap::<i64, i32>(wide)", "value +wrap 1_i32"] {
+        let source = format!(
+            "fn pick(value: i32, wide: i64, flag: Bool) -> result: i32 pure {{
+  let picked = if flag {{
+    give {expression};
+  }} else {{
+    give {expression};
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "pick");
+        validate_derivations(&summary);
+        assert!(summary.derivations.nodes.iter().all(|node| !matches!(
+            node,
+            DerivationNode::PostconditionGive { .. }
+                | DerivationNode::PostconditionDeliveryJoin { .. }
+        )));
+    }
+}
+
+/// A call result forms no delivery image. A bare outer atom given under
 /// branch-local support delivers only its carrier equality: since v0.79 each
 /// `give value;` edge delivers `picked = value` [ENT-5], which both edges
 /// hold, while `picked != limit` names a `limit` whose scope the edge leaves.
-/// Before v0.79 the carrier equality did not exist and `scoped` delivered
-/// nothing, which this test asserted together with `computed`.
 #[test]
-fn nonbare_carriers_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
-    let source = br#"fn computed(value: i32, narrow: Bool) -> result: i32 pure {
+fn calls_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
+    let source = br#"fn identity(value: i32) -> result: i32 pure {
+  return value;
+}
+
+fn computed(value: i32, narrow: Bool) -> result: i32 pure {
   let picked = if narrow {
     if value < 8_i32 {
-      give value +wrap 0_i32;
+      give identity(value: value);
     } else {
       return value;
     }
   } else if value < 128_i32 {
-    give value +wrap 0_i32;
+    give identity(value: value);
   } else {
     return value;
   }
@@ -9263,7 +9458,7 @@ fn range_contract_source(contract: &str, body: &str) -> String {
 fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -9281,7 +9476,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
 fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -9308,7 +9503,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
 fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -9355,7 +9550,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
 fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline);\n    }\n  }\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let wait_cancel_1 = std::time::cancel_never();\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n      std::time::close_cancel_watch(watch: move wait_cancel_1);\n    }\n  }\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -9400,7 +9595,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
 fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -9428,7 +9623,10 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 3_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -9444,7 +9642,10 @@ fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 4_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -9566,7 +9767,9 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   requires 3_u64 <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   match outcome {
     Ok(value: written) => {
       let sample = table[written];
@@ -9582,7 +9785,9 @@ fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sour
   requires limit <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline);
+  let wait_cancel_2 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
   set limit = 9_u64;
   match outcome {
     Ok(value: written) => {

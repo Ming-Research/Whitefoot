@@ -445,10 +445,8 @@ fn measured_place_headers_retain_base_and_backedge_evidence() {
             1,
         ),
         (
-            include_bytes!(
-                "../../../../tests/conformance/cases/inv1-pos-measure-table-places.wf"
-            )
-            .as_slice(),
+            include_bytes!("../../../../tests/conformance/cases/inv1-pos-measure-table-places.wf")
+                .as_slice(),
             15,
         ),
     ] {
@@ -485,10 +483,8 @@ fn key_set_writes_reject_the_stale_equality_at_the_backedge() {
             "../../../../tests/conformance/cases/inv1-neg-key-set-insert-stale-length.wf"
         )
         .as_slice(),
-        include_bytes!(
-            "../../../../tests/conformance/cases/inv1-neg-key-set-scan-stale-length.wf"
-        )
-        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/inv1-neg-key-set-scan-stale-length.wf")
+            .as_slice(),
     ] {
         assert_invariant_required_relation(source, "keys.len == original");
     }
@@ -1672,7 +1668,9 @@ fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     set end = end + 1_u64;
   }
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return unit;
 }
 
@@ -2857,7 +2855,10 @@ fn break_free_inner_return_has_matching_empty_induction_inputs() {
             .collect::<Vec<_>>();
         assert_eq!(record.site, invariant.node_path);
         assert_eq!(inputs, &proof_inputs);
-        assert!(inputs.is_empty(), "the returning inner loop has no backedge");
+        assert!(
+            inputs.is_empty(),
+            "the returning inner loop has no backedge"
+        );
         assert!(invariant.proof.base);
         assert_eq!(invariant.proof.step, None);
     });
@@ -2913,4 +2914,305 @@ fn main() -> status: std::process::ExitStatus pure {{
             });
         }
     }
+}
+
+const PER_ROW_READ: &str = "    let t = table^[rows^[i].len];
+    set sum = sum +sat t;";
+
+const PER_ROW_CHECK: &str = "    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }";
+
+fn per_row_source(rows_type: &str, contract: &str, invariant: &str, body: &str) -> String {
+    let header = if invariant.is_empty() {
+        "for (i in 0_u64..n)".to_owned()
+    } else {
+        format!("for (\n    i in 0_u64..n,\n    {invariant}\n  )")
+    };
+    format!(
+        r#"fn total(rows: {rows_type}, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {contract}{{
+  let n = rows^.len;
+  let sum = 0_u64;
+  {header} {{
+{body}
+  }}
+  return sum;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+/// The OP-4 header formation failure's residual and repair.
+fn per_row_formation_failure(source: &str) -> (String, String) {
+    let mut found = None;
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("the row must fail formation, not capability checking: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op4, "{issue:?}");
+        let SemanticIssueKind::UndischargedBoundsObligation {
+            residual,
+            mechanical_fix,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected a header bounds failure: {issue:?}");
+        };
+        found = Some((residual.clone(), mechanical_fix.clone()));
+    });
+    found.expect("the checker reported an issue")
+}
+
+fn per_row_element_repair(relation: &str, prefix: &str, extent: &str) -> String {
+    format!(
+        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..{prefix}): {relation}`; when the input guarantees it, require it of every element, `requires forall fits_all(k in 0_u64..{extent}): {relation};`"
+    )
+}
+
+/// The two backquoted range forms a counted-element repair suggests.
+fn per_row_suggested_forms(repair: &str) -> (String, String) {
+    let quoted = repair.split('`').skip(1).step_by(2).collect::<Vec<_>>();
+    let [_, _, invariant, requirement] = quoted.as_slice() else {
+        panic!("the repair names the invariant, the binder and two forms: {repair}");
+    };
+    (invariant.to_string(), requirement.to_string())
+}
+
+#[test]
+fn per_row_header_formation_reports_the_actual_preheader_failure() {
+    for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
+        let source = per_row_source(
+            rows_type,
+            "",
+            "invariant fits: rows^[i].len <= 4_u64",
+            PER_ROW_READ,
+        );
+        let (residual, repair) = per_row_formation_failure(&source);
+        assert_eq!(residual, "i < rows^.len");
+        assert_eq!(
+            repair,
+            per_row_element_repair("rows^[k].len <= 4_u64", "i", "rows^.len"),
+            "{rows_type}"
+        );
+    }
+}
+
+#[test]
+fn per_row_nonempty_input_reports_the_element_repair_at_the_backedge() {
+    for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
+        let source = per_row_source(
+            rows_type,
+            "contract {\n  requires 1_u64 <= rows^.len;\n} ",
+            "invariant fits: rows^[i].len <= 8_u64",
+            PER_ROW_CHECK,
+        );
+        let (residual, repair) = per_row_formation_failure(&source);
+        assert_eq!(residual, "(i + 1_u64) < rows^.len");
+        assert_eq!(
+            repair,
+            per_row_element_repair("rows^[k].len <= 8_u64", "i", "rows^.len"),
+            "{rows_type}"
+        );
+    }
+}
+
+#[test]
+fn per_row_constant_subscript_keeps_its_formation_repair() {
+    let source = per_row_source(
+        "&Slots<Slots<u8, 8>, 8>",
+        "",
+        "invariant fits: rows^[0_u64].len <= 4_u64",
+        PER_ROW_READ,
+    );
+    let (residual, repair) = per_row_formation_failure(&source);
+    assert_eq!(residual, "0_u64 < rows^.len");
+    assert_eq!(
+        repair,
+        "prove this subscript bound on every incoming instance of invariant `fits`"
+    );
+}
+
+#[test]
+fn per_row_outer_binder_subscript_keeps_its_formation_repair() {
+    let source = br#"fn probe(rows: &Slots<Slots<u8, 8>, 8>) -> result: unit pure {
+  for (o in 0_u64..8_u64) {
+    for (
+      i in 0_u64..4_u64,
+      invariant fits: rows^[o].len <= rows^[o].cap
+    ) {
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let source = std::str::from_utf8(source).expect("fixture is UTF-8");
+    let (residual, repair) = per_row_formation_failure(source);
+    assert_eq!(residual, "o < rows^.len");
+    assert_eq!(
+        repair,
+        "prove this subscript bound on every incoming instance of invariant `fits`"
+    );
+}
+
+#[test]
+fn per_row_element_repair_takes_a_fresh_bound_variable_and_the_counted_start() {
+    let source = br#"fn probe(rows: &Slots<Slots<u8, 8>, 8>, s: u64) -> result: unit reads(rows) {
+  let n = rows^.len;
+  let k = 0_u64;
+  for (
+    i in s..n,
+    invariant fits: rows^[i].len <= rows^[i].cap + k
+  ) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let source = std::str::from_utf8(source).expect("fixture is UTF-8");
+    let (residual, repair) = per_row_formation_failure(source);
+    assert_eq!(residual, "i < rows^.len");
+    assert!(
+        repair
+            .contains("`invariant forall fits(k1 in s..i): rows^[k1].len <= (rows^[k1].cap + k)`")
+            && !repair.contains("requires forall"),
+        "{repair}"
+    );
+}
+
+#[test]
+fn per_row_suggested_range_forms_are_accepted() {
+    for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
+        let refused = per_row_source(
+            rows_type,
+            "",
+            "invariant fits: rows^[i].len <= 4_u64",
+            PER_ROW_READ,
+        );
+        let (_, repair) = per_row_formation_failure(&refused);
+        let (invariant, requirement) = per_row_suggested_forms(&repair);
+        let contract = format!("contract {{\n  {requirement}\n}} ");
+        for (contract, invariant, body) in [
+            ("", invariant.as_str(), PER_ROW_CHECK),
+            (contract.as_str(), "", PER_ROW_READ),
+            (contract.as_str(), invariant.as_str(), PER_ROW_READ),
+        ] {
+            let source = per_row_source(rows_type, contract, invariant, body);
+            with_semantics(source.as_bytes(), |outcome| {
+                assert!(
+                    matches!(outcome, SemanticOutcome::Complete(_)),
+                    "the suggested form must be accepted for {rows_type}, {contract:?}, {invariant:?}: {outcome:?}"
+                );
+            });
+        }
+    }
+}
+
+#[test]
+fn per_row_run_measure_forms_at_local_and_ordinary_headers_without_read_effects() {
+    let source = br#"struct Row {
+  bytes: Slots<u8, 8>;
+}
+
+fn probe(rows: &[Row]) -> result: unit pure contract {
+  requires 1_u64 <= rows^.len;
+} {
+  invariant local: rows^[0_u64].bytes.len <= rows^[0_u64].bytes.cap;
+  loop (
+    invariant fits: rows^[0_u64].bytes.len <= rows^[0_u64].bytes.cap
+  ) {
+    break;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "an erased run-element measure needs no read effect: {outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn per_row_run_measure_checks_the_substituted_backedge_offset() {
+    for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
+        let source = format!(
+            r#"fn probe(rows: {rows_type}) -> result: unit reads(rows) contract {{
+  requires 1_u64 <= rows^.len;
+}} {{
+  let n = rows^.len;
+  for (
+    i in 0_u64..n,
+    invariant fits: rows^[i].len <= rows^[i].cap
+  ) {{
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the next header must prove its own row exists: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Op4);
+            let SemanticIssueKind::UndischargedBoundsObligation {
+                residual,
+                mechanical_fix,
+                ..
+            } = issue.kind()
+            else {
+                panic!("expected next-header formation failure: {issue:?}");
+            };
+            assert_eq!(residual, "(i + 1_u64) < rows^.len");
+            assert_eq!(
+                *mechanical_fix,
+                per_row_element_repair("rows^[k].len <= rows^[k].cap", "i", "rows^.len")
+            );
+        });
+    }
+}
+
+#[test]
+fn a_local_run_has_no_out_of_scope_requirement_repair() {
+    let source = per_row_source(
+        "&Slots<Slots<u8, 8>, 8>",
+        "",
+        "invariant fits: rows^[i].len <= 4_u64",
+        PER_ROW_READ,
+    )
+    .replace("total(rows:", "total(input:")
+    .replace("reads(rows),", "reads(input),")
+    .replace(
+        "  let n = rows^.len;",
+        "  let rows = &input^;\n  let n = rows^.len;",
+    );
+    let (_, repair) = per_row_formation_failure(&source);
+    // The invariant is written inside the function, where rows is in scope.
+    assert_eq!(
+        repair,
+        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`"
+    );
 }

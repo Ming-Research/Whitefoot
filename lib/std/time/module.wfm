@@ -20,6 +20,32 @@ public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure
 
 public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
 
-public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
+public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result<unit, unit> reads(cancel) waits doc "Returns Ok with unit when the monotonic clock reaches deadline, or Err with unit when cancel ends the wait.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+
+public opaque nodrop struct CancelSource {
+}
+
+public opaque nodrop struct CancelWatch {
+}
+
+public opaque struct CancelState {
+  public fired: Bool;
+}
+
+public fn cancel_state(watch: &CancelWatch) -> result: SharedRead<CancelState> reads(watch) doc "Returns a read-only shared view retaining watch's cancellation state.";
+
+public fn cancel_source() -> result: CancelSource pure doc "Creates an unfired cancellation state and returns its source handle.";
+
+public fn cancel_share(source: &CancelSource) -> result: CancelSource reads(source) doc "Returns another source handle for the same cancellation state.";
+
+public fn cancel_watch(source: &CancelSource) -> result: CancelWatch reads(source) doc "Returns a watch retaining source's cancellation state independently of its source handles.";
+
+public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) waits doc "Permanently fires source's cancellation state; repeated firings have no further effect.";
+
+public fn cancel_never() -> result: CancelWatch pure doc "Returns a watch that never fires.";
+
+public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Releases this source handle without firing it; remaining source handles, watches and shared views retain the state.";
+
+public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Releases this watch handle, including a never-firing watch.";

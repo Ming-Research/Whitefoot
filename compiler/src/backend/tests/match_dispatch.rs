@@ -291,6 +291,63 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
 }
 
 #[test]
+fn split_dispatch_keeps_one_struct_and_passes_its_pointer_to_every_part() {
+    let module = emit(
+        br#"enum Step {
+  Again(left: u64);
+  Done();
+}
+
+fn run(first: Step) -> result: u64 pure {
+  let step = first;
+  loop @steps {
+    match step {
+      Again(left: n) => {
+        let left = n;
+        if left == 0_u64 {
+          return 0_u64;
+        }
+        let next = left -wrap 1_u64;
+        set step = Step::Again(left: next);
+        continue;
+      }
+      Done() => {
+        break @steps;
+      }
+    }
+  }
+  return 1_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = Step::Again(left: 2_u64);
+  let result = run(first: first);
+  if result == 0_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#,
+    );
+    assert_split(&module, "wf_run", 2);
+    let enclosing = emitted_body(&module, "run");
+    assert_eq!(enclosing.matches("%wf.frame = alloca {").count(), 1);
+    assert_eq!(enclosing.matches(" = alloca ").count(), 1, "{enclosing}");
+    assert!(enclosing.contains(", ptr %wf.frame, i32 0, i32 "));
+    let call = enclosing
+        .lines()
+        .find(|line| line.contains("@wf_run.dispatch("))
+        .expect("the enclosing function calls dispatch");
+    assert!(call.contains("ptr %wf.frame"), "{call}");
+    for symbol in ["wf_run.dispatch", "wf_run.arm.0", "wf_run.arm.1"] {
+        let part = definition(&module, symbol);
+        let signature = part.lines().next().expect("a part signature");
+        assert_eq!(signature.matches("ptr %wf.frame").count(), 1, "{part}");
+        assert!(!part.contains("%wf.frame = alloca"), "{part}");
+    }
+}
+
+#[test]
 fn a_result_returned_through_its_destination_threads_the_destination_through_every_part() {
     let module = emit(enum_interpreter().as_bytes());
     let base = if module.contains(" @wf_run.body(") {
@@ -2009,4 +2066,80 @@ fn runtime_map_values_keep_ordinary_layout_without_disabling_unrelated_handlers(
     );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+/// The same provisional-result selection in a dispatch arm must write into
+/// the enclosing call's result destination, not into a part-local temporary.
+#[test]
+fn selection_in_a_split_arm_passes_the_result_destination_to_its_producer() {
+    let source = format!(
+        "{}{}",
+        super::payload_enums::SELECT_STEP,
+        r#"
+enum Command {
+  Again();
+  Select();
+}
+
+fn dispatch(command: Command, n: u64) -> result: Step pure {
+  loop {
+    match command {
+      Again() => {
+        set command = Command::Select();
+        continue;
+      }
+      Select() => {
+        let step = prepare(n: n);
+        let final_step = step;
+        match step {
+          Error() => {
+            set final_step = unwind(n: n);
+          }
+          Jump(..) => {
+          }
+          Done(..) => {
+          }
+          Stop() => {
+          }
+          Budget() => {
+          }
+        }
+        return final_step;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let select = Command::Select();
+    let direct = dispatch(command: select, n: n);
+    let first = valid_step(step: direct, n: n);
+    if bnot(first) {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let again = Command::Again();
+    let repeated = dispatch(command: again, n: n);
+    let second = valid_step(step: repeated, n: n);
+    if bnot(second) {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    let module = super::payload_enums::retain_step_producers(&emit(source.as_bytes()));
+    assert_split(&module, "wf_dispatch", 2);
+    super::payload_enums::assert_step_destination(definition(&module, "wf_dispatch.arm.1"));
+    let optimized = super::host_optimized_module(&module);
+    super::payload_enums::assert_step_destination(definition(&optimized, "wf_dispatch.arm.1"));
+    // The base retains both Step join parameters within this arm, so its raw
+    // producer destination and copy assertions fail even if LLVM hides a copy.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
 }

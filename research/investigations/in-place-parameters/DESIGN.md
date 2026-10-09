@@ -264,3 +264,546 @@ stayed within their ranges. The gain is the widened rule's across every
 function that receives an aggregate by value, not `push_frame`'s copy alone.
 The owner reopened the rejection and adopted the rule, with firn measured
 for no slowdown before merging.
+
+## By-value let bindings read through a reference
+
+### Question and scope
+
+Does a by-value aggregate let retain its whole snapshot under the host's
+`-O2` pipeline when a call can write its source, even if no path from that
+write reaches a use of the binding? Phase 1 minimizes and inspects this
+shape. It changes neither the compiler nor the specification and selects no
+implementation. The existing parameter rule above does not select local
+let results.
+
+The motivating downstream report is Halo-wf's Lua interpreter,
+`lib/halo/vm/library-sort.wf`, `sort_compare`:
+`let local_call_5 = vm^.library_contexts.inner[context];` snapshots a
+152-byte `LibraryContext`; its fast path reads only
+`local_call_5.frame.func` and `local_call_5.comparator`. Halo reports that a
+`slow::<Host<E>>(... vm: vm ...)` call which writes `vm` on another path
+leaves a 152-byte memcpy and a `0x1f8` frame. Moving that call to another
+function reportedly removes the memcpy, leaves a `0x60` frame, and improves
+the sort kernel by 25% on the 14900K. These are the supplied downstream
+observations, not measurements independently reproduced here; the optimizer
+explanation remains a hypothesis.
+
+### What lowering and emission establish
+
+Source inspection at `0bea2b796` establishes the following path:
+
+- `compiler/src/lowering/builder.rs:1095`: an ordinary
+  `CheckedStatement::Let` evaluates its initializer once and binds its
+  resulting IR value. It does not make this binding an alias of the source.
+- `compiler/src/lowering/builder.rs:1957`: `ReadStorage` computes the
+  selected place's address, including its field and array-element steps
+  (`compiler/src/lowering/builder/storage.rs:499`), then calls
+  `load_storage_value` (`storage.rs:705`) to define an `IrOperation::Load`.
+  The addressed object here is the selected row, not the whole enclosing
+  array or reference target.
+- `compiler/src/backend/storage.rs:24` classifies structs and arrays as
+  stored aggregates. `FunctionStoragePlan::build_in_world` assigns backing
+  to their definitions (`storage.rs:122`); loads and ordinary projections
+  remain snapshots, as the module contract at `storage.rs:8` states.
+  `select_incoming_places` (`compiler/src/backend/emitter.rs:1984`) only
+  selects eligible function parameters, not this load result.
+- `compiler/src/backend/emitter/places.rs:132` routes a stored load to
+  `load_place_result` (`places.rs:764`). It copies from the selected address
+  into the result's planned slot. `copy_storage` (`places.rs:663`) emits
+  one `llvm.memmove.p0.p0.i64` of the complete allocated type size, including
+  padding. The `llvm.memcpy` alternative there is reserved for the admitted
+  equal-or-disjoint operation row; an ordinary witness reader uses memmove.
+  A downstream machine-code memcpy can therefore originate in a memmove
+  intrinsic.
+- Reading `r.f` or `r.g` subsequently projects from that value's slot
+  (`ProjectStruct`, `places.rs:188`) and loads the scalar field. An aggregate
+  field projection, as in `let-field-of-param.wf`, uses the same
+  `load_place_result` copy path. The existing parameter optimization can
+  remove the parameter entry copy without removing this new field snapshot.
+
+Thus the initial LLVM contains one whole copy at the let into `r`'s slot;
+subsequent CFG transfers can also copy storage if their slots were not
+coalesced. It is not an LLVM aggregate SSA value that merely names the
+source's fields. For the reference witnesses the let's copy has this
+schematic form (the witnesses' row has eight `u64` fields, 64 bytes):
+
+```llvm
+call void @llvm.memmove.p0.p0.i64(ptr %r_slot, ptr %selected_row, i64 64, i1 false)
+```
+
+That copy captures the old value required by REF-1 and OWN-1. Simply
+forwarding a later load from `%r_slot` to `%selected_row`, or sinking the
+snapshot past a call that may write the selected row, is invalid if the
+later use must see the old value. Ordinary dead-store elimination cannot
+discard bytes that a subsequent read of the slot observes. The proposed
+explanation for Halo is that the copy is not sunk onto the read-only arm,
+while a may-write call blocks source forwarding and the still-read slot
+survives scalar replacement of aggregates (SROA).
+
+This last explanation is **not established by the emitter**. A write on a
+path with no subsequent use is not a semantic obstacle to forwarding on the
+other path, and even a required old value can be captured in scalar registers.
+SROA may replace a read slot; “the slot is read later” alone is not evidence
+that SROA cannot run. The minimal witnesses deliberately allow LLVM to
+inline the small sink, split the copy, hoist scalar reads, or sink a copy.
+If those transformations remove it, phase 1 has narrowed or rejected the
+explanation, rather than confirmed a compiler change is needed.
+
+### Witnesses and prior expectation
+
+Each file under [witnesses](witnesses/) is a separate complete program, with
+its own `main`. `inplace_let_probe` is the function to inspect in every file;
+the emitted symbol is `wf_inplace_let_probe`. Package declarations use the
+`InplaceLet` or `inplace_let_` prefix to avoid local/declaration collisions.
+The reference cases use a struct holding a two-element array, select an
+index constrained by `requires i < 2_u64`, and read two fields of a 64-byte
+row. Addition uses `+wrap` so arbitrary `u64` inputs introduce no unrelated
+overflow proof or runtime branch. The supplied values sum to 42 without
+wrapping. The sink changes both observed fields in both elements to 99 and
+7, so a post-write direct read would sum to 106.
+
+| Witness | Observation and prior expectation |
+|---|---|
+| [let-no-write.wf](witnesses/let-no-write.wf) | Binding read through a reference, no later source write. Expect the whole snapshot to disappear. |
+| [let-write-other-path.wf](witnesses/let-write-other-path.wf) | `let r = big^.inner[i]; if c { return r.f +wrap r.g; } inplace_let_sink(big: big); return 0_u64;`. The write arm never reads `r`. Expect a retained whole copy if the reported path-insensitive obstacle reproduces. `main` checks both arms and the write. |
+| [let-write-after-last-use.wf](witnesses/let-write-after-last-use.wf) | Computes the sum from `r`, calls the sink, returns the saved sum. Expect a retained whole copy under the hypothesis, though scalar loads before the call would be legal. |
+| [let-write-before-use.wf](witnesses/let-write-before-use.wf) | Calls the sink between the let and the reads of `r`. The old value is required: `main` expects 42 and separately checks the source is now 99 and 7. This falsifies an in-place rule that reads the modified source. A whole physical copy is not required if scalar snapshots preserve the old value. |
+| [let-field-of-param.wf](witnesses/let-field-of-param.wf) | `let r = big.inner;` selects an aggregate field of a by-value parameter. Separates the local projection copy from the parameter entry-copy optimization; expect the redundant local copy to disappear in this no-write control. |
+
+**Rejection criterion, recorded before CI:** if the other-path or
+last-use witness has no whole snapshot after optimization, that witness
+rejects the respective prediction that the later write alone retains it.
+If the no-write control retains it, a may-write call alone does not explain
+the contrast. If both write cases simplify, the five-case minimization has
+not reproduced Halo: inspect the downstream shape before drawing a wider
+conclusion. Inlining away the sink is one possible reason and must be
+reported from the artifacts. The before-use case must preserve the old
+observed fields, regardless of whether a memory intrinsic survives. A wrong
+106 is a correctness failure, never evidence for an optimization.
+
+A zero memcpy/memmove count does not by itself establish removal: a transfer
+may become scalar or vector loads and stores. Inspect the optimized reader
+and assembly for a complete 64-byte snapshot, scalar captures, load/store
+ordering, and the sink call's survival. Frame size corroborates that
+inspection; it does not identify the copy's cause. No runtime speed claim
+will be made from hosted-runner code inspection.
+
+### CI experiment and current evidence
+
+The temporary `inplace-lets` job, now removed, was a manual experiment option
+of `compute-bench.yml`; its definition is in this branch's history at
+[`0a0776ce9`](https://github.com/Ming-Research/Whitefoot/blob/0a0776ce9/.github/workflows/compute-bench.yml).
+It used hosted `ubuntu-24.04`, installed the exact LLVM major in
+`.github/llvm-major` by the gate's setup, built the compiler with the `gate`
+profile under `run-check.pl compiler/build`, and processed the no-write
+control first, then the other witnesses. Each was emitted with
+`whitefootc --emit-llvm -o <name>.ll`; the same `/usr/bin/clang` emitted
+`<name>.opt.ll` and `<name>.s` from that untouched input at `-O2` for
+`x86_64-unknown-linux-gnu`, with no forced call boundaries or IR edits.
+
+The summary counts actual memcpy and memmove calls separately in the raw
+and optimized **reader function**, excluding declarations and other
+functions. Its stack column is Clang's static stack-usage report from
+`-fstack-usage` (`<name>.su`), not just an assembly `subq` immediate; the
+assembly permits inspection of saves and red-zone use. A missing reader or
+stack record is an instrument error, not a zero. Small counter and
+missing-reader controls execute in CI before reporting. The artifact
+`inplace-lets-x86-64` contains raw/optimized LLVM, assembly, stack reports,
+`summary.tsv`, and a manifest of the source revision and toolchain. Copy
+counts and frame sizes are observations, not pass/fail thresholds. The job
+does not link or execute these programs, so emitted artifacts alone will
+not establish their exit status.
+
+It was dispatched with `-f experiment=inplace-lets` on this branch while the job existed.
+
+**First result**
+([run 37858726701](https://github.com/Ming-Research/Whitefoot/actions/runs/37858726701),
+hosted ubuntu-24.04, `/usr/bin/clang -O2`): every one of the five witnesses
+has one raw `llvm.memmove` in the reader and none after optimization, with a
+static stack of 0 bytes. Even `let-write-before-use` keeps only the two
+scalar field loads the old value needs. The prediction that a write to the
+source on another path keeps the copy is rejected for these shapes: a may-write
+call alone does not keep it.
+
+**Halo's shape, attributed.** A read-only reading of Halo's unsplit
+`sort_compare` disassembly against its source (Halo-wf run 37857130998,
+artifact `halo-slowsplit-disasm`) finds the whole-element `memcpy` is the
+`let local_call_5 = vm^.library_contexts.inner[context];` snapshot, but no
+later instruction reads its destination: the number path reloads the
+fields it needs from the source element. The copy is dead yet kept. Halo
+differs from the first witnesses in three ways: the element holds a
+union-laid-out payload enum (`Value`), which makes it memory-only; fields
+and operands of that enum type are passed by value, as pointers to stored
+slots, to calls that survive inlining (`slow`, `callback_values`); and
+those slots may share one `%wf.frame` allocation with the snapshot when the
+function's allocation roots do not all qualify for independent allocas
+(compiler/storage-placement), so an escaping sibling pointer can keep the
+optimizer from proving the snapshot's bytes dead. Two further witnesses
+test that mechanism and differ only in a marker struct's alignment:
+`let-union-mixed-frame` (a `u32` marker, predicted to share one frame and
+keep the copy) and `let-union-uniform-frame` (a `u64` marker, predicted to
+get independent allocas and lose it). If the mixed case loses the copy while
+its shared frame and aggregate calls survive, the frame-provenance
+hypothesis is rejected for this shape. Both contain a falsifier that must
+return the old snapshot's value after the source is written.
+
+**Second result**
+([run 37861211781](https://github.com/Ming-Research/Whitefoot/actions/runs/37861211781),
+same toolchain): the five first witnesses are unchanged; the two Halo-shaped
+ones separate.
+
+| witness | raw memmove | optimized memcpy | static stack |
+|---|---:|---:|---:|
+| `let-union-mixed-frame` (`u32` marker) | 3 | 3 | 296 |
+| `let-union-uniform-frame` (`u64` marker) | 3 | 1 | 56 |
+
+In the mixed case the reader keeps one `%wf.frame` struct allocation and the
+whole 152-byte `memcpy` into the snapshot's slot stays, beside the 16-byte
+argument copies; in the uniform case every slot is its own `alloca`, SROA
+splits the snapshot, and only the 12 bytes of the comparator the call needs
+are copied. The frame-provenance hypothesis survives its falsifier: the
+copy follows the frame representation, selected by compiler/storage-placement's
+uniform-alignment condition for independent allocations, not the later
+write. Whether Halo's `sort_compare` frame is mixed for this reason is
+inferred from its shape, not yet observed.
+
+The job does not link or execute these programs; checker acceptance is
+observed through `--emit-llvm`, runtime results remain unverified. Remove
+the temporary job and option once its conclusions are recorded here; keep
+the witnesses as evidence.
+
+### Selected follow-up: independent mixed-alignment roots
+
+The owner selected separate allocations for ordinary positive-sized roots
+with natural requested alignment. The question for the next `inplace-lets`
+CI run is whether removing the uniform-alignment restriction makes the mixed
+witness lose its dead 152-byte snapshot copy, as the uniform witness did.
+Compare both witnesses under the same toolchain and inspect their raw frame
+allocations, optimized copies and the before-use snapshot falsifier. Retention
+of the dead copy despite separate roots and surviving aggregate calls would
+reject this explanation for the mixed witness. The job does not execute the
+falsifier, so native snapshot correctness still needs the maintained tests.
+
+The independent extent is the checked sum of `size + emitted_alignment - 1`
+over roots, plus `maximum_alignment - 1`. Each preceding gap is at most its
+root's alignment minus one; final padding is at most the maximum minus one,
+so the bound covers any ordering. For `i8, i64, i8, i64`, the earlier proposed
+sum of sizes plus maximum alignment gives 26 bytes, but aligned starts
+`0, 8, 16, 24` need 32 bytes. The selected bound is 39 bytes. Both the sum and
+final padding addition must reject arithmetic overflow and target-domain
+overflow. This qualifies only planned roots, not machine spills or allocations
+outside the plan; exact stored-type qualification remains separate.
+
+Split dispatch frames, parallel lane frames and context argument frames keep
+their shared-object interfaces; zero-sized and over-aligned ordinary roots
+keep the struct fallback.
+
+**Result after the change**
+([run 37871073792](https://github.com/Ming-Research/Whitefoot/actions/runs/37871073792),
+head `0a0776ce9`, same toolchain): `let-union-mixed-frame` now matches
+`let-union-uniform-frame`, one optimized `memcpy` (the 12 bytes of the
+comparator the call needs) and a 56-byte static stack, against three copies
+including the dead 152-byte snapshot and 296 bytes before. The five first
+witnesses are unchanged. The explanation survives its falsifier for this
+shape. The job did not execute the programs; native correctness rests on the
+gate. The temporary job is removed; its definition is in this branch's
+history at `0a0776ce9`.
+
+### Halo with separate roots
+
+Observed on the 14900K by Halo-wf
+([run 37878776396](https://github.com/Ming-Research/Halo-wf/actions/runs/37878776396),
+artifact `halo-lm-inplace-let`): Halo's sources with `sort_compare`
+unsplit, built by experiment release `wf-exp-2ab47723e356` (main
+`a4a333fb8`'s tree) and by `wf-exp-b4e79dfdff01` (that base plus this
+change), 6 alternating pairs with a twin of the base.
+
+| kernel | head/base median |
+|---|---:|
+| sort with a comparator (300,000 elements) | 0.941 |
+| string-key | 0.748 |
+| integer-table | 0.866 |
+| concat | 0.866 |
+| fib | 0.969 |
+| sort (homogeneous fast path) | 0.951 |
+| binary-trees | 0.984 |
+| loop | 0.996 |
+
+The first five lie outside their spreads and the twin's largest deviation
+(integer-table 1.015, concat 0.984); none is slower. `sort_compare` drops
+from 297 instructions, one `memcpy` and a 0x1d8-byte frame to 255
+instructions, no `memcpy` and 0x60 bytes. `run`'s call arm is identical in
+both builds, its `Step` copy retained, as split frames are outside this
+change; `prepare` goes from two `memcpy` calls and 0x538 bytes to one and
+0x2d8, and whether the remaining one is the `Value` read is not yet
+attributed. Halo's check time is unchanged by this change (10.32 and 10.22 s
+against 10.25 and 10.40 s).
+
+### Earlier candidate rule
+
+The results above show the snapshot copy follows the frame representation,
+not a later write, so this rule was not needed for the observed cost. A by-value let could read through its source place when, on every path from
+the let to each use of the binding, nothing may write that source: no `set`
+to it or overlapping storage, no call whose writes reach it, and no write
+through a reference reaching it. The binding must never be written or have
+its address exposed, and the source place's storage must outlive all uses.
+The before-use witness is excluded. Phase 1 did not select this candidate
+or change snapshot placement. The later [read-through snapshot decision](#read-through-snapshots)
+selects it for the indexed Halo witness, whose remaining copy is now attributed.
+
+
+### Unobserved join forwarding
+
+Source inspection of main `d392af91c` identifies a separate cause for the
+provisional-result selection copy: `lower_match_from_value` carries every
+binding into a continuing join. In `let step = prepare(...); let final_step =
+step; match step { ... } return final_step;`, the unused post-match `step`
+parameter remains a distinct destination. Storage interference protects both
+join destinations, preventing coalescing; a union-enum edge transfer then
+emits a whole-value `memmove`.
+
+The change generalizes the outlined-chunk capture dependency walk to all
+finished lowered functions, before work estimation and storage planning.
+Instruction operands, terminator observations and every value or place used by
+a release are roots. A needed parameter retains every incoming argument;
+a forwarding cycle with no route to a root disappears. Ordinary instructions,
+cleanup order, source signatures and value IDs remain. Reconstruction and
+capture-ABI removal remain confined to the existing chunk caller.
+
+Without the unused duplicate, existing CFG transfer candidates can coalesce
+`prepare`, `unwind` and `final_step`. The returned-slot selector maps their
+common complete allocation to the result destination, which `emit_call` already
+passes. No interference, aliasing, exposed-address, swap snapshot, waiting or
+overlap restriction is relaxed; split parts retain their enclosing-frame
+lifetime rules. This is a code-inspection conclusion, pending CI evidence.
+
+The maintained 32-byte `Step` fixture asserts direct producer destinations and
+no whole-value copies in raw and optimized ordinary/split-arm definitions.
+The base retains the duplicate join destination and fails the raw assertions.
+Native cases observe the provisional value after recovery, simultaneous
+aggregate-carry swaps and exactly-once release of a cleanup-only owner. The
+shared walk's unit case distinguishes dead forwarding cycles from cycles
+reaching instruction, branch, return or cleanup uses. The earlier record-entry
+test now expects only genuinely read continuation carries; its copy and native
+assertions remain. Execution, including baseline failure, awaits CI.
+
+**Halo timing pending**. No specification, verdict or diagnostic change.
+
+### Read-through snapshots
+
+The owner selected option A on the status board on 2026-10-09: preserve
+by-value snapshot semantics, but read through a stable source address when
+the compiler proves that no intervening operation can change or invalidate
+it. This supersedes the earlier unselected candidate for this work; the
+separate-allocation results above remain evidence for their own change.
+
+The supplied Halo optimized artifact `bench.opt.path.ll`, function
+`prepare$instance$2ead40aebe81bc32`, block `bb5`, contains:
+
+```llvm
+%t4 = getelementptr inbounds nuw %wf.t.90128e7f982cc38a, ptr %t4.split, i64 %v24639
+call void @llvm.memmove.p0.p0.i64(ptr noundef nonnull align 8 dereferenceable(16) %wf.slot.0, ptr noundef nonnull align 1 dereferenceable(16) %t4, i64 16, i1 false)
+%t1.i.i = load i32, ptr %wf.slot.0, align 8
+```
+
+The source is `let v = stack^.inner[fslot]; let view = func_of(v: v);`
+in Halo `lib/halo/vm/calls.wf:296–297`; `state.wf:81` defines `func_of`
+with a by-value `Value` parameter. The retained IR settles the earlier
+attribution question: this particular 16-byte snapshot survives host
+optimization. It supplies no timing result for its removal.
+
+Source inspection on Whitefoot `d903bf3f63e970653504984bd333ee2a34ac7bb7`
+confirms `CheckedExpression::ReadStorage` calls `load_storage_value`, which
+emits `IrOperation::Load`. Stored-aggregate planning reserves a snapshot
+slot, and `load_place_result` copies the complete value to it. The existing
+immutable-parameter path removes an eligible callee's entry copy but does
+not remove this caller copy.
+
+The implementation question is whether placement can eliminate that copy
+while preserving the old value on all mutation paths. Compare the maintained
+backend fixtures before and after the placement change, keeping observation
+callees out of line. A whole-value copy on an eligible hot path rejects the
+optimization claim. Observing a changed value, losing a required capture,
+or emitting an address across part boundaries rejects correctness. Baseline
+failure, generated LLVM and native execution remain pending CI. Only the
+owner-authorized released compiler's `--check` fixture admission runs were
+made on the editing machine; they do not validate the changed backend.
+
+#### Placement and materialization
+
+The planner records the Load's captured address for complete, unexposed slots
+whose values come only from that Load through unchanged CFG transfers.
+Scalar field/tag observations and eligible synchronous by-value calls read
+through. Each other use gets a copy immediately before that instruction or
+terminator, on that path only. The emitter uses private backing for that
+operation and the captured source address for other eligible uses. Copies
+never rely on which block was emitted first, nor on a previous operation
+having initialized backing. A returned snapshot can materialize directly
+into its result destination. Exposed and mixed-origin slots still retain the
+Load copy: an escaping mutable address needs persistent snapshot storage.
+
+Every read-through use requires source stability for the complete operation;
+every materialization requires stability from the Load to just before that
+operation. Thus a cold call that writes the source can receive its old value
+from a copy taken immediately before the call. This also covers an immutable
+value formal when another argument authorizes the source write during that
+call: immutability of the value formal alone cannot make the use read through.
+If any intervening write or
+invalidation can reach any required use, the entire snapshot falls back to
+its original Load copy. The owner requested this lazy placement within
+option A on 2026-10-09; the snapshot's logical semantics are unchanged.
+
+Typed projections, loads and unchanged reference carries retain a containing
+root. Checked reference formals and known fresh local allocations provide
+root identities; unknown producers or rebindings cannot establish a root.
+The finite CFG walk explores both clean and invalidated states. Same-root or
+unknown-root stores, container changes, replacements, releases and call
+writes invalidate the source. Calls use retained read-only reference-formal
+facts; unknown contracts, waiting calls and unclassified operations remain
+barriers. Effects on a proved separate root do not block placement.
+
+Halo's retained `prepare` snapshot was rejected because `metamethod`'s
+`reads(name)` range had no read-only formal fact, and its constant text slice
+(`ConstantAddress` → `SliceFromRun` → `SliceRange`) had an unknown root: the
+call falsely dirtied the stack source before a later observation of `v`.
+Lowering now retains the no-declared-write fact for ordinary references,
+ranges and runs, and the call barrier consumes it for both reference source
+modes. This follows CALL-1 and REF-4 without assuming range disjointness;
+writing ranges still invalidate overlapping sources. The maintained backend
+case pairs parameter and constant text ranges with an overlapping range
+write. Its source passed the authorized prebuilt compiler's `--check`;
+copy placement and native execution remain pending.
+
+An own argument whose type consists entirely of inline scalars, structural
+struct/enum fields or fixed arrays/windows cannot reach another allocation.
+It therefore contributes no source invalidation, even if an unknown producer
+returned it. This matters for Halo's `func_of(v: tm)` between `metamethod`
+and a later observation of `v`. The type walk excludes Box, Shared, opaque,
+reference and other indirect representations; absence of release work is
+not used as proof of an inline representation. A transfer of a potentially
+aliasing owner into a constructor, binding, box, store or window remains a
+barrier: moving it can hide the source under a different root before release.
+
+A write after the final use is irrelevant. Re-executing the Load starts a
+new interval only when no old snapshot carry is live into it. Uses employ
+the captured address, never a recomputed index. All uses must stay in the
+enclosing part or one possible split arm, and potential dispatch-header
+loads stay excluded because header instructions can be hoisted. Waiting and
+overlapping execution remain excluded. Overlap restrictions follow the world
+being emitted, including callee eligibility and call invalidation: a sequential
+clone executes its body and reachable calls without deferred hand-outs, so
+retained overlap annotations do not exclude it. Source stability, waiting,
+exposure and split-part restrictions still apply. These rules use no source
+names and add no proof, diagnostic, specification or verdict change.
+
+#### Destination-result calls
+
+The caller-side restriction was unnecessary and is removed. A read-through
+call still requires a checked own parameter, an acyclic synchronous body,
+no overlapping execution, and an unexposed complete slot holding only that
+parameter and not serving as its result. Acyclicity excludes split callees.
+A destination result does not invalidate that proof: such callees already
+capture their indirect inputs before a body or result write. Passing a stable element
+address removes the caller's redundant capture while preserving the callee's
+ABI-required capture.
+
+The separate callee-entry restriction in `select_incoming_places` remains
+necessary for the current general ABI: a destination is not always distinct
+from inputs. `call_reuse_operand_for_type` may reuse a consumed input as the
+result, and `returned_storage_slot` permits a different parameter's slot to
+be redirected into that destination. For example, this schematic fragment
+uses a `Big` record large enough to require a destination result:
+
+```text
+fn choose(a: Big, b: Big) -> result: Big {
+  let out = a;
+  let old = b.last;
+  set out.last = old;
+  return out;
+}
+let result = choose(a: left, b: move right);
+```
+
+If the result occupies `right`, the callee's entry transfer from `a` into
+`out` overwrites `b`'s incoming storage. Letting `b` read through that pointer
+would observe `a.last`, not the original `right.last`. The existing prologue
+captures `b` before initializing the result and prevents this error. That
+protection is unchanged; it is not grounds for copying the caller's separate
+snapshot too. Removing callee-entry captures would require a distinct ABI or
+a result/input disjointness proof, neither of which this change introduces.
+
+#### Halo prepare trace
+
+This is source inspection of the supplied Halo tree, not newly generated IR.
+The snapshot at `calls.wf:296` has four observations:
+
+| Use of `v` | Placement under the revised rule |
+|---|---|
+| `func_of(v: v)`, line 297 | Read through the captured stack element. `state.wf:81` matches the tag and reads the selected scalar function handle or native id; its unchanged by-value parameter is eligible. |
+| Native id 111 error, `call_type_error(..., v: v, ...)`, line 322 | Read through. The preceding config store and this call's writes affect `vm`, a separate checked root from `stack`. `state.wf:1344` has an acyclic body and never changes or exposes `v`. |
+| Other branch, `metamethod(vm: vm, v: v, ...)`, line 442 | Read through at the caller. The `Value` destination is separate from this captured element, and `slow.wf:134` keeps its input capture required by the general destination-result ABI. Its writes reach `vm`; the name range is read-only. |
+| Failed metamethod lookup, `call_type_error(..., v: v, ...)`, line 445 | Read through. `func_of(v: tm)` observes a different inline `Value` and cannot change the stack element; intervening writes still reach only `vm`. |
+
+Lua and ordinary native paths have no further use of `v` before their stack
+mutations or returns. In the Other branch, `ensure_stack` at line 458 and
+the following shifts happen after the last use; the next loop iteration
+loads a fresh `v`. No caller-side copy of this `v` is expected, even on the
+error paths. `metamethod` may still copy at its own entry. Lazy per-use
+materialization covers consumers outside this eligibility subset without
+putting their copies back on the hot path. Exact slot eligibility, dispatch
+partitioning and the final copy traffic require rebuilt Halo IR to confirm.
+
+#### Maintained cases and fixture admission
+
+`compiler/src/backend/tests/read_through.rs` covers:
+
+- A 16-byte prepare-like snapshot with a surviving non-inlined classifier and
+  direct tag load: raw and optimized eligible bodies must have no whole copy.
+- Source writes and writing calls before a later read: the Load copy remains
+  and the old value is 7 rather than the replacement 99. Growth and push have
+  explicit copy assertions even if allocation or the earlier element stays put.
+- Unrelated-root writes and writes after the last use: no snapshot copy.
+- Moving a Box owner into a wrapper released before the use: retain the copy,
+  so the observation cannot read freed storage. The fixture reads through an
+  explicit reference to the Box content to produce a Load; a direct
+  `holder.cell.inner` expression lowers as BoxDeref and does not exercise
+  Load snapshot placement.
+- Mutable by-value consumers: privately materialize at the use. An exposed
+  snapshot binding still copies at the Load, and subsequent source reads
+  check that local mutation did not change the source.
+- Actual split arms: local use reads through, cross-part use retains backing.
+- A hot tag-only path and a cold ineligible call: exactly one raw copy in
+  the cold successor, immediately before the call. The call replaces the source
+  with 99 before reading its argument, then mutates its local parameter to 37;
+  it must return 737 from old value 7 and local value 37. In the paired case,
+  the source changes before the cold call, so the copy must precede the branch
+  at the Load, and the call still returns 737. Both hot paths return 1.
+- A destination-result consumer followed by a call using its returned inline
+  value and then another observation of the original snapshot: the caller
+  passes the element directly and observes 15; the destination-result callee
+  retains its input capture. A returned snapshot materializes at its return
+  directly into the result destination. An immutable-formal call that changes
+  the source through another argument must capture immediately before the
+  call, after an earlier read-through observation. Its callee reads the
+  parameter in place; both observations must see 7 and sum to 14, not 106.
+  The earlier observation distinguishes lazy placement from a Load copy.
+
+The fixture repairs preserve the four committed tests' selection, dispatch,
+provisional-value, swap and exactly-once cleanup observations. They expand
+all blocks (including empty arms), use distinct match binder names, and bind
+`Command` constructors before calls. The new read-through fixtures also
+remove the leading blank line, spell the unit value `unit`, and make `touch`
+actually read its declared reference root. No expected outcome was weakened.
+
+On 2026-10-09, the authorized released `whitefootc --check FILE` accepts eight
+standalone files assembled from the exact fixture bytes: `select_step.wf`
+with an inert main; the two payload-enum tests; the split selection test;
+the cleanup-only owner test; and the three read-through tests. No module
+graph is needed. The released compiler predates this branch, so these runs
+establish syntax, canonical form and acceptance only. Rust authoring used
+`rustfmt`; no Cargo, Make, build, native test or performance run was made.
+
+The effect whitelist, known-root subset, callee restrictions and exposure or
+mixed-origin exclusions can retain safe copies. Analysis cost, baseline
+failure, optimized shape, facts-off behavior, native correctness and the
+full compiler gate remain unverified. **Halo timing and rebuilt IR pending.**

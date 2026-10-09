@@ -142,6 +142,7 @@ macro_rules! operation_operands {
             | IrOperation::AtomicGroupTarget { object: value, .. }
             | IrOperation::ConcurrentHashMapCount { table: value }
             | IrOperation::ConcurrentHashMapClear { table: value }
+            | IrOperation::ConcurrentHashMapReleaseReserve { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
             | IrOperation::TableHoldKey { key: value, .. }
             | IrOperation::TableHoldKeys { set: value, .. }
@@ -236,6 +237,15 @@ macro_rules! operation_operands {
                 private,
                 ..
             } => vec![$value(slice), $value(offset), $value(private)],
+            IrOperation::IndexedBlocks { address } => vec![$value(address)],
+            IrOperation::IndexedBlock { blocks } => vec![$value(blocks)],
+            IrOperation::IndexedReference { original, roots } => std::iter::once($value(original))
+                .chain(
+                    roots
+                        .$iter()
+                        .map(|crate::ir::IrIndexedRootReference { block, .. }| $value(block)),
+                )
+                .collect(),
             IrOperation::SliceMeasure { slice } => vec![$value(slice)],
             IrOperation::SliceIndex { slice, offset, .. }
             | IrOperation::SliceAddress { slice, offset, .. } => {

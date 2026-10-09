@@ -11,13 +11,14 @@ mod buffer;
 mod cleanup;
 mod contexts;
 mod conversion;
-mod dispatch;
+pub(super) mod dispatch;
 mod floating;
 mod floor;
 mod frames;
 mod frontier;
 mod handler_words;
 mod indexed;
+mod indexed_blocks;
 mod integer;
 mod operations;
 mod paged;
@@ -1108,6 +1109,8 @@ enum FunctionSlot {
     OwnedValue(usize),
     ArrayFillIndex(IrValueId),
     Address(IrValueId),
+    IndexedDirectory(IrValueId),
+    IndexedReference(IrValueId, usize),
     /// The slot a register-returned definition's public entry gives its
     /// body to construct the result in.
     Result,
@@ -1153,12 +1156,13 @@ struct PlannedFunctionSlot {
     pointer: String,
 }
 
-/// The one physical frame an ordinary generated function owns.
+/// The planned allocation roots an ordinary generated function owns.
 ///
 /// Planning walks the already-selected IR schedule before emission and gives
-/// every actual materialization a semantic key. Target layout then turns the
-/// logical slots into one explicitly padded struct. Emission can only obtain a
-/// pointer by that key; it has no string-shaped `alloca` escape hatch.
+/// each planned materialization a semantic key. Target layout then turns the
+/// logical slots into an explicitly padded struct or qualified independent
+/// allocations. Emission obtains each planned pointer by that key; context
+/// groups, shared records, dispatch pins and cleanup temporaries are separate.
 struct FunctionFramePlan {
     target: TargetFramePlan,
     slots: HashMap<FunctionSlot, PlannedFunctionSlot>,
@@ -1191,6 +1195,7 @@ impl FunctionFramePlan {
             if Some(slot) != result_slot
                 && storage.destination(slot).is_none()
                 && storage.field_destination(slot).is_none()
+                && storage.needs_snapshot_backing(slot)
             {
                 push_function_slot(
                     &mut specifications,
@@ -1245,6 +1250,33 @@ impl FunctionFramePlan {
                             TargetStorageType::integer(64),
                             None,
                         )?;
+                    }
+                    IrOperation::IndexedBlocks { .. } => {
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            FunctionSlot::IndexedDirectory(*result),
+                            TargetStorageType::source(IrType::Address(IrAddressed::Unit)),
+                            None,
+                        )?;
+                    }
+                    IrOperation::IndexedReference { original, roots } => {
+                        let Some(IrType::Address(referent)) = function.value_type(*original) else {
+                            return Err(BackendFailure::InvalidIr);
+                        };
+                        for (index, (_, ty)) in
+                            indexed_blocks::reference_slots(program, referent.ty(), roots)?
+                                .iter()
+                                .enumerate()
+                        {
+                            push_function_slot(
+                                &mut specifications,
+                                &mut ordered,
+                                FunctionSlot::IndexedReference(*result, index),
+                                TargetStorageType::source(*ty),
+                                None,
+                            )?;
+                        }
                     }
                     IrOperation::AddressOf { referent, .. } => {
                         let storage = TargetStorageType::source(referent.ty());
@@ -1371,6 +1403,7 @@ impl FunctionFramePlan {
 
     fn render(
         &self,
+        target: TargetLayout,
         program: &IrProgram,
         references: &mut References,
     ) -> Result<String, BackendFailure> {
@@ -1384,10 +1417,15 @@ impl FunctionFramePlan {
             .map(|field| llvm_storage_type_with_references(program, field, &mut references.types))
             .collect::<Result<Vec<_>, _>>()?;
         let mut output = String::new();
-        if let Some(alignment) = self.target.independent_slot_alignment() {
-            // The complete frame was qualified before this representation
-            // choice. Keep each full allocation root, including parents of
-            // reused result fields; only unrelated roots gain distinct LLVM
+        if self
+            .target
+            .independent_extent(target)
+            .map_err(BackendFailure::TargetLayout)?
+            .is_some()
+        {
+            // The bound uses each root's emitted alignment. Keep each full
+            // allocation root, including parents of reused result fields;
+            // only unrelated roots gain distinct LLVM
             // allocation provenance. Storage interference is unchanged.
             for key in &self.ordered {
                 let slot = self.slots.get(key).ok_or(BackendFailure::InvalidIr)?;
@@ -1398,6 +1436,7 @@ impl FunctionFramePlan {
                 let ty = fields
                     .get(field.physical_index() as usize)
                     .ok_or(BackendFailure::InvalidIr)?;
+                let alignment = field.alignment();
                 writeln!(
                     output,
                     "  {} = alloca {ty}, align {alignment}",
@@ -1411,7 +1450,7 @@ impl FunctionFramePlan {
         writeln!(
             output,
             "  %wf.frame = alloca {frame_type}, align {}",
-            self.target.layout().align()
+            self.target.struct_layout().align()
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         for key in &self.ordered {
@@ -1430,6 +1469,29 @@ impl FunctionFramePlan {
         }
         Ok(output)
     }
+}
+
+/// Ordinary roots before call hand-out emission, for fixtures without split
+/// dispatch, context groups or shared records. This deliberately does not run
+/// the emitter: an allocation added while actualizing a call is not a root.
+#[cfg(test)]
+pub(super) fn ordinary_frame_prelude_for_test(
+    program: &IrProgram,
+    target: TargetLayout,
+    function: &IrFunction,
+) -> Result<String, BackendFailure> {
+    let storage = FunctionStoragePlan::build(program, function)?;
+    let frame = FunctionFramePlan::build(
+        target,
+        program,
+        function,
+        FunctionFrameContents {
+            storage: &storage,
+            result_slot: places::returned_storage_slot(function, &storage),
+            spills: &[],
+        },
+    )?;
+    frame.render(target, program, &mut References::default())
 }
 
 /// Reserves one logical frame slot under its semantic key.
@@ -1486,6 +1548,8 @@ struct FunctionEmitter<'program, 'state> {
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
+    /// Read-through slots privately captured for the current operation only.
+    snapshot_copies: BTreeSet<usize>,
     /// Arguments a split part hands to a callee through its pin slot
     /// instead of the reference itself, for the duration of that call
     /// (compiler/match-dispatch-lowering).
@@ -1620,10 +1684,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 spills: &[],
             },
         )?;
-        let mut output = FunctionBody::default();
-        let mut entry_prelude = frame.render(program, &mut output.references)?;
-        entry_prelude.push_str(&contexts::context_group_prelude(function));
-        entry_prelude.push_str(&shared::record_prelude(function));
         Ok(Self {
             program,
             function,
@@ -1631,13 +1691,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             window_address_facts,
             intrinsics,
             incoming: Vec::new(),
-            output,
-            entry_prelude,
+            output: FunctionBody::default(),
+            entry_prelude: String::new(),
             frame,
             storage,
             result_slot,
             incoming_places: HashMap::new(),
             materialized: HashMap::new(),
+            snapshot_copies: BTreeSet::new(),
             pin_names: HashMap::new(),
             temporary: 0,
             parallel,
@@ -1932,6 +1993,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 abi.result().uses_destination(),
                 &result,
             )?;
+            if self.dispatch.is_none() {
+                // Select split dispatch first: its shared struct does not
+                // need the bound for independently reordered allocations.
+                self.entry_prelude =
+                    self.frame
+                        .render(self.target, self.program, &mut self.output.references)?;
+                self.entry_prelude
+                    .push_str(&contexts::context_group_prelude(self.function));
+                self.entry_prelude
+                    .push_str(&shared::record_prelude(self.function));
+            }
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
@@ -2150,8 +2222,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ty = public.result().ty();
         let (mut parameters, mut references) = self.signature_parameters(body)?;
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
-        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.program, &mut references)?;
+        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
+            self.target,
+            self.program,
+            &mut references,
+        )?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
@@ -2278,6 +2353,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         index: usize,
         instruction: &IrInstruction,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, index)?;
         match instruction {
             IrInstruction::StoreSlice {
                 slice,
@@ -2607,6 +2683,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SliceRange { slice, start, end } => {
                 self.emit_slice_range(result, ty, *slice, *start, *end, None)
             }
+            IrOperation::IndexedBlocks { address } => {
+                self.emit_indexed_blocks(result, ty, *address)
+            }
+            IrOperation::IndexedBlock { blocks } => self.emit_indexed_block(result, *blocks),
+            IrOperation::IndexedReference { original, roots } => {
+                self.emit_indexed_reference(result, *original, roots)
+            }
             IrOperation::IndexedRange {
                 slice,
                 start,
@@ -2700,13 +2783,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::ConcurrentHashMapClear { table } => {
                 self.emit_keyed_table_clear(result, *table)
             }
+            IrOperation::ConcurrentHashMapReleaseReserve { table } => {
+                self.emit_keyed_table_release_reserve(result, *table)
+            }
             IrOperation::TableLockEntry {
                 record,
                 table,
                 key,
                 read,
+                inserts,
                 stable_absence,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
+            } => self.emit_table_lock_entry(
+                result,
+                *record,
+                *table,
+                *key,
+                *read,
+                *inserts,
+                *stable_absence,
+            ),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
@@ -2853,6 +2948,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         block: IrBlockId,
         terminator: &IrTerminator,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
         match terminator {
             IrTerminator::Unreachable => {
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)

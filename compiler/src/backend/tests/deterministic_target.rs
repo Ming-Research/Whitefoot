@@ -55,7 +55,7 @@ const CHUNKED_READ: &[u8] = include_bytes!("../../../../tests/programs/io_chunke
 const WRITE_PREFIX: &[u8] = include_bytes!("../../../../tests/programs/io_write_prefix.wf");
 
 /// `IoError`'s variants in declared order, each with whether it carries the
-/// native code and origin: every variant but `DeadlinePassed` does.
+/// native code and origin: every variant but `DeadlinePassed` and `Cancelled` does.
 fn io_error_classes() -> Vec<(&'static str, bool)> {
     let declaration = crate::library::RECORDS
         .iter()
@@ -814,7 +814,10 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
   set bytes[2_u64] = 67_u8;
   let payload = &bytes[0_u64..3_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {
@@ -1336,7 +1339,10 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
   let ordinary_source = &bytes.inner[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
     }
     Err(error: problem) => {
@@ -1391,7 +1397,10 @@ pub(super) fn assert_zero_write_outcome() {
   let bytes = array_filled::<u8, 2>(value: 119_u8);
   let window = &bytes[0_u64..2_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline) {{
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {{
     Ok(value: written) => {{
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {{

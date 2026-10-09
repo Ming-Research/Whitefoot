@@ -1,0 +1,9 @@
+opaque struct Hidden {
+  value: u64;
+}
+
+const empty: Array<Hidden, 0> =[];
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

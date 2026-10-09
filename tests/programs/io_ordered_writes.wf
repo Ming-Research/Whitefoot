@@ -15,21 +15,30 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   set bytes[2_u64] = 67_u8;
   let window = &bytes[0_u64..3_u64];
   let no_deadline = None<std::time::Instant>();
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: first) => {
     }
     Err(error: problem) => {
       return exit_status(code: 210_u8);
     }
   }
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 2_u64, deadline: no_deadline) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: second) => {
     }
     Err(error: problem) => {
       return exit_status(code: 211_u8);
     }
   }
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 2_u64, end: 3_u64, deadline: no_deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = write_once(factory: &entry_factory, output: &out, source: window, start: 2_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match wait_outcome_3 {
     Ok(value: third) => {
       return exit_status(code: 0_u8);
     }

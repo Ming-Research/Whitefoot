@@ -1,0 +1,13 @@
+struct Zeroes {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn build() -> result: Zeroes pure {
+  let cells = array_filled::<u64, 1>(value: 0_u64);
+  return Zeroes(cells: cells);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

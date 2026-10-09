@@ -15,7 +15,16 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     return exit_status(code: 1_u8);
   }
   let deadline = std::time::instant_after(instant: second, nanoseconds: 20000000_u64);
-  std::time::sleep_until(deadline: deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let sleep_outcome = std::time::sleep_until(deadline: deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match sleep_outcome {
+    Ok(value: done) => {
+    }
+    Err(error: cancelled) => {
+      return exit_status(code: 4_u8);
+    }
+  }
   let later = std::time::now(clock: &clock);
   let reached = std::time::instant_reached(deadline: deadline, instant: later);
   if reached {
