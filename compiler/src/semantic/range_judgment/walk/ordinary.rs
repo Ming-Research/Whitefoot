@@ -163,6 +163,52 @@ impl Walker<'_> {
         }
     }
 
+    pub(super) fn goal_condition_with(
+        &mut self,
+        state: &mut State,
+        expression: &super::super::super::goal::GoalExpression,
+        function: &CheckedFunction,
+        values: &[Value],
+    ) -> Option<Cond> {
+        use super::super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
+        match expression {
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(value))) => {
+                Some(Cond::Constant(*value))
+            }
+            GoalExpression::Datum(GoalDatum::Parameter {
+                ordinal,
+                projections,
+                ty,
+            }) => {
+                match self.goal_parameter(
+                    state,
+                    function,
+                    values,
+                    *ordinal as usize,
+                    projections,
+                    *ty,
+                )? {
+                    Value::Bool(condition) => Some(condition),
+                    _ => None,
+                }
+            }
+            GoalExpression::Operation {
+                row: GoalOperation::Boolean(operation),
+                arguments,
+                ..
+            } => {
+                let parts = arguments
+                    .iter()
+                    .map(|argument| self.goal_condition_with(state, argument, function, values))
+                    .collect::<Option<Vec<_>>>()?;
+                boolean(*operation, parts)
+            }
+            _ => self
+                .goal_literal_with(state, expression, function, values)
+                .map(Cond::Literal),
+        }
+    }
+
     pub(super) fn has_ordinary(&self, site: &NodePath, subject: &ObligationSubject) -> bool {
         self.dry == 0
             && self.deferred.iter().any(|(index, _)| {
@@ -183,27 +229,60 @@ impl Walker<'_> {
         if !self.has_ordinary(site, subject) {
             return;
         }
-        let proved = match (goals, written) {
-            (Some(goals), Some(written)) => goals.iter().all(|goal| {
-                let (units, choices) = state.premises(&self.world);
-                let mut query = Query {
+        let goal = goals.map(|goals| Cond::And(goals.iter().cloned().map(Cond::Literal).collect()));
+        self.ordinary_condition(state, site, subject, goal.as_ref(), written);
+    }
+
+    pub(super) fn ordinary_condition(
+        &mut self,
+        state: &State,
+        site: &NodePath,
+        subject: &ObligationSubject,
+        goal: Option<&Cond>,
+        written: Option<&[WrittenInstance]>,
+    ) {
+        if !self.has_ordinary(site, subject) {
+            return;
+        }
+        let negation = goal.and_then(|goal| alternatives(goal, false));
+        let proved = match (negation, written) {
+            (Some(negation), Some(written)) => {
+                let (units, mut choices) = state.premises(&self.world);
+                choices.push(negation);
+                let query = Query {
                     units,
                     choices,
                     ..Query::default()
                 };
-                let negation = conclusion_negation(goal);
-                match negation.as_slice() {
-                    [single] => query.units.push(single.clone()),
-                    _ => query
-                        .choices
-                        .push(negation.into_iter().map(|item| vec![item]).collect()),
+                match facts::judge(&mut self.world, &self.facts, &state.facts, written, query) {
+                    Ok(Verdict::Refuted) => true,
+                    Ok(Verdict::Open) => false,
+                    Err(Capacity::Arithmetic) => {
+                        self.issues.push(RangeIssue::Unsupported {
+                            node: site.clone(),
+                            feature: UnsupportedSemanticFeature::RangeArithmetic,
+                        });
+                        false
+                    }
+                    Err(capacity) => {
+                        self.issues.push(RangeIssue::Undischarged {
+                            node: site.clone(),
+                            fact: "the deferred ordinary obligation".to_owned(),
+                            site: "an ordinary obligation",
+                            relation: None,
+                            capacity: Some(capacity.describe()),
+                        });
+                        false
+                    }
                 }
-                matches!(
-                    facts::judge(&mut self.world, &self.facts, &state.facts, written, query),
-                    Ok(Verdict::Refuted)
-                )
-            }),
-            _ => false,
+            }
+            _ => {
+                self.issues.push(RangeIssue::Unsupported {
+                    node: site.clone(),
+                    feature: UnsupportedSemanticFeature::RangeOrdinaryGoal,
+                });
+                false
+            }
         };
         for (index, answer) in &mut self.deferred {
             let record = &self.function.obligations[*index];
@@ -384,5 +463,111 @@ impl Walker<'_> {
             written.push((fact, arguments, Vec::new()));
         }
         Some(written)
+    }
+}
+
+/// Alternatives of conjunctions, preserving the complete Boolean formula.
+/// In particular, negating a disjunction conjoins each operand's negation.
+fn alternatives(condition: &Cond, truth: bool) -> Option<Vec<Vec<Literal>>> {
+    match condition {
+        Cond::Literal(literal) => Some(vec![vec![if truth {
+            literal.clone()
+        } else {
+            negated(literal)
+        }]]),
+        Cond::Constant(value) => Some(if *value == truth {
+            vec![Vec::new()]
+        } else {
+            Vec::new()
+        }),
+        Cond::Not(inner) => alternatives(inner, !truth),
+        Cond::And(parts) | Cond::Or(parts) => {
+            let conjunction = matches!(condition, Cond::And(_)) == truth;
+            let mut result = if conjunction {
+                vec![Vec::new()]
+            } else {
+                Vec::new()
+            };
+            for part in parts {
+                let next = alternatives(part, truth)?;
+                if conjunction {
+                    result = result
+                        .into_iter()
+                        .flat_map(|prefix| {
+                            next.iter().map(move |suffix| {
+                                let mut row = prefix.clone();
+                                row.extend(suffix.iter().cloned());
+                                row
+                            })
+                        })
+                        .collect();
+                } else {
+                    result.extend(next);
+                }
+            }
+            Some(result)
+        }
+        Cond::Unknown => None,
+    }
+}
+
+/// Boolean operators keep comparisons intact through arbitrary nesting.
+pub(super) fn boolean(operation: CheckedBooleanOperation, parts: Vec<Cond>) -> Option<Cond> {
+    match (operation, parts.as_slice()) {
+        (CheckedBooleanOperation::And, [_, _]) => Some(Cond::And(parts)),
+        (CheckedBooleanOperation::Or, [_, _]) => Some(Cond::Or(parts)),
+        (CheckedBooleanOperation::Not, [part]) => Some(Cond::Not(Box::new(part.clone()))),
+        (CheckedBooleanOperation::ExclusiveOr, [left, right]) => Some(Cond::Or(vec![
+            Cond::And(vec![left.clone(), Cond::Not(Box::new(right.clone()))]),
+            Cond::And(vec![Cond::Not(Box::new(left.clone())), right.clone()]),
+        ])),
+        _ => None,
+    }
+}
+
+/// OP-2 domains whose results RANGE-2 intentionally leaves opaque.
+pub(super) fn integer_domain(
+    operation: CheckedIntegerOperation,
+    ty: IntegerType,
+    values: &[Linear],
+) -> Option<Cond> {
+    let differs = |value: &Linear, bound| {
+        Cond::Literal(literal(
+            value.clone(),
+            Relation::NotEqual,
+            Linear::constant(bound),
+        ))
+    };
+    match (operation, values) {
+        (
+            CheckedIntegerOperation::DivideExact | CheckedIntegerOperation::RemainderExact,
+            [dividend, divisor],
+        ) => {
+            let nonzero = differs(divisor, 0);
+            Some(if ty.signed() {
+                Cond::And(vec![
+                    nonzero,
+                    Cond::Or(vec![
+                        differs(dividend, integer_range(ty).0),
+                        differs(divisor, -1),
+                    ]),
+                ])
+            } else {
+                nonzero
+            })
+        }
+        (
+            CheckedIntegerOperation::NegateExact | CheckedIntegerOperation::AbsoluteExact,
+            [value],
+        ) => Some(differs(value, integer_range(ty).0)),
+        (
+            CheckedIntegerOperation::ShiftLeftExact | CheckedIntegerOperation::ShiftRightExact,
+            [_, amount],
+        ) => Some(Cond::Literal(literal(
+            amount.clone(),
+            Relation::Less,
+            Linear::constant(i128::from(ty.width())),
+        ))),
+        _ => None,
     }
 }

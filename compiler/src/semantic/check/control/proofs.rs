@@ -19,6 +19,7 @@ use super::super::super::model::{
     CheckedMeasure, CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
     CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType, WindowShape,
 };
+use super::super::references::RequiredReferent;
 use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
 use super::StatementResult;
@@ -634,6 +635,7 @@ impl<'unit> Checker<'_, 'unit> {
                     bindings,
                     loop_depth,
                     owner.value_role(),
+                    RequiredReferent::IndexableStorage,
                 )?;
                 if let Some(declaration) = declaration
                     && !allowed_values.contains(&declaration)
@@ -680,6 +682,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 loop_depth,
                 owner.value_role(),
+                RequiredReferent::MeasuredStorage,
             )?;
             // [INV-1] the place resolves in the same context an IDENT does,
             // and its root is one of the values that context admits.

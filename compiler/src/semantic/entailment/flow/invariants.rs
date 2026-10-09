@@ -523,7 +523,36 @@ impl Judging<'_, '_, '_> {
                 inputs,
                 element: counted.map(|(binder, lower)| {
                     let variable = self.input.fresh_name("k");
+                    let admitted = |binding| {
+                        binding == binder
+                            || self
+                                .input
+                                .function
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter.binding == binding)
+                    };
+                    let requirement_in_scope = invariant
+                        .relation
+                        .left
+                        .postorder()
+                        .chain(invariant.relation.right.postorder())
+                        .all(|expression| match &expression.kind {
+                            CheckedAffineExpressionKind::Local { binding, .. } => {
+                                admitted(*binding)
+                            }
+                            CheckedAffineExpressionKind::Measure(value) => {
+                                let mut in_scope = true;
+                                crate::semantic::permission::visit_read_bindings(
+                                    value,
+                                    &mut |binding| in_scope &= admitted(binding),
+                                );
+                                in_scope
+                            }
+                            _ => true,
+                        });
                     CountedElementRelation {
+                        requirement_in_scope,
                         requirement: self.input.fresh_name(&format!("{}_all", invariant.name)),
                         binder,
                         binder_name: self.input.binding_name(binder),

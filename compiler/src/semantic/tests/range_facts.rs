@@ -2127,3 +2127,301 @@ fn a_page_below_a_range_element_uses_its_projected_page_count_for_the_bound() {
     );
     field_range_verdict(&source, None);
 }
+
+/// The corpus owns the verdicts; this pins each negative to the intended
+/// post-match call rather than an earlier type, effect or reference error.
+#[test]
+fn reference_match_payload_writes_reach_the_container() {
+    for (source, rejected) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-scalar-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-scalar-call.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-match-deref-scalar-read.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-struct-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-struct-call.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-match-deref-struct-read.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-borrow-scalar-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-borrow-scalar-call.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-match-borrow-scalar-read.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-borrow-struct-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-borrow-struct-call.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-match-borrow-struct-read.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+    ] {
+        with_semantics(source, |outcome| match (rejected, outcome) {
+            (false, SemanticOutcome::Complete(_)) => {}
+            (true, SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+                assert!(
+                    matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { fact, site, .. } if fact == "zero" && *site == "a call"),
+                    "{issue:?}"
+                );
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(source[start..].starts_with(b"need("), "{issue:?}");
+            }
+            (expected, outcome) => panic!("rejected={expected}: {outcome:?}"),
+        });
+    }
+}
+
+#[test]
+fn range_facts_discharge_every_integer_domain_family() {
+    for (ty, bound, expression) in [
+        ("u64", "0_u64 < xs^[k]", "9_u64 / x"),
+        ("u64", "0_u64 < xs^[k]", "9_u64 % x"),
+        ("i64", "-9223372036854775808_i64 < xs^[k]", "ineg(x)"),
+        ("i64", "-9223372036854775808_i64 < xs^[k]", "iabs(x)"),
+        ("i64", "0_i64 < xs^[k]", "-9223372036854775808_i64 / x"),
+        ("i64", "0_i64 < xs^[k]", "-9223372036854775808_i64 % x"),
+        ("u32", "xs^[k] < 64_u32", "ishl(1_u64, x)"),
+        ("u32", "xs^[k] < 64_u32", "ishr(1_u64, x)"),
+        ("u64", "xs^[k] < 256_u64", "cvt::<u64, u8>(x)"),
+    ] {
+        let source = field_range_program(&format!(
+            "fn probe(xs: &[{ty}]) -> result: unit reads(xs) contract {{\n  requires forall domain(k in 0_u64..xs^.len): {bound};\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let result = {expression};\n  }}\n  return unit;\n}}\n"
+        ));
+        field_range_verdict(&source, None);
+    }
+}
+
+#[test]
+fn range_integer_domains_refuse_their_boundary_twins() {
+    for (ty, bound, expression, rule) in [
+        ("u64", "xs^[k] == 0_u64", "9_u64 / x", SemanticRule::Op2),
+        ("u64", "xs^[k] == 0_u64", "9_u64 % x", SemanticRule::Op2),
+        (
+            "i64",
+            "xs^[k] == -9223372036854775808_i64",
+            "ineg(x)",
+            SemanticRule::Op2,
+        ),
+        (
+            "i64",
+            "xs^[k] == -9223372036854775808_i64",
+            "iabs(x)",
+            SemanticRule::Op2,
+        ),
+        (
+            "i64",
+            "xs^[k] == -1_i64",
+            "-9223372036854775808_i64 / x",
+            SemanticRule::Op2,
+        ),
+        (
+            "i64",
+            "xs^[k] == -1_i64",
+            "-9223372036854775808_i64 % x",
+            SemanticRule::Op2,
+        ),
+        (
+            "u32",
+            "xs^[k] == 64_u32",
+            "ishl(1_u64, x)",
+            SemanticRule::Op2,
+        ),
+        (
+            "u32",
+            "xs^[k] == 64_u32",
+            "ishr(1_u64, x)",
+            SemanticRule::Op2,
+        ),
+        (
+            "u64",
+            "xs^[k] == 256_u64",
+            "cvt::<u64, u8>(x)",
+            SemanticRule::Op6,
+        ),
+    ] {
+        let source = field_range_program(&format!(
+            "fn probe(xs: &[{ty}]) -> result: unit reads(xs) contract {{\n  requires forall domain(k in 0_u64..xs^.len): {bound};\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let result = {expression};\n  }}\n  return unit;\n}}\n"
+        ));
+        field_range_verdict(&source, Some(rule));
+    }
+}
+
+#[test]
+fn range_requirements_preserve_boolean_combinations_of_comparisons() {
+    for (goal, accepted) in [
+        ("band(below, different)", true),
+        ("bor(one, seven)", true),
+        ("bnot(either)", true),
+        ("bxor(below, seven)", true),
+        ("band(below, two)", false),
+        ("bor(two, seven)", false),
+    ] {
+        let source = field_range_program(&format!(
+            "fn need(x: u64) -> result: unit pure contract {{\n  define below = x < 4_u64;\n  define different = x != 2_u64;\n  define one = x == 1_u64;\n  define two = x == 2_u64;\n  define seven = x == 7_u64;\n  define either = bor(two, seven);\n  requires {goal};\n}} {{\n  return unit;\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    need(x: x);\n  }}\n  return unit;\n}}\n"
+        ));
+        field_range_verdict(&source, (!accepted).then_some(SemanticRule::Fn8));
+    }
+}
+
+#[test]
+fn deferred_float_conversion_is_an_explicit_capability() {
+    let source = field_range_program(
+        "fn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall value(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let result = cvt::<u64, f32>(x);\n  }\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeOrdinaryGoal
+        );
+    });
+}
+
+#[test]
+fn a_deferred_obligation_reports_the_instance_ceiling_it_reached() {
+    let source = String::from_utf8(guarded_reads(300, false))
+        .unwrap()
+        .replace(
+            "  let got = zeros(cells: cells);",
+            "  let got = cells^[399_u64];\n  need(value: got);",
+        );
+    let source = format!(
+        "fn need(value: u64) -> result: unit pure contract {{\n  requires value == 0_u64;\n}} {{\n  return unit;\n}}\n\n{source}"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+        assert!(
+            matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { missing, .. } if missing.contains("256 instances")),
+            "{issue:?}"
+        );
+    });
+}
+
+#[test]
+fn deferred_arithmetic_capacity_is_never_an_invariant_rejection() {
+    let source = field_range_program(
+        "fn probe(cells: &[u64]) -> result: unit reads(cells) contract {\n  requires 2_u64 <= cells^.len;\n  requires forall small(a in 0_u64..cells^.len, b in 0_u64..cells^.len): 18446744073709551613_u64 * cells^[a] <= 18446744073709551612_u64 * cells^[b];\n} {\n  let a = cells^[0_u64];\n  let b = cells^[1_u64];\n  invariant scaled: 18446744073709551615_u64 * a <= 18446744073709551614_u64 * b;\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeArithmetic
+        );
+    });
+}
+
+#[test]
+fn an_imprecise_walk_cannot_reject_a_deferred_requirement() {
+    let source = String::from_utf8(nest(10)).unwrap().replace(
+        "let got = positive(cells: &cells.inner[0_u64..4_u64]);",
+        "let x = cells.inner[0_u64];\nlet got = need(value: x);",
+    );
+    let source = format!(
+        "fn need(value: u64) -> result: u64 pure contract {{\n  requires value > 0_u64;\n}} {{\n  return value;\n}}\n\n{source}"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeLoopNesting
+        );
+    });
+}
+
+#[test]
+fn an_unvisited_page_element_bound_is_an_explicit_capability() {
+    let source = field_range_program(
+        "fn probe(data: &Paged<u64>, indices: &Array<u64, 1>) -> result: unit reads(data), reads(indices) contract {\n  requires 0_u64 < data^.pages.len;\n  requires forall zero(k in 0_u64..1_u64): indices^[k] == 0_u64;\n} {\n  let page = &data^.pages[0_u64];\n  let i = indices^[0_u64];\n  let value = page^[i];\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeOrdinaryGoal
+        );
+    });
+}
+
+#[test]
+fn a_disjunction_is_proved_without_selecting_one_disjunct() {
+    let source = field_range_program(
+        "fn need(x: u64) -> result: unit pure contract {\n  define below = x < 2_u64;\n  define above = x > 2_u64;\n  requires bor(below, above);\n} {\n  return unit;\n}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall different(k in 0_u64..xs^.len): xs^[k] != 2_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    need(x: x);\n  }\n  return unit;\n}\n",
+    );
+    field_range_verdict(&source, None);
+}

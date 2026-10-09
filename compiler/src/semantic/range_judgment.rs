@@ -1,8 +1,8 @@
 //! [RANGE-2, RANGE-3, RANGE-5] the range judgment.
 //!
 //! Range facts are judged over the completed checked program, after every
-//! function's ordinary entailment has either discharged its records or left
-//! only deferrable integer goals. The walk proves each deferred record at
+//! function's ordinary entailment. Every deferrable record left open is judged
+//! at its source site; unrelated ordinary debt never disables the walk. The walk proves each deferred record at
 //! its own program point before assuming a local invariant's target. One forward walk per function carries the facts
 //! a function's requirements, its loops' invariants and its callees'
 //! postconditions establish, discharges every range fact owed at a call, a
@@ -197,7 +197,20 @@ pub(crate) fn judge_program(
     selected: &[bool],
     constants: &[super::model::CheckedConstant],
     scope: JudgmentScope,
+    resolved: &crate::ResolvedSyntaxUnit,
 ) -> Vec<RangeJudgment> {
+    let prelude = functions
+        .iter()
+        .filter_map(|function| {
+            let declaration = resolved.declaration(function.declaration)?;
+            let file = resolved
+                .syntax()
+                .classified_bundle()
+                .source_bundle()
+                .file(declaration.origin().coordinate().source())?;
+            file.prelude().map(|_| function.declaration)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     functions
         .iter()
         .enumerate()
@@ -209,7 +222,6 @@ pub(crate) fn judge_program(
                         .get(callee.0 as usize)
                         .is_some_and(|callee| callee.range_facts.has_boundary())
                 })
-                || deferred_records(function).is_none()
             {
                 return RangeJudgment::default();
             }
@@ -217,19 +229,26 @@ pub(crate) fn judge_program(
                 functions,
                 nominals,
                 function,
-                deferred_records(function).unwrap_or_default(),
+                deferred_records(function),
                 constants,
                 scope,
+                &prelude,
             );
             walker.run();
             // A walk that forgot more than RANGE-2 does cannot reject: what
             // it left unproved may hold.
-            let issues = match (&walker.issues[..], walker.imprecise.take()) {
-                ([], _) | (_, None) => walker.issues,
-                (_, Some(node)) => vec![RangeIssue::Unsupported {
-                    node,
-                    feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
-                }],
+            let unproved = walker
+                .deferred
+                .iter()
+                .any(|(_, answer)| *answer != Some(true));
+            let issues = match walker.imprecise.take() {
+                Some(node) if !walker.issues.is_empty() || unproved => {
+                    vec![RangeIssue::Unsupported {
+                        node,
+                        feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
+                    }]
+                }
+                _ => walker.issues,
             };
             RangeJudgment {
                 issues,
@@ -244,13 +263,15 @@ pub(crate) fn judge_program(
         .collect()
 }
 
-/// Only functions whose complete remaining ordinary debt is deferrable proceed.
-fn deferred_records(function: &CheckedFunction) -> Option<Vec<(usize, Option<bool>)>> {
+/// Collect every deferrable record; unrelated debt never disables the walk.
+fn deferred_records(function: &CheckedFunction) -> Vec<(usize, Option<bool>)> {
     use super::entailment::ObligationFamily;
     use super::obligations::ObligationSubject;
     let mut pending = Vec::new();
     for (index, record) in function.obligations.iter().enumerate() {
-        let answer = function.entailment.answers.get(index).copied().flatten()?;
+        let Some(answer) = function.entailment.answers.get(index).copied().flatten() else {
+            continue;
+        };
         if answer.discharged(&function.entailment) {
             continue;
         }
@@ -265,9 +286,12 @@ fn deferred_records(function: &CheckedFunction) -> Option<Vec<(usize, Option<boo
             | ObligationSubject::LoopInvariant { .. } => pending.push((index, None)),
             ObligationSubject::SourceProof => {
                 let super::obligations::RecordAnswer::SourceProof(proof) = answer else {
-                    return None;
+                    continue;
                 };
-                let check = &function.entailment.source_proofs.get(proof)?.check;
+                let Some(proof) = function.entailment.source_proofs.get(proof) else {
+                    continue;
+                };
+                let check = &proof.check;
                 // A failed target can be deferred; an invalid ordinary certificate cannot.
                 if check.redundant
                     || check.source_failure.is_some()
@@ -275,38 +299,13 @@ fn deferred_records(function: &CheckedFunction) -> Option<Vec<(usize, Option<boo
                     || check.residual_failure.is_some()
                     || check.first_unproved_premise.is_some()
                 {
-                    return None;
+                    continue;
                 }
                 pending.push((index, None));
             }
-            ObligationSubject::CallRequirement { .. } => {
-                let super::obligations::RecordAnswer::CallGoal(goal) = answer else {
-                    return None;
-                };
-                let goal = &function.entailment.call_goals.get(goal)?.goal.root;
-                use super::goal::{GoalExpression, GoalOperation};
-                use super::model::CheckedIntegerOperation as Op;
-                if !matches!(
-                    goal,
-                    GoalExpression::Operation {
-                        row: GoalOperation::Integer {
-                            operation: Op::Equal
-                                | Op::NotEqual
-                                | Op::Less
-                                | Op::LessEqual
-                                | Op::Greater
-                                | Op::GreaterEqual,
-                            ..
-                        },
-                        ..
-                    }
-                ) {
-                    return None;
-                }
-                pending.push((index, None));
-            }
-            _ => return None,
+            ObligationSubject::CallRequirement { .. } => pending.push((index, None)),
+            _ => {}
         }
     }
-    Some(pending)
+    pending
 }

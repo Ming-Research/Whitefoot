@@ -76,7 +76,11 @@ impl Checker<'_, '_> {
             Vec::new()
         };
         let shared_new = signature.name == "shared_new"
-            && self.types.declarations.tree.is_body_less(signature.node)?;
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?;
         for (parameter, checked) in signature.parameters.iter().zip(parameters) {
             let nominal = self.declared_invariant_struct(check_context, parameter)?;
             // shared_new's T is supplied by its operand rather than written in

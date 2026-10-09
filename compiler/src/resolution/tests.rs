@@ -2574,6 +2574,8 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
     for source in [
         "struct Slots {\n}\n",
         "struct DivideByZero {\n}\n",
+        "fn place_back(window: u64, value: u64) -> result: unit pure {\n  return unit;\n}\n",
+        "fn shared_new(value: u64) -> result: unit pure {\n  return unit;\n}\n",
         "fn box_new() -> result: unit pure {\n  return unit;\n}\n",
     ] {
         with_resolution_sources(

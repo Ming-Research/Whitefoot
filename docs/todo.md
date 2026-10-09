@@ -838,6 +838,20 @@ rarely insert at the same place.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
 
+- **Atomic binding-use checking omits proof-only mentions.** SHARE-2
+  requires the guard and block together to name every atomic binding, but
+  `statement_mentions` in `compiler/src/semantic/check/control/atomic.rs`
+  visits a loop's endpoints and body without its header invariants and
+  returns false for `CheckedStatement::Proof(_)`. Impact: an atomic binding
+  named only in a loop-header invariant, a body `invariant_stmt` or a proof
+  use can receive a false `AtomicBindingUnused` before entailment. This is
+  a source-inspected discrepancy; no execution has confirmed it. Change:
+  extend the existing mention traversal over checked header relations and
+  body proofs, including their proof uses. Validate with positive cases
+  naming a binding only in each of those three positions and a negative
+  control naming it nowhere. Keep this separate from measure-place
+  admission; reopen when completing SHARE-2's proof-only binding-use coverage.
+
 - **Mathematical clause constants exceed the checker's i128 projection domain.**
   ENT-2 and MSR-5 specify mathematical integers, not an i128 ceiling. Source
   folding in `goal_affine_side` and `goal_projection`
@@ -2299,22 +2313,6 @@ rarely insert at the same place.
   workers. Reopen when a measured program's per-item allocations sit on a
   parallel loop's critical path.
 
-- **An inline range argument does not carry its length into a
-  postcondition.** `box_segments_filled`'s record ensures
-  `result.inner.len == lengths^.len`. When the argument is a binding,
-  `let run = &a.inner[0_u64..3_u64];`, the caller learns the segment count
-  3; when the same range is formed at the argument,
-  `lengths: &a.inner[0_u64..3_u64]`, `&segments.inner[2_u64]` stays
-  unproved, so writers must bind the range first
-  (`tests/conformance/cases/fn9-pos-segments-count-postcondition.wf` binds
-  it).
-  The formation's endpoint images are recorded under its capture, but the
-  clause instantiation reads the argument's length only through a bound
-  holder. Change: instantiate a range argument's `len` from the
-  formation's captured length as a binding's is. Validate with the inline
-  form of that case discharging the bound. Reopen with the next change to
-  call-site clause instantiation.
-
 - **An effect-row path through a segment is typed as the whole run.** The
   effect-row resolver (`container_element_type` in
   `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
@@ -2694,15 +2692,14 @@ rarely insert at the same place.
   writer report shows the normalized form costing a round.
 
 - **Compiler comments cite the retired DIAG-3.** DIAG-3 was the v0.39 runtime
-  claim-trap record, retired with claims in v0.40, yet four comments still
-  cite it: three for words that are now [DIAG-1]'s (byte identity only where
-  selection and encoding are fixed, and the `unproved` or `refuted`
-  disposition) in `compiler/src/driver/pinned_sentences.rs`,
-  `compiler/src/semantic/tests/postconditions.rs` and
+  claim-trap record, retired with claims in v0.40, yet three comments still
+  cite it: two for words that are now [DIAG-1]'s (byte identity only where
+  selection and encoding are fixed) in
+  `compiler/src/driver/pinned_sentences.rs` and
   `compiler/src/semantic/tests/requires.rs`, and one, the module doc of
   `compiler/src/semantic/permission_ledger.rs`, for the retired record
   itself. A reader following the reference finds no rule. Cite DIAG-1 in the
-  first three and drop the ledger's clause; reopen with the next edit of any
+  first two and drop the ledger's clause; reopen with the next edit of any
   of these files.
 
 - **The callee-`ensures` route can name a call whose result no longer

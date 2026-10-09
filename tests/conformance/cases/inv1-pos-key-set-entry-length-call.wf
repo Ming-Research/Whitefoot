@@ -1,0 +1,25 @@
+fn refresh(slots: &Entries<u8>, access_keys: &KeySet, index: u64) -> result: unit writes(slots) contract {
+  requires slots^.len == access_keys^.len;
+  requires index < slots^.len;
+  ensures slots^.len == entry(slots)^.len;
+} {
+  set slots^[index] = Some<u8>(value: 1_u8);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let names = array_filled::<u8, 2>(value: 97_u8);
+  let store = shared_map_new::<u8>(capacity: 2_u64);
+  let keys = key_set_new(capacity: 2_u64);
+  key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
+  key_set_insert(keys: &keys, key: &names[0_u64..2_u64]);
+  atomic slots = &store[keys] {
+    for @each (
+      i in 0_u64..keys.len,
+      invariant aligned: slots^.len == keys.len
+    ) {
+      refresh(slots: slots, access_keys: &keys, index: i);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -2,11 +2,10 @@
 
 Status: the owner selected, on 2026-10-08, the enum-payload scope with copy
 provenance (board card on scope, option A) and precise field support (board
-card on support, option A); implementation in progress.
-Baseline: Whitefoot `1a6a96c5bba34cac2ed056a4c49d3073e0f1a0a7`, specification
-v0.101. No implementation, specification amendment, conformance change or
-measurement accompanies this draft. Code below is specification fragments,
-not compiled complete programs.
+card on support, option A); implemented on branch `claude/proof-facts`, with
+the [results](#results-against-the-criterion) below. Baseline of this design:
+Whitefoot `1a6a96c5bba34cac2ed056a4c49d3073e0f1a0a7`, specification v0.101.
+Code below is specification fragments, not compiled complete programs.
 
 ## Question and evidence
 
@@ -619,6 +618,32 @@ performance claim needs its own same-source interleaved comparison, base
 twin and falsifier under [the research method](../../README.md); it is not a
 condition silently added to this language-expression trial.
 
+## Results against the criterion
+
+Observed on branch `claude/proof-facts`.
+
+- Rule design: met by its conformance observations. Positive cases name a
+  struct field, `Box` content, an enum payload by variant and an element
+  measure (`range1-pos-struct-field-element`, `range1-pos-box-content-element`,
+  `range1-pos-enum-payload-by-variant`, `range1-pos-element-measure`), keep a
+  fact across a sibling field write (`range3-pos-sibling-field-write-keeps-fact`)
+  and across a copy (`range3-pos-copy-keeps-source-payload`), and certify a
+  scatter through a stored inverse field and across variants
+  (`range5-pos-stored-inverse-field`, `range5-pos-shared-store-across-variants`).
+  The negatives refuse an overlapping field write, a write after a copy, a
+  copy taken for its source and an inactive payload
+  (`range3-neg-overlapping-field-write`, `range3-neg-copy-does-not-see-later-write`,
+  `range2-neg-copy-is-not-its-source`, `range5-neg-wrong-variant`). The
+  derivation stays the fixed finite one of [RANGE-3].
+- Primary criterion: partly observed. With the experiment release
+  `wf-exp-7bf6aadcb051`, Snowghost's sibling-move callee was accepted with its
+  `requires` clause, but every caller was refused, because nothing carried
+  the stored inverse to the call (Snowghost-wf `research/m2-frag-a-proof`
+  ad6108a, `research/investigations/m2-edit-cost/inverse-proof/call-site.md`,
+  hosted run 37823187962). That caller-side gap is what
+  [range type invariants](../range-type-invariants/DESIGN.md) close; the
+  frozen trial against a release of this branch has not run yet.
+
 ## Open choices for the owner
 
 ---
@@ -681,12 +706,9 @@ condition silently added to this language-expression trial.
 | [REF-1] | Payload selection requires ordinary current refinement | Separate ordinary-place and erased range-projection domains if enums are selected | Enum option only |
 | [RANGE-4], [PAR-2], [ENT-5], [MSR-1], [MSR-2], [OP-4], [TYPE-2], [OWN-7] | Existing instantiation, permission, support, measure, bounds, field and overlap rules | No new ordinary proof route or independent replacement rule | Retained boundaries; analysis above states their consequences |
 
-No normative tokens or grammar productions are added. All specification
-wording here is proposed; no owner ruling or version archive has been
-written. Before implementation, the selected draft still needs a soundness
-review of versioned projection and domain handling, followed by the
-independent conformance observations and frozen Snowghost trial. The enum
-option additionally needs the integrated tag-case argument stated above.
+No normative tokens or grammar productions are added. This table records
+the delta as proposed before implementation; the adopted wording is in the
+active specification on branch `claude/proof-facts`.
 
 Findings retained in this document within the requested single-file scope:
 the earlier field refusal has a different consumer premise; range facts
@@ -695,7 +717,7 @@ cannot reach RANGE-1 as a well-typed program; and the cited Snowghost
 traversal is not evidence of a prepared certified loop. Their dispositions
 are, respectively, a proposed reopening, explicit separate version
 semantics, correctly assigned negative-test ownership, and an unverified
-experiment prerequisite. No implementation or measured outcome is claimed.
+experiment prerequisite.
 
 An independent read-only agent reviewed the complete draft against the
 baseline, the relevant specification and design passages, and checklist

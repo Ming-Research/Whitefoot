@@ -582,7 +582,11 @@ impl Checker<'_, '_> {
                 capacity,
             } => (
                 node,
-                if matches!(*site, "a construction" | "an atomic leaving edge") {
+                // [TYPE-11] owns a construction's or leaving edge's failure;
+                // a structural ceiling cites RANGE-3 wherever it is reached.
+                if capacity.is_none()
+                    && matches!(*site, "a construction" | "an atomic leaving edge")
+                {
                     SemanticRule::Type11
                 } else {
                     SemanticRule::Range3

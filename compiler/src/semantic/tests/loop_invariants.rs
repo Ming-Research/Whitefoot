@@ -434,6 +434,62 @@ fn main() -> status: std::process::ExitStatus pure {{
     }
 }
 
+#[test]
+fn measured_place_headers_retain_base_and_backedge_evidence() {
+    for (source, expected_count) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/inv1-pos-key-set-entry-length-call.wf"
+            )
+            .as_slice(),
+            1,
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/inv1-pos-measure-table-places.wf")
+                .as_slice(),
+            15,
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("measure-table headers must check: {outcome:?}");
+            };
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .expect("main exists");
+            let invariants = &main.entailment.loop_invariants;
+            assert_eq!(invariants.len(), expected_count);
+            for invariant in invariants {
+                assert!(invariant.proof.base, "{}", invariant.name);
+                assert_eq!(invariant.proof.step, Some(true), "{}", invariant.name);
+                let [input] = invariant.inputs.as_slice() else {
+                    panic!("{} must retain its one backedge", invariant.name);
+                };
+                assert!(input.discharged);
+                assert!(input.evidence.contradiction.is_none());
+                assert!(input.evidence.formation_failure.is_none());
+            }
+        });
+    }
+}
+
+#[test]
+fn key_set_writes_reject_the_stale_equality_at_the_backedge() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-key-set-insert-stale-length.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/inv1-neg-key-set-scan-stale-length.wf")
+            .as_slice(),
+    ] {
+        assert_invariant_required_relation(source, "keys.len == original");
+    }
+}
+
 // The field and counted binder share a spelling but have distinct identities.
 fn counted_field_collision_source(upper: u64, relation: &str) -> String {
     format!(
@@ -2797,7 +2853,10 @@ fn break_free_inner_return_has_matching_empty_induction_inputs() {
             .collect::<Vec<_>>();
         assert_eq!(record.site, invariant.node_path);
         assert_eq!(inputs, &proof_inputs);
-        assert!(inputs.is_empty(), "the returning inner loop has no backedge");
+        assert!(
+            inputs.is_empty(),
+            "the returning inner loop has no backedge"
+        );
         assert!(invariant.proof.base);
         assert_eq!(invariant.proof.step, None);
     });
@@ -3026,11 +3085,9 @@ fn main() -> status: std::process::ExitStatus pure {
     let (residual, repair) = per_row_formation_failure(source);
     assert_eq!(residual, "i < rows^.len");
     assert!(
-        repair.contains(
-            "`invariant forall fits(k1 in s..i): rows^[k1].len <= (rows^[k1].cap + k)`"
-        ) && repair.contains(
-            "`requires forall fits_all(k1 in 0_u64..rows^.len): rows^[k1].len <= (rows^[k1].cap + k);`"
-        ),
+        repair
+            .contains("`invariant forall fits(k1 in s..i): rows^[k1].len <= (rows^[k1].cap + k)`")
+            && !repair.contains("requires forall"),
         "{repair}"
     );
 }
@@ -3134,4 +3191,25 @@ fn main() -> status: std::process::ExitStatus pure {{
             );
         });
     }
+}
+
+#[test]
+fn a_local_run_has_no_out_of_scope_requirement_repair() {
+    let source = per_row_source(
+        "&Slots<Slots<u8, 8>, 8>",
+        "",
+        "invariant fits: rows^[i].len <= 4_u64",
+        PER_ROW_READ,
+    )
+    .replace("total(rows:", "total(input:")
+    .replace("reads(rows),", "reads(input),")
+    .replace(
+        "  let n = rows^.len;",
+        "  let rows = &input^;\n  let n = rows^.len;",
+    );
+    let (_, repair) = per_row_formation_failure(&source);
+    assert_eq!(
+        repair,
+        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`"
+    );
 }

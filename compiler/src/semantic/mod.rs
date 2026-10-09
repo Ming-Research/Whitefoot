@@ -1479,6 +1479,8 @@ pub enum UnsupportedSemanticFeature {
     /// checker's 128-bit integers. It names no rule: the specified
     /// arithmetic has no bound, so reaching here is a checker gap.
     RangeArithmetic,
+    /// A deferred ordinary goal outside the range walk's implemented vocabulary.
+    RangeOrdinaryGoal,
     /// A range judgment that left a fact unproved after a loop header forgot
     /// everything, because the loop nest was deeper, or the header's
     /// written set took more walks to settle, than the checker follows;

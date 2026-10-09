@@ -1259,7 +1259,22 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &ordinary,
             &self.types.checked_constants,
             super::range_judgment::JudgmentScope::Concrete,
+            self.types.declarations.resolved,
         );
+        if self.reject_entailment
+            && let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+                matches!(
+                    issue,
+                    super::range_judgment::RangeIssue::Unsupported { .. }
+                        | super::range_judgment::RangeIssue::Undischarged {
+                            capacity: Some(_),
+                            ..
+                        }
+                )
+            })
+        {
+            return Err(self.range_issue(issue));
+        }
         if self.reject_entailment {
             let mut rejections = Vec::new();
             let mut rejected = vec![false; baseline_functions.len()];
@@ -2151,7 +2166,20 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &judged,
             &self.types.checked_constants,
             super::range_judgment::JudgmentScope::Symbolic,
+            self.types.declarations.resolved,
         );
+        if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+            matches!(
+                issue,
+                super::range_judgment::RangeIssue::Unsupported { .. }
+                    | super::range_judgment::RangeIssue::Undischarged {
+                        capacity: Some(_),
+                        ..
+                    }
+            )
+        }) {
+            return Err(self.range_issue(issue));
+        }
         for (index, declaration) in canonical {
             let checked = functions
                 .get(*index)

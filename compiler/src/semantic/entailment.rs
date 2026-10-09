@@ -762,6 +762,8 @@ pub(crate) struct CountedElementRelation {
     /// The requirement's fact name, distinct from the invariant's so both
     /// forms can stand together.
     pub(crate) requirement: String,
+    /// Every free binding of the suggested requirement is a parameter.
+    pub(crate) requirement_in_scope: bool,
     /// The relation with the bound variable for the binder.
     pub(crate) relation: String,
 }

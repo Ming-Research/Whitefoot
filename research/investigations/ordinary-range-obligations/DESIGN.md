@@ -1,10 +1,10 @@
 # Range facts for ordinary obligations
 
 Status: route A selected by the owner on 2026-10-08 (board card "how range
-facts reach ordinary proofs", option A); not yet implemented. Baseline:
-branch `claude/checker-completion` at 375eec894 (specification v0.102), whose
-range rules match main's v0.101. No implementation or measurement
-accompanies this draft.
+facts reach ordinary proofs", option A); implemented on branch
+`claude/proof-facts`, with the [results](#results-against-the-criterion)
+below. Baseline of this design: branch `claude/checker-completion` at
+375eec894 (specification v0.102), whose range rules match main's v0.101.
 
 ## Question
 
@@ -194,6 +194,30 @@ Route A is supported if, with an experiment compiler implementing it:
 
 Route A is rejected if a witness needs an ordinary-only fact that cannot be
 stated as a local invariant, or if a negative twin is accepted.
+
+## Results against the criterion
+
+Observed on branch `claude/proof-facts`; tests are in
+`compiler/src/semantic/tests/range_ordinary.rs` and pass in the gate.
+
+- Met for the witnesses: witness 1 (`input_rows`), witness 2
+  (`stored_position`) and witness 3 (`written_instance`, with its one written
+  instance) are accepted with no run-time test. Their negative twins are
+  refused with the original ordinary rule: a bound one too weak
+  (`rows_one_too_weak`), a write that breaks the fact before the read
+  (`write_breaks_fact`), a read outside the fact's range
+  (`rows_outside_range`) and a false deferred invariant target
+  (`false_local_target`).
+- Every case accepted before keeps its verdict, apart from the three
+  explicit certificates that ordinary entailment now proves (PRF-1
+  redundancy, owner-chosen on the main line) and the verdicts the
+  specification changes of this branch select, each listed in its pull
+  request.
+- Not met as stated for checking time: on the 14900K the conformance suite
+  checks 6.5% slower, concentrated in three range certificate cases, while
+  the natural-form interpreter is unchanged
+  ([measurement](../range-type-invariants/DESIGN.md#results-against-the-criterion)).
+  Which of this branch's changes costs the time is attributed there.
 
 ## Specification changes route A needs
 

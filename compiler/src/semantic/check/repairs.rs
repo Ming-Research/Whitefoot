@@ -1232,9 +1232,13 @@ pub(super) fn counted_element_invariant(
         requirement,
         ..
     } = element;
-    format!(
-        "`{name}` reads the element at `{binder_name}`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall {name}({variable} in {lower}..{binder_name}): {relation}`; when the input guarantees it, require it of every element, `requires forall {requirement}({variable} in 0_u64..{extent}): {relation};`"
-    )
+    let mut repair = format!(
+        "`{name}` reads the element at `{binder_name}`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall {name}({variable} in {lower}..{binder_name}): {relation}`"
+    );
+    if element.requirement_in_scope {
+        repair.push_str(&format!("; when the input guarantees it, require it of every element, `requires forall {requirement}({variable} in 0_u64..{extent}): {relation};`"));
+    }
+    repair
 }
 
 /// [INV-1] a loop invariant's base judgment on entry to the loop.
