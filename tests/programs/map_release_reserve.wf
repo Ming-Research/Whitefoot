@@ -1,5 +1,6 @@
 alias ExitStatus = std::process::ExitStatus;
 alias Inputs = std::process::Inputs;
+alias MemoryMeter = std::process::MemoryMeter;
 alias exit_status = std::process::exit_status;
 
 fn low_byte(v: u64) -> result: u8 pure {
@@ -32,52 +33,93 @@ fn spell(destination: &[u8], value: u64) -> result: unit writes(destination) {
   return unit;
 }
 
+fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 writes(store), writes(meter) {
+  let before = std::process::heap_in_use(meter: meter);
+  let freed = shared_map_release_reserve::<u64>(map: store);
+  let after = std::process::heap_in_use(meter: meter);
+  let again = shared_map_release_reserve::<u64>(map: store);
+  if freed == 0_u64 {
+    return 1_u8;
+  }
+  if after > before {
+    return 2_u8;
+  }
+  let fallen = before -wrap after;
+  if fallen != freed {
+    return 3_u8;
+  }
+  if again != 0_u64 {
+    return 4_u8;
+  }
+  return 0_u8;
+}
+
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
-  let store = shared_map_new::<u64>(capacity: 0_u64);
   let name = array_filled::<u8, 8>(value: 0_u8);
-  let live = 2000_u64;
-  let next = 0_u64;
-  loop @churn {
-    if next == 42000_u64 {
-      break @churn;
+  let small = shared_map_new::<u64>(capacity: 0_u64);
+  let small_next = 0_u64;
+  loop @small_churn {
+    if small_next == 4000_u64 {
+      break @small_churn;
     }
     let key = &name[0_u64..8_u64];
-    spell(destination: key, value: next);
-    atomic t = &store {
-      set t^[key] = Some<u64>(value: next);
+    spell(destination: key, value: small_next);
+    atomic t = &small {
+      set t^[key] = Some<u64>(value: small_next);
     }
-    if next >= live {
-      let old = next -wrap live;
+    if small_next >= 4_u64 {
+      let old = small_next -wrap 4_u64;
       spell(destination: key, value: old);
-      atomic t = &store {
+      atomic t = &small {
         set t^[key] = None<u64>();
       }
     }
-    set next = next +wrap 1_u64;
+    set small_next = small_next +wrap 1_u64;
   }
-  let before = std::process::heap_in_use(meter: &meter);
-  let freed = shared_map_release_reserve::<u64>(map: &store);
-  let after = std::process::heap_in_use(meter: &meter);
-  let again = shared_map_release_reserve::<u64>(map: &store);
-  let count = 0_u64;
-  atomic t = &store {
-    set count = map_count::<u64>(map: t);
+  let small_code = released(store: &small, meter: &meter);
+  if small_code != 0_u8 {
+    let small_exit = small_code +wrap 10_u8;
+    return exit_status(code: small_exit);
   }
-  if freed == 0_u64 {
-    return exit_status(code: 1_u8);
+  let small_count = 0_u64;
+  atomic t = &small {
+    set small_count = map_count::<u64>(map: t);
   }
-  if after > before {
-    return exit_status(code: 2_u8);
+  if small_count != 4_u64 {
+    return exit_status(code: 15_u8);
   }
-  if before -wrap after != freed {
-    return exit_status(code: 3_u8);
+  let medium = shared_map_new::<u64>(capacity: 0_u64);
+  let medium_next = 0_u64;
+  loop @medium_churn {
+    if medium_next == 200000_u64 {
+      break @medium_churn;
+    }
+    let key = &name[0_u64..8_u64];
+    spell(destination: key, value: medium_next);
+    atomic t = &medium {
+      set t^[key] = Some<u64>(value: medium_next);
+    }
+    if medium_next >= 2000_u64 {
+      let old = medium_next -wrap 2000_u64;
+      spell(destination: key, value: old);
+      atomic t = &medium {
+        set t^[key] = None<u64>();
+      }
+    }
+    set medium_next = medium_next +wrap 1_u64;
   }
-  if again != 0_u64 {
-    return exit_status(code: 4_u8);
+  let medium_code = released(store: &medium, meter: &meter);
+  if medium_code != 0_u8 {
+    let medium_exit = medium_code +wrap 20_u8;
+    return exit_status(code: medium_exit);
   }
-  if count != live {
-    return exit_status(code: 5_u8);
+  let medium_count = 0_u64;
+  atomic t = &medium {
+    set medium_count = map_count::<u64>(map: t);
+  }
+  if medium_count != 2000_u64 {
+    return exit_status(code: 25_u8);
   }
   return exit_status(code: 0_u8);
 }

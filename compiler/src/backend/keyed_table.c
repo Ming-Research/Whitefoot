@@ -28,6 +28,7 @@
 #define WF_CMAP_GIVE(block, bytes) wf__runtime_give((block), (bytes))
 #define WF_CMAP_YIELD() wf__runtime_yield()
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
+#define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
 #endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;

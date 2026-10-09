@@ -3346,6 +3346,54 @@ static void reserves_release_on_request(void) {
     wf_cmap_destroy(map);
 }
 
+static _Atomic int releasing_stop;
+static _Atomic uint64_t released_bytes;
+
+static void *release_reserves(void *arg) {
+    wf_cmap **maps = (wf_cmap **)arg;
+    while (!atomic_load(&releasing_stop)) {
+        uint64_t freed = wf_cmap_release_reserve(maps[0]) + wf_cmap_release_reserve(maps[1]);
+        atomic_fetch_add(&released_bytes, freed);
+    }
+    return NULL;
+}
+
+/* A release needs no statement, so it can meet a swap, which only needs no
+ * statement inside either map: each reserve moves with its map or is
+ * released, never both, so destroying both maps frees each array once. */
+static void reserves_release_beside_swaps(void) {
+    wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
+    wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
+    uint64_t next[2] = {0, 1000000};
+    for (int m = 0; m < 2; m++)
+        for (uint64_t k = 0; k < 64; k++, next[m]++)
+            wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+    atomic_store(&releasing_stop, 0);
+    atomic_store(&released_bytes, 0);
+    pthread_t releaser;
+    pthread_create(&releaser, NULL, release_reserves, maps);
+    for (unsigned round = 0; round < 20000; round++) {
+        for (int m = 0; m < 2; m++)
+            for (unsigned step = 0; step < 16; step++, next[m]++) {
+                wf_cmap_remove(users[m], key_of(next[m] - 64));
+                wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+            }
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+    }
+    atomic_store(&releasing_stop, 1);
+    pthread_join(releaser, NULL);
+    if (atomic_load(&released_bytes) == 0)
+        fail("no release met a reserve beside the swaps (rounds)", 20000, 0);
+    for (int m = 0; m < 2; m++)
+        if (wf_cmap_count(maps[m]) != 64)
+            fail("a map lost or gained keys beside releases and swaps (count, expected)", wf_cmap_count(maps[m]), 64);
+    for (int m = 0; m < 2; m++) {
+        wf_cmap_leave(users[m]);
+        wf_cmap_destroy(maps[m]);
+    }
+}
+
 static void maps_clear(void) {
     wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
@@ -3558,6 +3606,7 @@ int main(int argc, char **argv) {
         histories(20);
     }
     reserves_release_on_request();
+    reserves_release_beside_swaps();
     printf("concurrent-map-test: all checks passed\n");
     return 0;
 }
