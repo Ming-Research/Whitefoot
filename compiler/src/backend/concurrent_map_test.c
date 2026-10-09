@@ -3303,6 +3303,39 @@ static void release_cleared(void *table) {
  * included, keeps what the statement writes after it, and hands the old
  * entries to their release only once the hold is given up, leaking no
  * block. */
+/* A move keeps the freed cells only when they are the current table's size:
+ * a map that grew keeps no spare of its old size, and one whose size holds
+ * steady while keys come and go keeps a spare of its own size for the next
+ * move. */
+static void spares_match_the_current_size(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *user = wf_cmap_enter(map);
+    uint64_t got = 0;
+    for (uint64_t k = 0; k < 20000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    wf_cmap_get(user, key_of(0), &got);
+    table *now = atomic_load(&map->current);
+    if (map->spare != NULL && map->spare_capacity != now->capacity)
+        fail("a grown map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+    int kept = 0;
+    for (uint64_t k = 20000; k < 220000; k++) {
+        wf_cmap_remove(user, key_of(k - 20000));
+        wf_cmap_insert(user, key_of(k), k);
+        now = atomic_load(&map->current);
+        if (map->spare != NULL) {
+            if (map->spare_capacity != now->capacity)
+                fail("a steady map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+            kept = 1;
+        }
+    }
+    if (!kept)
+        fail("a steady map never kept a spare for its next move", now->capacity, 0);
+    if (wf_cmap_count(map) != 20000)
+        fail("churn lost or gained keys (count)", wf_cmap_count(map), 20000);
+    wf_cmap_leave(user);
+    wf_cmap_destroy(map);
+}
+
 static void maps_clear(void) {
     wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
@@ -3488,6 +3521,7 @@ int main(int argc, char **argv) {
         holds_wait_out_moves();
         maps_swap();
         maps_clear();
+        spares_match_the_current_size();
         scans_resume();
         scans_sparse();
         scans_write_nothing();
