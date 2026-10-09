@@ -6,6 +6,13 @@ use super::*;
 type WrittenInstance = (FactId, Vec<Linear>, Vec<Linear>);
 type Written = Vec<WrittenInstance>;
 
+/// Forming a selected goal can fail before the solver sees it.
+#[derive(Clone, Copy)]
+pub(super) enum GoalFailure {
+    Unrepresentable,
+    Arithmetic,
+}
+
 impl Walker<'_> {
     /// Project a formal over the already evaluated actual value, without
     /// substituting caller binding identities into the callee's namespace.
@@ -300,7 +307,7 @@ impl Walker<'_> {
         expression: &super::super::super::goal::GoalExpression,
         function: &CheckedFunction,
         values: &[Value],
-    ) -> Option<Vec<Literal>> {
+    ) -> Result<Vec<Literal>, GoalFailure> {
         use super::super::super::goal::{GoalExpression, GoalOperation};
         match expression {
             GoalExpression::Operation {
@@ -312,7 +319,7 @@ impl Walker<'_> {
                 for argument in arguments {
                     goals.extend(self.goal_comparisons_with(state, argument, function, values)?);
                 }
-                Some(goals)
+                Ok(goals)
             }
             _ => self
                 .goal_literal_with(state, expression, function, values)
@@ -334,12 +341,20 @@ impl Walker<'_> {
         state: &State,
         site: &NodePath,
         subject: &ObligationSubject,
-        goals: Option<&[Literal]>,
+        goals: Result<&[Literal], GoalFailure>,
         written: Option<&[WrittenInstance]>,
     ) {
         if !self.has_ordinary(site, subject) {
             return;
         }
+        let goals = match goals {
+            Ok(goals) => Some(goals),
+            Err(GoalFailure::Unrepresentable) => None,
+            Err(GoalFailure::Arithmetic) => {
+                self.ordinary_arithmetic_limit(site, subject);
+                return;
+            }
+        };
         let counterexamples =
             goals.map(|goals| goals.iter().map(|goal| vec![negated(goal)]).collect());
         self.ordinary_counterexamples(state, site, subject, counterexamples, written);
@@ -396,6 +411,32 @@ impl Walker<'_> {
                 DeferredAnswer::Inconclusive
             }
         };
+        self.answer_ordinary(site, subject, proved);
+    }
+
+    /// A selected goal can have the right source shape and still exceed the
+    /// checker's arithmetic while it is being formed, before the solver runs.
+    pub(super) fn ordinary_arithmetic_limit(
+        &mut self,
+        site: &NodePath,
+        subject: &ObligationSubject,
+    ) {
+        if !self.has_ordinary(site, subject) {
+            return;
+        }
+        self.issues.push(RangeIssue::Unsupported {
+            node: site.clone(),
+            feature: UnsupportedSemanticFeature::RangeArithmetic,
+        });
+        self.answer_ordinary(site, subject, DeferredAnswer::Inconclusive);
+    }
+
+    fn answer_ordinary(
+        &mut self,
+        site: &NodePath,
+        subject: &ObligationSubject,
+        proved: DeferredAnswer,
+    ) {
         for (index, answer) in &mut self.deferred {
             let record = &self.function.obligations[*index];
             if record.site == *site && record.subject == *subject {
@@ -429,7 +470,13 @@ impl Walker<'_> {
             return;
         }
         let goals = length.map(|length| vec![literal(index.clone(), Relation::Less, length)]);
-        self.ordinary_goal(state, site, &subject, goals.as_deref(), Some(&[]));
+        self.ordinary_goal(
+            state,
+            site,
+            &subject,
+            goals.as_deref().ok_or(GoalFailure::Unrepresentable),
+            Some(&[]),
+        );
     }
 
     pub(super) fn ordinary_domain(
@@ -457,7 +504,13 @@ impl Walker<'_> {
             }
             _ => None,
         };
-        self.ordinary_goal(state, site, &subject, goals.as_deref(), Some(&[]));
+        self.ordinary_goal(
+            state,
+            site,
+            &subject,
+            goals.as_deref().ok_or(GoalFailure::Unrepresentable),
+            Some(&[]),
+        );
     }
 
     pub(super) fn target_length(
@@ -546,16 +599,30 @@ impl Walker<'_> {
                     state,
                     &invariant.relation.node_path,
                     &subject,
-                    goals.as_deref(),
+                    goals.as_deref().map_err(|failure| *failure),
                     Some(&[]),
                 );
             }
         }
     }
 
+    /// A written premise forms every measure place, even when some other
+    /// term of the relation has no representation in the range walk.
+    pub(super) fn ordinary_relation_places(
+        &mut self,
+        state: &mut State,
+        relation: &CheckedAffineRelation,
+    ) {
+        for value in relation.left.postorder().chain(relation.right.postorder()) {
+            if let CheckedAffineExpressionKind::Measure(measure) = &value.kind {
+                let _ = self.eval(state, measure);
+            }
+        }
+    }
+
     pub(super) fn assume_affine(&mut self, state: &mut State, invariants: &[CheckedLoopInvariant]) {
         for invariant in invariants {
-            if let Some(goals) = self.affine_relation(state, &invariant.relation) {
+            if let Ok(goals) = self.affine_relation(state, &invariant.relation) {
                 state.conds.extend(goals);
             }
         }

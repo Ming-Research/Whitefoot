@@ -6,17 +6,19 @@ use crate::NodePath;
 
 mod calls;
 
+use super::super::entailment::ObligationFamily;
 use super::super::model::*;
+use super::super::obligations::{ObligationRecord, ObligationSubject};
 use super::super::places::{PlaceMap, PlaceRoot};
 
-pub(super) fn excluded_sites<'a>(
+pub(super) fn selected_sites<'a>(
     function: &CheckedFunction,
     functions: &'a [&'a CheckedFunction],
     nominals: &'a [CheckedNominal],
     elements: &'a [CheckedType],
 ) -> Selection<'a> {
     let mut selection = Selection {
-        excluded: BTreeSet::new(),
+        goals: BTreeSet::new(),
         requirements: BTreeSet::new(),
         functions,
         nominals,
@@ -31,7 +33,7 @@ pub(super) fn excluded_sites<'a>(
 }
 
 pub(super) struct Selection<'a> {
-    excluded: BTreeSet<NodePath>,
+    goals: BTreeSet<(NodePath, GoalKind)>,
     requirements: BTreeSet<(NodePath, NodePath, Option<u32>)>,
     functions: &'a [&'a CheckedFunction],
     nominals: &'a [CheckedNominal],
@@ -39,26 +41,50 @@ pub(super) struct Selection<'a> {
     places: PlaceMap,
 }
 
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum GoalKind {
+    Bounds,
+    IntegerDomain,
+    ConversionDomain,
+    LoopInvariant,
+    SourceProof,
+}
+
 impl Selection<'_> {
-    pub(super) fn excludes(&self, record: &super::super::obligations::ObligationRecord) -> bool {
-        self.excluded.contains(&record.site)
-            || match &record.subject {
-                super::super::obligations::ObligationSubject::CallRequirement {
-                    requires_clause,
-                    subject,
-                    ..
-                } => self.requirements.contains(&(
+    /// Only a positively classified goal may replace its ordinary verdict.
+    /// A new record kind or a site this traversal does not visit stays ordinary.
+    pub(super) fn selects(&self, record: &ObligationRecord) -> bool {
+        let kind = match &record.subject {
+            ObligationSubject::Source {
+                family,
+                conjunct: 0,
+            } => match family {
+                ObligationFamily::Bounds => GoalKind::Bounds,
+                ObligationFamily::IntegerDomain => GoalKind::IntegerDomain,
+                ObligationFamily::ConversionDomain => GoalKind::ConversionDomain,
+                _ => return false,
+            },
+            ObligationSubject::LoopInvariant { .. } => GoalKind::LoopInvariant,
+            ObligationSubject::SourceProof => GoalKind::SourceProof,
+            ObligationSubject::CallRequirement {
+                requires_clause,
+                subject,
+                ..
+            } => {
+                return self.requirements.contains(&(
                     record.site.clone(),
                     requires_clause.clone(),
                     *subject,
-                )),
-                _ => false,
+                ));
             }
+            _ => return false,
+        };
+        self.goals.contains(&(record.site.clone(), kind))
     }
 
-    fn goal(&mut self, site: &NodePath, admitted: bool) {
-        if !admitted {
-            self.excluded.insert(site.clone());
+    fn goal(&mut self, site: &NodePath, kind: GoalKind, admitted: bool) {
+        if admitted {
+            self.goals.insert((site.clone(), kind));
         }
     }
 
@@ -66,7 +92,7 @@ impl Selection<'_> {
         for step in path {
             if let CheckedPlaceStep::Subscript(index) = step {
                 admitted &= term(&index.offset);
-                self.goal(&index.obligation, admitted);
+                self.goal(&index.obligation, GoalKind::Bounds, admitted);
                 admitted &= element_base(index.base_type, below_element);
                 below_element = true;
             }
@@ -75,11 +101,11 @@ impl Selection<'_> {
 
     fn element(&mut self, place: &CheckedRangeElementPlace) {
         let admitted = term(&place.offset);
-        self.goal(&place.obligation, admitted);
+        self.goal(&place.obligation, GoalKind::Bounds, admitted);
         self.path(&place.path, admitted, true);
     }
 
-    fn affine(&mut self, relation: &CheckedAffineRelation) {
+    fn affine(&mut self, relation: &CheckedAffineRelation) -> bool {
         let mut admitted = true;
         for value in relation.left.postorder().chain(relation.right.postorder()) {
             if let CheckedAffineExpressionKind::Measure(measure) = &value.kind {
@@ -87,7 +113,7 @@ impl Selection<'_> {
                 self.expression(measure);
             }
         }
-        self.goal(&relation.node_path, admitted);
+        admitted
     }
 
     fn expression(&mut self, expression: &CheckedExpression) {
@@ -117,7 +143,7 @@ impl Selection<'_> {
                         &self.places,
                     );
                     for (template, requirement) in boundary.iter().zip(requirements) {
-                        if !terms.goal(&template.template.root) {
+                        if terms.goal(&template.template.root) {
                             self.requirements.insert((
                                 call.clone(),
                                 requirement.requires_clause.clone(),
@@ -134,7 +160,11 @@ impl Selection<'_> {
                 arguments,
                 ..
             } if operation.is_exact() => {
-                self.goal(carrier, domain(*operation, *operand_type, arguments));
+                self.goal(
+                    carrier,
+                    GoalKind::IntegerDomain,
+                    domain(*operation, *operand_type, arguments),
+                );
             }
             CheckedExpression::NumericConversion {
                 carrier,
@@ -146,6 +176,7 @@ impl Selection<'_> {
             } => {
                 self.goal(
                     carrier,
+                    GoalKind::ConversionDomain,
                     matches!(
                         (source, destination),
                         (
@@ -158,7 +189,7 @@ impl Selection<'_> {
             CheckedExpression::ArrayIndex {
                 obligation, offset, ..
             } => {
-                self.goal(obligation, term(offset));
+                self.goal(obligation, GoalKind::Bounds, term(offset));
             }
             CheckedExpression::BufferIndex {
                 root,
@@ -167,7 +198,11 @@ impl Selection<'_> {
                 ..
             } => {
                 self.path(&root.path, true, false);
-                self.goal(obligation, term(offset) && range_path(&root.path, false));
+                self.goal(
+                    obligation,
+                    GoalKind::Bounds,
+                    term(offset) && range_path(&root.path, false),
+                );
                 for offset in offsets(&root.path) {
                     self.expression(offset);
                 }
@@ -178,6 +213,12 @@ impl Selection<'_> {
             CheckedExpression::BufferMeasure { root, .. } => {
                 self.path(&root.path, true, false);
                 for offset in offsets(&root.path) {
+                    self.expression(offset);
+                }
+            }
+            CheckedExpression::BoxTake { path, .. } => {
+                self.path(path, true, false);
+                for offset in offsets(path) {
                     self.expression(offset);
                 }
             }
@@ -199,6 +240,7 @@ impl Selection<'_> {
                 {
                     self.goal(
                         &index.obligation,
+                        GoalKind::Bounds,
                         term(&index.offset) && root.offsets().all(term),
                     );
                 }
@@ -259,7 +301,12 @@ impl Selection<'_> {
                     self.expression(lower);
                     self.expression(upper);
                     for invariant in invariants {
-                        self.affine(&invariant.relation);
+                        let admitted = self.affine(&invariant.relation);
+                        self.goal(
+                            &invariant.relation.node_path,
+                            GoalKind::LoopInvariant,
+                            admitted,
+                        );
                     }
                     self.statements(body);
                 }
@@ -267,15 +314,23 @@ impl Selection<'_> {
                     invariants, body, ..
                 } => {
                     for invariant in invariants {
-                        self.affine(&invariant.relation);
+                        let admitted = self.affine(&invariant.relation);
+                        self.goal(
+                            &invariant.relation.node_path,
+                            GoalKind::LoopInvariant,
+                            admitted,
+                        );
                     }
                     self.statements(body);
                 }
                 CheckedStatement::Proof(proof) => {
-                    self.affine(&proof.target);
+                    let admitted = self.affine(&proof.target);
                     // The obligation's site is the statement, not its target.
-                    if self.excluded.contains(&proof.target.node_path) {
-                        self.excluded.insert(proof.node_path.clone());
+                    self.goal(&proof.node_path, GoalKind::SourceProof, admitted);
+                    for written_use in &proof.uses {
+                        if let CheckedProofUseSource::Relation(relation) = &written_use.source {
+                            self.affine(relation);
+                        }
                     }
                 }
                 CheckedStatement::Atomic {
@@ -443,4 +498,154 @@ fn range_path(path: &[CheckedPlaceStep], mut below_element: bool) -> bool {
         }
         CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_selection() -> Selection<'static> {
+        Selection {
+            goals: BTreeSet::new(),
+            requirements: BTreeSet::new(),
+            functions: &[],
+            nominals: &[],
+            elements: &[],
+            places: PlaceMap::default(),
+        }
+    }
+
+    #[test]
+    fn unclassified_records_keep_their_ordinary_verdict() {
+        let site = NodePath {
+            components: vec![0],
+        };
+        let mut selection = empty_selection();
+        let mut record = ObligationRecord {
+            rule: crate::SemanticRule::Op4,
+            site: site.clone(),
+            subject: ObligationSubject::Source {
+                family: ObligationFamily::Bounds,
+                conjunct: 0,
+            },
+        };
+        // Merely belonging to a deferrable family cannot defer an unvisited site.
+        assert!(!selection.selects(&record));
+        selection.goal(&site, GoalKind::Bounds, false);
+        assert!(!selection.selects(&record));
+        selection.goal(&site, GoalKind::Bounds, true);
+        assert!(selection.selects(&record));
+        // Classifying one record cannot select another kind sharing its site.
+        for subject in [
+            ObligationSubject::Source {
+                family: ObligationFamily::IntegerDomain,
+                conjunct: 0,
+            },
+            ObligationSubject::Source {
+                family: ObligationFamily::RangeFormation,
+                conjunct: 0,
+            },
+            ObligationSubject::SourceProof,
+            ObligationSubject::CallRequirement {
+                callee: FunctionId(0),
+                requires_clause: site.clone(),
+                subject: None,
+            },
+        ] {
+            record.subject = subject;
+            assert!(!selection.selects(&record));
+        }
+    }
+
+    #[test]
+    fn box_take_and_written_premise_subscripts_are_classified() {
+        let site = NodePath {
+            components: vec![1],
+        };
+        let integer = CheckedType::Integer(IntegerType::U64);
+        let row = CheckedType::Array {
+            element: CheckedElement(0),
+            length: CheckedConst::Value(4),
+        };
+        let record = ObligationRecord {
+            rule: crate::SemanticRule::Op4,
+            site: site.clone(),
+            subject: ObligationSubject::Source {
+                family: ObligationFamily::Bounds,
+                conjunct: 0,
+            },
+        };
+        let path = vec![CheckedPlaceStep::Subscript(Box::new(
+            CheckedPlaceSubscript {
+                base_type: CheckedType::Array {
+                    element: CheckedElement(1),
+                    length: CheckedConst::Value(4),
+                },
+                element_type: row,
+                offset: CheckedExpression::Binding {
+                    carrier: site.clone(),
+                    binding: BindingId(1),
+                    ty: integer,
+                    consume_root: false,
+                },
+                obligation: site.clone(),
+                target_domain: CheckedTargetDomainObligation::ElementAddress,
+                captured: super::super::super::places::CapturedValue::unknown(),
+            },
+        ))];
+        // Indexed owned takes currently reject at WIN-3 before forming this
+        // tree. Its record-bearing representation must still be classified.
+        let mut selection = empty_selection();
+        selection.expression(&CheckedExpression::BoxTake {
+            carrier: NodePath {
+                components: vec![0],
+            },
+            referent: row,
+            binding: BindingId(0),
+            path: path.clone(),
+            cleanup: Vec::new(),
+        });
+        assert!(selection.selects(&record));
+
+        let zero = CheckedAffineExpression {
+            node_path: site.clone(),
+            kind: CheckedAffineExpressionKind::Constant {
+                value: 0,
+                ty: IntegerType::U64,
+            },
+        };
+        let target = CheckedAffineRelation {
+            node_path: NodePath {
+                components: vec![2],
+            },
+            left: zero.clone(),
+            right: zero,
+            bound: 0,
+            equality: false,
+        };
+        let mut premise = target.clone();
+        premise.left.kind =
+            CheckedAffineExpressionKind::Measure(Box::new(CheckedExpression::ContainerMeasure {
+                measure: CheckedMeasure::Length,
+                root: CheckedContainerRoot {
+                    root: PlaceRoot::Binding(BindingId(0)),
+                    path,
+                    ty: row,
+                    proof_base: None,
+                },
+            }));
+        let mut selection = empty_selection();
+        selection.statements(&[CheckedStatement::Proof(CheckedSourceProof {
+            node_path: target.node_path.clone(),
+            declaration: crate::DeclarationId::from_index(0).unwrap(),
+            name: "target".to_owned(),
+            target,
+            uses: vec![CheckedProofUse {
+                node_path: site,
+                multiplicity: CheckedProofMultiplicity::Literal(1),
+                source: CheckedProofUseSource::Relation(premise),
+            }],
+        })]);
+        assert!(selection.selects(&record));
+    }
 }

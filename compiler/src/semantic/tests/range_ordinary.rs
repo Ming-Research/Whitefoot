@@ -978,3 +978,119 @@ fn caller(xs: &Array<u64, 4>) -> result: unit writes(xs) {
         Some(SemanticRule::Range3),
     );
 }
+
+#[test]
+fn function_kind_calls_discharge_the_formal_requirement() {
+    for (value, requirement, expected) in [
+        (0, "requires value < 4_u64;", None),
+        (4, "requires value < 4_u64;", Some(SemanticRule::Fn8)),
+        (
+            0,
+            "define low = value < 4_u64;\n    define high = value > 4_u64;\n    requires bor(low, high);",
+            Some(SemanticRule::Fn8),
+        ),
+    ] {
+        // The actual has no requirement. The selected concrete call must
+        // answer the formal's record, using its clause identity and template.
+        check(
+            &format!(
+                "fn permissive(input: u64) -> result: unit pure {{
+  return unit;
+}}
+
+fn apply<fn action(value: u64) -> result: unit pure contract {{
+    {requirement}
+  }}>(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
+  requires forall known(k in 0_u64..xs^.len): xs^[k] == {value}_u64;
+}} {{
+  action(value: xs^[0_u64]);
+  return unit;
+}}
+
+fn probe(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
+  requires forall known(k in 0_u64..xs^.len): xs^[k] == {value}_u64;
+}} {{
+  apply::<fn permissive>(xs: xs);
+  return unit;
+}}"
+            ),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn overflowing_exact_goal_formation_reports_range_arithmetic() {
+    let prefix = "fn need_sum(value: i64) -> result: unit pure contract {
+  requires value + value == 0_i64;
+} {
+  return unit;
+}
+
+fn need_difference(left: i64, right: i64) -> result: unit pure contract {
+  requires left - right == 0_i64;
+} {
+  return unit;
+}
+
+fn probe(xs: &Array<i64, 1>) -> result: unit reads(xs) contract {
+  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_i64;
+} {
+  let x = xs^[0_u64];
+  let first = x * 9223372036854775807_i64;
+  let second = first * 9223372036854775807_i64;
+  let large = second + second;
+  let negative = 0_i64 - large;";
+    // The same prefix is representable; only forming the final add/subtract
+    // exceeds i128. All runtime values are zero under the range requirement.
+    check(&format!("{prefix}\n  return unit;\n}}"), None);
+    for goal in [
+        "let overflow = large + large;",
+        "let overflow = large - negative;",
+        "need_sum(value: large);",
+        "need_difference(left: large, right: negative);",
+        "invariant zero_sum: large + large == 0_i64;",
+        "invariant zero_difference: large - negative == 0_i64;",
+    ] {
+        let source = format!(
+            "{prefix}\n  {goal}\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("{outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeArithmetic
+            );
+        });
+    }
+}
+
+#[test]
+fn written_premise_measure_subscripts_receive_their_own_range_verdict() {
+    for (index, expected) in [(0, None), (4, Some(SemanticRule::Op4))] {
+        // Three independent premises make the certificate nonredundant.
+        // The two measures cancel in the last premise, but their subscripts
+        // still owe their own OP-4 records, separately from proving c<=c_limit.
+        check(
+            &format!(
+                "fn probe(indices: &Array<u64, 1>, rows: &Array<Slots<u8, 8>, 4>, a: u64, a_limit: u64, b: u64, b_limit: u64, c: u64, c_limit: u64) -> result: unit reads(indices) contract {{
+  requires a <= a_limit;
+  requires b <= b_limit;
+  requires c <= c_limit;
+  requires forall at(k in 0_u64..indices^.len): indices^[k] == {index}_u64;
+}} {{
+  let index = indices^[0_u64];
+  invariant total: a + b + c <= a_limit + b_limit + c_limit {{
+    use (a <= a_limit);
+    use (b <= b_limit);
+    use (c + rows^[index].len <= c_limit + rows^[index].len);
+  }}
+  return unit;
+}}"
+            ),
+            expected,
+        );
+    }
+}

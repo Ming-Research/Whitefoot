@@ -326,18 +326,18 @@ fn deferred_records(
                 pending.push((index, walk::DeferredAnswer::Pending));
             }
             ObligationSubject::CallRequirement { .. }
-                if record.rule == super::SemanticRule::Fn8 =>
+                if record.rule != super::SemanticRule::Type11 =>
             {
-                // TYPE-11 and OP-14 share this record representation, but
-                // RANGE-2 selects ordinary-call FN-8 requirements only.
+                // TYPE-11 is judged as a state invariant. PRE-1 requirements
+                // remain ordinary calls even when OP-14 owns their diagnostic.
                 pending.push((index, walk::DeferredAnswer::Pending));
             }
             _ => {}
         }
     }
     if !pending.is_empty() {
-        let excluded = selection::excluded_sites(function, functions, nominals, elements);
-        pending.retain(|(index, _)| !excluded.excludes(&function.obligations[*index]));
+        let selected = selection::selected_sites(function, functions, nominals, elements);
+        pending.retain(|(index, _)| selected.selects(&function.obligations[*index]));
     }
     pending
 }

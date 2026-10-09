@@ -1,0 +1,14 @@
+fn probe(xs: &[u64]) -> result: unit reads(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] == 2_u64;
+} {
+  if 0_u64 < xs^.len {
+    let x = xs^[0_u64];
+    let y = xs^[0_u64];
+    let product = x * y;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -20,6 +20,8 @@ mod ordinary;
 mod type_invariants;
 mod windows;
 
+use ordinary::GoalFailure;
+
 use super::super::UnsupportedSemanticFeature;
 use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
@@ -697,15 +699,24 @@ impl<'program> Walker<'program> {
             }
             CheckedStatement::Proof(proof) => {
                 let literals = self.affine_relation(&mut state, &proof.target);
+                // Written premises also form measure places with their own
+                // OP-4 records, independently of the certificate's target.
+                for written_use in &proof.uses {
+                    if let super::super::model::CheckedProofUseSource::Relation(relation) =
+                        &written_use.source
+                    {
+                        self.ordinary_relation_places(&mut state, relation);
+                    }
+                }
                 let written = self.written_instances(&state, &proof.uses);
                 self.ordinary_goal(
                     &state,
                     &proof.node_path,
                     &ObligationSubject::SourceProof,
-                    literals.as_deref(),
+                    literals.as_deref().map_err(|failure| *failure),
                     written.as_deref(),
                 );
-                if let Some(literals) = literals {
+                if let Ok(literals) = literals {
                     state.conds.extend(literals);
                 }
                 Some(state)
@@ -1867,6 +1878,7 @@ impl<'program> Walker<'program> {
                 arguments,
                 result,
                 formal_effects,
+                formal_contract,
                 ..
             } => self.call(
                 state,
@@ -1875,6 +1887,7 @@ impl<'program> Walker<'program> {
                 arguments,
                 *result,
                 formal_effects.as_deref(),
+                formal_contract.as_deref(),
             ),
             CheckedExpression::IntegerOperation {
                 carrier,
@@ -2360,9 +2373,13 @@ impl<'program> Walker<'program> {
                     fields: values,
                 }
             }
-            CheckedExpression::BufferMeasure { .. }
-            | CheckedExpression::BoxDeref { .. }
-            | CheckedExpression::BoxTake { .. } => self.opaque_of(expression.ty()),
+            CheckedExpression::BufferMeasure { .. } | CheckedExpression::BoxDeref { .. } => {
+                self.opaque_of(expression.ty())
+            }
+            CheckedExpression::BoxTake { binding, path, .. } => {
+                let _ = self.path_target(state, PlaceRoot::Binding(*binding), path);
+                self.opaque_of(expression.ty())
+            }
         }
     }
 
@@ -2446,31 +2463,47 @@ impl<'program> Walker<'program> {
             CheckedIntegerOperation::AddExact
             | CheckedIntegerOperation::SubtractExact
             | CheckedIntegerOperation::MultiplyExact => {
-                let exact = match (operation, values.as_slice()) {
-                    (CheckedIntegerOperation::AddExact, [left, right]) => left.plus(right),
-                    (CheckedIntegerOperation::SubtractExact, [left, right]) => left.minus(right),
+                // The outer option says the operation has a linear form;
+                // failure inside that form is arithmetic overflow.
+                let formed = match (operation, values.as_slice()) {
+                    (CheckedIntegerOperation::AddExact, [left, right]) => Some(left.plus(right)),
+                    (CheckedIntegerOperation::SubtractExact, [left, right]) => {
+                        Some(left.minus(right))
+                    }
                     (CheckedIntegerOperation::MultiplyExact, [left, right])
                         if left.is_constant() =>
                     {
-                        right.scaled(left.constant)
+                        Some(right.scaled(left.constant))
                     }
                     (CheckedIntegerOperation::MultiplyExact, [left, right])
                         if right.is_constant() =>
                     {
-                        left.scaled(right.constant)
+                        Some(left.scaled(right.constant))
                     }
                     _ => None,
                 };
+                let arithmetic_limit = matches!(formed, Some(None));
+                let exact = formed.flatten();
                 let goal = exact
                     .as_ref()
                     .map_or(Value::Unknown, |value| Value::Int(value.clone()));
-                self.ordinary_domain(
-                    state,
-                    carrier,
-                    ObligationFamily::IntegerDomain,
-                    &goal,
-                    result,
-                );
+                if arithmetic_limit {
+                    self.ordinary_arithmetic_limit(
+                        carrier,
+                        &ObligationSubject::Source {
+                            family: ObligationFamily::IntegerDomain,
+                            conjunct: 0,
+                        },
+                    );
+                } else {
+                    self.ordinary_domain(
+                        state,
+                        carrier,
+                        ObligationFamily::IntegerDomain,
+                        &goal,
+                        result,
+                    );
+                }
                 exact.map_or_else(|| self.opaque_of(result), Value::Int)
             }
             CheckedIntegerOperation::DivideExact
@@ -2499,6 +2532,7 @@ impl<'program> Walker<'program> {
 
     // ----- calls -----
 
+    #[allow(clippy::too_many_arguments)]
     fn call(
         &mut self,
         state: &mut State,
@@ -2507,6 +2541,7 @@ impl<'program> Walker<'program> {
         arguments: &[CheckedExpression],
         result: CheckedType,
         formal: Option<&super::super::model::CheckedEffects>,
+        contract: Option<&super::super::model::CheckedCallContract>,
     ) -> Value {
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
@@ -2530,7 +2565,10 @@ impl<'program> Walker<'program> {
                 _ => None,
             }
         };
-        for requirement in &callee.requirements {
+        let requirements = contract.map_or(callee.requirements.as_slice(), |contract| {
+            contract.requirements.as_slice()
+        });
+        for requirement in requirements {
             let subject = ObligationSubject::CallRequirement {
                 callee: function,
                 requires_clause: requirement.clause.clone(),
@@ -2539,7 +2577,13 @@ impl<'program> Walker<'program> {
             if self.has_ordinary(call, &subject) {
                 let goal =
                     self.goal_comparisons_with(state, &requirement.template.root, callee, &values);
-                self.ordinary_goal(state, call, &subject, goal.as_deref(), Some(&[]));
+                self.ordinary_goal(
+                    state,
+                    call,
+                    &subject,
+                    goal.as_deref().map_err(|failure| *failure),
+                    Some(&[]),
+                );
             }
         }
         // [RANGE-3] the callee's range requirements, at the call.
@@ -3393,29 +3437,34 @@ impl<'program> Walker<'program> {
         &mut self,
         state: &mut State,
         expression: &CheckedAffineExpression,
-    ) -> Option<Linear> {
+    ) -> Result<Linear, GoalFailure> {
         match &expression.kind {
-            CheckedAffineExpressionKind::Constant { value, .. } => Some(Linear::constant(*value)),
+            CheckedAffineExpressionKind::Constant { value, .. } => Ok(Linear::constant(*value)),
             CheckedAffineExpressionKind::Local { binding, .. } => match state.values.get(binding) {
-                Some(Value::Int(value)) => Some(value.clone()),
-                _ => None,
+                Some(Value::Int(value)) => Ok(value.clone()),
+                _ => Err(GoalFailure::Unrepresentable),
             },
-            CheckedAffineExpressionKind::Add(left, right) => {
-                self.affine(state, left)?.plus(&self.affine(state, right)?)
-            }
-            CheckedAffineExpressionKind::Subtract(left, right) => {
-                self.affine(state, left)?.minus(&self.affine(state, right)?)
-            }
+            CheckedAffineExpressionKind::Add(left, right) => self
+                .affine(state, left)?
+                .plus(&self.affine(state, right)?)
+                .ok_or(GoalFailure::Arithmetic),
+            CheckedAffineExpressionKind::Subtract(left, right) => self
+                .affine(state, left)?
+                .minus(&self.affine(state, right)?)
+                .ok_or(GoalFailure::Arithmetic),
             CheckedAffineExpressionKind::MultiplyByConstant {
                 constant, value, ..
-            } => self.affine(state, value)?.scaled(*constant),
+            } => self
+                .affine(state, value)?
+                .scaled(*constant)
+                .ok_or(GoalFailure::Arithmetic),
             CheckedAffineExpressionKind::Measure(expression) => {
                 match self.eval(state, expression) {
-                    Value::Int(value) => Some(value),
-                    _ => None,
+                    Value::Int(value) => Ok(value),
+                    _ => Err(GoalFailure::Unrepresentable),
                 }
             }
-            CheckedAffineExpressionKind::ConstGeneric { .. } => None,
+            CheckedAffineExpressionKind::ConstGeneric { .. } => Err(GoalFailure::Unrepresentable),
         }
     }
 
@@ -3425,19 +3474,22 @@ impl<'program> Walker<'program> {
         &mut self,
         state: &mut State,
         relation: &CheckedAffineRelation,
-    ) -> Option<Vec<Literal>> {
+    ) -> Result<Vec<Literal>, GoalFailure> {
         let left = self.affine(state, &relation.left)?;
         let right = self.affine(state, &relation.right)?;
-        let bounded = right.plus_constant(relation.bound)?;
+        let bounded = right
+            .plus_constant(relation.bound)
+            .ok_or(GoalFailure::Arithmetic)?;
         let mut out = vec![literal(left.clone(), Relation::LessEqual, bounded)];
         if relation.equality {
             out.push(literal(
                 right.clone(),
                 Relation::LessEqual,
-                left.plus_constant(relation.bound)?,
+                left.plus_constant(relation.bound)
+                    .ok_or(GoalFailure::Arithmetic)?,
             ));
         }
-        Some(out)
+        Ok(out)
     }
 
     /// One affine requirement as a literal, where the walk can read it.
@@ -3459,6 +3511,7 @@ impl<'program> Walker<'program> {
             })
             .collect::<Vec<_>>();
         self.goal_literal_with(state, root, self.function, &values)
+            .ok()
     }
 
     fn goal_literal_with(
@@ -3467,7 +3520,7 @@ impl<'program> Walker<'program> {
         root: &super::super::goal::GoalExpression,
         function: &CheckedFunction,
         values: &[Value],
-    ) -> Option<Literal> {
+    ) -> Result<Literal, GoalFailure> {
         use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
         fn term(
             walker: &mut Walker<'_>,
@@ -3475,10 +3528,10 @@ impl<'program> Walker<'program> {
             expression: &GoalExpression,
             function: &CheckedFunction,
             values: &[Value],
-        ) -> Option<Linear> {
+        ) -> Result<Linear, GoalFailure> {
             match expression {
                 GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
-                    Some(Linear::constant(super::super::entailment::integer_value(
+                    Ok(Linear::constant(super::super::entailment::integer_value(
                         *ty, *bits,
                     )))
                 }
@@ -3490,11 +3543,12 @@ impl<'program> Walker<'program> {
                     let value = &walker
                         .constants
                         .iter()
-                        .find(|item| item.declaration == *declaration)?
+                        .find(|item| item.declaration == *declaration)
+                        .ok_or(GoalFailure::Unrepresentable)?
                         .value;
                     match constant(value) {
-                        Value::Int(value) => Some(value),
-                        _ => None,
+                        Value::Int(value) => Ok(value),
+                        _ => Err(GoalFailure::Unrepresentable),
                     }
                 }
                 GoalExpression::Datum(GoalDatum::Parameter {
@@ -3502,17 +3556,19 @@ impl<'program> Walker<'program> {
                     projections,
                     ty,
                 }) => {
-                    let value = walker.goal_parameter(
-                        state,
-                        function,
-                        values,
-                        *ordinal as usize,
-                        projections,
-                        *ty,
-                    )?;
+                    let value = walker
+                        .goal_parameter(
+                            state,
+                            function,
+                            values,
+                            *ordinal as usize,
+                            projections,
+                            *ty,
+                        )
+                        .ok_or(GoalFailure::Unrepresentable)?;
                     match value {
-                        Value::Int(value) => Some(value),
-                        _ => None,
+                        Value::Int(value) => Ok(value),
+                        _ => Err(GoalFailure::Unrepresentable),
                     }
                 }
                 GoalExpression::Operation { row, arguments, .. } => {
@@ -3524,7 +3580,8 @@ impl<'program> Walker<'program> {
                             },
                             [left, right],
                         ) => term(walker, state, left, function, values)?
-                            .plus(&term(walker, state, right, function, values)?),
+                            .plus(&term(walker, state, right, function, values)?)
+                            .ok_or(GoalFailure::Arithmetic),
                         (
                             GoalOperation::Integer {
                                 operation: CheckedIntegerOperation::SubtractExact,
@@ -3532,7 +3589,8 @@ impl<'program> Walker<'program> {
                             },
                             [left, right],
                         ) => term(walker, state, left, function, values)?
-                            .minus(&term(walker, state, right, function, values)?),
+                            .minus(&term(walker, state, right, function, values)?)
+                            .ok_or(GoalFailure::Arithmetic),
                         (
                             GoalOperation::Integer {
                                 operation: CheckedIntegerOperation::MultiplyExact,
@@ -3543,11 +3601,11 @@ impl<'program> Walker<'program> {
                             let left = term(walker, state, left, function, values)?;
                             let right = term(walker, state, right, function, values)?;
                             if left.is_constant() {
-                                right.scaled(left.constant)
+                                right.scaled(left.constant).ok_or(GoalFailure::Arithmetic)
                             } else if right.is_constant() {
-                                left.scaled(right.constant)
+                                left.scaled(right.constant).ok_or(GoalFailure::Arithmetic)
                             } else {
-                                None
+                                Err(GoalFailure::Unrepresentable)
                             }
                         }
                         (
@@ -3570,14 +3628,16 @@ impl<'program> Walker<'program> {
                                 }),
                             ],
                         ) => {
-                            let value = walker.goal_parameter(
-                                state,
-                                function,
-                                values,
-                                *ordinal as usize,
-                                projections,
-                                *ty,
-                            )?;
+                            let value = walker
+                                .goal_parameter(
+                                    state,
+                                    function,
+                                    values,
+                                    *ordinal as usize,
+                                    projections,
+                                    *ty,
+                                )
+                                .ok_or(GoalFailure::Unrepresentable)?;
                             let target = match value {
                                 Value::Ref(View::Run {
                                     container,
@@ -3602,9 +3662,11 @@ impl<'program> Walker<'program> {
                                 Value::Owned(location) | Value::Ref(View::Place(location)) => {
                                     Target::Location(location)
                                 }
-                                _ => return None,
+                                _ => return Err(GoalFailure::Unrepresentable),
                             };
-                            walker.target_measure(state, &target, *ty, *measure)
+                            walker
+                                .target_measure(state, &target, *ty, *measure)
+                                .ok_or(GoalFailure::Unrepresentable)
                         }
                         (
                             GoalOperation::ArrayIndex { .. }
@@ -3619,42 +3681,46 @@ impl<'program> Walker<'program> {
                                 index,
                             ],
                         ) => {
-                            let value = walker.goal_parameter(
-                                state,
-                                function,
-                                values,
-                                *ordinal as usize,
-                                projections,
-                                *ty,
-                            )?;
+                            let value = walker
+                                .goal_parameter(
+                                    state,
+                                    function,
+                                    values,
+                                    *ordinal as usize,
+                                    projections,
+                                    *ty,
+                                )
+                                .ok_or(GoalFailure::Unrepresentable)?;
                             let index = term(walker, state, index, function, values)?;
                             let Value::Ref(View::Element {
                                 container,
                                 indices,
                                 projection: Some(projection),
-                            }) = walker.goal_subscript(state, value, *ty, index)?
+                            }) = walker
+                                .goal_subscript(state, value, *ty, index)
+                                .ok_or(GoalFailure::Unrepresentable)?
                             else {
-                                return None;
+                                return Err(GoalFailure::Unrepresentable);
                             };
                             let version = state.version(&mut walker.world, container);
-                            Some(walker.world.read(
+                            Ok(walker.world.read(
                                 version,
                                 indices,
                                 projection,
                                 integer_type(expression.ty()),
                             ))
                         }
-                        _ => None,
+                        _ => Err(GoalFailure::Unrepresentable),
                     }
                 }
-                _ => None,
+                _ => Err(GoalFailure::Unrepresentable),
             }
         }
         let GoalExpression::Operation { row, arguments, .. } = root else {
-            return None;
+            return Err(GoalFailure::Unrepresentable);
         };
         let GoalOperation::Integer { operation, .. } = row else {
-            return None;
+            return Err(GoalFailure::Unrepresentable);
         };
         let relation = match operation {
             CheckedIntegerOperation::Equal => Relation::Equal,
@@ -3663,14 +3729,14 @@ impl<'program> Walker<'program> {
             CheckedIntegerOperation::LessEqual => Relation::LessEqual,
             CheckedIntegerOperation::Greater => Relation::Greater,
             CheckedIntegerOperation::GreaterEqual => Relation::GreaterEqual,
-            _ => return None,
+            _ => return Err(GoalFailure::Unrepresentable),
         };
         let [left, right] = arguments.as_slice() else {
-            return None;
+            return Err(GoalFailure::Unrepresentable);
         };
         let left = term(self, state, left, function, values)?;
         let right = term(self, state, right, function, values)?;
-        Some(literal(left, relation, right))
+        Ok(literal(left, relation, right))
     }
 }
 
