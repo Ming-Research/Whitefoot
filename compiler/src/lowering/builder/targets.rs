@@ -148,26 +148,51 @@ impl IrBuilder<'_> {
     /// and a live linear target never reaches lowering because [WIN-3]
     /// makes that overwrite a hard error.
     ///
-    /// A directly named binding path is decided by the record the checker
-    /// carries on it [DIAG-2]: re-initializing a moved-out binding is an
-    /// accepted program and displaces nothing, so deriving the release from
-    /// the type alone would release a value that is already gone, while
-    /// deriving none at all leaked the cell a live binding still held.
-    pub(super) fn displaced_release(
+    /// The checker's post-RHS liveness record applies to every target shape
+    /// [DIAG-2]: a revived binding or an atomic read-out displaces nothing.
+    /// Structs use the same component records as checked scope cleanup;
+    /// their own node is empty, so emitting only that node loses the fields'
+    /// releases. Other releasing types keep their ordinary recursive action.
+    pub(super) fn displaced_releases(
         &mut self,
         target: &PreparedTarget<'_>,
-    ) -> Result<Option<IrDrop>, LoweringFailure> {
+    ) -> Result<Vec<IrDrop>, LoweringFailure> {
         if !target.displaces_live_value
             || !crate::lowering::type_derives_release(self.nominals, self.elements, target.ty)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?
         {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let previous = self.read_target(target)?;
-        Ok(Some(IrDrop {
-            subject: IrDropSubject::Value(previous),
-            ty: target.ty,
-        }))
+        let mut drops = Vec::new();
+        let mut pending = vec![(Vec::new(), target.ty)];
+        while let Some((path, ty)) = pending.pop() {
+            if !crate::lowering::type_derives_release(self.nominals, self.elements, ty)
+                .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            {
+                continue;
+            }
+            if let IrType::Nominal(id) = ty
+                && let IrNominalKind::Struct { fields } = &self
+                    .nominals
+                    .get(id.index())
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                    .kind
+            {
+                // The stack is LIFO; release fields in declaration order
+                // [PROV-6], including each nested struct's owned components.
+                for (index, field) in fields.iter().enumerate().rev() {
+                    let mut child = path.clone();
+                    child.push(u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?);
+                    pending.push((child, field.ty));
+                }
+            } else {
+                // Capture every component from the pre-write snapshot. The
+                // commit can overwrite the target before this group runs.
+                drops.push(self.lower_drop_subject(previous, &path, ty)?);
+            }
+        }
+        Ok(drops)
     }
 
     fn check_target_offset(

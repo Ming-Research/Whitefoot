@@ -2311,12 +2311,9 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let displaced = self.displaced_release(&target)?;
+        let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
-        if let Some(drop) = displaced {
-            self.append_drops(vec![drop])?;
-        }
-        Ok(())
+        self.append_drops(displaced)
     }
 
     fn project_struct_path(
