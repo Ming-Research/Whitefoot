@@ -546,6 +546,37 @@ direction for it is the join, [direction A1](#direction-a1-reduce-or-demand-the-
 Gate run 37834305243 at `2e21e2c90` confirms unchanged conformance and corpus
 verdicts and the full-rebuild differentials.
 
+## Promotion after Halo's regression
+
+A Halo-wf bisect on the 14900K (runs 37880685345 and 37882393995, the same
+Halo sources, 6 rounds with a twin) placed a 12-13% slower check of Halo's
+`pkg::vm` (9.16 s to 10.29 s) on the demanded index alone; the handler-word
+change merged with it does not affect checking. The suspect was the final
+AUTO family: exhausting it discovered up to N^2 vectors and each cold vector
+demand scanned all N left candidates, cubic per exhausted family. The index
+now builds the complete strongest-vector map once per residency when the
+final family is entered or when cold demands reach the candidate count, so
+later present and absent demands are lookups; the map equals the eager
+builder's, which remains the tests' oracle.
+
+Observed on the 14900K:
+
+| workload | base | head | head/base | twin/base | run |
+|---|---:|---:|---:|---:|---|
+| Halo `--check-module pkg::vm` (Halo main `d116d6a`) | 10.265 s | 8.575 s | 0.835 | 1.002 | Halo-wf 37887766480 |
+| natural wasm interpreter | 3.490 s | 3.460 s | 0.991 | 0.999 | Whitefoot 37887782082 |
+| plain series, 640 arms | 16.065 s | 16.215 s | 1.009 | 1.009 | Whitefoot 37887782082 |
+
+Base is main `64c0f956d` (release `wf-64c0f956df63`), head the promotion
+change (`wf-exp-1b988b826eab` for Halo). Halo's check is now faster than
+before the demanded index (9.1-9.2 s), and the wasm interpreter keeps its
+gain; the natural input here is a later `gen.py` output than the earlier
+table's, so only ratios compare. `WHITEFOOT_CHECK_WORK` on Halo's check under
+the head counts 12,803 affine attempts, 11,244 memo hits, 11,012 final-family
+starts of which 10,982 exhausted, 5,417 cold demands, 154,433 left candidates
+scanned and 216 promotions: nearly every final-family entry fails, the shape
+that made the lazy path cubic.
+
 ## Lazy-index read-only review and remaining evidence
 
 A separate read-only GPT-6-based Codex agent reviewed
