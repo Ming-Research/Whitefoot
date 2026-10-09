@@ -65,7 +65,7 @@ impl ParameterAbi {
     /// Whether this parameter crosses the call boundary as a range
     /// reference's element pointer and count rather than as one value.
     pub(crate) const fn is_range(self) -> bool {
-        matches!(self, Self::Value(IrType::Range { .. }))
+        matches!(self, Self::Value(IrType::Range { .. } | IrType::Run { .. }))
     }
 }
 

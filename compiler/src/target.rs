@@ -205,6 +205,12 @@ struct Layout {
 
 const POINTER_LAYOUT: Layout = Layout { size: 8, align: 8 };
 
+/// compiler/storage-representation: the bytes of a `Paged` cell's header,
+/// its `len`, `cap` and directory-capacity words, which the page-pointer
+/// directory follows in the same allocation. The emitter's cell type
+/// `{ i64, i64, i64, [0 x ptr] }` spells the same three words.
+pub(crate) const PAGED_HEADER_BYTES: u64 = 24;
+
 /// One concrete type owned by target lowering rather than by Whitefoot's
 /// source type system.
 ///
@@ -413,12 +419,45 @@ pub(super) fn element_has_zero_stride(
     Ok(layouts.layout(element)?.size == 0)
 }
 
+/// Compile-time page geometry: B from the element type's [OP-9] stride
+/// ceiling [OP-13], and the actual stride that addresses elements. A zero
+/// actual stride keeps zero displacement whatever B is, while logical indices
+/// are retained.
+pub(super) fn paged_geometry(
+    target: TargetLayout,
+    program: &IrProgram,
+    element: IrType,
+) -> Result<(u64, u64), TargetLayoutFailure> {
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let layout = layouts.layout(element)?;
+    let stride = align_up(
+        target,
+        layout.size,
+        layout.align,
+        TargetObject::Representation,
+    )?;
+    // [OP-13] B depends on the element type's [OP-9] language stride ceiling,
+    // not on this target's stride, so a program observes the same page
+    // length on every qualified target. The actual stride, which target
+    // qualification keeps at or below that ceiling, still addresses the page.
+    let ceiling = crate::lowering::layout_ceiling(program.nominals(), program.elements(), element)
+        .map(|ceiling| ceiling.stride);
+    let limit = match ceiling {
+        Some(crate::IrLayoutMagnitude::Finite(ceiling)) if ceiling <= 4096 => {
+            4096 / ceiling.max(1)
+        }
+        _ => 1,
+    };
+    Ok((1_u64 << (63 - limit.leading_zeros()), stride))
+}
+
 /// The selected-target layout of one union-laid-out enum
 /// (compiler/payload-enum-layout): the value's size and alignment, and each
 /// variant's view, the `i32` tag followed by that variant's fields.
 struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
+    handler_offset: Option<u64>,
 }
 
 /// What the emitter prints for one union-laid-out enum: the value's size,
@@ -428,7 +467,9 @@ struct UnionLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct UnionEnumLayout {
     size: u64,
+    align: u64,
     aligning_variant: u32,
+    handler_offset: Option<u64>,
 }
 
 impl UnionEnumLayout {
@@ -438,6 +479,15 @@ impl UnionEnumLayout {
 
     pub(crate) const fn aligning_variant(self) -> u32 {
         self.aligning_variant
+    }
+
+    pub(crate) const fn handler_offset(self) -> Option<u64> {
+        self.handler_offset
+    }
+
+    pub(crate) fn handler_alignment(self) -> Option<u64> {
+        self.handler_offset
+            .map(|_| self.align.min(POINTER_LAYOUT.align))
     }
 }
 
@@ -460,19 +510,50 @@ pub(crate) fn union_enum_layout(
         return Err(TargetLayoutFailure::InvalidIr);
     };
     let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
-    let union = layouts.union_layout(variants)?;
+    let words = program
+        .nominal(id)
+        .ok_or(TargetLayoutFailure::InvalidIr)?
+        .handler_words;
+    let union = layouts.union_layout(variants, words)?;
+    let view_align = union.views.iter().map(|(_, view)| view.align).max();
     let aligning_variant = variants
         .iter()
         .zip(&union.views)
-        .find(|(variant, (_, view))| {
-            !variant.fields().is_empty() && view.align == union.value.align
-        })
+        .find(|(variant, (_, view))| !variant.fields().is_empty() && Some(view.align) == view_align)
         .map(|(variant, _)| variant.tag())
         .ok_or(TargetLayoutFailure::InvalidIr)?;
     Ok(UnionEnumLayout {
         size: union.value.size,
+        align: union.value.align,
         aligning_variant,
+        handler_offset: union.handler_offset,
     })
+}
+
+/// All family words must fit OP-9's retained language ceiling. A product of
+/// selected child layouts is not that ceiling: nested unions may already be
+/// smaller, and their unused allowance is available to the containing enum.
+pub(crate) fn threaded_enum_fits(
+    target: TargetLayout,
+    program: &IrProgram,
+    id: IrNominalId,
+) -> Result<bool, TargetLayoutFailure> {
+    let nominal = program.nominal(id).ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = nominal.kind() else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    if nominal.is_tag_only_enum() {
+        return Ok(false);
+    }
+    let ceiling = program
+        .nominal_ceilings
+        .get(id.index())
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let threaded = layouts.union_layout(variants, nominal.handler_words)?.value;
+    Ok(ceiling.size.permits(threaded.size)
+        && threaded.align <= ceiling.align
+        && ceiling.stride.permits(threaded.size))
 }
 
 /// Whether `id` is laid out as a union of variant views
@@ -484,9 +565,10 @@ pub(crate) fn union_enum_layout(
 /// variant the product, which already is that variant's view, and one whose
 /// product returns in registers that product and its register return.
 ///
-/// The rule reads only the concrete nominal and the register budget shared
-/// by every admitted target, so it is target-independent, and target layout,
-/// the emitter and the call ABI all ask this one predicate.
+/// A dispatch layout plan may also select a union plus handler words for
+/// a previously register-returned product when all words fit its ceiling.
+/// Target layout, the emitter and the call ABI all ask this one predicate;
+/// the ordinary rule reads only the nominal and shared register budget.
 pub(crate) fn is_union_enum(
     nominals: &[IrNominal],
     elements: &[IrType],
@@ -498,6 +580,9 @@ pub(crate) fn is_union_enum(
     let IrNominalKind::Enum { variants } = nominal.kind() else {
         return Ok(false);
     };
+    if nominal.handler_words != 0 {
+        return Ok(true);
+    }
     if variants
         .iter()
         .filter(|variant| !variant.fields().is_empty())
@@ -595,6 +680,7 @@ fn holds_union_enum(
         | IrType::Buffer { .. }
         | IrType::Segments { .. }
         | IrType::Window { capacity: None, .. }
+        | IrType::Run { .. }
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }
         | IrType::KeySet
@@ -690,6 +776,7 @@ impl<'types> ReturnLeaves<'types> {
             // `{ ptr, i64 }`, and the runtime-capacity blocks' headers, whose
             // zero-length element tails have no leaf.
             IrType::Range { .. } => self.integer(copies, 2),
+            IrType::Run { .. } => self.integer(copies, 3),
             IrType::Buffer { .. } | IrType::Segments { .. } => self.integer(copies, 1),
             // `{ i64, ptr }`, and the `{ ptr, i64, i64 }` record an entry
             // binding names, which is only ever reached by its address.
@@ -703,7 +790,7 @@ impl<'types> ReturnLeaves<'types> {
                 let header = match (shape, capacity) {
                     (IrWindowShape::Slots, Some(_)) => 1,
                     (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
-                    (IrWindowShape::Ring, None) => 3,
+                    (IrWindowShape::Ring, None) | (IrWindowShape::Paged, _) => 3,
                 };
                 self.integer(copies, header);
                 if let Some(length @ 1..) = capacity {
@@ -1036,6 +1123,9 @@ fn runtime_capacity_layout(
             match shape {
                 IrWindowShape::Slots => 2,
                 IrWindowShape::Ring => 3,
+                // The header words and the minimum one directory entry.
+                // The entry count beyond that is checked at run time.
+                IrWindowShape::Paged => PAGED_HEADER_BYTES / 8 + 1,
             },
         ),
         _ => return Err(TargetLayoutFailure::InvalidIr),
@@ -1057,10 +1147,23 @@ fn runtime_capacity_layout(
         .ok_or(TargetLayoutFailure::Unrepresentable(
             TargetObject::RuntimeSizedAllocation,
         ))?;
+    // Paged elements occupy separate allocations, so their alignment does not
+    // pad the cell's pointer tail. Page alignment is still checked above.
+    let header_align = if matches!(
+        content,
+        IrType::Window {
+            shape: IrWindowShape::Paged,
+            ..
+        }
+    ) {
+        8
+    } else {
+        actual.align
+    };
     let header = align_up(
         layouts.target,
         fixed,
-        actual.align,
+        header_align,
         TargetObject::RuntimeSizedAllocation,
     )?;
     if header > layouts.target.runtime_allocation_max() {
@@ -1274,13 +1377,15 @@ fn validate_target_obligation(
         IrOperation::BufferIndex { target_domain, .. }
         | IrOperation::SliceIndex { target_domain, .. }
         | IrOperation::SliceAddress { target_domain, .. }
+        | IrOperation::IndexedAddress { target_domain, .. }
             if *target_domain == IrTargetDomainObligation::ElementAddress => {}
         IrOperation::ArrayFill { .. }
         | IrOperation::BufferFill { .. }
         | IrOperation::ArrayIndex { .. }
         | IrOperation::BufferIndex { .. }
         | IrOperation::SliceIndex { .. }
-        | IrOperation::SliceAddress { .. } => {
+        | IrOperation::SliceAddress { .. }
+        | IrOperation::IndexedAddress { .. } => {
             return Err(TargetLayoutFailure::InvalidIr);
         }
         _ => {}
@@ -1398,6 +1503,27 @@ impl<'types> LayoutComputer<'types> {
                 self.element(element)?;
                 Ok(Layout { size: 8, align: 8 })
             }
+            IrType::Run { element } => {
+                self.element(element)?;
+                Ok(Layout { size: 24, align: 8 })
+            }
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                element,
+                capacity: None,
+            } => {
+                self.element(element)?;
+                // The directory's runtime pointer tail follows this header.
+                Ok(Layout {
+                    size: PAGED_HEADER_BYTES,
+                    align: 8,
+                })
+            }
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                capacity: Some(_),
+                ..
+            } => Err(TargetLayoutFailure::InvalidIr),
             IrType::Range { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 16, align: 8 })
@@ -1520,7 +1646,8 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            self.union_layout(variants)?.value
+            self.union_layout(variants, nominal.handler_words)?
+                .value
         } else {
             let mut fields = Vec::new();
             match nominal.kind() {
@@ -1562,6 +1689,7 @@ impl<'types> LayoutComputer<'types> {
     fn union_layout(
         &mut self,
         variants: &[crate::IrVariant],
+        words: u32,
     ) -> Result<UnionLayout, TargetLayoutFailure> {
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
@@ -1577,10 +1705,29 @@ impl<'types> LayoutComputer<'types> {
             align = align.max(view.align);
             views.push((variant.tag(), view));
         }
+        let handler_offset = if words != 0 {
+            // The maximum view alignment equals the product alignment: both
+            // take the maximum over the tag and the same selected field
+            // layouts. Cap the word alignment there, including when it is
+            // below pointer alignment, so the word cannot raise the ceiling.
+            let word_align = POINTER_LAYOUT.align.min(align);
+            let offset = align_up(self.target, size, word_align, TargetObject::Representation)?;
+            size = checked_add(
+                offset,
+                u64::from(words) * POINTER_LAYOUT.size,
+                self.target,
+                TargetObject::Representation,
+            )?;
+            align = align.max(word_align);
+            Some(offset)
+        } else {
+            None
+        };
         let size = align_up(self.target, size, align, TargetObject::Representation)?;
         Ok(UnionLayout {
             value: Layout { size, align },
             views,
+            handler_offset,
         })
     }
 

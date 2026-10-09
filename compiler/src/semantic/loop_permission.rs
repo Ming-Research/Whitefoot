@@ -1,6 +1,6 @@
 //! The counted permission judgment [PAR-2]: whether the iterations of one
 //! counted `for` may be executed with overlapping execution, and whether the
-//! one value they carry may be recombined across them.
+//! scalar and indexed values they carry may be recombined across them.
 //!
 //! The adjacency judgment next door reads two *statements*, so two executions
 //! of one statement are never a pair and a counted loop gets nothing however
@@ -12,17 +12,21 @@
 //! The unit is one `for_stmt` L with body B, and every written, read, and
 //! operand-read footprint of a statement of B is formed exactly as [PAR-1]
 //! forms one. Writing an *iteration-own* place for one rooted in a binding B
-//! itself introduces, permission holds exactly when all four conditions hold:
+//! itself introduces, permission holds exactly when all five conditions hold:
 //!
 //! 1. **One accumulator, or none.** "Among whole-place writes of B, at most
 //!    one place is rooted in a binding declared outside L; that binding is
 //!    L's accumulator, and every occurrence of it in B is one operand of one
 //!    `set` statement whose target is that whole binding and whose right-hand
 //!    side is one operation applied to that operand and to a second operand
-//!    reaching the accumulator nowhere." The operation is one of ten fixed
-//!    for the accumulator across the whole of B.
+//!    reaching the accumulator nowhere." The operation is from the admitted
+//!    set, fixed for the accumulator across B. Indexed roots independently
+//!    admit matching direct or one-step temporary updates and root measures,
+//!    with fixed storage and length, discharged bounds and root-independent
+//!    indices/contributions.
 //! 2. **Every written place is admitted.** "Every place a footprint of B
-//!    writes is iteration-own storage, the accumulator's whole place, a place
+//!    writes is iteration-own storage, the accumulator's whole place, an indexed
+//!    accumulator cell, a place
 //!    in one proved single-binder affine element, a place in one proved
 //!    range reference, or a place in one certified element." Nothing else is
 //!    admitted, and no injectivity argument is searched for.
@@ -37,7 +41,8 @@
 //! # Element and range families
 //!
 //! A **proved single-binder affine element** is one subscript of an `Array`,
-//! a `Slots`, the run a range names or a `Segments`, rooted in an own binding
+//! a `Slots`, a `Paged`, the run either range kind names, a `Segments`, or
+//! the pages of a `Paged`, rooted in an own binding
 //! declared outside L, or reached through `^` of a reference parameter
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
@@ -109,8 +114,9 @@
 //!   tree over them. **No float operation is admitted.** `fadd.strict` is the
 //!   pointed example: floating-point addition is not associative, so a
 //!   schedule that regrouped it would move a published byte. `+`, `+defined`,
-//!   `+checked`, and `+sat` are absent because each application carries an
-//!   obligation, a `Result` route, or a clamp that regrouping moves.
+//!   `+checked`, and signed `+sat` are absent because each application carries
+//!   an obligation, a `Result` route, or a clamp that regrouping moves.
+//!   Unsigned `+sat` computes min(sum, max), with identity zero.
 //! - No entailment fact established inside one counted iteration survives to
 //!   a later head or to the continuation, so a regrouped accumulator can
 //!   falsify no surviving proof.
@@ -128,10 +134,10 @@ use super::entailment::{
     ObligationFamily, ObligationOutcome, ProvedAffineIndexMap, ProvedRangePartition,
 };
 use super::model::{
-    BindingId, CheckedArrayRoot, CheckedBooleanOperation, CheckedExpression, CheckedFunction,
-    CheckedIntegerOperation, CheckedLoopId, CheckedPlaceStep, CheckedRangeElementPlace,
-    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, WindowShape,
-    expression_children,
+    BindingId, CheckedArrayRoot, CheckedBooleanOperation, CheckedContainerRoot, CheckedExpression,
+    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedMeasure, CheckedPlaceStep,
+    CheckedRangeElementPlace, CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType,
+    CheckedValue, WindowShape, expression_children,
 };
 use super::permission::{
     Footprint, Program, argument_places, call_projection, collect_consumed_places, container_steps,
@@ -165,6 +171,8 @@ pub(crate) struct LoopPermission {
     /// Resolved places written by the body, retained for capture permissions
     /// in the context executing an actualized chunk.
     pub(crate) written_places: Vec<ResolvedPlace>,
+    /// Indexed roots live through the structured join; lengths are read at entry.
+    pub(crate) indexed: Vec<IndexedReduction>,
 }
 
 impl LoopPermission {
@@ -187,12 +195,29 @@ pub(crate) enum LoopActualization {
     },
 }
 
+/// A checked indexed family and its scalar cell projection. The root is
+/// borrowed until the split joins; private cells acquire no cleanup authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IndexedReduction {
+    pub(crate) root: CheckedContainerRoot,
+    pub(crate) fields: Vec<u32>,
+    pub(crate) value_type: CheckedType,
+    pub(crate) kind: IndexedFamilyKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum IndexedFamilyKind {
+    Reduce { op: LoopCombine },
+    Mark { constant: CheckedValue },
+}
+
 /// The closed set of operations an accumulator may be combined under: exactly
-/// the ten [PAR-2] admits, named once so the judgment, the ledger, and the
+/// those [PAR-2] admits, named once so the judgment, the ledger, and the
 /// emitted combination tree cannot hold three drifting copies of it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LoopCombine {
     AddWrap,
+    AddSaturating,
     MultiplyWrap,
     BitAnd,
     BitOr,
@@ -209,6 +234,7 @@ impl LoopCombine {
     pub(crate) const fn spelling(self) -> &'static str {
         match self {
             Self::AddWrap => "+wrap",
+            Self::AddSaturating => "+sat",
             Self::MultiplyWrap => "*wrap",
             Self::BitAnd => "iand",
             Self::BitOr => "ior",
@@ -259,6 +285,11 @@ pub(crate) enum LoopDenial {
     /// Condition 1: the accumulator is read outside its own combine, so what
     /// a later iteration sees is the running total.
     AccumulatorRead { statement: NodePath, reads: usize },
+    /// Condition 1: an indexed root violates its update-only contract.
+    IndexedReduction {
+        statement: NodePath,
+        reason: &'static str,
+    },
     /// Condition 2: a written or read place outside the families the rule
     /// admits.
     SharedWrite { argument: NodePath },
@@ -281,7 +312,8 @@ impl LoopDenial {
         match self {
             Self::NotAReduction { .. }
             | Self::ManyAccumulators { .. }
-            | Self::AccumulatorRead { .. } => 1,
+            | Self::AccumulatorRead { .. }
+            | Self::IndexedReduction { .. } => 1,
             Self::SharedWrite { .. } | Self::BodyForm { .. } => 2,
             Self::UnresolvedWrite { .. } => 3,
             Self::Exit { .. } => 4,
@@ -408,6 +440,10 @@ fn judge<'check>(
         inner_loops: Vec::new(),
         reads: Vec::new(),
         accumulates: Vec::new(),
+        indexed: Vec::new(),
+        indexed_denial: None,
+        indexed_temporaries: Vec::new(),
+        write_events: Vec::new(),
         written_places: Vec::new(),
         carried: None,
         shared: None,
@@ -419,6 +455,25 @@ fn judge<'check>(
         exit: None,
     };
     survey.introduce(body);
+    survey.select_indexed_roots(body);
+    // Selecting one family claims the entire root, including affine sibling
+    // fields. Otherwise those siblings would still write shared storage.
+    let selected = survey
+        .indexed
+        .iter()
+        .filter(|root| {
+            root.needs_reduction
+                || survey.indexed.iter().any(|other| {
+                    other.binding == root.binding
+                        && same_element_root(&other.origin, &root.origin)
+                        && other.map != root.map
+                })
+        })
+        .map(|root| root.binding)
+        .collect::<Vec<_>>();
+    survey
+        .indexed
+        .retain(|root| selected.contains(&root.binding));
     survey.walk(body, 0);
     survey.finish(statement)
 }
@@ -433,6 +488,7 @@ struct ProvenElementWrite {
     root: ResolvedPlace,
     statement: NodePath,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One already-proved element read whose exact offset is the same affine map.
@@ -441,6 +497,7 @@ struct ProvenElementWrite {
 struct ProvenElementRead {
     root: ResolvedPlace,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One borrowed argument at or below one mapped element [PAR-2]: the callee's
@@ -452,6 +509,7 @@ struct ProvenElementReference {
     /// The element itself: the root extended by that index step.
     element: ResolvedPlace,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One range reference `&r[s*i+b..s*i+b+s]` whose endpoint images the [REF-4]
@@ -491,6 +549,8 @@ struct ReadOccurrence {
     /// A measure expression without a certificate element-read carrier.
     /// Affine and range coverage also check its exact measured root [MSR-2].
     measure: bool,
+    /// REF-4's page formation reads its owner's length, separate from a page map.
+    page_descriptor: bool,
     /// A measure selected through a range element retains its carrier for
     /// the certified family, but can measure an affine map's own nested root.
     element_measure: bool,
@@ -514,6 +574,31 @@ struct Accumulate {
     binding: BindingId,
     combine: LoopCombine,
     statement: NodePath,
+}
+
+/// A root requiring the indexed family rather than the existing affine map.
+/// Bindings, paths and bounds come from ordinary checking, never from syntax
+/// reconstruction. The whole binding's occurrences are checked at finish.
+struct IndexedAccumulator {
+    root: CheckedContainerRoot,
+    binding: BindingId,
+    origin: ResolvedPlace,
+    map: Option<ProvedAffineIndexMap>,
+    needs_reduction: bool,
+    fields: Vec<u32>,
+    value_type: CheckedType,
+    kind: Option<IndexedFamilyKind>,
+    updates: usize,
+    statement: NodePath,
+}
+
+/// A one-step initializer still available on this block's straight-line path.
+/// Ordinary read/write footprints invalidate it before a later set can use it.
+struct IndexedTemporary<'check> {
+    binding: BindingId,
+    value: &'check CheckedExpression,
+    root: usize,
+    dependencies: Vec<ResolvedPlace>,
 }
 
 struct Survey<'check, 'run> {
@@ -543,6 +628,12 @@ struct Survey<'check, 'run> {
     /// Every read occurrence, with multiplicity and resolved places.
     reads: Vec<ReadOccurrence>,
     accumulates: Vec<Accumulate>,
+    indexed: Vec<IndexedAccumulator>,
+    indexed_denial: Option<LoopDenial>,
+    indexed_temporaries: Vec<(BindingId, NodePath)>,
+    /// Unlike the retained write set, this records repeated commits too.
+    /// A repeated write between a temporary and its set still invalidates it.
+    write_events: Vec<ResolvedPlace>,
     written_places: Vec<ResolvedPlace>,
     carried: Option<NodePath>,
     shared: Option<NodePath>,
@@ -563,6 +654,392 @@ impl<'check> Survey<'check, '_> {
         collect_inner_loops(statements, &mut self.inner_loops);
     }
 
+    /// Choose the indexed family only for roots outside the existing single
+    /// affine map. This preserves map permission for ordinary same-index
+    /// reads and stores while also admitting reductions over several maps.
+    /// A holding certificate already owns its writes and requires no indexed
+    /// update form; leave those writes with the certified-element family.
+    fn select_indexed_roots(&mut self, statements: &[CheckedStatement]) {
+        for statement in statements {
+            if let CheckedStatement::Set {
+                node_path,
+                target: CheckedSetTarget::Storage(target),
+                ..
+            } = statement
+                && !self
+                    .certificate
+                    .is_some_and(|certificate| certificate.writes.contains(node_path))
+                && let Some((binding, origin)) = self.indexed_origin(target)
+            {
+                let (position, index, fields) =
+                    indexed_parts(target).expect("indexed_origin established the cell projection");
+                let map = self
+                    .outermost_map(path_subscripts(&target.path))
+                    .map(|(_, map)| map);
+                if let Some(root) = self.indexed.iter_mut().find(|root| {
+                    root.binding == binding
+                        && same_element_root(&root.origin, &origin)
+                        && root.fields == fields
+                }) {
+                    root.needs_reduction |= map.is_none() || root.map != map;
+                } else {
+                    let mut root = target.clone();
+                    root.path.truncate(position);
+                    root.ty = index.base_type;
+                    self.indexed.push(IndexedAccumulator {
+                        root,
+                        binding,
+                        origin,
+                        map,
+                        needs_reduction: map.is_none(),
+                        fields,
+                        value_type: target.ty,
+                        kind: None,
+                        updates: 0,
+                        statement: node_path.clone(),
+                    });
+                }
+            }
+            for nested in nested_bodies(statement) {
+                self.select_indexed_roots(nested);
+            }
+        }
+    }
+
+    fn indexed_origin(&self, target: &CheckedContainerRoot) -> Option<(BindingId, ResolvedPlace)> {
+        let binding = target.binding()?;
+        if self.introduced.contains(&binding) {
+            return None;
+        }
+        let (position, index, _) = indexed_parts(target)?;
+        let prefix = &target.path[..position];
+        if !matches!(target.ty, CheckedType::Integer(_) | CheckedType::Bool)
+            || !matches!(
+                index.base_type,
+                CheckedType::Array { .. }
+                    | CheckedType::Buffer { .. }
+                    | CheckedType::Window {
+                        shape: WindowShape::Slots,
+                        ..
+                    }
+            )
+        {
+            return None;
+        }
+        let resolved = self.places.resolve(
+            target.root,
+            &prefix
+                .iter()
+                .map(CheckedPlaceStep::place_step)
+                .collect::<Vec<_>>(),
+        );
+        let [origin] = resolved.as_slice() else {
+            return None;
+        };
+        Some((binding, origin.clone()))
+    }
+
+    fn indexed_overlaps(&self, root: &IndexedAccumulator, place: &ResolvedPlace) -> bool {
+        self.places
+            .resolve(PlaceRoot::Binding(root.binding), &[])
+            .iter()
+            .any(|owner| self.places.overlaps(&UnprovedSeparations, owner, place))
+    }
+
+    fn indexed_mentions(&self, root: &IndexedAccumulator, expression: &CheckedExpression) -> bool {
+        let mut mentioned = false;
+        visit_read_bindings(expression, &mut |binding| {
+            mentioned |= binding == root.binding
+                || self
+                    .places
+                    .resolve(PlaceRoot::Binding(binding), &[])
+                    .iter()
+                    .any(|place| self.indexed_overlaps(root, place));
+        });
+        mentioned
+    }
+
+    /// A selected root owns every one of its writes, including any malformed
+    /// update or affine store mixed into the same binding.
+    fn indexed_target(
+        &mut self,
+        target: &CheckedSetTarget,
+        value: &CheckedExpression,
+        node: &NodePath,
+    ) -> bool {
+        if self.indexed.is_empty() {
+            return false;
+        }
+        let mut footprint = Footprint::default();
+        set_target_place(self.places, target, node, &mut footprint);
+        let exact = match target {
+            CheckedSetTarget::Storage(target) => self.indexed.iter().position(|root| {
+                self.indexed_origin(target)
+                    .is_some_and(|(binding, origin)| {
+                        root.binding == binding
+                            && same_element_root(&root.origin, &origin)
+                            && indexed_parts(target)
+                                .is_some_and(|(_, _, fields)| fields == root.fields)
+                    })
+            }),
+            _ => None,
+        };
+        let Some(position) = exact.or_else(|| {
+            self.indexed.iter().position(|root| {
+                footprint
+                    .writes
+                    .iter()
+                    .any(|write| self.indexed_overlaps(root, &write.place))
+            })
+        }) else {
+            return false;
+        };
+        let result = self.indexed_combine(&self.indexed[position], target, value);
+        match result {
+            Ok(kind) => {
+                let root = &mut self.indexed[position];
+                if root.kind.as_ref().is_some_and(|first| *first != kind) {
+                    self.indexed_denial.get_or_insert(LoopDenial::IndexedReduction {
+                        statement: node.clone(),
+                        reason: "one fixed operation or one constant is required per indexed family throughout the body",
+                    });
+                }
+                root.updates += usize::from(matches!(kind, IndexedFamilyKind::Reduce { .. }));
+                root.kind = Some(kind);
+            }
+            Err(reason) => {
+                self.indexed_denial
+                    .get_or_insert(LoopDenial::IndexedReduction {
+                        statement: node.clone(),
+                        reason,
+                    });
+            }
+        }
+        for write in footprint.writes {
+            self.record_written_place(&write.place);
+        }
+        if let Some(argument) = footprint.unresolved {
+            self.unresolved.get_or_insert(argument);
+        }
+        match target {
+            CheckedSetTarget::Storage(target) => {
+                for offset in target.offsets() {
+                    self.expression(offset);
+                }
+            }
+            CheckedSetTarget::RangeIndex(target) => {
+                for offset in target.offsets() {
+                    self.expression(offset);
+                }
+            }
+            CheckedSetTarget::Place(_) => {}
+        }
+        true
+    }
+
+    fn indexed_combine(
+        &self,
+        root: &IndexedAccumulator,
+        target: &CheckedSetTarget,
+        value: &CheckedExpression,
+    ) -> Result<IndexedFamilyKind, &'static str> {
+        let CheckedSetTarget::Storage(target) = target else {
+            return Err(
+                "every write must update an indexed cell; the root and its length stay unchanged",
+            );
+        };
+        let Some((binding, origin)) = self.indexed_origin(target) else {
+            return Err(
+                "the target must be an integer or Bool cell of one outside Array or Slots root",
+            );
+        };
+        if binding != root.binding || !same_element_root(&origin, &root.origin) {
+            return Err("all updates must use one fixed storage path of the same outside binding");
+        }
+        let Some((_, index, fields)) = indexed_parts(target) else {
+            return Err("the target must be a subscripted cell or record field");
+        };
+        if fields != root.fields {
+            return Err("a field family cannot share its root with a whole-element write");
+        }
+        if !self.obligations.iter().any(|outcome| {
+            outcome.family == ObligationFamily::Bounds
+                && outcome.node_path == index.obligation
+                && outcome.discharged
+        }) {
+            return Err("the indexed write requires its ordinary discharged OP-4 bound");
+        }
+        if self.indexed_mentions(root, &index.offset) {
+            return Err("the subscript must read nothing of the indexed root");
+        }
+        if let CheckedExpression::Constant(constant)
+        | CheckedExpression::NamedConstant {
+            value: constant, ..
+        } = value
+            && matches!(
+                constant,
+                CheckedValue::Integer { .. } | CheckedValue::Bool(_)
+            )
+        {
+            return Ok(IndexedFamilyKind::Mark {
+                constant: constant.clone(),
+            });
+        }
+        let (combine, arguments) = match value {
+            CheckedExpression::IntegerOperation {
+                operation,
+                operand_type,
+                arguments,
+                ..
+            } => (integer_combine(*operation, *operand_type), arguments),
+            CheckedExpression::BooleanOperation {
+                operation,
+                arguments,
+                ..
+            } => (boolean_combine(*operation), arguments),
+            _ => {
+                return Err(
+                    "each indexed write requires an admitted operation directly or through one fresh, unchanged, single-use temporary",
+                );
+            }
+        };
+        let Some(combine) = combine else {
+            return Err(
+                "the indexed operation must belong to the scalar accumulator's admitted set",
+            );
+        };
+        let [left, right] = arguments.as_slice() else {
+            return Err("the indexed operation must have two operands");
+        };
+        let Some((_, contribution)) = [(left, right), (right, left)]
+            .into_iter()
+            .find(|(operand, _)| self.same_indexed_operand(target, operand))
+        else {
+            return Err("one operand must name exactly the target's subscripted place");
+        };
+        if self.indexed_mentions(root, contribution) {
+            return Err("the contribution must read nothing of the indexed root");
+        }
+        Ok(IndexedFamilyKind::Reduce { op: combine })
+    }
+
+    fn same_indexed_operand(
+        &self,
+        target: &CheckedContainerRoot,
+        operand: &CheckedExpression,
+    ) -> bool {
+        let CheckedExpression::ReadStorage { root, .. } = operand else {
+            return self.same_legacy_indexed_operand(target, operand);
+        };
+        // GRAM-9 operands and subscript offsets are atoms, so no operation
+        // can change a binding between the target and operand evaluations.
+        // Captures retain different occurrence IDs, but identical typed paths
+        // and offset atoms in this one statement select the same cell.
+        root.root == target.root && same_update_path(&root.path, &target.path)
+    }
+
+    fn same_legacy_indexed_operand(
+        &self,
+        target: &CheckedContainerRoot,
+        operand: &CheckedExpression,
+    ) -> bool {
+        let Some((CheckedPlaceStep::Subscript(index), prefix)) = target.path.split_last() else {
+            return false;
+        };
+        let (binding, path, offset) = match operand {
+            CheckedExpression::ArrayIndex {
+                root: CheckedArrayRoot::Binding { binding, fields },
+                offset,
+                ..
+            } => (*binding, field_steps(fields), offset.as_ref()),
+            CheckedExpression::BufferIndex { root, offset, .. } => {
+                (root.binding, root.place_path(), offset.as_ref())
+            }
+            _ => return false,
+        };
+        let same_offset = same_update_atom(&index.offset, offset);
+        let written = self.places.resolve(
+            target.root,
+            &prefix
+                .iter()
+                .map(CheckedPlaceStep::place_step)
+                .collect::<Vec<_>>(),
+        );
+        let read = self.places.resolve(PlaceRoot::Binding(binding), &path);
+        target.binding() == Some(binding)
+            && same_offset
+            && matches!((written.as_slice(), read.as_slice()), ([written], [read]) if same_element_root(written, read))
+    }
+
+    fn indexed_state(&self) -> Option<LoopDenial> {
+        if let Some(denial) = &self.indexed_denial {
+            return Some(denial.clone());
+        }
+        for (binding, statement) in &self.indexed_temporaries {
+            let uses = self
+                .reads
+                .iter()
+                .filter(|read| read.binding == *binding)
+                .count();
+            let place = ResolvedPlace::binding(*binding);
+            if uses != 1
+                || self
+                    .written_places
+                    .iter()
+                    .any(|written| self.places.overlaps(&UnprovedSeparations, &place, written))
+            {
+                return Some(LoopDenial::IndexedReduction {
+                    statement: statement.clone(),
+                    reason: "an indexed update temporary must be immutable and used exactly once by its set",
+                });
+            }
+        }
+        for root in &self.indexed {
+            if self.indexed.iter().any(|other| {
+                other.binding == root.binding && !same_element_root(&other.origin, &root.origin)
+            }) {
+                return Some(LoopDenial::IndexedReduction {
+                    statement: root.statement.clone(),
+                    reason: "all updates must use one fixed storage path of the same outside binding",
+                });
+            }
+            let reads = self
+                .reads
+                .iter()
+                .filter(|read| {
+                    (read.places.is_empty()
+                        || !read
+                            .places
+                            .iter()
+                            .all(|place| read.is_root_measure(place, &root.origin)))
+                        && (read.binding == root.binding
+                            || read
+                                .places
+                                .iter()
+                                .any(|place| self.indexed_overlaps(root, place))
+                            || self
+                                .places
+                                .resolve(PlaceRoot::Binding(read.binding), &[])
+                                .iter()
+                                .any(|place| self.indexed_overlaps(root, place)))
+                })
+                .count();
+            let expected_reads: usize = self
+                .indexed
+                .iter()
+                .filter(|family| family.binding == root.binding)
+                .map(|family| family.updates)
+                .sum();
+            if reads != expected_reads {
+                return Some(LoopDenial::IndexedReduction {
+                    statement: root.statement.clone(),
+                    reason: "every occurrence of the indexed root must be a root measure or belong to its cell update; prefix reads, checks of cells and root-dependent subscripts or contributions are not permitted",
+                });
+            }
+        }
+        None
+    }
+
     /// Walks one block, carrying how many value initializers the *body* opens
     /// around it.
     ///
@@ -575,22 +1052,80 @@ impl<'check> Survey<'check, '_> {
     /// is reckoned from L's body, which is why judging a nested loop starts
     /// it again at zero.
     fn walk(&mut self, statements: &'check [CheckedStatement], initializers: usize) {
+        let mut pending: Vec<IndexedTemporary<'check>> = Vec::new();
         for statement in statements {
             if let Some(node) = statement_node(statement) {
                 self.cite = node.clone();
             }
-            self.statement(statement, initializers);
+            let temporary = match statement {
+                CheckedStatement::Set {
+                    value: CheckedExpression::Binding { binding, .. },
+                    ..
+                } => pending
+                    .iter()
+                    .find(|temporary| temporary.binding == *binding),
+                _ => None,
+            };
+            let read_start = self.reads.len();
+            let write_start = self.write_events.len();
+            self.statement(statement, initializers, temporary);
             let inside = initializers
                 + usize::from(matches!(statement, CheckedStatement::ValueMatchLet { .. }));
             for nested in nested_bodies(statement) {
                 self.walk(nested, inside);
+            }
+            // Include nested footprints: an intervening branch or loop can
+            // read the root or change an index/contribution's support too.
+            pending.retain(|temporary| {
+                let root = &self.indexed[temporary.root];
+                !self.reads[read_start..].iter().any(|read| {
+                    read.binding == root.binding
+                        || read
+                            .places
+                            .iter()
+                            .any(|place| self.indexed_overlaps(root, place))
+                }) && !self.write_events[write_start..].iter().any(|write| {
+                    self.indexed_overlaps(root, write)
+                        || temporary.dependencies.iter().any(|dependency| {
+                            self.places
+                                .overlaps(&UnprovedSeparations, dependency, write)
+                        })
+                })
+            });
+            if let CheckedStatement::Let { binding, value, .. } = statement
+                && matches!(
+                    value,
+                    CheckedExpression::IntegerOperation { .. }
+                        | CheckedExpression::BooleanOperation { .. }
+                )
+                && let Some(root) = self
+                    .indexed
+                    .iter()
+                    .position(|root| self.indexed_mentions(root, value))
+            {
+                let mut dependencies = self.reads[read_start..]
+                    .iter()
+                    .flat_map(|read| read.places.iter().cloned())
+                    .collect::<Vec<_>>();
+                dependencies.push(ResolvedPlace::binding(*binding));
+                pending.push(IndexedTemporary {
+                    binding: *binding,
+                    value,
+                    root,
+                    dependencies,
+                });
             }
         }
     }
 
     /// One body statement. The match is exhaustive on purpose: every form is
     /// either given a footprint here or refused here.
-    fn statement(&mut self, statement: &'check CheckedStatement, initializers: usize) {
+    fn statement(
+        &mut self,
+        statement: &'check CheckedStatement,
+        initializers: usize,
+        temporary: Option<&IndexedTemporary<'check>>,
+    ) {
         match statement {
             CheckedStatement::Let {
                 node_path,
@@ -636,6 +1171,16 @@ impl<'check> Survey<'check, '_> {
                     if place.fields.is_empty() && self.places.is_reference(place.binding))
                 {
                     self.shared.get_or_insert(node_path.clone());
+                    self.moved_places(value, node_path);
+                    self.expression(value);
+                    return;
+                }
+                let update = temporary.map_or(value, |temporary| temporary.value);
+                if self.indexed_target(target, update, node_path) {
+                    if let Some(temporary) = temporary {
+                        self.indexed_temporaries
+                            .push((temporary.binding, node_path.clone()));
+                    }
                     self.moved_places(value, node_path);
                     self.expression(value);
                     return;
@@ -731,9 +1276,10 @@ impl<'check> Survey<'check, '_> {
                 continue;
             }
             if let Some((after, map)) = affine_map
-                && let Some((root, _)) = element_prefix(&write.place, after)
+                && let Some((root, element)) = element_prefix(&write.place, after)
             {
-                self.record_element_write(root, node.clone(), map);
+                let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                self.record_element_write(root, node.clone(), map, page);
                 continue;
             }
             self.enclosing_write(target, &write.place, node, combine);
@@ -973,7 +1519,7 @@ impl<'check> Survey<'check, '_> {
         if !matches!(place.path[first], PlaceStep::Index(_))
             && !place.path[first..]
                 .iter()
-                .any(|step| matches!(step, PlaceStep::Index(_)))
+                .any(|step| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
         {
             return false;
         }
@@ -1053,19 +1599,66 @@ impl<'check> Survey<'check, '_> {
     /// caller storage and is not classified here would leave the read out of
     /// condition 2 and *widen* permission.
     fn record_reads(&mut self, expression: &CheckedExpression) {
+        // Reference formation is also an occurrence for an indexed root,
+        // even though it reads no element and contributes no map footprint.
+        if let CheckedExpression::RangeOf { source, .. } = expression
+            && let Some(binding) = source.binding()
+            && self.indexed.iter().any(|root| {
+                binding == root.binding
+                    || self
+                        .places
+                        .resolve(PlaceRoot::Binding(binding), &[])
+                        .iter()
+                        .any(|place| self.indexed_overlaps(root, place))
+            })
+        {
+            self.reads.push(ReadOccurrence {
+                binding,
+                places: Vec::new(),
+                carrier: None,
+                measure: false,
+                page_descriptor: false,
+                element_measure: false,
+            });
+        }
         let occurrence = match expression {
             // Forming a reference reads no content, but naming an
             // accumulator outside its one combine operand still violates
             // PAR-2's occurrence restriction. Keep the occurrence without
             // inventing an element-read footprint for address formation.
-            CheckedExpression::BorrowAddressed { root, .. }
-            | CheckedExpression::BorrowSegment { root, .. } => {
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                if matches!(segment, super::CheckedSegmentSelect::Page(_)) {
+                    let (spelling, mut path) = root.place();
+                    path.push(PlaceStep::Measure(CheckedMeasure::Length));
+                    let places = self.places.resolve(spelling, &path);
+                    let subscripts = match root {
+                        super::CheckedSegmentSource::Storage(root) => path_subscripts(&root.path),
+                        super::CheckedSegmentSource::Element(place) => range_element_subscripts(place),
+                    };
+                    self.record_element_reads(subscripts, &places);
+                    root.binding().map(|binding| (binding, places))
+                } else {
+                    if let Some(binding) = root.binding() {
+                        self.reads.push(ReadOccurrence {
+                            binding,
+                            places: Vec::new(),
+                            carrier: None,
+                            measure: false,
+                            page_descriptor: false,
+                            element_measure: false,
+                        });
+                    }
+                    None
+                }
+            }
+            CheckedExpression::BorrowAddressed { root, .. } => {
                 if let Some(binding) = root.binding() {
                     self.reads.push(ReadOccurrence {
                         binding,
                         places: Vec::new(),
                         carrier: None,
                         measure: false,
+                        page_descriptor: false,
                         element_measure: false,
                     });
                 }
@@ -1077,6 +1670,7 @@ impl<'check> Survey<'check, '_> {
                     places: Vec::new(),
                     carrier: None,
                     measure: false,
+                    page_descriptor: false,
                     element_measure: false,
                 });
                 None
@@ -1094,7 +1688,9 @@ impl<'check> Survey<'check, '_> {
             // Copying a reference reads its name, not the storage it names
             // [REF-1, TYPE-7]. A call's projected row records any referent
             // read; reference rebinding is separately refused by statement.
-            CheckedExpression::Binding { binding, .. } if self.places.is_reference(*binding) => None,
+            CheckedExpression::Binding { binding, .. }
+                if self.places.is_reference(*binding)
+                    && !self.indexed.iter().any(|root| self.indexed_mentions(root, expression)) => None,
             CheckedExpression::Binding { binding, .. }
             | CheckedExpression::DerefAddressed { binding, .. } => Some((
                 *binding,
@@ -1144,7 +1740,7 @@ impl<'check> Survey<'check, '_> {
                     .resolve(PlaceRoot::Binding(*binding), &field_steps(fields));
                 if let Some(map) = self.proven_affine_map_at(obligation) {
                     for root in places.iter().cloned() {
-                        self.element_reads.push(ProvenElementRead { root, map });
+                        self.element_reads.push(ProvenElementRead { root, map, page: false });
                     }
                 }
                 Some((*binding, places))
@@ -1161,7 +1757,7 @@ impl<'check> Survey<'check, '_> {
                     .resolve(PlaceRoot::Binding(root.binding), &root.place_path());
                 if let Some(map) = self.proven_affine_map_at(obligation) {
                     for root in places.iter().cloned() {
-                        self.element_reads.push(ProvenElementRead { root, map });
+                        self.element_reads.push(ProvenElementRead { root, map, page: false });
                     }
                 }
                 Some((root.binding, places))
@@ -1218,6 +1814,10 @@ impl<'check> Survey<'check, '_> {
             CheckedExpression::ContainerMeasure { .. }
             | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::ArrayMeasure { .. } => (None, true),
+            CheckedExpression::BorrowSegment {
+                segment: super::CheckedSegmentSelect::Page(_),
+                ..
+            } => (None, true),
             _ => (None, false),
         };
         if let Some((binding, places)) = occurrence {
@@ -1229,6 +1829,13 @@ impl<'check> Survey<'check, '_> {
                     places,
                     carrier,
                     measure,
+                    page_descriptor: matches!(
+                        expression,
+                        CheckedExpression::BorrowSegment {
+                            segment: super::CheckedSegmentSelect::Page(_),
+                            ..
+                        }
+                    ),
                     element_measure: matches!(
                         expression,
                         CheckedExpression::RangeElementMeasure { .. }
@@ -1250,8 +1857,10 @@ impl<'check> Survey<'check, '_> {
     ) {
         if let Some((after, map)) = self.outermost_map(subscripts) {
             for place in places {
-                if let Some((root, _)) = element_prefix(place, after) {
-                    self.element_reads.push(ProvenElementRead { root, map });
+                if let Some((root, element)) = element_prefix(place, after) {
+                    let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                    self.element_reads
+                        .push(ProvenElementRead { root, map, page });
                 }
             }
         }
@@ -1272,8 +1881,15 @@ impl<'check> Survey<'check, '_> {
                 // [TYPE-9] distinct segments are distinct storage, so a
                 // segment borrow is an element of its `Segments` place.
                 CheckedExpression::BorrowSegment { root, segment, .. } => {
-                    let mut subscripts = path_subscripts(&root.path);
-                    if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                    let mut subscripts = match root {
+                        super::CheckedSegmentSource::Storage(root) => path_subscripts(&root.path),
+                        super::CheckedSegmentSource::Element(place) => {
+                            range_element_subscripts(place)
+                        }
+                    };
+                    if let crate::semantic::CheckedSegmentSelect::One(index)
+                    | crate::semantic::CheckedSegmentSelect::Page(index) = segment
+                    {
                         subscripts.push((&index.obligation, false));
                     }
                     subscripts
@@ -1296,7 +1912,13 @@ impl<'check> Survey<'check, '_> {
             // locates it in every resolved place.
             for place in &resolved {
                 if let Some((root, element)) = element_prefix(place, after) {
-                    references.push(ProvenElementReference { root, element, map });
+                    let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                    references.push(ProvenElementReference {
+                        root,
+                        element,
+                        map,
+                        page,
+                    });
                 }
             }
         }
@@ -1364,6 +1986,7 @@ impl<'check> Survey<'check, '_> {
                 self.element_reads.push(ProvenElementRead {
                     root: element.root.clone(),
                     map: element.map,
+                    page: element.page,
                 });
             }
             self.reads.push(ReadOccurrence {
@@ -1376,11 +1999,22 @@ impl<'check> Survey<'check, '_> {
                 places: vec![read.place.clone()],
                 carrier: call.cloned(),
                 measure: false,
+                page_descriptor: false,
                 element_measure: false,
             });
         }
         for write in &footprint.writes {
             self.record_written_place(&write.place);
+            if self
+                .indexed
+                .iter()
+                .any(|root| self.indexed_overlaps(root, &write.place))
+            {
+                self.indexed_denial.get_or_insert(LoopDenial::IndexedReduction {
+                    statement: write.argument.clone(),
+                    reason: "every write must be a matching cell update; calls, moves and length changes are not updates",
+                });
+            }
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1402,6 +2036,7 @@ impl<'check> Survey<'check, '_> {
                     element.root.clone(),
                     write.argument.clone(),
                     element.map,
+                    element.page,
                 );
                 continue;
             }
@@ -1410,6 +2045,7 @@ impl<'check> Survey<'check, '_> {
     }
 
     fn record_written_place(&mut self, place: &ResolvedPlace) {
+        self.write_events.push(place.clone());
         if !self.written_places.contains(place) {
             self.written_places.push(place.clone());
         }
@@ -1422,6 +2058,7 @@ impl<'check> Survey<'check, '_> {
         root: ResolvedPlace,
         statement: NodePath,
         map: ProvedAffineIndexMap,
+        page: bool,
     ) {
         // [PAR-2] "Every write by B to one mapped root must be to a place in
         // a proved single-binder affine element of it carrying exactly the
@@ -1434,7 +2071,9 @@ impl<'check> Survey<'check, '_> {
         let oracle = UnprovedSeparations;
         if self.element_writes.iter().any(|written| {
             self.places.overlaps(&oracle, &written.root, &root)
-                && !(same_element_root(&written.root, &root) && written.map == map)
+                && !(same_element_root(&written.root, &root)
+                    && written.map == map
+                    && written.page == page)
         }) {
             self.shared.get_or_insert(statement.clone());
         }
@@ -1442,6 +2081,7 @@ impl<'check> Survey<'check, '_> {
             root,
             statement,
             map,
+            page,
         });
     }
 
@@ -1466,6 +2106,13 @@ impl<'check> Survey<'check, '_> {
                 carried.push(accumulate.combine);
             }
         }
+        for root in &self.indexed {
+            if let Some(IndexedFamilyKind::Reduce { op: combine }) = &root.kind
+                && !carried.contains(combine)
+            {
+                carried.push(*combine);
+            }
+        }
         let combines = carried.iter().map(|combine| combine.spelling()).collect();
         let denial = self.denial();
         // The advice outlives exactly one refusal: a loop this version
@@ -1485,7 +2132,8 @@ impl<'check> Survey<'check, '_> {
                 accumulator: accumulate.binding,
                 combine: accumulate.combine,
             })
-        } else if self.element_writes.is_empty()
+        } else if self.indexed.is_empty()
+            && self.element_writes.is_empty()
             && self.certified_writes.is_empty()
             && !self.range_references.iter().any(|range| range.written)
         {
@@ -1493,6 +2141,7 @@ impl<'check> Survey<'check, '_> {
         } else {
             Some(LoopActualization::IndependentMap)
         };
+        let permitted = denial.is_none();
         let verdict = match denial {
             Some(denial) => LoopVerdict::Denied(denial),
             None => LoopVerdict::PermittedEligible,
@@ -1503,6 +2152,21 @@ impl<'check> Survey<'check, '_> {
             combines,
             advises_split,
             actualization,
+            indexed: if permitted {
+                self.indexed
+                    .iter()
+                    .filter_map(|root| {
+                        root.kind.clone().map(|kind| IndexedReduction {
+                            root: root.root.clone(),
+                            fields: root.fields.clone(),
+                            value_type: root.value_type,
+                            kind,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             written_places: self.written_places,
         }
     }
@@ -1512,6 +2176,9 @@ impl<'check> Survey<'check, '_> {
             return Some(LoopDenial::BodyForm { form });
         }
         if let Some(denial) = self.carried_state() {
+            return Some(denial);
+        }
+        if let Some(denial) = self.indexed_state() {
             return Some(denial);
         }
         if let Some(argument) = &self.shared {
@@ -1590,21 +2257,29 @@ impl<'check> Survey<'check, '_> {
         self.element_writes
             .iter()
             .find(|written| {
+                let mut descriptor = written.root.clone();
+                descriptor
+                    .path
+                    .push(PlaceStep::Measure(CheckedMeasure::Length));
                 let reads = self
                     .reads
                     .iter()
-                    .flat_map(|read| {
-                        read.places
-                            .iter()
-                            .filter(move |place| !read.is_root_measure(place, &written.root))
+                    .flat_map(|read| read.places.iter().map(move |place| (read, place)))
+                    .filter(|(read, place)| {
+                        !read.is_root_measure(place, &written.root)
+                            && self.places.overlaps(&oracle, place, &written.root)
+                            && !(written.page
+                                && read.page_descriptor
+                                && same_element_root(place, &descriptor))
                     })
-                    .filter(|place| self.places.overlaps(&oracle, place, &written.root))
                     .count();
                 let matching = self
                     .element_reads
                     .iter()
                     .filter(|read| {
-                        same_element_root(&read.root, &written.root) && read.map == written.map
+                        same_element_root(&read.root, &written.root)
+                            && read.map == written.map
+                            && read.page == written.page
                     })
                     .count();
                 reads != matching
@@ -1726,7 +2401,7 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
         .iter()
         .enumerate()
         .rev()
-        .filter(|(_, step)| matches!(step, PlaceStep::Index(_)))
+        .filter(|(_, step)| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
         .find_map(|(position, _)| {
             if remaining == 0 {
                 Some(position)
@@ -1798,15 +2473,157 @@ const fn checked_type_is_ring(ty: CheckedType) -> bool {
     )
 }
 
-/// The combine of `set acc = <op>(acc, rest)`, when `op` is one of the ten
+/// Typed atom identity within a single set statement. Unlike a stored
+/// reference capture, both evaluations occur before the same commit and
+/// GRAM-9 admits no intervening call. This is not an index injectivity proof.
+fn same_update_atom(left: &CheckedExpression, right: &CheckedExpression) -> bool {
+    match (left, right) {
+        (
+            CheckedExpression::Binding { binding: a, .. },
+            CheckedExpression::Binding { binding: b, .. },
+        ) => a == b,
+        (CheckedExpression::Constant(a), CheckedExpression::Constant(b)) => a == b,
+        (
+            CheckedExpression::DerefAddressed { binding: a, .. },
+            CheckedExpression::DerefAddressed { binding: b, .. },
+        ) => a == b,
+        (
+            CheckedExpression::ContainerMeasure {
+                measure: am,
+                root: a,
+            },
+            CheckedExpression::ContainerMeasure {
+                measure: bm,
+                root: b,
+            },
+        ) => am == bm && a.root == b.root && same_update_path(&a.path, &b.path),
+        (
+            CheckedExpression::ArrayMeasure {
+                measure: am,
+                root: a,
+                ..
+            },
+            CheckedExpression::ArrayMeasure {
+                measure: bm,
+                root: b,
+                ..
+            },
+        ) => am == bm && a == b,
+        (
+            CheckedExpression::RangeMeasure {
+                measure: am,
+                root: a,
+            },
+            CheckedExpression::RangeMeasure {
+                measure: bm,
+                root: b,
+            },
+        ) => am == bm && a == b,
+        (
+            CheckedExpression::BufferMeasure {
+                measure: am,
+                root: a,
+            },
+            CheckedExpression::BufferMeasure {
+                measure: bm,
+                root: b,
+            },
+        ) => am == bm && a.binding == b.binding && same_update_path(&a.path, &b.path),
+        (
+            CheckedExpression::RangeElementMeasure {
+                measure: am,
+                place: a,
+                ..
+            },
+            CheckedExpression::RangeElementMeasure {
+                measure: bm,
+                place: b,
+                ..
+            },
+        ) => {
+            am == bm
+                && a.root == b.root
+                && same_update_atom(&a.offset, &b.offset)
+                && same_update_path(&a.path, &b.path)
+        }
+        (
+            CheckedExpression::NamedConstant { declaration: a, .. },
+            CheckedExpression::NamedConstant { declaration: b, .. },
+        ) => a == b,
+        (
+            CheckedExpression::Project {
+                binding: a,
+                fields: ap,
+                ..
+            },
+            CheckedExpression::Project {
+                binding: b,
+                fields: bp,
+                ..
+            },
+        ) => a == b && ap == bp,
+        (
+            CheckedExpression::ReadStorage { root: a, .. },
+            CheckedExpression::ReadStorage { root: b, .. },
+        ) => a.root == b.root && same_update_path(&a.path, &b.path),
+        (
+            CheckedExpression::ArrayIndex {
+                root: a,
+                offset: ai,
+                ..
+            },
+            CheckedExpression::ArrayIndex {
+                root: b,
+                offset: bi,
+                ..
+            },
+        ) => a == b && same_update_atom(ai, bi),
+        (
+            CheckedExpression::BufferIndex {
+                root: a,
+                offset: ai,
+                ..
+            },
+            CheckedExpression::BufferIndex {
+                root: b,
+                offset: bi,
+                ..
+            },
+        ) => {
+            a.binding == b.binding && same_update_path(&a.path, &b.path) && same_update_atom(ai, bi)
+        }
+        (
+            CheckedExpression::RangeIndex { place: a, .. },
+            CheckedExpression::RangeIndex { place: b, .. },
+        ) => {
+            a.root == b.root
+                && same_update_atom(&a.offset, &b.offset)
+                && same_update_path(&a.path, &b.path)
+        }
+        _ => false,
+    }
+}
+
+fn same_update_path(left: &[CheckedPlaceStep], right: &[CheckedPlaceStep]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| match (a, b) {
+            (CheckedPlaceStep::Subscript(a), CheckedPlaceStep::Subscript(b)) => {
+                a.base_type == b.base_type && same_update_atom(&a.offset, &b.offset)
+            }
+            _ => a == b,
+        })
+}
+
+/// The combine of `set acc = <op>(acc, rest)`, when `op` is one of those
 /// [PAR-2] admits and `rest` reaches `acc` nowhere.
 fn combine_of(accumulator: BindingId, value: &CheckedExpression) -> Option<LoopCombine> {
     let (combine, arguments) = match value {
         CheckedExpression::IntegerOperation {
             operation,
+            operand_type,
             arguments,
             ..
-        } => (integer_combine(*operation)?, arguments),
+        } => (integer_combine(*operation, *operand_type)?, arguments),
         CheckedExpression::BooleanOperation {
             operation,
             arguments,
@@ -1841,18 +2658,24 @@ fn reads_only(operand: &CheckedExpression, binding: BindingId) -> bool {
     matches!(operand, CheckedExpression::Binding { binding: read, .. } if *read == binding)
 }
 
-/// The seven integer operations [PAR-2] admits.
+/// The integer operations [PAR-2] admits at this operand type.
 ///
 /// The list is closed and every entry is here for the same stated reason:
 /// each is total, associative, and commutative on the complete value set of
 /// its type and carries a two-sided identity, so regrouping its applications
 /// produces the same bits. `+`, `+defined`, and `+checked` are associative in
 /// Z and are still absent, because each application attaches a domain
-/// obligation or a `Result` route that regrouping moves. `+sat` fails
-/// associativity outright.
-const fn integer_combine(operation: CheckedIntegerOperation) -> Option<LoopCombine> {
+/// obligation or a `Result` route that regrouping moves. Unsigned `+sat`
+/// computes min(sum, max); signed `+sat` can move its clamp under regrouping.
+const fn integer_combine(
+    operation: CheckedIntegerOperation,
+    ty: CheckedType,
+) -> Option<LoopCombine> {
     Some(match operation {
         CheckedIntegerOperation::AddWrap => LoopCombine::AddWrap,
+        CheckedIntegerOperation::AddSaturating if matches!(ty, CheckedType::Integer(integer) if !integer.signed()) => {
+            LoopCombine::AddSaturating
+        }
         CheckedIntegerOperation::MultiplyWrap => LoopCombine::MultiplyWrap,
         CheckedIntegerOperation::BitAnd => LoopCombine::BitAnd,
         CheckedIntegerOperation::BitOr => LoopCombine::BitOr,
@@ -1931,4 +2754,26 @@ fn nested_bodies(statement: &CheckedStatement) -> Vec<&[CheckedStatement]> {
         | CheckedStatement::Atomic { body, .. } => vec![body.as_slice()],
         _ => Vec::new(),
     }
+}
+
+/// Exactly one subscript, followed only by record fields. Keeping the root
+/// separate from its projection makes sibling families share one read policy.
+fn indexed_parts(
+    target: &CheckedContainerRoot,
+) -> Option<(usize, &super::model::CheckedPlaceSubscript, Vec<u32>)> {
+    let position = target
+        .path
+        .iter()
+        .position(|step| matches!(step, CheckedPlaceStep::Subscript(_)))?;
+    let CheckedPlaceStep::Subscript(index) = &target.path[position] else {
+        return None;
+    };
+    let fields = target.path[position + 1..]
+        .iter()
+        .map(|step| match step {
+            CheckedPlaceStep::Field(field) => Some(*field),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((position, index, fields))
 }

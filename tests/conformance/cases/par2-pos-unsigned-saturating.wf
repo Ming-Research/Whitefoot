@@ -1,0 +1,33 @@
+fn reduce() -> result: u8 pure {
+  doc "Unsigned indexed saturation keeps untouched values and clamps the total.";
+  let cells = array_filled::<u8, 4>(value: 7_u8);
+  for (i in 0_u64..4_u64) {
+    set cells[0_u64] = cells[0_u64] +sat 70_u8;
+  }
+  if cells[3_u64] != 7_u8 {
+    return 0_u8;
+  }
+  return cells[0_u64];
+}
+
+fn scalar() -> result: u8 pure {
+  doc "Unsigned scalar saturation has identity zero and clamps the mathematical sum.";
+  let total = 7_u8;
+  for (i in 0_u64..4_u64) {
+    set total = 70_u8 +sat total;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check the independent expected results.";
+  let indexed = reduce();
+  let folded = scalar();
+  if indexed != 255_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if folded != 255_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

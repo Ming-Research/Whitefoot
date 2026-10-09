@@ -1,0 +1,38 @@
+enum Pick {
+  First(v: Array<u64, 4>);
+  Second(v: Array<u64, 4>);
+}
+
+fn positive(size: u64) -> result: unit pure contract {
+  requires size >= 1_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "B is the largest power of two whose product with stride_ceiling(T) is at most 4096, so these values are the same on every target. Pick has stride ceiling 72 (a tag then both payloads, OP-9) although a union layout stores it in 40 bytes, so B is 32, not the 64 its actual stride would give.";
+  let bytes = paged_page_len::<u8>();
+  let words = paged_page_len::<u64>();
+  let empty = paged_page_len::<unit>();
+  let large = paged_page_len::<Array<u8, 4097>>();
+  let pick = paged_page_len::<Pick>();
+  positive(size: bytes);
+  positive(size: words);
+  positive(size: empty);
+  if bytes != 4096_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if words != 512_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if empty != 4096_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if large != 1_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if pick != 32_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

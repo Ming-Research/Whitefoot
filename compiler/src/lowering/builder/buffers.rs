@@ -31,6 +31,15 @@ impl IrBuilder<'_> {
         offset: &CheckedExpression,
         target_domain: CheckedTargetDomainObligation,
     ) -> Result<IrValueId, LoweringFailure> {
+        if let Some(family) = self.indexed_family(
+            crate::semantic::CheckedPlaceRoot::Binding(root.binding),
+            &root.path,
+            &[],
+        ) {
+            let offset = self.expression(offset)?;
+            let address = self.indexed_address(family, offset, target_domain.into())?;
+            return self.load_storage_value(address);
+        }
         let buffer = self.buffer_root(root)?;
         let IrType::Address(IrAddressed::Buffer { element }) = self.value_type(buffer)? else {
             return Err(LoweringFailure::InvalidCheckedProgram);

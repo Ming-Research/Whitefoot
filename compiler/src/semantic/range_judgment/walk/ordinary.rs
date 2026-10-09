@@ -265,8 +265,18 @@ impl Walker<'_> {
         target: &Target,
         ty: CheckedType,
     ) -> Option<Linear> {
+        self.target_measure(state, target, ty, CheckedMeasure::Length)
+    }
+
+    pub(super) fn target_measure(
+        &mut self,
+        state: &mut State,
+        target: &Target,
+        ty: CheckedType,
+        measure: CheckedMeasure,
+    ) -> Option<Linear> {
         let observed = match target {
-            Target::Run { length, .. } => Some(length.clone()),
+            Target::Run { length, .. } if measure == CheckedMeasure::Length => Some(length.clone()),
             Target::Location(location) => {
                 let location = state.resolve(location);
                 let arity = if matches!(ty, CheckedType::Segments { .. }) {
@@ -275,24 +285,22 @@ impl Walker<'_> {
                     1
                 };
                 let container = state.container(&mut self.world, location, arity)?;
-                Some(self.world.measure(
-                    container,
-                    state.generation(container),
-                    CheckedMeasure::Length,
-                ))
+                Some(
+                    self.world
+                        .measure(container, state.generation(container), measure),
+                )
             }
-            Target::Row { container, row } => Some(self.world.segment_length(
-                *container,
-                state.generation(*container),
-                row.clone(),
-            )),
+            Target::Row { container, row } if measure == CheckedMeasure::Length => Some(
+                self.world
+                    .segment_length(*container, state.generation(*container), row.clone()),
+            ),
             Target::Element {
                 container,
                 indices,
                 projection: Some(projection),
             } => {
                 let mut projection = projection.clone();
-                projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                projection.push(CheckedRangeProjection::Measure(measure));
                 let version = state.version(&mut self.world, *container);
                 Some(
                     self.world
@@ -301,7 +309,9 @@ impl Walker<'_> {
             }
             _ => None,
         };
-        if let CheckedType::Array { length, .. } = ty {
+        if let CheckedType::Array { length, .. } = ty
+            && measure == CheckedMeasure::Length
+        {
             let fixed = Linear::constant(i128::from(length.value()?));
             if let Some(observed) = observed {
                 state

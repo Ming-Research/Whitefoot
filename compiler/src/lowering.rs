@@ -35,6 +35,7 @@ impl TypeLowering<'_> {
 pub(crate) const fn lower_window_shape(value: crate::semantic::WindowShape) -> IrWindowShape {
     match value {
         crate::semantic::WindowShape::Slots => IrWindowShape::Slots,
+        crate::semantic::WindowShape::Paged => IrWindowShape::Paged,
         crate::semantic::WindowShape::Ring => IrWindowShape::Ring,
     }
 }
@@ -364,7 +365,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 30] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 33] = [
     // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
@@ -373,6 +374,9 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 30] = [
     "box_array_filled",
     "box_segments_filled",
     "box_slots_new",
+    "box_paged_new",
+    "grow_paged",
+    "paged_page_len",
     "box_ring_new",
     "slots_from_array",
     "slots_into_array",
@@ -409,6 +413,7 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use builder::lower_checked;
+pub(crate) use builder::layout_ceiling;
 pub(crate) use builder::lower_checked_from;
 #[cfg(test)]
 pub(crate) use builder::lower_checked_with_layout;

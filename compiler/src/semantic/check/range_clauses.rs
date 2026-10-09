@@ -21,7 +21,7 @@ use crate::{
 
 use super::super::model::{
     CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedType, CheckedValue, IntegerType,
-    MeasureCell,
+    MeasureCell, WindowShape,
 };
 use super::super::postcondition::CheckedPostconditionSelector;
 use super::super::range_facts::{
@@ -927,7 +927,7 @@ impl Checker<'_, '_> {
         {
             return self.invalid_range(
                 SemanticRule::Range1,
-                place,
+                pbase,
                 "a range term reads an entry image",
                 "read the current value; a range clause states one state",
             );
@@ -1075,7 +1075,7 @@ impl Checker<'_, '_> {
                         );
                     };
                     path.push(CheckedRangeStep::Referent);
-                    selected = if mode == CheckedMode::Range {
+                    selected = if mode.is_range() {
                         Selected::Run(ty)
                     } else {
                         Selected::Value(ty)
@@ -1098,7 +1098,11 @@ impl Checker<'_, '_> {
                     let element = match selected {
                         Selected::Run(element) => element,
                         Selected::Value(CheckedType::Array { element, .. })
-                        | Selected::Value(CheckedType::Window { element, .. })
+                        | Selected::Value(CheckedType::Window {
+                            element,
+                            shape: WindowShape::Slots | WindowShape::Paged,
+                            ..
+                        })
                         | Selected::Value(CheckedType::Buffer { element }) => {
                             self.types.element_type(element)?
                         }
@@ -1158,7 +1162,7 @@ impl Checker<'_, '_> {
                                 SemanticRule::Range1,
                                 suffix,
                                 "a range term subscripts a value that is not a run of elements",
-                                "subscript an array, a slots window, a range reference's run or a segments value",
+                                "subscript an array, a Slots or Paged window, a range reference's run or a Segments value",
                             );
                         }
                     };
@@ -1176,6 +1180,30 @@ impl Checker<'_, '_> {
                 }
                 PlaceSuffix::Member(_) => {
                     let name = self.member_name(suffix)?;
+                    if name == "pages"
+                        && index + 2 == last
+                        && matches!(
+                            selected,
+                            Selected::Value(CheckedType::Window {
+                                shape: WindowShape::Paged,
+                                ..
+                            })
+                        )
+                        && matches!(
+                            self.types
+                                .declarations
+                                .tree
+                                .place_suffix(suffixes[index + 1])?,
+                            PlaceSuffix::Member(_)
+                        )
+                        && self.member_name(suffixes[index + 1])? == "len"
+                    {
+                        return Ok(CheckedRangeTerm::Measure {
+                            place: CheckedRangePlace { root, path },
+                            measure: CheckedMeasure::Pages,
+                            shape: CheckedRangeShape::Run,
+                        });
+                    }
                     if at_end && (name == "len" || name == "cap") {
                         let measure = if name == "len" {
                             CheckedMeasure::Length
@@ -1301,7 +1329,7 @@ impl Checker<'_, '_> {
                             SemanticRule::Range1,
                             suffix,
                             "a range term subscripts a value that is not indexable",
-                            "subscript an array, a slots window or a segments value",
+                            "subscript an array, a window or a Segments value",
                         );
                     }
                 };
@@ -1398,6 +1426,29 @@ impl Checker<'_, '_> {
                     "a variant-qualified field requires an enum",
                     "select a struct field without a variant qualifier",
                 );
+            }
+            if name == "pages"
+                && position + 2 == suffixes.len()
+                && matches!(
+                    selected,
+                    CheckedType::Window {
+                        shape: WindowShape::Paged,
+                        ..
+                    }
+                )
+                && matches!(
+                    self.types
+                        .declarations
+                        .tree
+                        .place_suffix(suffixes[position + 1])?,
+                    PlaceSuffix::Member(_)
+                )
+                && self.member_name(suffixes[position + 1])? == "len"
+            {
+                projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Pages));
+                selected = CheckedType::Integer(IntegerType::U64);
+                position += 2;
+                continue;
             }
             if position + 1 == suffixes.len()
                 && selected.measured().is_some()

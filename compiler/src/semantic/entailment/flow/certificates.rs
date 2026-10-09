@@ -200,14 +200,7 @@ impl Reasoning<'_, '_, '_> {
                 AffineCheckError::CoefficientMismatch | AffineCheckError::InvalidCertificateFactor,
             ) => return Ok(false),
         }
-        let candidates = self.affine_l0_candidates(values);
-        let closed = close(
-            facts,
-            &self.vocabulary.terms,
-            &self.vocabulary.goals,
-            &mut self.vocabulary.derivations,
-        );
-        let l0 = affine_l0_index(&candidates, &closed, &mut check);
+        let (closed, l0) = self.affine_query_view(ProofContext::new(facts, values));
         let mut query = AffineDirectQuery::new(&l0, values, &closed);
         Ok(self
             .affine_candidate_residual_proof(target, sum, &mut query, &mut check)

@@ -276,7 +276,11 @@ fn loop_detail<Source: LedgerSource>(
     // so the line carries it rather than leaving a reader to infer it from
     // silence.
     let carried = match judged.combines.as_slice() {
+        [] if !judged.indexed.is_empty() => "indexed constant marks".to_owned(),
         [] => "no accumulator".to_owned(),
+        combines if !judged.indexed.is_empty() => {
+            format!("indexed reductions under {}", combines.join(", "))
+        }
         combines => format!("one accumulator under {}", combines.join(", ")),
     };
     Ok(match &judged.verdict {
@@ -302,6 +306,10 @@ pub(crate) fn loop_denied_detail<Source: LedgerSource>(
         }
         LoopDenial::AccumulatorRead { statement, reads } => format!(
             "the accumulator is read {reads} times in the body and a reduction reads it once, at {}",
+            source.spelling(statement)?
+        ),
+        LoopDenial::IndexedReduction { statement, reason } => format!(
+            "PAR-2 indexed accumulator: {reason}, at {}",
             source.spelling(statement)?
         ),
         LoopDenial::SharedWrite { argument } => format!(

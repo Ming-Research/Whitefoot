@@ -747,7 +747,8 @@ impl State {
         self.routed.retain(|(at, _, _)| !at.starts_with(location));
     }
 
-    /// Forgets every container's contents: a write the judgment cannot place.
+    /// Forgets every container's contents and every exposed scalar
+    /// binding's value: a write the judgment cannot place.
     pub(super) fn havoc_everything(&mut self, world: &mut World) {
         for container in 0..world.containers.len() as ContainerId {
             self.havoc_container(world, container, true);
@@ -1011,7 +1012,9 @@ pub(super) fn join_values(
 }
 
 /// Sibling struct fields are disjoint; payload storage of different variants
-/// overlaps even when their field ordinals differ.
+/// overlaps even when their field ordinals differ. Measures overlap when
+/// they read the same descriptor word [MSR-2], so a length write also
+/// invalidates a page-count read without identifying their values.
 pub(super) fn projections_overlap(
     left: &[CheckedRangeProjection],
     right: &[CheckedRangeProjection],
@@ -1019,6 +1022,11 @@ pub(super) fn projections_overlap(
     for (left, right) in left.iter().zip(right) {
         if left == right {
             continue;
+        }
+        if let (CheckedRangeProjection::Measure(left), CheckedRangeProjection::Measure(right)) =
+            (left, right)
+        {
+            return left.support_word() == right.support_word();
         }
         return matches!((left, right),
             (CheckedRangeProjection::Payload { variant: a, .. }, CheckedRangeProjection::Payload { variant: b, .. }) if a != b);
@@ -1140,7 +1148,11 @@ pub(super) fn stored_projections(
                         arity: world.containers[container as usize].arity,
                     },
                 );
-                for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
+                for measure in [
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Pages,
+                ] {
                     path.push(CheckedRangeProjection::Measure(measure));
                     let value = world.measure(container, generation, measure);
                     values.insert(path.clone(), Stored::Int(value));

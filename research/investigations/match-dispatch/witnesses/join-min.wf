@@ -1,0 +1,31 @@
+enum Op {
+  Set(v: u64);
+  Keep();
+  Halt();
+}
+
+fn run(code: &Box<Slots<Op>>, limit: u64) -> r: u64 reads(code) {
+  let pc = 0_u64;
+  let x = 0_u64;
+  if pc < code^.inner.len {
+    loop (
+      invariant xb: x <= limit
+    ) {
+      match code^.inner[pc] {
+        Set(v: vv) => {
+          if vv^ <= limit {
+            set x = vv^;
+          } else {
+            return x;
+          }
+        }
+        Keep() => {
+        }
+        Halt() => {
+          return x;
+        }
+      }
+    }
+  }
+  return x;
+}

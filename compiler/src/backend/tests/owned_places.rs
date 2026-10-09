@@ -420,8 +420,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         // The refused-reservation arm retired with [BLK-2]: [STOR-8] makes
         // allocation total in the source, so no writer-reachable refusal edge
         // exists for the observer to script.
@@ -799,8 +799,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = allocation_observer(2, 0);
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -839,14 +839,66 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = allocation_observer(2, 0);
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(output.stdout, b"A1;A2;F1;F2;");
         assert!(output.stderr.is_empty(), "{output:?}");
     }
+}
+
+/// The RHS reads the old element before allocating the replacement. The
+/// displaced struct then releases both nested fields in declaration order;
+/// scope exit releases the replacement and finally the enclosing Slots Box.
+#[test]
+fn struct_element_assignment_releases_nested_fields_once_in_order() {
+    let source = br#"struct Tail {
+  last: Box<u64>;
+}
+
+struct Pair {
+  first: Box<u64>;
+  rest: Tail;
+}
+
+fn replacement(old: &Pair) -> result: Pair reads(old) {
+  doc "Reads the displaced owners while constructing the new value.";
+  let next_left = old^.first.inner +wrap 10_u64;
+  let next_right = old^.rest.last.inner +wrap 10_u64;
+  let left = box_new::<u64>(value: next_left);
+  let right = box_new::<u64>(value: next_right);
+  let ending = Tail(last: move right);
+  return Pair(first: move left, rest: move ending);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the new values after replacing a nested struct in a Slots element.";
+  let left = box_new::<u64>(value: 11_u64);
+  let right = box_new::<u64>(value: 12_u64);
+  let ending = Tail(last: move right);
+  let initial = Pair(first: move left, rest: move ending);
+  let slots = box_slots_new::<Pair>(capacity: 1_u64);
+  place_back(window: &slots.inner, value: move initial);
+  set slots.inner[0_u64] = replacement(old: &slots.inner[0_u64]);
+  if slots.inner[0_u64].first.inner != 21_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if slots.inner[0_u64].rest.last.inner != 22_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = super::emit_lowered(source, super::OverlapLowering::Off);
+    let observed = retain_calls(&module)
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
+    let output = compile_link_and_run(&observed, Some(&allocation_observer(5, 0)), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, b"A1;A2;A3;A4;A5;F1;F2;F4;F5;F3;");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 /// A [SET-1] commit through a payload-step reference updates the child owner
@@ -913,8 +965,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = allocation_observer(4, 0);
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1315,8 +1367,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
     );
     let observed = retain_calls(&module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let host = allocation_observer(4, 0);
     let output = compile_link_and_run(&observed, Some(&host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1378,8 +1430,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
     );
     let observed = retain_calls(&module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let host = allocation_observer(4, 0);
     let output = compile_link_and_run(&observed, Some(&host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1442,8 +1494,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
     );
     let observed = retain_calls(&module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let host = allocation_observer(6, 0);
     let output = compile_link_and_run(&observed, Some(&host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1489,8 +1541,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
     );
     let observed = retain_calls(&module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let output = compile_link_and_run(&observed, Some(&allocation_observer(4, 0)), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(output.stdout, b"A1;A2;A3;A4;F1;F2;F3;F4;");
@@ -1533,6 +1585,11 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
     } else {
         "printf(\"F%u;\", id);"
     };
+    let release_record_old = if observe_u64_payload {
+        release_record
+    } else {
+        "printf(\"F%u;\", old_id);"
+    };
     format!(
         r#"#include <stddef.h>
 #include <inttypes.h>
@@ -1542,6 +1599,7 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
 #include <string.h>
 
 static void *held[{slots}];
+static size_t requested[{slots}];
 static unsigned attempts;
 static atomic_flag observer_lock = ATOMIC_FLAG_INIT;
 
@@ -1565,15 +1623,17 @@ void *wf_test_allocate(size_t size) {{
     void *allocation = malloc(size);
     if (allocation == NULL) abort();
     held[id] = allocation;
+    requested[id] = size;
     printf("A%u;", id);
     unlock_observer();
     return allocation;
 }}
 
-void wf_test_release(void *allocation) {{
+void wf_test_release(void *allocation, uint64_t bytes) {{
     lock_observer();
     for (unsigned id = 1; id <= attempts && id <= {limit}; ++id) {{
         if (allocation != NULL && held[id] == allocation) {{
+            if (bytes != requested[id]) abort();
             held[id] = NULL;
             {release_record}
             free(allocation);
@@ -1582,6 +1642,39 @@ void wf_test_release(void *allocation) {{
         }}
     }}
     abort();
+}}
+
+/* `grow` [OP-10] reallocates its block. The observer books that as one new
+   allocation id, a release of the old one, and the real realloc: the same
+   A-then-F events the former malloc, copy and free produced, and a refusal of
+   the request returns NULL with the old block still held. */
+void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
+    if (allocation == NULL) return wf_test_allocate(size);
+    lock_observer();
+    unsigned id = ++attempts;
+    if (id > {limit}) abort();
+    unsigned old_id = 0;
+    for (unsigned candidate = 1; candidate < id && candidate <= {limit}; ++candidate) {{
+        if (held[candidate] == allocation) {{
+            old_id = candidate;
+            break;
+        }}
+    }}
+    if (old_id == 0 || requested[old_id] != old_bytes) abort();
+    if (id == {refused}) {{
+        printf("X%u;", id);
+        unlock_observer();
+        return NULL;
+    }}
+    printf("A%u;", id);
+    held[old_id] = NULL;
+    {release_record_old}
+    void *moved = realloc(allocation, size);
+    if (moved == NULL) abort();
+    held[id] = moved;
+    requested[id] = size;
+    unlock_observer();
+    return moved;
 }}
 "#
     )
@@ -1620,8 +1713,8 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     for source in [source, partial.as_str()] {
         let module = compile(source.as_bytes());
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(
@@ -1732,11 +1825,12 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = allocation_observer(4, 0).replace(
             "held[id] = allocation;",
-            "memset(allocation, 0xa5, size);\n    held[id] = allocation;",
+            "memset(allocation, 0xa5, size);\n    held[id] = allocation;
+    requested[id] = size;",
         );
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1759,8 +1853,8 @@ fn owning_map_put_releases_each_displaced_and_remaining_payload_once() {
         include_bytes!("../../../../tests/conformance/cases/run-exclusive-owning-map-put.wf");
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = retain_calls(&super::emit_lowered(source, overlap))
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         // Three cells, one per `allocate_put`: A1 is key 1's payload (id 11),
         // A2 is key 3's (id 22), and A3 is the replacement offered for key 1
         // (id 33). The observer's limit is that same three, so a fourth
@@ -1842,8 +1936,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let output = compile_link_and_run(&observed, Some(&allocation_observer(1, 0)), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(output.stdout, b"A1;F1;", "{output:?}");
@@ -1880,8 +1974,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let output = compile_link_and_run(&observed, Some(&allocation_observer(1, 0)), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(output.stdout, b"A1;F1;", "{output:?}");
@@ -1981,8 +2075,8 @@ fn main() -> status: std::process::ExitStatus pure {{
         for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
             let module = super::emit_lowered(source.as_bytes(), overlap);
             let observed = retain_calls(&module)
-                .replace("@malloc(", "@wf_test_allocate(")
-                .replace("@free(", "@wf_test_release(");
+                .replace("@wf__heap_take(", "@wf_test_allocate(")
+                .replace("@wf__heap_give(", "@wf_test_release(");
             let observer = allocation_observer_body(limit, "0", true);
             let output = compile_link_and_run(&observed, Some(&observer), &[]);
             assert_eq!(output.status.code(), Some(0), "{source}\n{output:?}");
@@ -2041,8 +2135,8 @@ fn main() -> status: std::process::ExitStatus pure {{
         for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
             let module = super::emit_lowered(source.as_bytes(), overlap);
             let observed = retain_calls(&module)
-                .replace("@malloc(", "@wf_test_allocate(")
-                .replace("@free(", "@wf_test_release(");
+                .replace("@wf__heap_take(", "@wf_test_allocate(")
+                .replace("@wf__heap_give(", "@wf_test_release(");
             let output = compile_link_and_run(&observed, Some(&u64_allocation_observer(2)), &[]);
             assert_eq!(output.status.code(), Some(0), "{statement}: {output:?}");
             let records = std::str::from_utf8(&output.stdout)
@@ -2092,8 +2186,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let output = compile_link_and_run(&observed, Some(&u64_allocation_observer(3)), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         let records = std::str::from_utf8(&output.stdout)

@@ -1197,22 +1197,31 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .signatures
             .iter()
-            .map(|signature| PermissionSignature {
-                name: signature.name.clone(),
-                parameter_declarations: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.declaration)
-                    .collect(),
-                parameter_modes: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.mode)
-                    .collect(),
-                reads: signature.declared_effects.reads.clone(),
-                writes: signature.declared_effects.writes.clone(),
+            .map(|signature| {
+                Ok(PermissionSignature {
+                    name: signature.name.clone(),
+                    parameter_declarations: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.declaration)
+                        .collect(),
+                    parameter_modes: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.mode)
+                        .collect(),
+                    parameter_releases: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            self.types.may_release_storage(parameter.ty, parameter.mode)
+                        })
+                        .collect::<Result<Vec<_>, CheckStop>>()?,
+                    reads: signature.declared_effects.reads.clone(),
+                    writes: signature.declared_effects.writes.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         for checked in &mut function_inventory {
             if !ordinary[checked.function.id.0 as usize] {
                 continue;
@@ -1714,7 +1723,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 binding,
                 mode: parameter.mode,
                 ty: parameter.ty,
-                range_element: (parameter.mode == CheckedMode::Range)
+                range_element: (parameter.mode.is_range())
                     .then(|| self.types.intern_element(parameter.ty))
                     .transpose()?,
             });
@@ -1951,7 +1960,28 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .flatten()
                 .collect()
         };
+        let prelude_element = if signature.name == "paged_page_len"
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?
+        {
+            signature
+                .substitution
+                .entries()
+                .iter()
+                .find_map(|(_, argument)| match argument {
+                    generics::GenericArgument::Type(ty) => Some(*ty),
+                    _ => None,
+                })
+                .map(|ty| self.types.intern_element(ty))
+                .transpose()?
+        } else {
+            None
+        };
         let function = CheckedFunction {
+            prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
             id: signature.id,
             declaration: signature.declaration,
@@ -2049,7 +2079,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // through it terminates there.
             reference: parameter.mode.is_reference().then(|| {
                 ReferenceInfo::formed(
-                    if parameter.mode == CheckedMode::Range {
+                    if parameter.mode.is_range() {
                         references::ReferenceKind::Range
                     } else {
                         references::ReferenceKind::Single
@@ -3343,6 +3373,13 @@ impl<'unit> TypeContext<'unit> {
                             ty = None;
                         }
                     }
+                }
+                super::model::CheckedEffectStep::Page(index) => {
+                    rendered.push_str(&format!(
+                        ".pages[{}]",
+                        self.declarations.declaration_spelling(*index)?
+                    ));
+                    ty = None;
                 }
                 super::model::CheckedEffectStep::Index(index) => {
                     rendered.push_str(&format!(

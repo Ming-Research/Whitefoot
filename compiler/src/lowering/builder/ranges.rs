@@ -24,7 +24,31 @@ impl IrBuilder<'_> {
         element: crate::semantic::CheckedElement,
     ) -> Result<IrValueId, LoweringFailure> {
         let element = lower_element(self.erasure, element)?;
-        let ty = IrType::Range { element };
+        let paged = match source {
+            CheckedRangeSource::Storage(root) => matches!(
+                root.ty,
+                CheckedType::Window {
+                    shape: crate::semantic::WindowShape::Paged,
+                    ..
+                }
+            ),
+            CheckedRangeSource::Element(place) => matches!(
+                place.ty,
+                CheckedType::Window {
+                    shape: crate::semantic::WindowShape::Paged,
+                    ..
+                }
+            ),
+            CheckedRangeSource::Range(root) => {
+                let value = self.binding_value(root.binding)?;
+                matches!(self.value_type(value)?, IrType::Run { .. })
+            }
+        };
+        let ty = if paged {
+            IrType::Run { element }
+        } else {
+            IrType::Range { element }
+        };
         let slice = match source {
             CheckedRangeSource::Storage(root) => {
                 let address = self.lower_place_address(root)?;
@@ -76,12 +100,32 @@ impl IrBuilder<'_> {
     /// discharged by [OP-4] before this operation exists.
     pub(super) fn lower_segment_borrow(
         &mut self,
-        root: &crate::semantic::CheckedContainerRoot,
+        root: &crate::semantic::CheckedSegmentSource,
         segment: &crate::semantic::CheckedSegmentSelect,
         element: crate::semantic::CheckedElement,
     ) -> Result<IrValueId, LoweringFailure> {
         let element = lower_element(self.erasure, element)?;
-        let segments = self.lower_place_address(root)?;
+        let segments = match root {
+            crate::semantic::CheckedSegmentSource::Storage(root) => {
+                self.lower_place_address(root)?
+            }
+            crate::semantic::CheckedSegmentSource::Element(place) => self.lower_range_address(
+                &place.root,
+                &place.offset,
+                &place.path,
+                place.target_domain,
+            )?,
+        };
+        if let crate::semantic::CheckedSegmentSelect::Page(index) = segment {
+            let index = self.expression(&index.offset)?;
+            return self.define(
+                IrType::Range { element },
+                IrOperation::PagedPage {
+                    paged: segments,
+                    index,
+                },
+            );
+        }
         if self.value_type(segments)? != IrType::Address(IrAddressed::Segments { element }) {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
@@ -98,6 +142,9 @@ impl IrBuilder<'_> {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
                 self.define(ty, IrOperation::SegmentSlice { segments, index })
+            }
+            crate::semantic::CheckedSegmentSelect::Page(_) => {
+                Err(LoweringFailure::InvalidCheckedProgram)
             }
             crate::semantic::CheckedSegmentSelect::All(_) => {
                 self.define(ty, IrOperation::SegmentsAll { segments })
@@ -252,10 +299,7 @@ impl IrBuilder<'_> {
         root: &CheckedRangeRoot,
     ) -> Result<IrValueId, LoweringFailure> {
         let slice = self.binding_value(root.binding)?;
-        if self.value_type(slice)?
-            != (IrType::Range {
-                element: lower_element(self.erasure, root.element)?,
-            })
+        if !matches!(self.value_type(slice)?, IrType::Range { element } | IrType::Run { element } if element == lower_element(self.erasure, root.element)?)
         {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }

@@ -566,8 +566,8 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidGive,
                 );
             }
-            // [GIVE-1] an empty delivery set — every arm leaves by `return`
-            // or by `break` — rejects at the `let_stmt` node: its repair is
+            // [GIVE-1] an empty delivery set rejects at the `let_stmt`
+            // node even when every branch diverges: its repair is
             // the statement form with the binding dropped, and the statements
             // after it, which no path reaches [FN-1], go with it.
             let Some((mode, expected)) = matched.delivered else {
@@ -578,13 +578,13 @@ impl<'unit> Checker<'_, 'unit> {
                     node,
                     SemanticIssueKind::EmptyDeliverySet {
                         mechanical_fix: format!(
-                            "every arm leaves by `return` or `break`, so no value reaches `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
+                            "no arm supplies a value to `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
                         ),
                         binding,
                     },
                 );
             };
-            let result_range_element = if mode == CheckedMode::Range {
+            let result_range_element = if mode.is_range() {
                 Some(self.types.intern_element(expected)?)
             } else {
                 None

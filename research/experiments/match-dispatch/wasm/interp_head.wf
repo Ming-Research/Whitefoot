@@ -184,7 +184,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
   requires pc0 < code^.inner.len;
   requires fp0 + 65536_u64 <= stack^.inner.len;
 } {
-  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot.";
+  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot, or a local's value that an operation wrote to both the local's slot and acc, to the operations after it reading that local.";
   let n = code^.inner.len;
   let pc = pc0;
   let fp = fp0;
@@ -291,6 +291,26 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
               }
             }
           }
+          if target < n {
+            set pc = target;
+            continue;
+          }
+        }
+        return trap(code: 1_u32, pc: pc);
+      }
+      BrTableN(c: cv, start: startv, count: countv) => {
+        let ci = cvt::<u16, u64>(cv^);
+        let ct = fp + ci;
+        let iw = stack^.inner[ct];
+        let count = cvt::<u32, u64>(countv^);
+        let i32v = cvt.wrap::<u64, u32>(iw);
+        let i = cvt::<u32, u64>(i32v);
+        let pick = imin(i, count);
+        let base = cvt::<u32, u64>(startv^);
+        let at = base + pick;
+        if at < brtab^.inner.len {
+          let slot = brtab^.inner[at];
+          let target = cvt::<u32, u64>(slot.t);
           if target < n {
             set pc = target;
             continue;

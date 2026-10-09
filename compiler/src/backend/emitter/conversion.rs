@@ -187,20 +187,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         converted: &str,
         valid: &str,
     ) -> Result<(), BackendFailure> {
-        let error_type = self.checked_result_error_type(result_type, destination_type, &[0])?;
-        let result_ty = self.output.type_name(self.program, result_type)?;
-        let destination_ty = self.output.type_name(self.program, destination_type)?;
-        let error_ty = self.output.type_name(self.program, error_type)?;
-        let ok_tag = self.next_temporary()?;
-        let ok_value = self.next_temporary()?;
-        let error_tag = self.next_temporary()?;
-        let error_value = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{ok_tag} = insertvalue {result_ty} zeroinitializer, i32 0, 0\n  %{ok_value} = insertvalue {result_ty} %{ok_tag}, {destination_ty} {converted}, 1\n  %{error_tag} = insertvalue {result_ty} zeroinitializer, i32 1, 0\n  %{error_value} = insertvalue {result_ty} %{error_tag}, {error_ty} 0, 2\n  {} = select i1 {valid}, {result_ty} %{ok_value}, {result_ty} %{error_value}",
-            self.value_name(result)
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        self.checked_result_error_type(result_type, destination_type, &[0])?;
+        self.construct_checked_result(result, valid, converted)
     }
 
     fn emit_integer_cast(

@@ -84,14 +84,17 @@ COMPLETION_HARNESS_DEFINES := \
 	-DWF_COMPLETION_WAIT_RETURN=wf_completion_test_wait_return
 COMPLETION_HARNESS_CFLAGS := $(COMPLETION_CFLAGS) $(COMPLETION_HARNESS_DEFINES)
 COMPLETION_RUNTIME_SOURCES := \
+	src/backend/heap.c \
 	$(SCHED_SOURCES) \
 	$(COMPLETION_DIR)/runtime.c \
 	$(COMPLETION_DIR)/wait_host.c \
 	$(COMPLETION_DIR)/file_adapter.c \
 	$(COMPLETION_DIR)/file_posix.c \
 	$(COMPLETION_DIR)/bridge.c \
+	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/linux_io_uring.c
 COMPLETION_SOURCES := $(COMPLETION_RUNTIME_SOURCES) \
+	src/backend/wf_floor.c \
 	src/backend/ordinary_values.c src/backend/ordinary_values_probe.c \
 	src/backend/ordinary_values.ll src/backend/ordinary_values_probe.ll \
 	$(COMPLETION_DIR)/harness.c
@@ -527,6 +530,7 @@ completion-tsan: $(COMPLETION_TMP)/harness-tsan
 # same list as the POSIX one with the leaves swapped, which is the whole point
 # of step (iv).
 WINDOWS_LINK_SOURCES := \
+	src/backend/heap.c \
 	$(SCHED_DIR)/core.c \
 	$(SCHED_DIR)/prim_windows.c \
 	$(SCHED_DIR)/entry.c \
@@ -535,6 +539,7 @@ WINDOWS_LINK_SOURCES := \
 	$(COMPLETION_DIR)/file_adapter.c \
 	$(COMPLETION_DIR)/file_windows.c \
 	$(COMPLETION_DIR)/bridge.c \
+	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/windows_iocp.c \
 	src/backend/windows_runtime.c
 WINDOWS_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic \

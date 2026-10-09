@@ -1,0 +1,8 @@
+fn reslice(run: &Run<u64>, end: u64) -> result: u64 reads(run) {
+  let part = &run^[0_u64..end];
+  return part^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

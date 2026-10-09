@@ -224,8 +224,16 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         // through the pointer its owner's slot holds, as a runtime-capacity
         // `Array`'s is.
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            bindings.extend(root.binding());
-            collect_place(root, bindings);
+            match root {
+                crate::semantic::CheckedSegmentSource::Storage(root) => {
+                    bindings.extend(root.binding());
+                    collect_place(root, bindings);
+                }
+                crate::semantic::CheckedSegmentSource::Element(place) => {
+                    collect_expression(&place.offset, bindings);
+                    collect_steps(&place.path, None, bindings);
+                }
+            }
             if let Some(offset) = segment.offset() {
                 collect_expression(offset, bindings);
             }
@@ -301,6 +309,23 @@ impl IrBuilder<'_> {
         root: &crate::semantic::CheckedContainerRoot,
         write: bool,
     ) -> Result<IrValueId, LoweringFailure> {
+        if let Some(position) = root
+            .path
+            .iter()
+            .position(|step| matches!(step, crate::semantic::CheckedPlaceStep::Subscript(_)))
+            && let crate::semantic::CheckedPlaceStep::Subscript(index) = &root.path[position]
+            && let Some(fields) = root.path[position + 1..]
+                .iter()
+                .map(|step| match step {
+                    crate::semantic::CheckedPlaceStep::Field(field) => Some(*field),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+            && let Some(family) = self.indexed_family(root.root, &root.path[..position], &fields)
+        {
+            let offset = self.expression(&index.offset)?;
+            return self.indexed_address(family, offset, index.target_domain.into());
+        }
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
                 .bindings
@@ -329,6 +354,84 @@ impl IrBuilder<'_> {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
         Ok(address)
+    }
+
+    pub(super) fn indexed_family(
+        &self,
+        root: crate::semantic::CheckedPlaceRoot,
+        path: &[crate::semantic::CheckedPlaceStep],
+        fields: &[u32],
+    ) -> Option<usize> {
+        self.indexed_roots.iter().rposition(|(candidate, _, _)| {
+            candidate.root.root == root && candidate.root.path == path && candidate.fields == fields
+        })
+    }
+
+    pub(super) fn indexed_address(
+        &mut self,
+        family: usize,
+        offset: IrValueId,
+        target_domain: IrTargetDomainObligation,
+    ) -> Result<IrValueId, LoweringFailure> {
+        let (family, slice, private) = self.indexed_roots[family].clone();
+        let IrType::Range { element } = self.value_type(slice)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let value_type = lower_type(self.erasure, family.value_type)?;
+        let private_type = match family.kind {
+            crate::semantic::IndexedFamilyKind::Reduce { .. } => value_type,
+            crate::semantic::IndexedFamilyKind::Mark { .. } => IrType::Bool,
+        };
+        self.define(
+            IrType::Address(
+                IrAddressed::of(value_type).ok_or(LoweringFailure::InvalidCheckedProgram)?,
+            ),
+            IrOperation::IndexedAddress {
+                slice,
+                offset,
+                private,
+                private_type,
+                target_domain,
+                projection: crate::ir::IrIndexedProjection {
+                    root_element: self.element_type(element)?,
+                    fields: family.fields,
+                    value_type,
+                },
+            },
+        )
+    }
+
+    pub(super) fn indexed_mark(
+        &self,
+        root: &crate::semantic::CheckedContainerRoot,
+    ) -> Option<(IrValueId, IrConstant)> {
+        self.indexed_roots
+            .iter()
+            .rev()
+            .find_map(|(family, _, private)| {
+                let crate::semantic::IndexedFamilyKind::Mark { constant } = &family.kind else {
+                    return None;
+                };
+                let prefix = family.root.path.len();
+                let fields = family
+                    .fields
+                    .iter()
+                    .copied()
+                    .map(crate::semantic::CheckedPlaceStep::Field)
+                    .collect::<Vec<_>>();
+                if root.root == family.root.root
+                    && root.path.get(..prefix) == Some(family.root.path.as_slice())
+                    && matches!(
+                        root.path.get(prefix),
+                        Some(crate::semantic::CheckedPlaceStep::Subscript(_))
+                    )
+                    && root.path[prefix + 1..] == fields
+                {
+                    Some((*private, lower_scalar_constant(constant).ok()?))
+                } else {
+                    None
+                }
+            })
     }
 
     pub(super) fn borrow_may_write(&self, writable: bool, places: &[CheckedResolvedPlace]) -> bool {

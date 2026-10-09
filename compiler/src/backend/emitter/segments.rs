@@ -246,10 +246,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let bytes = self.emit_allocation_size(&total, &stride, &header, &oom, &allocate)?;
         let nonnull = self.next_temporary()?;
         let address = self.value_name(result);
-        self.output.symbol("malloc");
+        self.output.symbol("wf__heap_take");
         writeln!(
             self.output,
-            "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+            "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(oom);

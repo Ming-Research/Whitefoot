@@ -22,12 +22,14 @@ mod programs {
     #[cfg(unix)]
     mod contexts;
     mod file_replacement;
+    mod stop_signals;
     #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]
     mod heap;
     #[cfg(unix)]
     mod image;
+    mod memory;
     mod network;
     #[cfg(unix)]
     mod numerics;

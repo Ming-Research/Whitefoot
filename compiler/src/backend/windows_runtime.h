@@ -6,11 +6,15 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+/* Host callback implemented by completion/stop_signals.c. */
+BOOL WINAPI wf__stop_console_handler(DWORD event);
 #endif
 
 #if defined(__cplusplus)
 extern "C" {
 #endif
+
+int64_t wf__windows_registry_bytes(void);
 
 /* Native name bytes in one component, shared by call storage and host leaves. */
 #define WF_WINDOWS_COMPONENT_MAX_BYTES 510u

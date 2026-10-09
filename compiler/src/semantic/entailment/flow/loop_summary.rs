@@ -97,7 +97,9 @@ impl Input<'_, '_> {
                 }
                 reaches
             }
-            CheckedStatement::Loop { id, body, .. } => {
+            CheckedStatement::Loop {
+                id, body, continues, ..
+            } => {
                 reachability.breaks.push((*id, normal_reaches));
                 reachability.continues.push((*id, false));
                 let body_reaches = loop_block_reaches(body, false, reachability);
@@ -106,7 +108,7 @@ impl Input<'_, '_> {
                 self.collect_continuing_loop_kills(body, body_reaches, reachability, kills);
                 reachability.continues.pop();
                 reachability.breaks.pop();
-                normal_reaches || body_reaches
+                (*continues && normal_reaches) || body_reaches
             }
             CheckedStatement::CountedRange {
                 id,
@@ -220,6 +222,12 @@ impl Reasoning<'_, '_, '_> {
                 .events
                 .iter()
                 .any(|event| self.event_kills_goal(separations, goal, event))
+        });
+        state.origins.retain(|binding, _| {
+            !kills.events.iter().any(|event| {
+                self.input
+                    .event_kills_goal_origin_binding(separations, *binding, event)
+            })
         });
         state.goal_origins.retain(|binding, _| {
             !kills.events.iter().any(|event| {
@@ -349,7 +357,9 @@ pub(super) fn loop_statement_reaches(
             reachability.gives.pop();
             reaches
         }
-        CheckedStatement::Loop { id, body, .. } => {
+        CheckedStatement::Loop {
+            id, body, continues, ..
+        } => {
             // A nested loop body reaches its successor through its own
             // break edges, or can escape through another visible target.
             // A backedge alone cannot create reachability, so evaluating
@@ -362,10 +372,9 @@ pub(super) fn loop_statement_reaches(
             let body_reaches = loop_block_reaches(body, false, reachability);
             reachability.continues.pop();
             reachability.breaks.pop();
-            // [FN-1] also keeps a conservative direct edge from the
-            // nested loop statement to its normal successor. That edge
-            // carries no event from inside the body.
-            normal_reaches || body_reaches
+            // [FN-1] a local break retains the direct entry-to-successor
+            // edge, which carries no event from inside the body.
+            (*continues && normal_reaches) || body_reaches
         }
         CheckedStatement::CountedRange { id, body, .. } => {
             // The false-header edge reaches the normal successor, while

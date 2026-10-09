@@ -8,6 +8,7 @@ mod call_grain;
 mod contexts;
 mod loops;
 mod prelude;
+pub(crate) use prelude::layout_ceiling;
 mod probe;
 mod ranges;
 mod results;
@@ -20,6 +21,7 @@ mod work;
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
+use crate::semantic::permission::CallStorageEffects;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
@@ -200,7 +202,15 @@ pub(crate) fn lower_checked_from(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    let nominal_ceilings = nominals
+        .iter()
+        .map(|nominal| {
+            prelude::layout_ceiling(&nominals, &elements, IrType::Nominal(nominal.id()))
+                .ok_or(LoweringFailure::InvalidCheckedProgram)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        nominal_ceilings,
         nominals,
         elements,
         constants,
@@ -415,6 +425,7 @@ fn lower_nominals(
                     u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
                 ),
                 kind,
+                handler_words: 0,
             })
         })
         .collect()
@@ -525,7 +536,7 @@ fn lower_function<'program>(
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
-        builder.lower_prelude_row(&function.name)?;
+        builder.lower_prelude_row(&function.name, function.prelude_element)?;
     } else {
         builder.blocks.clear();
         builder.current = None;
@@ -568,7 +579,7 @@ const fn lower_source_mode(mode: CheckedMode) -> IrSourceMode {
     match mode {
         CheckedMode::Own => IrSourceMode::Own,
         CheckedMode::Reference => IrSourceMode::Reference,
-        CheckedMode::Range => IrSourceMode::Range,
+        CheckedMode::Range | CheckedMode::Run => IrSourceMode::Range,
     }
 }
 
@@ -601,6 +612,16 @@ fn lower_parameter_type(
     // [REF-4, TYPE-8] a `&[T]` parameter's written type is the element type
     // and its kind is its mode, so the descriptor type is formed here and
     // never from the type alone.
+    if parameter.mode == CheckedMode::Run {
+        return Ok(IrType::Run {
+            element: lower_element(
+                erasure,
+                parameter
+                    .range_element
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+            )?,
+        });
+    }
     if parameter.mode == CheckedMode::Range {
         return Ok(IrType::Range {
             element: lower_element(
@@ -624,7 +645,12 @@ fn lower_borrow_mode_type(
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own || matches!(ty, IrType::Buffer { .. } | IrType::Range { .. }) {
+    if mode == CheckedMode::Own
+        || matches!(
+            ty,
+            IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
+        )
+    {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {
@@ -721,6 +747,8 @@ struct IrBuilder<'program> {
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
+    /// Indexed families, their current ranges, and source/private storage modes.
+    indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -787,6 +815,7 @@ impl<'program> IrBuilder<'program> {
             atomics: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
+            indexed_roots: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -948,7 +977,13 @@ impl<'program> IrBuilder<'program> {
     ///   and its join sit on one straight-line edge; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
-    ///   and the join, where the value does not exist yet.
+    ///   and the join, where the value does not exist yet; and
+    /// - no member releases a place that overlaps a place another member
+    ///   borrows at entry or loads through during argument formation. These
+    ///   places come from the checker; a conflict ends the group before the
+    ///   new member's argument formation, after earlier members have joined.
+    ///   The new member can start another group, and disjoint written Box
+    ///   references remain eligible together.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -962,11 +997,12 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<IrValueId>,
+        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
             if members.len() >= 2 {
+                let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
                 overlaps.push(IrOverlap { members });
             }
@@ -1008,10 +1044,17 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
+                let effects = &site.storage_effects;
+                if members
+                    .iter()
+                    .any(|(_, previous)| effects.conflicts(previous))
+                {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push(value);
+                members.push((value, effects));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
@@ -1023,13 +1066,13 @@ impl<'program> IrBuilder<'program> {
         overlaps
     }
 
-    /// Records where a named-function call in call position landed, whatever
-    /// written position it was in.
+    /// Records where a named-function call in call position landed,
+    /// whatever written position it was in.
     ///
     /// The permission judgment reaches a call as a `let` right-hand side, as an
-    /// expression statement, and as a `match` scrutinee alike, and all are
+    /// expression statement, a conditional call, and a `match` scrutinee alike, and all are
     /// named by their call occurrence, so one recording serves them all. Which
-    /// of them a group can actually keep is decided later and by the IR alone:
+    /// of them a group can keep also depends on the emitted storage shape:
     /// every member of a group must be defined in one block, and a scrutinee's
     /// own dispatch terminates its block, so a scrutinee call is only ever a
     /// group's last member.
@@ -1046,6 +1089,127 @@ impl<'program> IrBuilder<'program> {
         let block = self.current.ok_or(LoweringFailure::InvalidCheckedProgram)?;
         self.call_results.insert(call.clone(), (block, value));
         Ok(())
+    }
+
+    /// Keep a permitted conditional member's call definition in its group's
+    /// block. Only the shared shape check licenses evaluating arguments before
+    /// dispatch; the permission table still owns independence and waiting.
+    /// An adjacent call member is a conservative pre-check: `overlaps` can
+    /// still drop the group for unavailable results, different blocks,
+    /// addressed bindings, or calls already claimed by another group, leaving
+    /// the guard as an ordinary call. Inside an atomic block, keep the branch
+    /// so the arm's ordinary lowering takes its units and binds their entries
+    /// before evaluating the call's arguments.
+    fn lower_conditional_call(
+        &mut self,
+        statement: &CheckedStatement,
+    ) -> Result<bool, LoweringFailure> {
+        if self.overlap != OverlapLowering::On || !self.atomics.is_empty() {
+            return Ok(false);
+        }
+        let Some(conditional) = crate::semantic::permission::conditional_call(statement) else {
+            return Ok(false);
+        };
+        let Some(permissions) = self.permissions else {
+            return Ok(false);
+        };
+        let member = |site: &crate::semantic::permission::PermissionSite| {
+            site.call.as_ref() == Some(conditional.site)
+        };
+        let adjacent_calls =
+            |first: &crate::semantic::permission::PermissionSite,
+             second: &crate::semantic::permission::PermissionSite| {
+                first.call.is_some() && second.call.is_some() && (member(first) || member(second))
+            };
+        let permitted = permissions.runs.iter().any(|run| {
+            run.sites
+                .windows(2)
+                .any(|sites| adjacent_calls(&sites[0], &sites[1]))
+        }) || permissions
+            .pairs
+            .iter()
+            .any(|pair| pair.verdict.is_eligible() && adjacent_calls(&pair.first, &pair.second));
+        if !permitted {
+            return Ok(false);
+        }
+        let CheckedExpression::UserCall { arguments, .. } = conditional.value else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let function = self
+            .physical_calls
+            .iter()
+            .find_map(|(site, target)| (site == conditional.site).then_some(*target))
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let result_type = *self
+            .function_results
+            .get(function as usize)
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let condition = self.expression(conditional.scrutinee)?;
+        let mut values = vec![condition];
+        for argument in arguments {
+            values.push(self.expression(argument)?);
+        }
+        let mut guard = Self::new(
+            self.context(),
+            IrType::Unit,
+            HashSet::new(),
+            None,
+            self.overlap,
+            self.function_name,
+        )?;
+        let parameters = values
+            .iter()
+            .map(|value| guard.new_parameter(self.values[value.index()]))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (invoke, _) = guard.new_block(&[])?;
+        let (done, _) = guard.new_block(&[])?;
+        guard.terminate(IrTerminator::Match {
+            scrutinee: parameters[0],
+            enum_type: IrEnumType::Bool,
+            targets: vec![
+                IrMatchTarget {
+                    tag: conditional.tag,
+                    block: invoke,
+                },
+                IrMatchTarget {
+                    tag: 1 - conditional.tag,
+                    block: done,
+                },
+            ],
+        })?;
+        guard.current = Some(invoke);
+        guard.define(
+            result_type,
+            IrOperation::Call {
+                function,
+                arguments: parameters[1..].to_vec(),
+            },
+        )?;
+        guard.terminate(IrTerminator::Jump {
+            target: done,
+            arguments: Vec::new(),
+            drops: Vec::new(),
+        })?;
+        guard.current = Some(done);
+        let unit = guard.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?;
+        guard.terminate(IrTerminator::Return {
+            value: unit,
+            drops: Vec::new(),
+        })?;
+        let (ordinal, name) = self.synthesis.borrow_mut().reserve(self.function_name)?;
+        // Unlike a split half, this helper is an ordinary call in both worlds.
+        // Its call graph determines clones, call grain and recursive budgets.
+        let guard = guard.finish(format!("_par_cond_{name}"), Vec::new(), None)?;
+        self.synthesis.borrow_mut().file(ordinal, guard)?;
+        let result = self.define(
+            IrType::Unit,
+            IrOperation::Call {
+                function: ordinal,
+                arguments: values,
+            },
+        )?;
+        self.note_call_result(conditional.value, result)?;
+        Ok(true)
     }
 
     fn lower_statements(
@@ -1273,8 +1437,9 @@ impl<'program> IrBuilder<'program> {
                     id,
                     body,
                     backedge_drops,
+                    continues,
                     ..
-                } => self.lower_loop(*id, body, backedge_drops, give_target.clone())?,
+                } => self.lower_loop(*id, body, backedge_drops, *continues, give_target.clone())?,
                 CheckedStatement::CountedRange {
                     id,
                     node_path,
@@ -1358,14 +1523,18 @@ impl<'program> IrBuilder<'program> {
                     enum_type,
                     arms,
                     continues,
-                } => self.lower_match(
-                    scrutinee,
-                    *enum_type,
-                    arms,
-                    *continues,
-                    None,
-                    give_target.clone(),
-                )?,
+                } => {
+                    if !self.lower_conditional_call(statement)? {
+                        self.lower_match(
+                            scrutinee,
+                            *enum_type,
+                            arms,
+                            *continues,
+                            None,
+                            give_target.clone(),
+                        )?;
+                    }
+                }
                 CheckedStatement::ValueMatchLet {
                     binding,
                     result_type,
@@ -1382,7 +1551,15 @@ impl<'program> IrBuilder<'program> {
                     // carries the selected address; a range join carries the
                     // selected pointer and count. Neither has the by-value
                     // representation of its written referent type.
-                    let result = if *result_mode == CheckedMode::Range {
+                    let result = if *result_mode == CheckedMode::Run {
+                        IrType::Run {
+                            element: lower_element(
+                                self.erasure,
+                                result_range_element
+                                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                            )?,
+                        }
+                    } else if *result_mode == CheckedMode::Range {
                         IrType::Range {
                             element: lower_element(
                                 self.erasure,
@@ -1668,7 +1845,7 @@ impl<'program> IrBuilder<'program> {
                         (actual, expected),
                         (IrType::Address(referent), _) if referent.ty() == expected
                     )
-                    && !matches!(actual, IrType::Range { element } if self.element_type(element)? == expected)
+                    && !matches!(actual, IrType::Range { element } | IrType::Run { element } if self.element_type(element)? == expected)
                 {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
@@ -1870,6 +2047,23 @@ impl<'program> IrBuilder<'program> {
                 target_domain,
                 ..
             } => {
+                if let CheckedArrayRoot::Binding { binding, fields } = root {
+                    let path = fields
+                        .iter()
+                        .copied()
+                        .map(crate::semantic::CheckedPlaceStep::Field)
+                        .collect::<Vec<_>>();
+                    if let Some(family) = self.indexed_family(
+                        crate::semantic::CheckedPlaceRoot::Binding(*binding),
+                        &path,
+                        &[],
+                    ) {
+                        let offset = self.expression(offset)?;
+                        let address =
+                            self.indexed_address(family, offset, (*target_domain).into())?;
+                        return self.load_storage_value(address);
+                    }
+                }
                 let (root, ty) = self.array_root(root)?;
                 let IrType::Array {
                     element,
@@ -2242,12 +2436,9 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let displaced = self.displaced_release(&target)?;
+        let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
-        if let Some(drop) = displaced {
-            self.append_drops(vec![drop])?;
-        }
-        Ok(())
+        self.append_drops(displaced)
     }
 
     fn project_struct_path(

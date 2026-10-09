@@ -1966,11 +1966,11 @@ impl Vocabulary {
         pair: DistinctKey,
         receiver: TermId,
     ) -> Option<(TermId, TermId, DeliveryImageBound)> {
-        [pair, (pair.1, pair.0, -pair.2)]
+        [pair, (pair.1, pair.0, pair.2.saturating_neg())]
             .into_iter()
             .find_map(|(left, right, difference)| {
                 let edge = self.delivery_image_bound(image, (left, right), receiver)?;
-                (edge.bound() < difference).then_some((left, right, edge))
+                (edge.bound() <= difference.saturating_sub(1)).then_some((left, right, edge))
             })
     }
 
@@ -2377,13 +2377,13 @@ impl Vocabulary {
                     .iter()
                     .flatten()
                     .any(|proof| self.derivations.depends_on_postcondition_call(*proof));
-            if [pair, (pair.1, pair.0, -pair.2)]
+            if [pair, (pair.1, pair.0, pair.2.saturating_neg())]
                 .into_iter()
                 .any(|(left, right, difference)| {
                     self.delivery_join_implied(
                         target,
                         (left, right),
-                        difference - 1,
+                        difference.saturating_sub(1),
                         context.receiver,
                         call_dependent,
                     ) || target
@@ -2391,7 +2391,7 @@ impl Vocabulary {
                         .candidate_minimum((left, right), |proof| {
                             call_dependent || !self.derivations.depends_on_postcondition_call(proof)
                         })
-                        .is_some_and(|bound| bound < difference)
+                        .is_some_and(|bound| bound <= difference.saturating_sub(1))
                 })
             {
                 continue;
@@ -3174,20 +3174,12 @@ pub(super) fn substitute_delivery_relation(
             right,
             difference,
         } => {
-            let (left, right) = (replace(*left), replace(*right));
-            // Ordering the pair reverses the difference with it.
-            if left <= right {
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference: *difference,
-                }
-            } else {
-                Relation::Distinct {
-                    left: right,
-                    right: left,
-                    difference: -difference,
-                }
+            let (left, right, difference) =
+                distinct_key(replace(*left), replace(*right), *difference);
+            Relation::Distinct {
+                left,
+                right,
+                difference,
             }
         }
     }

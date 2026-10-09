@@ -23,9 +23,9 @@ fn affine_slot_windows_fill_overwrite_empty_and_release_per_element() {
     // slot: the window is frame-resident [STOR-1], its element release is
     // derived over the slots in ascending logical index order, and the `Box`
     // it holds is freed after its content [PROV-6, STOR-3, WIN-3].
-    assert!(llvm.contains("call ptr @malloc"));
+    assert!(llvm.contains("call ptr @wf__heap_take"));
     let helper = derived_drop(&llvm, "define private void @wf.drop.t");
-    assert!(helper.contains("call void @free"));
+    assert!(helper.contains("call void @wf__heap_give"));
 
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
@@ -48,9 +48,9 @@ fn recursively_boxed_tree_executes_with_derived_cleanup() {
             .any(|line| line.contains("call ") && line.contains(" @wf_count(")),
         "{count}"
     );
-    assert!(llvm.contains("call ptr @malloc"));
+    assert!(llvm.contains("call ptr @wf__heap_take"));
     assert!(llvm.contains("icmp ne ptr"));
-    assert!(llvm.contains("call void @free"));
+    assert!(llvm.contains("call void @wf__heap_give"));
     // A recursive enum's derived release is one release action per node type
     // that enters itself at the closing edge of its release graph [PROV-6]:
     // the owner deleted the cycle refusal on 2026-09-04 and ruled that the
@@ -64,7 +64,7 @@ fn recursively_boxed_tree_executes_with_derived_cleanup() {
         .and_then(|rest| rest.split('(').next())
         .expect("a derived release action name");
     assert_eq!(entry.matches(&format!("call void @{name}(")).count(), 2);
-    assert_eq!(entry.matches("call void @free(").count(), 2);
+    assert_eq!(entry.matches("call void @wf__heap_give(").count(), 2);
     assert!(!llvm.contains("@wf.drop.step."));
     assert!(!llvm.contains("@wf.drop.push"));
     assert!(!llvm.contains("@wf.drop.run"));

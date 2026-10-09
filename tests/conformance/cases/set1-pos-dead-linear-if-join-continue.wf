@@ -1,0 +1,42 @@
+nodrop struct InterplayToken {
+  value: u8;
+}
+
+fn interplay_close(input: InterplayToken) -> observed: u8 pure {
+  doc "PROV-6 permits whole destructuring to discharge the linear token.";
+  let InterplayToken(value: prior) = move input;
+  return prior;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Both if branches consume log, so LIV-1 agrees that it is dead at the join. ENT-5 transports the correlated INV-1 header relation from differing branch images across the real set statement. SET-1 revives the complete binding without releasing an old value under WIN-3, and OWN-11 and INV-1 admit the explicit continue. Execution visits both branches and consumes the final token.";
+  let log = InterplayToken(value: 0_u8);
+  let left = 0_u64;
+  let right = 2_u64;
+  let round = 0_u8;
+  loop (
+    invariant balanced: left + right == 2_u64
+  ) {
+    if round == 2_u8 {
+      break;
+    }
+    if round == 0_u8 {
+      let first = interplay_close(input: move log);
+      set left = 2_u64;
+      set right = 0_u64;
+    } else {
+      let second = interplay_close(input: move log);
+      set left = 0_u64;
+      set right = 2_u64;
+    }
+    set log = InterplayToken(value: round);
+    invariant joined: left + right == 2_u64;
+    set round = round +wrap 1_u8;
+    continue;
+  }
+  let final_value = interplay_close(input: move log);
+  if final_value != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -63,6 +63,69 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **Wide-match checking still grows about tenfold per doubling of arms.**
+  The demanded affine L0 index cut the natural wasm interpreter's check to
+  0.215 of its base on the 14900K but left the plain constant-assignment
+  series unchanged: it grows 4.0, 5.5, 7.3 and 10.5 times per doubling from
+  40 to 640 arms
+  ([C3 results](../research/investigations/check-time/DESIGN.md#14900k-timing-results)).
+  Impact: a match with several hundred arms that each assign distinct
+  constants takes seconds to minutes to check. The source attribution puts
+  that series' cost in the join: pair enumeration, per-input lookups and
+  parent construction in `join_at_once` (`compiler/src/semantic/entailment/state.rs`),
+  cubic on the series. Change: direction A1 of the C3 investigation, reducing
+  or demanding the join locally, after a profile or counters rank those
+  phases in seconds. Validate with the same base/twin/head panel on the
+  14900K, the series' doublings at most 2.5, unchanged verdicts and the
+  eager-join differential. Dense single-input snapshots, image formation and
+  inventory scans remain deferred until their elapsed share warrants an
+  experiment. Reopen with that profile, or when a real program meets the
+  series' growth. Halo's check regressed 13% with the demanded index
+  ([Halo-wf bisect run 37880685345](https://github.com/Ming-Research/Halo-wf/actions/runs/37880685345)).
+  An exhausted final AUTO family could demand quadratically many vectors,
+  each scanning all candidates, with additional scans for absent residuals.
+  Promotion to the complete index on final-family entry or after N cold
+  demands for N candidates addresses that cubic construction; measured on
+  the 14900K it brings Halo's check to 0.835 of the demanded-index base and
+  keeps the wasm interpreter's gain (0.991)
+  ([promotion](../research/investigations/check-time/DESIGN.md#promotion-after-halos-regression)).
+  The per-function affine work counters distinguish cold scans, memo reuse,
+  promotions and exhausted families.
+
+- **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
+  rewriting Halo's interpreter as plain `loop { match }` raised its source
+  check from about 7.7 s to 9.0 s, and the owner judged 9 s still too long.
+  Impact: every edit of an interpreter-sized program waits that long before
+  any diagnostic, and larger interpreters (full wasm, Lua) grow further. No
+  profile of Halo's check exists yet. The known sinks come from the v2h
+  wasm interpreter and the synthetic arm series: rebuilding the affine L0
+  index (64% of checking-thread samples in the stage-3 profile, addressed by
+  the lazy index above), join work at many-arm matches, dense single-input
+  snapshots, image formation and inventory scans. Possible directions after
+  the lazy index: a Halo profile to rank its own sinks, cheaper joins of
+  many arms that assign disjoint facts, and reuse of per-arm facts across
+  repeated checks of unchanged functions. Validate each with a same-source
+  base/twin/head timing of Halo's check on the 14900K through CI, unchanged
+  conformance and corpus verdicts, and the full-rebuild differentials.
+  With promotion Halo's `pkg::vm` check takes 8.6 s on the 14900K, below
+  the 9.1-9.2 s before the demanded index; its dominant remaining checking
+  cost is still unprofiled. Reopen with a profile of Halo's check, or when
+  it grows past 10 s again.
+
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
 - **Checking one function grows faster than its size.** The stage-3 wasm
   interpreter's interpreter function, a `match` whose arms each hold their
   handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
@@ -98,22 +161,6 @@ rarely insert at the same place.
   needs a nonzero exclusion that every input only derives. Validate a
   future extension against the finite candidate boundary conformance cases,
   large gaps, later strengthening, delivery, kills and retained derivations.
-
-- **Invariant/L0 publication awaits CI confirmation.** The owner selected
-  ordinary source-fact publication of proved invariant difference bounds
-  (option A), now specified by ENT-3.S16 and installed at successful header
-  and local invariant activation. General affine conclusions remain affine
-  premises. CI must confirm the equality-sentinel witness
-  `ent4-pos-offset-loop`, its existing wrong-guard twin, two-term bounds,
-  local publication and joins, replacement kills, equality's two directions, excluded
-  three-term and scaled conclusions, and retained derivations. No local
-  build or check was run; remove this entry after those CI results confirm
-  the implementation, or reopen the implementation against any failure.
-  Before branch readiness, consolidate the design log against its review
-  base after approval of every branch decision: the current branch also
-  adds the origin-transport node, whose approval is not recorded in the
-  existing log. This task's option A approves only the new invariant source;
-  `spec/log.md` records that approval, not approval of the earlier changes.
 
 - **A header relation about the current element of a whole-table counted
   loop is refused.** Over `for (i in 0_u64..n, invariant fits:
@@ -745,29 +792,83 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
-- **Reconcile invariant L0 publication with existing explicit certificates.**
-  The v0.102 ENT-3.S16 rule publishes `P: sum - i <= 0` both as the
-  existing affine premise and as an ordinary L0 bound. ENT-6 AUTO tries
-  the permitted pair `P + P` for `T: 3*sum - 3*i <= 0`; its residual
-  `T - (P + P)` is exactly the L0 image P, so DIRECT succeeds. PRF-1 then
-  requires rejecting the explicit `use 3 times sum_bound` block as
-  redundant. The same derivation applies to `sum <= limit` after exhaustion.
-  CI at `47f682ef4c56336b48c0f26f1ca6d8ec6d530c47` reports this precise
-  `RedundantUseBlock` reason in the existing accepted cases
-  `prf1-pos-active-header-reference`, `prf1-pos-certificate-after-exhaustion`
-  and `inv1-pos-operation-and-mode-proof-names`. The implementation path is
-  `establish_invariant_l0`, `first_two_premise_candidate`,
-  `affine_candidate_residual_proof`, then `affine_residual_proof` in
-  `compiler/src/semantic/entailment/flow/{invariants,prover}.rs`.
-  This is a specification/evidence conflict, not a displaced named premise:
-  the redundant-block judgment precedes named-premise admission. Preserving
-  these unchanged sources and verdicts needs an owner-selected adjustment
-  to S16, AUTO or redundancy; suppressing this candidate only in the
-  implementation would contradict the current rules. Reopen immediately
-  when that rule choice is settled, implement it with its corresponding
-  conformance boundary, and run the three unchanged cases, certificate
-  negative cases and the full gate in CI. The rule derivation and code path
-  were inspected; no local execution was performed for this investigation.
+- **Range facts cannot read a field below an element.** RANGE-1 admits
+  integer elements but refuses a field such as items[k].position, so a proof
+  about records needs a separate integer array. Snowghost's c4 probe is the
+  minimal witness in the [paged-storage investigation](../research/investigations/paged-storage/DESIGN.md#evidence-from-snowghosts-probes).
+  Specify field projections and their versioned support in the range
+  judgment; validate field-based inverses and scatter, sibling writes,
+  replacement of the containing element and stale facts. Reopen when a
+  downstream proof needs a record field rather than an integer side array.
+
+- **Structural uniqueness does not cross a callable boundary as a fact.**
+  A builder's locally known unique layout cannot yet publish that structural
+  property for a consumer's certified scatter. The precise required fact is
+  still to be isolated from Snowghost's probes
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+  Reduce it to a builder and consumer with a minimal uniqueness contract,
+  then compare expressing it through existing range postconditions with a
+  new exported relation. Validate a duplicate witness that fails and a
+  distinct witness that passes, including mutation between builder and
+  consumer. Reopen when the port needs to hand structural uniqueness on.
+
+- **Requalify Paged affine-element loops with in-body measure reads.**
+  Main now admits reads of an unchanged mapped root's measures in PAR-2,
+  including helper-row reads; the Paged integration retains page-formation
+  descriptor reads for page maps. The earlier Snowghost Paged port reported
+  that hoisting the measure read changed five minimal controls from denied
+  to permitted, while none of its 415 corresponding renderer loops became
+  newly permitted (Snowghost-wf `research/m2-paged`,
+  `research/investigations/storage-layout/probes/c2-paged-permission.wf`,
+  ledger `research/investigations/structure-edits/runs/paged-layout-ledger.md`).
+  Reopen after the merged compiler passes CI: rerun those controls and the
+  port's permission ledger to establish whether this former blocker is gone.
+  Keep a loop that appends, an element read outside the map and a mixed
+  page/element map denied; no new performance conclusion follows from the
+  rule change alone.
+
+- **A const generic argument refuses a type-suffixed literal.** The call
+  fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
+  the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
+  while numeric value literals require their suffix [FORM-5]. A writer who
+  writes the suffix everywhere meets a refusal at a const argument. The
+  owner's witness is Firn-wf commit `430b25b90`, which replaced the literal
+  with a name; that downstream run has not been reproduced here. Change:
+  admit a suffixed literal whose suffix matches the const parameter's type.
+  Validate matching suffixes, wrong suffixes and out-of-range values, keeping
+  named arguments covered. Reopen with the next grammar change.
+
+- **Mathematical clause constants exceed the checker's i128 projection domain.**
+  ENT-2 and MSR-5 specify mathematical integers, not an i128 ceiling. Source
+  folding in `goal_affine_side` and `goal_projection`
+  (`compiler/src/semantic/entailment/flow/goals.rs`) uses checked i128
+  operations and returns no L0 projection on overflow; `comparison_relation`
+  (`flow/sources.rs`) does the same for strict-bound and reverse-bound
+  constants. Minimal arithmetic witness: with i64 constants
+  `low = -9223372036854775808_i64` and `high = 9223372036854775807_i64`,
+  let M denote the clause expression `low * high + low * high + low + low`.
+  M and every intermediate fit i128, with M = -2^127, but the admitted clause
+  fragment `x < M` loses its required `x - Z <= M - 1` projection at
+  `gap.checked_sub(1)?`; `x > M` also loses its representable reverse bound
+  `Z - x <= 2^127 - 1` at `gap.checked_neg()?` before subtracting one.
+  These are projection witnesses, not claims about an executed whole-program
+  verdict. `x <= M - 1_i64` additionally overflows source folding itself.
+  Closed-bound composition already saturates (`compose_transitive_bounds`
+  in `state.rs`); stored offset arithmetic follows that convention as a
+  consistency repair, including saturated reversal and strict-bound
+  arithmetic. It does not implement unbounded offsets: reversing MIN stores
+  MAX, and negating then decrementing MIN gives MAX - 1. Fragment term ranges
+  make those extreme disequalities tautologies, but do not justify silently
+  losing specified source projections. Interval extraction likewise checks
+  lower-endpoint negation and otherwise keeps the type endpoint
+  (`flow/sources.rs`, `flow/prover.rs`); affine arithmetic reports
+  `AffineCheckError::ArithmeticOverflow` (`affine.rs`). Impact: some specified
+  numeric evidence is unavailable; the full source-verdict impact remains
+  unverified. Deferred: the offset panic repair only makes offset arithmetic
+  consistent with bound arithmetic. Reopen for an owner-selected implementation of the
+  mathematical constant domain; compare exact arithmetic against folding,
+  both strict orientations, origin transport, closure and joins in CI.
+  Do not reinterpret implementation overflow as a source-language rejection.
 
 ## Containers and storage lowering
 
@@ -1108,8 +1209,9 @@ rarely insert at the same place.
   materially affect a measured consumer or lowering work reaches those paths.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
+  capacity Box is one pointer to one header-first allocation; `grow`
+  reallocates it, selected on Halo's measured table growth only (one consumer,
+  one machine), so its cost in other consumers stays unmeasured. A one-word owner, one allocation and header
   placement are distinct choices: a fat descriptor can also own one element
   allocation and make measure reads direct, while widening transport and
   capture storage. Neither alternative is established as generally faster.
@@ -1182,6 +1284,137 @@ rarely insert at the same place.
   short-lived windows. Not checked on a later revision. Reopen with the
   next change to `Slots` lowering or when a profile shows the clearing
   again.
+
+- **Paged page adoption for splices is deferred (R7).** Private paged output
+  cannot yet transfer complete pages into retained storage, so a splice must
+  keep separate owners or move its elements. The [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
+  records Snowghost's P9 requirement. Specify an ownership transfer with
+  explicit length, capacity, partial-page and reference-invalidating effects
+  before adding an adoption operation. Validate empty, aligned and partial
+  splices, linear element consumption and absence of payload copies. Reopen
+  when Snowghost's retained-layout experiment needs P9.
+
+- **A Paged owner with few elements still takes a full first page.** The fixed
+  page size can leave most of its first allocation unused. Snowghost's html5
+  layout has about 117,000 entry-sequence owners, most holding one to five
+  entries, so a 4 KB first page per owner would cost hundreds of megabytes and
+  as many allocations; Snowghost currently plans one context-wide Paged pool
+  of entry nodes instead, which avoids the waste if its experiment confirms
+  it. Its per-owner like-for-like variant measured the cost on html5
+  (Snowghost-wf `research/m2-paged-nodes` at 0ac400e, census run
+  37645318944): 82,907 Paged stores (41,451 SequenceNode stores with B = 8
+  and 2,432-byte pages, 41,451 Flow stores with B = 128 and 1,024-byte
+  pages) hold 143,273,088 bytes of first pages against 63,300,960 in the
+  hand-written base, whose first page is 4 to 64 slots: 2.26 times before
+  descriptors, directories and allocator overhead, and the 38,664 smallest
+  owners alone account for 133,622,784 against 48,252,672 bytes. One candidate is `box_paged_new(capacity: c)` with `c` below the page
+  size allocating its first page at `c` elements and later pages at full size.
+  Compare a smaller first page with the
+  fixed-size representation, including the extra address branch and growth
+  transition, before selecting a change. Validate contents, stable earlier
+  payloads, page ranges and allocation sizes, and measure memory and access
+  cost on the same owner population. Reopen when the Paged port measures
+  material waste in small owners
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **An `apart` certificate cannot use range facts over a window reached
+  through a reference parameter.** The left-inverse scatter of
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  certifies with `&[u64]` parameters, but the same function written over
+  `&Slots<u64>` parameters (`requires forall inverse(k in 0_u64..order^.len)
+  when order^[k] < out^.len: pos^[order^[k]] == k`, body
+  `set out^[order^[k]] = k`) is refused with RANGE-5 `UndischargedApart` in
+  the gate run of the paged-storage branch, and so is the `&Paged<u64>` form;
+  the `&Run<u64>` form is the conformance case. The range walker seeds a
+  container for range and run parameters and a place view for reference
+  parameters, so a fact or measure over `order^` likely lands on a different
+  container identity or generation than the body's reads. Find the
+  mismatch, then accept the reference-parameter forms without changing the
+  range-parameter one. Reopen when a certified scatter must take its
+  storage by reference rather than as a range.
+
+- **Range facts over a window filled by place_back do not reach a call's
+  range requirement.** A caller that fills `Box<Slots<u64>>` (or
+  `Box<Paged<u64>>`) windows with `place_back`, proves
+  `invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q`
+  in a later counted loop, and then calls a function requiring
+  `forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k`
+  over `&order.inner[0_u64..5_u64]` and `&pos.inner[0_u64..5_u64]` is refused
+  with RANGE-3 `UndischargedRangeFact` at the call, for Slots and Paged alike
+  (gate run of the paged-storage branch); the same program over
+  `box_array_filled` arrays,
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`, is
+  accepted. Every existing range-fact case uses arrays, so window storage has
+  no positive witness. Find where the facts over the window die or fail to
+  map onto the range actual (container generation after a boundary
+  operation, or the range formation's length read), fix it, and restore the
+  calling `main` of `tests/conformance/cases/range5-pos-paged-certified-scatter.wf`.
+  Reopen when Snowghost's certified scatter runs over Paged payload pools.
+
+- **The window test module's introduction describes implemented support as
+  missing.** `compiler/src/semantic/tests/windows.rs` says OP-10's window
+  type parameter is not inferred from the operand and that runtime-capacity
+  `Slots<T>` and `Ring<T>` stop as unimplemented, but window operations are
+  called without type arguments and runtime-capacity windows check and run
+  throughout the conformance corpus. Rewrite the paragraph to state what the
+  module's assertions pin today; no test changes. Reopen with the next edit of
+  that module.
+
+- **A segment borrowed below a range element does not emit.** In
+  `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
+  `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
+  projection, `SegmentSlice`), but LLVM emission returns `InvalidIr`; the same
+  borrow through a `Box<Paged<u64>>` element emits. The lowering test
+  `page_borrows_below_range_elements_keep_the_outer_projection` in
+  `compiler/src/lowering/tests.rs` covers the Paged form only; the Segments
+  form failed in the gate run of the paged-storage branch. Find which
+  operand type `emit_segment_slice` or the surrounding measure emission
+  refuses and give that projection the address type the emitter expects;
+  validate with the Segments helper restored to that test. Reopen when a
+  program stores segmented runs in a range of cells.
+
+- **Growth kills facts about Paged elements it does not change.**
+  grow_paged writes the whole cell, so every fact about a filled element dies
+  although no element moves or changes. Snowghost's splice publication would
+  then re-establish its back-link range facts after each growth instead of
+  once. Give growth a row that invalidates references and address formation
+  but preserves element-content support, or a postcondition carrying element
+  facts across it. Validate that a fact over a filled element's field
+  survives growth while a reference formed before growth is still refused.
+  Reopen when a Snowghost proof must be re-established after growth.
+
+- **Paged references do not survive growth.** Stable element storage does
+  not keep the cell stable; grow_paged may replace the cell that holds the
+  directory and requires callers to form their references again. A
+  surviving-reference design needs an effect part read by every address
+  formation and written by cell replacement, including Run references.
+  Compare that refinement with a cell that never moves before changing REF-2. Validate every reference
+  kind, fact invalidation and overlapping growth/address formation. Reopen
+  when re-forming references blocks a concrete downstream operation
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **A page cannot be proved separate from an element outside it.** OWN-7
+  conservatively overlaps a Paged page step with every element or range at
+  that origin: there is no source fact relating their coordinates. Add only
+  a target-independent, finite relation that has a demonstrated caller,
+  rather than inferring page arithmetic from lowering. Validate calls and
+  parallel loops with inside, outside, empty and boundary ranges and retain
+  overlap for unknown coordinates. Reopen when a consumer needs mixed page
+  and element access in one call
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **Audit nonempty release classification for shared handles and key sets.**
+  `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
+  reaches no owned component for `Shared` and has no `KeySet` action, while
+  the backend's `type_derives_release` classifies both as releasing storage.
+  Its `check_self_tail_releases` consumer may therefore omit an FN-10
+  release obligation. This is an inspection finding, not a reproduced
+  acceptance failure; keep it separate from the call-group boundary, which
+  uses the release graph's storage actions and changes no acceptance rule.
+  Reopen before the next tail-release change: construct shared-handle and
+  key-set self-tail witnesses, compare their required cleanup with STOR-3,
+  SHARE-1 and FN-10, then unify the action classification if the discrepancy
+  affects the judgment; validate empty scalar and zero-capacity controls too.
 
 ## Parallel lowering and runtime
 
@@ -1804,10 +2037,19 @@ rarely insert at the same place.
   beside `let all = &data.inner[0_u64..2000000_u64];`
   (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
   range loads the Box's pointer, which the first statement writes. No
-  program observes it: the lowering hands out only calls, and a member that
-  is not a call ends every overlap group (`overlaps` in
-  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
-  in place needs only its address, so only a path through a Box's `inner`
+  program observes that non-call pair: the lowering hands out only calls,
+  and a member that is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Call argument formation is protected
+  separately: the checker retains released places (owned heap arguments,
+  written heap-owning referents, and whole aggregates consumed by argument
+  cleanup) and borrowed places (reference arguments and owner slots loaded
+  by reference formation) on each call site. Lowering ends a group before
+  argument formation when one member releases storage overlapping another
+  member's borrowed place under OWN-7; the new member may start a new group.
+  Disjoint written Box references and disjoint owned transfers retain overlap
+  eligibility. The PAR-1 verdict still lacks the owner-slot read described here.
+  Forming a reference to storage held in place needs only its address, so
+  only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
   formed path passes; validate with that pair denied, the rest of the
   quicksort ledger unchanged, and `let larger = &v^[after..n];` still
@@ -2100,15 +2342,57 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
@@ -2149,6 +2433,58 @@ rarely insert at the same place.
   calls on disjoint storage: permitted as a pair and splitting, with the
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
+
+- **Qualify ignored-reference entry ordering under granted and refused
+  offers.** A pure `ignore(part: &Slots<u64>)` followed by
+  `grow(cell: &p, ...)`, with `ignore(part: &p.inner)` formed first, needs
+  the referenced block to remain live until the borrowing call enters.
+  The row of `ignore` has no content read, while a refused offer executes
+  at the final join. Ordinary reference parameters carry `dereferenceable`,
+  whose
+  [LLVM contract](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  applies at callee entry. The checker now retains released and borrowed
+  places on each call, and `IrBuilder::overlaps` separates overlapping
+  release/borrow pairs in both orders before argument formation; Paged uses
+  this same boundary. The lowering tests cover cell growth, forwarding
+  wrappers and by-value consumption. Native execution with granted and
+  refused offers and reference attributes with facts on and off remain
+  unverified for the combined Paged and relocating-owner cases. Qualify
+  those paths against sequential output while retaining the source
+  permission verdicts and ordinary reference attributes; inspect
+  `box_keeping_reference_parameters` and its emitter consumer when checking
+  the reference attributes.
+  Reopen at the next parallel-lowering correctness qualification.
+
+- **Measure heap counting under an allocation-heavy program.** The cost of
+  counting each allocation (memory statistics) was measured only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation of emitted
+  storage, and stayed inside the twins' 3 to 7% spread, leaving the 1%
+  criterion unresolved. A Lua
+  engine running scripts allocates through the emitted heap on every call
+  (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
+  script). Measure the counted against the uncounted build on such a
+  workload, interleaved with twins on the i9-14900K; reopen when firn's
+  script path is next measured or when a program reports the counting.
+
+- **Paged indexed accumulators remain deferred (Q2).** Paged storage, page
+  references and run references are defined, but PAR-2's indexed-accumulator
+  roots remain Array and Slots. Paged element, page and
+  run maps retain their independent-map and certified-element families.
+  Change: extend the indexed cell rule and private-copy lowering to Paged
+  after [PR #263 (built-in paged storage)](https://github.com/mbbill/Whitefoot/pull/263)
+  lands on main;
+  validate cross-page cell updates, unchanged length and private-copy
+  recombination against sequential execution in CI.
+
+- **Qualify the indexed mark and record-field extension.** The authorized
+  family-kind and cell-projection interface now has an implementation and
+  maintained fixtures, but the owner prohibited execution in this worktree.
+  [The implementation record](../research/investigations/indexed-reductions/DESIGN.md#interface-boundary-constant-marks-and-record-fields)
+  identifies the tests and remaining evidence. Reopen in the integrating CI
+  run: establish ordinary source acceptance, intended permission denials,
+  generated IR validity, dense masks and field slabs, nested/zero-budget
+  execution, and allocation failure cleanup before the downstream recount.
+  No performance or recovered-site-count claim follows from source inspection.
 
 ## Platforms and host interfaces
 
@@ -2498,6 +2834,31 @@ rarely insert at the same place.
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
 
+- **Verify memory readings with observed driver participation.** The context
+  program checks completed allocations and exact balance after joining at
+  requested driver counts one and four; it cannot identify which counters
+  contributed. Existing context cases expose no driver participation report,
+  and a host without a usable native ring runs one driver. Add a forwarding
+  native allocation observer when qualifying several-driver accounting; it
+  must show at least two allocation writers, without changing scheduling,
+  and cover a read spanning transfer and release as well as joined balance.
+
+- **Migrate retained allocation experiments before rerunning them.** The
+  memory-statistics emitter now calls wf__heap_take and the size-aware
+  wf__heap_give. Container-representation Makefiles and the families ABI
+  adapters still intercept malloc/free, and their cost harnesses retain
+  one-argument release functions; the compute radix phase observer and
+  buffer-initialization runner also recognize the former symbols. These
+  scripts can miss observations or fail when used with this compiler.
+  Update symbol selection and the WF release ABI together, retain the C
+  controls' intended comparison, and demonstrate wrong release sizes are
+  detected before collecting fresh measurements. Deferred because these
+  experiments are outside the correctness gate and no run is requested;
+  reopen before their next use, not by interpreting old measurements as
+  results of the counted runtime.
+
+- **Route Paged's page and directory allocations through wf__heap_take/wf__heap_give when Paged lands; validate matching allocation and release sizes.**
+
 ## Modules and libraries
 
 - **Whole-map iteration.** Shared maps provide selections, counting and swaps,
@@ -2676,6 +3037,12 @@ rarely insert at the same place.
   the tag to the variant count and order fields to pack, a layout decision
   for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
   the wasm interpreter's `Op` stride. Reopen with that layout decision.
+  The handler word adds 8 bytes to every dispatched cell (Halo's `Cell`
+  becomes 20 bytes), and Halo's `fib` ran 1.5% slower with it, outside
+  both spreads ([match-dispatch](../research/investigations/match-dispatch/DESIGN.md#outcome-of-the-handler-word-on-the-natural-form));
+  the wider stride is the unverified suspect. Packing the tag, or a
+  handler word narrower than an address (an offset from the dispatch
+  family's first handler), would test it with the same Halo comparison.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
@@ -2733,7 +3100,34 @@ rarely insert at the same place.
   Reopen when the wasm interpreter's profile shows register pressure the
   convention cannot hold, or when a target without `preserve_none` matters.
 
+- **Handler words are disabled for fragment builds.** Whole-program emission
+  computes one layout plan for every selected dispatch family and applies it
+  to constructors throughout the composition. A separately emitted or cached
+  fragment cannot yet consume that shared plan or bind a constructor to a
+  hidden arm symbol in another fragment, so `--fragments` deliberately keeps
+  ordinary enum layouts and tag-indexed tables. Implement the composition-wide
+  plan as fragment lowering input and cache identity, and give arm definitions
+  and references hidden cross-fragment linkage. Validate constructors and
+  dispatchers in different modules with both fragment granularities, a warm
+  cache, a changed family set, four-aligned enums and whole-value replacement;
+  require identical results and layout to whole-program emission. Reopen when
+  fragment dispatch performance is needed; the uncertainty is dependency and
+  cache invalidation coverage, not language acceptance.
+
 ## Code structure
+
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
@@ -2749,11 +3143,11 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` and
-  `compiler/src/semantic/tests/entailment.rs` each exceed the 4,000-line
-  threshold. The state module combines the fact state, ledger, dense closure
-  and a large inline test module. The flow itself is divided into its
-  sub-contexts and component modules (`design/compiler/engine-components.md`).
+  `compiler/src/semantic/entailment/state.rs`, including its inline tests,
+  and `compiler/src/semantic/tests/entailment.rs` both exceed 4,000 lines.
+  Slot layouts, dormant components, implicit structure and join construction
+  share the first module. The flow itself is divided into its sub-contexts
+  and component modules (`design/compiler/engine-components.md`).
   `state.rs` can move its test module to its own file and its dense-closure
   algorithms apart from the fact state and ledger types; the tests can group
   by the flow component they exercise. Validate that each move changes no
@@ -2779,7 +3173,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
+  `compiler/src/backend/completion/bridge.c` exceeds 4,000 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3550,6 +3944,20 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The grow initialization oracle recognizes a runtime offset without proving
+  it is past the retained prefix.** In
+  `compiler/src/backend/tests/cost_shape.rs`, `fresh_allocation_for_fill`
+  accepts a `wf__heap_retake` root when any derived `getelementptr` index is
+  an SSA value; an unrelated offset that is zero or inside the old filled
+  prefix also meets that structural condition. This limitation is inherited
+  from the realloc oracle: its positive result alone does not establish the
+  no-refill claim. Keep that requested root handling during counted-retake
+  integration; follow up by tracing the offset to the preserved length or
+  requiring an independent retained-prefix observation. Validate with a
+  negative control whose runtime offset falls inside the prefix, alongside
+  the existing appended-tail and repeated-fill cases. Reopen before using
+  this oracle as evidence for a changed grow-fill lowering.
+
 - **`make -C compiler format` depends on the host's stable rustfmt.**
   `compiler/rust-toolchain.toml` pins only the `stable` channel, and
   rustfmt 1.10.0 (2026-09-28, on the 14900K host) reformats five files that
@@ -3740,18 +4148,23 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
-- **The paired comparison compiles both arms' runtime with the candidate's
-  flags.** `tests/performance/Makefile` includes the candidate's
-  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
-  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
-  list. A change to how the driver compiles the runtime, as
-  `-falign-functions=64` in the code-placement change, reaches both arms and
-  the comparison cannot see it, and a runtime unit added or removed would
-  fail the baseline's build. The change: include each arm's own
-  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
-  driver does; validate that a flag change in the candidate's `runtime.mk`
-  then differs between the arms' native objects. Reopen at the next change to
-  the runtime's compile flags or unit list.
+- **`compute-regression` on AMD hosts reacts to where the launch places
+  data.** A change that only created one idle thread before the entry made
+  stencil 9 to 30 percent slower at width 1 on Zen 3 and Zen 4 hosted
+  runners and not at all on Zen 5 or Intel
+  ([stop-signals record](../research/investigations/stop-signals/README.md#startup-cost-on-amd-hosts)).
+  The placement control shifts code by 96 bytes and leaves data, stacks and
+  heap mappings where they were, so a change that reorders startup mappings
+  can fail the instrument without changing generated code, and a real
+  regression can hide behind the same variance. A data-placement control
+  (for example a padded first mapping, or a fixed-size allocation before the
+  entry) would show whether a host is placement-sensitive before a verdict.
+  Uncertainty: the cache structure involved is not identified; hosted VMs
+  expose no counters. Validate by rerunning the stop-signals probe with the
+  control on Zen 3 hosts and checking the control flags the receiver-first
+  layout. Reopen when another startup or allocator change trips stencil on
+  AMD hosts only.
+
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers
@@ -4095,18 +4508,17 @@ condition under which it is taken up.
   shared statement on each command, which would serialize every connection.
   Reopen when firn is monitored through `INFO`, or with the next work on
   firn's statistics.
-- **A signal stops firn without writing its pending append-only bytes.**
-  firn handles no signal, and the standard library's `std::process`
-  delivers none, so SIGTERM or SIGINT ends it at once, losing the changes its
-  writer (`write_log` in `apps/firn/persistence/persistence.wf`) has not yet
-  appended, up to one 10-millisecond cycle, and the bytes not yet synced,
-  where Redis on SIGTERM appends and syncs its file before it exits, as its
-  `SHUTDOWN` command does, which firn lacks. Seen on 2026-10-03: a `SET` sent
-  a few milliseconds before a SIGTERM was absent after the replay. A signal
-  delivered to a context could set the keyspace's `stopping`, which makes the
-  writer append, sync and close, as it does once the client limit is
-  reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
-  that stops it with SIGTERM.
+- **firn must connect stop requests to its append-only writer.** The
+  standard library now exposes `std::process::stop_listen` and `stop_next`
+  [PRE-2], but `apps/firn/server/server.wf` still does not open a listener.
+  Its host default therefore still ends it on SIGTERM or SIGINT, losing
+  changes its writer has not appended or synced. The 2026-10-03 witness was
+  a `SET` acknowledged a few milliseconds before SIGTERM and absent after
+  replay. Connect a waiting stop context to the keyspace's `stopping` state,
+  join its writer's append, sync and close, and close the listener before
+  returning. Validate a stop after acknowledged writes and replay every one
+  after restart. Reopen with firn's next orderly-stop change; the host
+  capability is implemented here, its application integration is not.
 - **firn writes decimals and reads `CONFIG SET`'s integers in repeated
   code.** `text_reserve` and `text_number` in `apps/firn/commands/info.wf`
   copy `log_reserve` and `log_number` in `apps/firn/store/store.wf`, the one

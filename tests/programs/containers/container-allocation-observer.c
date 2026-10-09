@@ -76,13 +76,14 @@ void *wf_observe_allocate(uint64_t bytes) {
     return pointer;
 }
 
-void wf_observe_release(void *pointer) {
+void wf_observe_release(void *pointer, uint64_t bytes) {
     if (pointer == NULL) return;
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
         Allocation *allocation = &allocations[index];
         if (allocation->pointer != pointer) continue;
         require(!allocation->released, "allocation released twice");
+        require(allocation->bytes == bytes, "release size differs from allocation request");
         allocation->released = true;
         ++release_count;
         memset(pointer, 0xa5,
@@ -91,6 +92,35 @@ void wf_observe_release(void *pointer) {
         return;
     }
     require(false, "release did not return an allocated address");
+}
+
+// `grow` [OP-10] reallocates its block: the observer books that as a fresh
+// allocation that takes over the old block's bytes, plus the release of the
+// old one, so a growth is one request and one release exactly as the former
+// allocate, copy and free were. The old block stays quarantined, never handed
+// back to the host allocator until the end, because a real realloc could
+// return the address of an earlier released entry and make the ledger's
+// pointer identity ambiguous.
+void *wf_observe_reallocate(void *pointer, uint64_t old_bytes, uint64_t bytes) {
+    if (pointer == NULL) return wf_observe_allocate(bytes);
+    void *moved = wf_observe_allocate(bytes);
+    lock_ledger();
+    for (size_t index = 0; index < allocation_count; ++index) {
+        Allocation *allocation = &allocations[index];
+        if (allocation->pointer != pointer) continue;
+        require(!allocation->released, "allocation released twice");
+        require(allocation->bytes == old_bytes, "retake size differs from allocation request");
+        uint64_t kept = allocation->bytes < bytes ? allocation->bytes : bytes;
+        memcpy(moved, pointer, (size_t)kept);
+        allocation->released = true;
+        ++release_count;
+        memset(pointer, 0xa5,
+               allocation->bytes == 0 ? 1 : (size_t)allocation->bytes);
+        unlock_ledger();
+        return moved;
+    }
+    require(false, "release did not return an allocated address");
+    return NULL;
 }
 
 enum { OBSERVER_WORKERS = 4, REQUESTS_PER_WORKER = 8 };
@@ -114,7 +144,7 @@ static void exercise_worker(void *argument) {
     wait_for_workers(&filled);
     size_t other = (worker + 1) % OBSERVER_WORKERS;
     for (size_t index = 0; index < REQUESTS_PER_WORKER; ++index)
-        wf_observe_release(cross_release[other][index]);
+        wf_observe_release(cross_release[other][index], index * 8);
     atomic_fetch_add_explicit(&finished, 1, memory_order_acq_rel);
 }
 
@@ -133,11 +163,14 @@ int main(int argc, char **argv) {
         exercise_concurrent_observation();
     } else if (argc == 2 && strcmp(argv[1], "double-release") == 0) {
         void *pointer = wf_observe_allocate(8);
-        wf_observe_release(pointer);
-        wf_observe_release(pointer);
+        wf_observe_release(pointer, 8);
+        wf_observe_release(pointer, 8);
     } else if (argc == 2 && strcmp(argv[1], "foreign-release") == 0) {
         unsigned char *pointer = wf_observe_allocate(8);
-        wf_observe_release(pointer + 1);
+        wf_observe_release(pointer + 1, 8);
+    } else if (argc == 2 && strcmp(argv[1], "wrong-size") == 0) {
+        void *pointer = wf_observe_allocate(8);
+        wf_observe_release(pointer, 7);
     } else if (argc == 2 && strcmp(argv[1], "missing-release") == 0) {
         (void)wf_observe_allocate(8);
     } else {

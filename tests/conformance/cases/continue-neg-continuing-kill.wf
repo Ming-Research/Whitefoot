@@ -6,5 +6,4 @@ fn probe() -> result: unit pure {
     set value = 18446744073709551615_u64;
     continue;
   }
-  return unit;
 }

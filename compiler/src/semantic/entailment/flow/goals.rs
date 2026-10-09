@@ -587,7 +587,9 @@ impl Input<'_, '_> {
             // range names, and `&[T]` is a reference kind and not a type, so
             // that run's checked image is its element type, exactly as a
             // `&[T]` parameter's is.
-            GoalProjection::Range(_) => element_type(input, self.context.elements),
+            GoalProjection::Range(_) | GoalProjection::Page(_) => {
+                element_type(input, self.context.elements)
+            }
             // [MSR-1] the same element selection a written subscript makes;
             // the offset is what the reader substitutes, not the type.
             GoalProjection::FormalSubscript { .. } => element_type(input, self.context.elements),
@@ -1683,6 +1685,9 @@ pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection
             field: *field,
         }),
         PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
+        // A page, like a range, retains its formation identity: its length
+        // is captured then, even if another formation selects the same page.
+        PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
         // [REF-4] a range step's endpoint captures identify the formation
         // whose immutable affine image gives the anonymous range its length.
         // Canonicalizing those captures by endpoint spelling would merge two
@@ -1872,6 +1877,7 @@ pub(super) fn substituted_steps(
                 field: *field,
             },
             Step::Index(declaration) => PlaceStep::Index(offset(declaration)),
+            Step::Page(declaration) => PlaceStep::Page(offset(declaration)),
             Step::Range { start, end } => PlaceStep::Range(CapturedRange {
                 start: offset(start),
                 end: offset(end),
@@ -1919,8 +1925,10 @@ pub(super) fn checked_integer_constant(expression: &CheckedExpression) -> Option
     }
 }
 
-/// A let-origin expansion is valid only while the bound value has no `set`
-/// target on the path to its use. The target's projection does not narrow
+/// A let-origin expansion is valid only while the binding holds its
+/// initializer [ENT-3]; this handles the `set` of the binding itself, and
+/// writes through a reference or a callee end it at their kill events. The
+/// target's projection does not narrow
 /// this invalidation: changing one field or element invalidates the aggregate
 /// value identity even when a separately established length fact survives.
 pub(super) fn invalidate_goal_origin_for_set(state: &mut FactState, target: &CheckedSetTarget) {

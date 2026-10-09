@@ -202,6 +202,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let pointer = self.next_temporary()?;
         let count = self.next_temporary()?;
+        if matches!(parameter.ty(), IrType::Run { .. }) {
+            let lo = self.next_temporary()?;
+            writeln!(self.output, "  %{pointer} = extractvalue {ty} {operand}, 0\n  %{lo} = extractvalue {ty} {operand}, 1\n  %{count} = extractvalue {ty} {operand}, 2").map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("ptr %{pointer}, i64 %{lo}, i64 %{count}"));
+        }
         writeln!(
             self.output,
             "  %{pointer} = extractvalue {ty} {operand}, 0\n  %{count} = extractvalue {ty} {operand}, 1"

@@ -215,7 +215,7 @@ impl<'program> Walker<'program> {
                 self.binding_types.insert(parameter.binding, ty);
             }
             let value = match parameter.mode {
-                CheckedMode::Range => {
+                CheckedMode::Range | CheckedMode::Run => {
                     let location = Location::root(Origin::Parameter(parameter.binding));
                     match state.container(&mut self.world, location, 1) {
                         Some(container) => {
@@ -1576,7 +1576,11 @@ impl<'program> Walker<'program> {
             if let Some(copy) = self.world.container(target, original.arity) {
                 let (version, generation) = state.snapshot_container(&mut self.world, container);
                 state.versions.insert(copy, version);
-                for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
+                for measure in [
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Pages,
+                ] {
                     let old = self.world.measure(container, generation, measure);
                     let new = self.world.measure(copy, 0, measure);
                     state.conds.push(literal(new, Relation::Equal, old));
@@ -1907,22 +1911,59 @@ impl<'program> Walker<'program> {
             }
             CheckedExpression::BorrowAddressed { root, .. } => {
                 if let PlaceRoot::Binding(binding) = root.root
+                    && root.path.is_empty()
                     && matches!(
                         state.values.get(&binding),
                         Some(Value::Int(_) | Value::Bool(_))
                     )
                 {
-                    let ty = self.binding_types.get(&binding).copied();
+                    let ty = match root.ty {
+                        CheckedType::Integer(integer) => Some(integer),
+                        _ => None,
+                    };
                     state.expose(&mut self.world, binding, ty);
                 }
                 Value::Ref(self.view_of(state, root.root, &root.path))
             }
             CheckedExpression::BorrowSegment { root, segment, .. } => {
-                let CheckedSegmentSelect::One(index) = segment else {
+                let target = match root {
+                    crate::semantic::CheckedSegmentSource::Storage(root) => {
+                        self.path_target(state, root.root, &root.path)
+                    }
+                    crate::semantic::CheckedSegmentSource::Element(place) => {
+                        match self.range_element(state, place) {
+                            Some((container, indices, projection)) => Target::Element {
+                                container,
+                                indices,
+                                projection,
+                            },
+                            None => Target::Unknown,
+                        }
+                    }
+                };
+                let (CheckedSegmentSelect::One(index) | CheckedSegmentSelect::Page(index)) =
+                    segment
+                else {
                     return Value::Ref(View::Unknown);
                 };
                 let row = self.int(state, &index.offset);
-                match self.path_target(state, root.root, &root.path) {
+                let page = matches!(segment, CheckedSegmentSelect::Page(_));
+                let length = self.target_measure(
+                    state,
+                    &target,
+                    root.ty(),
+                    if page {
+                        CheckedMeasure::Pages
+                    } else {
+                        CheckedMeasure::Length
+                    },
+                );
+                self.ordinary_bound(state, &index.obligation, &row, length);
+                if page {
+                    // The page offset is not a logical element offset [MSR-1].
+                    return Value::Ref(View::Unknown);
+                }
+                match target {
                     Target::Location(location) => {
                         let location = state.resolve(&location);
                         match state.container(&mut self.world, location, 2) {

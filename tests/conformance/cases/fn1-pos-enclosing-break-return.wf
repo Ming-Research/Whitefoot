@@ -1,0 +1,8 @@
+fn main() -> status: std::process::ExitStatus pure {
+  loop @outer {
+    loop @inner {
+      break @outer;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

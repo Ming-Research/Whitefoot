@@ -257,7 +257,6 @@ fn search_plain(input: &[u8], offsets: &[u64], total: u64, mode: u64) -> result:
       }
     }
   }
-  return total;
 }
 
 fn search_trace(input: &[u8], offsets: &[u64], total: u64, mode: u64, trace: &[SearchTrace]) -> result: u64 reads(input), reads(offsets), writes(trace) contract {
@@ -307,7 +306,6 @@ fn search_trace(input: &[u8], offsets: &[u64], total: u64, mode: u64, trace: &[S
       }
     }
   }
-  return total;
 }
 
 fn main() -> status: ExitStatus pure {

@@ -1,0 +1,497 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias MemoryMeter = std::process::MemoryMeter;
+
+enum Callee {
+  Lua(proto: u32);
+  Native(id: u32);
+}
+
+struct Payload {
+  callee: Callee;
+  upvals: Box<Slots<u32>>;
+}
+
+struct Cell {
+  live: Bool;
+  payload: Payload;
+}
+
+struct Heap {
+  closures: Box<Slots<Cell>>;
+}
+
+struct Vm {
+  heap: Heap;
+}
+
+struct Calls {
+  count: u64;
+}
+
+enum OwnedBuffer {
+  Empty();
+  Present(buffer: Box<Slots<u32>>);
+}
+
+struct EnumCell {
+  selected: OwnedBuffer;
+  optional: Option<Box<Slots<u32>>>;
+  tag: u64;
+}
+
+struct Holder<T> {
+  item: T;
+  tag: u64;
+}
+
+struct FilledCell {
+  items: Box<Slots<Payload>>;
+  tag: u64;
+}
+
+interface Host<E> {
+  fn call(env: &E) -> result: unit writes(env);
+}
+
+fn count_call(env: &Calls) -> result: unit writes(env) {
+  doc "Records that the concrete interface binding was called.";
+  set env^.count = env^.count +sat 1_u64;
+  return unit;
+}
+
+binding Counter : Host<Calls> {
+  call = count_call;
+}
+
+fn make_payload(capacity: u64) -> result: Payload pure {
+  doc "Owns either a zero-capacity cell or a sixteen-element reserve.";
+  let buffer = box_slots_new::<u32>(capacity: capacity);
+  let selected = Callee::Lua(proto: 7_u32);
+  return Payload(callee: selected, upvals: move buffer);
+}
+
+fn make_cell(capacity: u64) -> result: Cell pure {
+  doc "Wraps the owned payload in another struct.";
+  let contents = make_payload(capacity: capacity);
+  let active = True();
+  return Cell(live: active, payload: move contents);
+}
+
+fn replace_reference(vm: &Vm, capacity: u64, mode: u64) -> result: Bool writes(vm) {
+  doc "Replaces a Box, a payload struct or a whole element through a reference.";
+  if vm^.heap.closures.inner.len == 0_u64 {
+    return False();
+  }
+  if mode == 4_u64 {
+    let buffer = box_slots_new::<u32>(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64].payload.upvals = move buffer;
+  } else if mode == 5_u64 {
+    let contents = make_payload(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64].payload = move contents;
+  } else {
+    let replacement = make_cell(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64] = move replacement;
+  }
+  return True();
+}
+
+fn replace_generic<interface Host<E>>(vm: &Vm, env: &E, capacity: u64, mode: u64) -> result: Bool writes(vm), writes(env) {
+  doc "Runs the reported reference path inside a concretely instantiated interface-generic body.";
+  if vm^.heap.closures.inner.len == 0_u64 {
+    return False();
+  }
+  if mode == 7_u64 {
+    let buffer = box_slots_new::<u32>(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64].payload.upvals = move buffer;
+  } else if mode == 8_u64 {
+    let contents = make_payload(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64].payload = move contents;
+  } else {
+    let replacement = make_cell(capacity: capacity);
+    set vm^.heap.closures.inner[0_u64] = move replacement;
+  }
+  Host::call(env: env);
+  return True();
+}
+
+fn direct_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks the retained heap after every direct element assignment.";
+  let slots = box_slots_new::<Cell>(capacity: 1_u64);
+  let initial = make_cell(capacity: capacity);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 1_u64 {
+      let buffer = box_slots_new::<u32>(capacity: capacity);
+      set slots.inner[0_u64].payload.upvals = move buffer;
+    } else if mode == 2_u64 {
+      let contents = make_payload(capacity: capacity);
+      set slots.inner[0_u64].payload = move contents;
+    } else {
+      let replacement = make_cell(capacity: capacity);
+      set slots.inner[0_u64] = move replacement;
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner[0_u64].payload.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn indirect_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks both reference bodies and their final owners using the same allocation baseline.";
+  let slots = box_slots_new::<Cell>(capacity: 1_u64);
+  let initial = make_cell(capacity: capacity);
+  place_back(window: &slots.inner, value: move initial);
+  let storage = Heap(closures: move slots);
+  let machine = Vm(heap: move storage);
+  let environment = Calls(count: 0_u64);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    let replaced = False();
+    if mode <= 6_u64 {
+      set replaced = replace_reference(vm: &machine, capacity: capacity, mode: mode);
+    } else {
+      set replaced = replace_generic::<Counter>(vm: &machine, env: &environment, capacity: capacity, mode: mode);
+    }
+    let failed = bnot(replaced);
+    if failed {
+      return False();
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if machine.heap.closures.inner.len != 1_u64 {
+      return False();
+    }
+    if machine.heap.closures.inner[0_u64].payload.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  if mode > 6_u64 {
+    return environment.count == 4_u64;
+  }
+  return environment.count == 0_u64;
+}
+
+fn replace_range(values: &[Cell], capacity: u64) -> result: Bool writes(values) {
+  doc "Exercises both whole-element and projected range-reference targets.";
+  if values^.len == 0_u64 {
+    return False();
+  }
+  let replacement = make_cell(capacity: capacity);
+  set values^[0_u64] = move replacement;
+  let contents = make_payload(capacity: capacity);
+  set values^[0_u64].payload = move contents;
+  return values^[0_u64].payload.upvals.inner.cap == capacity;
+}
+
+fn other_windows(capacity: u64) -> result: Bool pure {
+  doc "Replaces structs in inline Slots, Array and wrapped Ring storage and through a range.";
+  let slots = slots_new::<Cell, 1>();
+  let initial = make_cell(capacity: capacity);
+  place_back(window: &slots, value: move initial);
+  let replacement = make_cell(capacity: capacity);
+  set slots[0_u64] = move replacement;
+  let array = slots_into_array::<Cell, 1>(values: move slots);
+  let next = make_cell(capacity: capacity);
+  set array[0_u64] = move next;
+  let ranged = replace_range(values: &array[0_u64..1_u64], capacity: capacity);
+  let range_failed = bnot(ranged);
+  if range_failed {
+    return False();
+  }
+  let ring = ring_new::<Cell, 2>();
+  let front = make_cell(capacity: capacity);
+  place_front(window: &ring, value: move front);
+  let updated = make_cell(capacity: capacity);
+  set ring[0_u64] = move updated;
+  let boxed = box_ring_new::<Cell>(capacity: 2_u64);
+  let first = make_cell(capacity: capacity);
+  place_front(window: &boxed.inner, value: move first);
+  let last = make_cell(capacity: capacity);
+  set boxed.inner[0_u64] = move last;
+  return boxed.inner[0_u64].payload.upvals.inner.cap == capacity;
+}
+
+fn other_places(capacity: u64) -> result: Bool pure {
+  doc "Exercises the same struct release at a binding, a field and Box content, plus a direct Box control.";
+  let local = make_cell(capacity: capacity);
+  set local = make_cell(capacity: capacity);
+  set local.payload = make_payload(capacity: capacity);
+  let boxed = box_new::<Cell>(value: move local);
+  set boxed.inner = make_cell(capacity: capacity);
+  let buffer = box_slots_new::<u32>(capacity: capacity);
+  set buffer = box_slots_new::<u32>(capacity: capacity);
+  return buffer.inner.cap == capacity;
+}
+
+fn make_enum_cell(capacity: u64, tag: u64) -> result: EnumCell pure {
+  doc "Owns two buffers through an active source enum payload and Option.Some.";
+  let buffer = box_slots_new::<u32>(capacity: capacity);
+  let selected = OwnedBuffer::Present(buffer: move buffer);
+  let other = box_slots_new::<u32>(capacity: capacity);
+  let optional = Some<Box<Slots<u32>>>(value: move other);
+  return EnumCell(selected: move selected, optional: move optional, tag: tag);
+}
+
+fn replace_enum_reference(values: &Box<Slots<EnumCell>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a struct with releasing enum fields through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_enum_cell(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn enum_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement releases both active enum payloads.";
+  let slots = box_slots_new::<EnumCell>(capacity: 1_u64);
+  let initial = make_enum_cell(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 12_u64 {
+      let replacement = make_enum_cell(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_enum_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn make_holder(capacity: u64, tag: u64) -> result: Holder<Payload> pure {
+  doc "Instantiates a generic field with a struct that owns a Box.";
+  let contents = make_payload(capacity: capacity);
+  return Holder<Payload>(item: move contents, tag: tag);
+}
+
+fn replace_holder_reference(values: &Box<Slots<Holder<Payload>>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a concrete generic struct element through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_holder(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn holder_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement expands a concrete generic struct's fields.";
+  let slots = box_slots_new::<Holder<Payload>>(capacity: 1_u64);
+  let initial = make_holder(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 14_u64 {
+      let replacement = make_holder(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_holder_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+    if slots.inner[0_u64].item.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn make_filled_cell(capacity: u64, tag: u64) -> result: FilledCell pure {
+  doc "Keeps three releasing payloads in a sixteen-slot backing, with payload reserves zero or sixteen.";
+  let items = box_slots_new::<Payload>(capacity: 16_u64);
+  let first = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move first);
+  let second = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move second);
+  let third = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move third);
+  return FilledCell(items: move items, tag: tag);
+}
+
+fn replace_filled_reference(values: &Box<Slots<FilledCell>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a struct owning a nonempty releasing container through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_filled_cell(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn filled_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement releases the container's elements and backing.";
+  let slots = box_slots_new::<FilledCell>(capacity: 1_u64);
+  let initial = make_filled_cell(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner.len != 3_u64 {
+      return False();
+    }
+    if mode == 16_u64 {
+      let replacement = make_filled_cell(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_filled_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner.len != 3_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner[0_u64].upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn replace_paged_reference(values: &Box<Paged<Cell>>, capacity: u64) -> result: Bool writes(values) {
+  doc "Replaces the payload struct of a Paged element through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let contents = make_payload(capacity: capacity);
+  set values^.inner[0_u64].payload = move contents;
+  return True();
+}
+
+fn paged_cells(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks a whole Paged element replacement and a payload replacement through a reference release the displaced Box.";
+  let pages = box_paged_new::<Cell>(capacity: 1_u64);
+  let initial = make_cell(capacity: capacity);
+  place_back(window: &pages.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if pages.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 18_u64 {
+      let replacement = make_cell(capacity: capacity);
+      set pages.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_paged_reference(values: &pages, capacity: capacity);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if pages.inner.len != 1_u64 {
+      return False();
+    }
+    if pages.inner[0_u64].payload.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Selects one regression per process and checks both commit balance and complete scope release at capacities zero and sixteen.";
+  let Inputs(args: arguments, cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let mode = std::text::args_count(args: &arguments);
+  if mode > 19_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let baseline = std::process::heap_in_use(meter: &meter);
+  for (size in 0_u64..2_u64) {
+    let capacity = 0_u64;
+    if size == 1_u64 {
+      set capacity = 16_u64;
+    }
+    let balanced = False();
+    if mode <= 3_u64 {
+      set balanced = direct_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else if mode <= 9_u64 {
+      set balanced = indirect_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else if mode == 10_u64 {
+      set balanced = other_windows(capacity: capacity);
+    } else if mode == 11_u64 {
+      set balanced = other_places(capacity: capacity);
+    } else if mode <= 13_u64 {
+      set balanced = enum_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else if mode <= 15_u64 {
+      set balanced = holder_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else if mode <= 17_u64 {
+      set balanced = filled_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else {
+      set balanced = paged_cells(meter: &meter, capacity: capacity, mode: mode);
+    }
+    let failed = bnot(balanced);
+    if failed {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let after = std::process::heap_in_use(meter: &meter);
+    if after != baseline {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

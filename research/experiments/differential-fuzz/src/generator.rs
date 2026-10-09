@@ -246,7 +246,7 @@ impl Gen {
 
     fn program(mut self) -> Program {
         self.body.line("doc \"A generated differential-fuzz program: real I/O, real control flow, one published digest.\";");
-        self.body.line("let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: input) = move inputs;");
+        self.body.line("let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: input, ..) = move inputs;");
         self.body.line("let total = 0_u64;");
         self.scalars.push("total".to_owned());
 

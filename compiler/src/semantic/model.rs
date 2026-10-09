@@ -28,12 +28,18 @@ pub(crate) enum CheckedMode {
     /// [REF-4]. It is a reference kind and not a type [TYPE-8], so it is
     /// never a stored value, never a result, and never a generic argument.
     Range,
+    /// `&Run<T>`: a range in paged storage, distinct from a contiguous range.
+    Run,
 }
 
 impl CheckedMode {
+    pub(crate) const fn is_range(self) -> bool {
+        matches!(self, Self::Range | Self::Run)
+    }
+
     /// Whether this kind names a path rather than owning storage [REF-1].
     pub(crate) const fn is_reference(self) -> bool {
-        matches!(self, Self::Reference | Self::Range)
+        matches!(self, Self::Reference | Self::Range | Self::Run)
     }
 }
 
@@ -617,6 +623,8 @@ pub(crate) enum CheckedType {
 pub(crate) enum WindowShape {
     /// `Slots`: the window begins at slot zero and there is no `head`.
     Slots,
+    /// `Paged`: a prefix window whose elements reside in separate fixed-size pages.
+    Paged,
     /// `Ring`: the window begins at `head` and wraps modulo `cap`.
     Ring,
 }
@@ -626,6 +634,7 @@ impl WindowShape {
     pub(crate) const fn spelling(self) -> &'static str {
         match self {
             Self::Slots => "Slots",
+            Self::Paged => "Paged",
             Self::Ring => "Ring",
         }
     }
@@ -683,6 +692,10 @@ impl CheckedType {
                 ..
             } => Some(MeasuredKind::RuntimeSlots),
             Self::Window {
+                shape: WindowShape::Paged,
+                ..
+            } => Some(MeasuredKind::Paged),
+            Self::Window {
                 shape: WindowShape::Ring,
                 capacity: Some(_),
                 ..
@@ -706,6 +719,8 @@ pub(crate) enum CheckedMeasure {
     Length,
     Capacity,
     Head,
+    /// Initialized page count, supported by the same word as len.
+    Pages,
 }
 
 /// One cell of [MSR-1]'s measure table.
@@ -753,6 +768,14 @@ impl MeasureCell {
 }
 
 impl CheckedMeasure {
+    /// The descriptor word supporting this observation [MSR-2].
+    pub(crate) const fn support_word(self) -> Self {
+        match self {
+            Self::Pages => Self::Length,
+            _ => self,
+        }
+    }
+
     /// The [MSR-1] member spelling of this measure: a measure is read as a
     /// member of the measured place, `p.len`, and the v0.59 `len_of(p)`
     /// former is not a v0.60 spelling [OP-15, TYPE-10].
@@ -761,6 +784,7 @@ impl CheckedMeasure {
             Self::Length => "len",
             Self::Capacity => "cap",
             Self::Head => "head",
+            Self::Pages => "pages.len",
         }
     }
 
@@ -770,6 +794,8 @@ impl CheckedMeasure {
     /// a member's spelling alone cannot establish either.
     pub(crate) const fn cell(self, measured: MeasuredKind) -> MeasureCell {
         match (measured, self) {
+            (MeasuredKind::Paged, Self::Pages) => MeasureCell::ExactRuntime,
+            (_, Self::Pages) => MeasureCell::Absent,
             // `Array<T, N>`: `len` is the type constant and every slot always
             // holds a value [WIN-1]. x1 gives the two `Array` rows no `cap`
             // cell at all: an array is its own extent and states no second
@@ -786,12 +812,14 @@ impl CheckedMeasure {
                 MeasuredKind::ConstantSlots
                 | MeasuredKind::RuntimeSlots
                 | MeasuredKind::ConstantRing
-                | MeasuredKind::RuntimeRing,
+                | MeasuredKind::RuntimeRing
+                | MeasuredKind::Paged,
                 Self::Length,
             )
-            | (MeasuredKind::RuntimeSlots | MeasuredKind::RuntimeRing, Self::Capacity) => {
-                MeasureCell::ExactRuntime
-            }
+            | (
+                MeasuredKind::RuntimeSlots | MeasuredKind::RuntimeRing | MeasuredKind::Paged,
+                Self::Capacity,
+            ) => MeasureCell::ExactRuntime,
             (MeasuredKind::ConstantSlots | MeasuredKind::ConstantRing, Self::Capacity) => {
                 MeasureCell::ExactTypeConstant
             }
@@ -816,7 +844,8 @@ impl CheckedMeasure {
                 MeasuredKind::ConstantArray
                 | MeasuredKind::RuntimeArray
                 | MeasuredKind::ConstantSlots
-                | MeasuredKind::RuntimeSlots,
+                | MeasuredKind::RuntimeSlots
+                | MeasuredKind::Paged,
                 Self::Head,
             )
             | (
@@ -854,6 +883,8 @@ pub(crate) enum MeasuredKind {
     ConstantSlots,
     /// `Slots<T>`
     RuntimeSlots,
+    /// `Paged<T>`: exact runtime length and capacity.
+    Paged,
     /// `Ring<T, N>`
     ConstantRing,
     /// `Ring<T>`
@@ -1715,10 +1746,67 @@ impl CheckedRangeSource {
     }
 }
 
+/// Storage whose segments or pages form contiguous range references. A range
+/// element carries its outer [OP-4] obligation and every projection below it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSegmentSource {
+    Storage(CheckedContainerRoot),
+    Element(Box<CheckedRangeElementPlace>),
+}
+
+impl CheckedSegmentSource {
+    pub(crate) fn place(&self) -> (super::places::PlaceRoot, Vec<super::places::PlaceStep>) {
+        match self {
+            Self::Storage(root) => (root.root, root.place_path()),
+            Self::Element(place) => (
+                super::places::PlaceRoot::Binding(place.root.binding),
+                place.place_path(),
+            ),
+        }
+    }
+
+    pub(crate) const fn binding(&self) -> Option<BindingId> {
+        match self {
+            Self::Storage(root) => root.binding(),
+            Self::Element(place) => Some(place.root.binding),
+        }
+    }
+
+    pub(crate) fn ty(&self) -> CheckedType {
+        match self {
+            Self::Storage(root) => root.ty,
+            Self::Element(place) => place.ty,
+        }
+    }
+
+    pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
+        let (storage, element) = match self {
+            Self::Storage(root) => (Some(root), None),
+            Self::Element(place) => (None, Some(place)),
+        };
+        storage
+            .into_iter()
+            .flat_map(CheckedContainerRoot::offsets)
+            .chain(element.into_iter().flat_map(|place| place.offsets()))
+    }
+
+    pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
+        let (storage, element) = match self {
+            Self::Storage(root) => (Some(root), None),
+            Self::Element(place) => (None, Some(place)),
+        };
+        storage
+            .into_iter()
+            .flat_map(CheckedContainerRoot::offsets_mut)
+            .chain(element.into_iter().flat_map(|place| place.offsets_mut()))
+    }
+}
+
 /// What one segment borrow selects: one segment, or every element [TYPE-9].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedSegmentSelect {
     One(Box<CheckedSegmentIndex>),
+    Page(Box<CheckedSegmentIndex>),
     /// `&s.all`: the run of every element, named as a range over the whole
     /// element run whose bounds no program states, so it overlaps every
     /// segment [OWN-7].
@@ -1729,14 +1817,14 @@ impl CheckedSegmentSelect {
     /// The offset this selection evaluates, if any.
     pub(crate) fn offset(&self) -> Option<&CheckedExpression> {
         match self {
-            Self::One(index) => Some(&index.offset),
+            Self::One(index) | Self::Page(index) => Some(&index.offset),
             Self::All(_) => None,
         }
     }
 
     pub(crate) fn offset_mut(&mut self) -> Option<&mut CheckedExpression> {
         match self {
-            Self::One(index) => Some(&mut index.offset),
+            Self::One(index) | Self::Page(index) => Some(&mut index.offset),
             Self::All(_) => None,
         }
     }
@@ -1745,6 +1833,7 @@ impl CheckedSegmentSelect {
     pub(crate) const fn place_step(&self) -> super::places::PlaceStep {
         match self {
             Self::One(index) => super::places::PlaceStep::Index(index.captured),
+            Self::Page(index) => super::places::PlaceStep::Page(index.captured),
             Self::All(range) => super::places::PlaceStep::Range(*range),
         }
     }
@@ -2384,8 +2473,8 @@ pub(crate) enum CheckedExpression {
     /// element in segment order.
     BorrowSegment {
         carrier: NodePath,
-        /// The `Segments<T>` place.
-        root: CheckedContainerRoot,
+        /// The `Segments<T>` or `Paged<T>` place.
+        root: CheckedSegmentSource,
         segment: CheckedSegmentSelect,
         element: CheckedElement,
         element_type: CheckedType,
@@ -2763,6 +2852,8 @@ pub(crate) enum CheckedStatement {
         invariants: Vec<CheckedLoopInvariant>,
         body: Vec<CheckedStatement>,
         backedge_drops: Vec<CheckedDrop>,
+        /// [FN-1] whether a break resolves to this loop's identity.
+        continues: bool,
     },
     CountedRange {
         id: CheckedLoopId,
@@ -2858,9 +2949,13 @@ pub(crate) enum CheckedEffectStep {
     /// `.inner`: `Box` content [TYPE-9].
     Deref,
     /// `.TYPEID.IDENT`: one enum payload step, by variant and field ordinal.
-    Payload { variant: u32, field: u32 },
+    Payload {
+        variant: u32,
+        field: u32,
+    },
     /// `[IDENT]`: one whole-index position naming a value parameter.
     Index(DeclarationId),
+    Page(DeclarationId),
     /// `[IDENT..IDENT]`: one range position [REF-4], both endpoints naming
     /// value parameters.
     Range {
@@ -2878,6 +2973,8 @@ pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
     pub(crate) formal_hypothesis: bool,
+    /// Element layout queried by paged_page_len, absent on other functions.
+    pub(crate) prelude_element: Option<CheckedElement>,
     pub(crate) id: FunctionId,
     pub(crate) declaration: DeclarationId,
     /// The module whose inventory declares it; the synthetic root module for
@@ -3282,6 +3379,7 @@ impl FunctionMentions {
     pub(crate) fn collect(function: &CheckedFunction) -> Self {
         let mut dependencies = Self::default();
         dependencies.types.push(function.result);
+        dependencies.elements.extend(function.prelude_element);
         dependencies
             .types
             .extend(function.parameters.iter().map(|parameter| parameter.ty));

@@ -39,6 +39,20 @@ fn main() -> status: std::process::ExitStatus pure {{
     .into_bytes()
 }
 
+/// The same scatter over run references into `Paged` storage [REF-4]: the
+/// elements of a run are integer storage terms exactly as a range's are
+/// [RANGE-1], so the certificate places its writes alike [PAR-2].
+fn run_scatter(header: &str) -> Vec<u8> {
+    String::from_utf8(scatter(header, ""))
+        .expect("scatter source is UTF-8")
+        .replacen(
+            "fn scatter(order: &[u64], pos: &[u64], out: &[u64])",
+            "fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>)",
+            1,
+        )
+        .into_bytes()
+}
+
 const PLAIN: &str = "k in 0_u64..count";
 
 const APART: &str = "\n    k in 0_u64..count,\n    apart(i, j) {\n    }\n  ";
@@ -224,6 +238,48 @@ fn main() -> status: std::process::ExitStatus pure {{
         };
         assert_eq!(fact, "zero");
         assert_eq!(*site, "a call");
+    });
+}
+
+#[test]
+fn a_callee_relation_over_an_entry_image_is_not_taken_as_a_range_fact() {
+    // `place_back`'s relation `window^.len == entry(window)^.len + 1` names
+    // an entry image, which no range term reads [RANGE-1]. Read as a range
+    // fact over the current length it is `len == len + 1`, a contradiction
+    // after which the caller proved every owed range fact, including this
+    // false one.
+    let source = b"fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
+  requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
+} {
+  return unit;
+}
+
+fn extend_by_five(xs: &Slots<u64, 8>) -> result: unit writes(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] < 100_u64;
+} {
+  if xs^.len < xs^.cap {
+    place_back(window: xs, value: 5_u64);
+    need_sevens(xs: xs);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "seven");
     });
 }
 
@@ -1693,4 +1749,366 @@ fn field_range_copy_join_keeps_nested_alias_overrides() {
     let source = String::from_utf8(field_range_copy_join_source("  let held = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set held.value = item;\n  }\n  set rows^[0_u64] = held.value;\n")).unwrap()
         .replace("fn need(", "struct Holder {\n  value: Entry;\n}\n\nfn need(");
     field_range_verdict(source.as_bytes(), Some(SemanticRule::Range3));
+}
+
+/// A callee owing `small` over its first `n` elements, and a caller with
+/// `parameters` and `body` that passes it a bound written through a
+/// reference.
+fn bound_through_reference(parameters: &str, effects: &str, body: &str) -> Vec<u8> {
+    format!(
+        "struct Holder {{
+  value: u64;
+}}
+
+fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {{
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn caller(xs: &Array<u64, 4>{parameters}) -> result: unit {effects} {{
+{body}  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+/// Asserts that `source` is refused because `small` is not proved.
+fn small_is_undischarged(source: &[u8]) {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "small");
+    });
+}
+
+#[test]
+fn a_bound_written_by_a_call_through_its_reference_is_forgotten() {
+    // The callee writes `n` through the reference argument; the walk
+    // cannot place that write in `n`, so it must forget `n` = 0, under
+    // which `small` would hold vacuously.
+    small_is_undischarged(
+        b"fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+} {
+  return unit;
+}
+
+fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 4_u64;
+  return unit;
+}
+
+fn caller(xs: &Array<u64, 4>) -> result: unit pure {
+  let n = 0_u64;
+  bump(x: &n);
+  need(xs: xs, n: n);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+",
+    );
+}
+
+#[test]
+fn a_bound_written_through_a_reference_the_loop_body_takes() {
+    // The first iteration sees `n` = 0, a later one what the previous one
+    // wrote through `w`.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    let w = &n;
+    set w^ = 4_u64;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_rebound_to_it_in_the_loop() {
+    // `w` reaches `n` only from the second iteration on.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  let other = 0_u64;
+  let w = &other;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    set w^ = 4_u64;
+    set w = &n;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_joined_reference() {
+    small_is_undischarged(&bound_through_reference(
+        ", flag: Bool",
+        "pure",
+        "  let other = 0_u64;
+  let n = 0_u64;
+  let p = if flag {
+    give &other;
+  } else {
+    give &n;
+  }
+  set p^ = 4_u64;
+  need(xs: xs, n: n);
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_inside_an_atomic_statement() {
+    small_is_undischarged(&bound_through_reference(
+        ", state: Shared<Holder>",
+        "pure waits",
+        "  let n = 0_u64;
+  let w = &n;
+  atomic held = &state {
+    set w^ = held^.value;
+  }
+  need(xs: xs, n: n);
+",
+    ));
+}
+
+#[test]
+fn paged_page_count_remains_its_own_range_atom() {
+    let source = b"fn bounded(p: &Paged<u64>) -> result: unit pure contract {\n  requires forall page(k in 0_u64..p^.pages.len) when k < p^.pages.len: k < p^.pages.len;\n} {\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("Paged page-count range terms must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "bounded")
+            .expect("bounded function");
+        let [clause] = function.range_facts.requirements.as_slice() else {
+            panic!("one retained range clause");
+        };
+        let expected = &clause.binders[0].end;
+        assert!(matches!(
+            expected,
+            super::super::range_facts::CheckedRangeTerm::Measure {
+                measure: super::super::CheckedMeasure::Pages,
+                ..
+            }
+        ));
+        assert_eq!(&clause.guards[0].right, expected);
+        assert_eq!(&clause.conclusions[0].right, expected);
+    });
+}
+
+#[test]
+fn a_certificate_admits_a_scatter_through_paged_runs() {
+    for (header, certified) in [(APART, true), (PLAIN, false)] {
+        let source = run_scatter(header);
+        with_semantics(&source, |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("the run scatter must check: {outcome:?}");
+            };
+            let function = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "scatter")
+                .expect("scatter is checked");
+            assert_eq!(
+                function.range_facts.certified.len(),
+                usize::from(certified),
+                "{:?}",
+                function.range_facts.certified
+            );
+            let table = program
+                .data
+                .permission
+                .named("scatter")
+                .expect("scatter's permissions");
+            assert_eq!(table.loops.len(), 1);
+            if certified {
+                assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+            } else {
+                assert!(
+                    matches!(
+                        &table.loops[0].verdict,
+                        LoopVerdict::Denied(LoopDenial::SharedWrite { .. })
+                    ),
+                    "{:?}",
+                    table.loops[0]
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn paged_bases_and_runs_preserve_element_field_certificates() {
+    for (order, targets) in [
+        ("&Paged<u64>", "&Paged<Block>"),
+        ("&Run<u64>", "&Run<Block>"),
+    ] {
+        let source = String::from_utf8(field_range_scatter(
+            "",
+            "reads(order)",
+            "      let slot = targets^[at].entry_slot;",
+        ))
+        .unwrap()
+        .replace("&[u64]", order)
+        .replace("&[Block]", targets);
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("Paged element projections must check: {outcome:?}");
+            };
+            let function = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "scatter")
+                .expect("scatter is checked");
+            assert_eq!(function.range_facts.certified.len(), 1);
+            assert_eq!(function.range_facts.certified[0].writes.len(), 1);
+            assert_eq!(function.range_facts.certified[0].reads.len(), 1);
+            let table = program.data.permission.named("scatter").unwrap();
+            assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+        });
+    }
+}
+
+#[test]
+fn paged_element_page_counts_follow_length_writes_only_at_the_written_tuple() {
+    for (before, start, expected) in [
+        ("", "0_u64", None),
+        (FIELD_RANGE_APPEND, "0_u64", Some(SemanticRule::Range3)),
+        (FIELD_RANGE_APPEND, "1_u64", None),
+        (
+            "  if 0_u64 < rows^.len {\n    if 0_u64 < rows^[0_u64].len {\n      let removed = take_back(window: &rows^[0_u64]);\n    }\n  }",
+            "0_u64",
+            Some(SemanticRule::Range3),
+        ),
+        (
+            "  if 0_u64 < rows^.len {\n    if 0_u64 < rows^[0_u64].len {\n      set rows^[0_u64][0_u64] = 0_u8;\n    }\n  }",
+            "0_u64",
+            None,
+        ),
+    ] {
+        let source = String::from_utf8(field_range_measure_source(before, start, "pages.len"))
+            .unwrap()
+            .replace("Slots<u8, 8>", "Paged<u8>");
+        field_range_verdict(source.as_bytes(), expected);
+    }
+}
+
+#[test]
+fn paged_range_element_measures_form_in_values_and_affine_proofs() {
+    for rows in ["[Paged<u8>]", "Run<Paged<u8>>"] {
+        let source = field_range_program(&format!(
+            "fn inspect(rows: &{rows}) -> result: u64 reads(rows) {{
+  if 0_u64 < rows^.len {{
+    let count = rows^[0_u64].pages.len;
+    invariant same: count == rows^[0_u64].pages.len;
+    return count;
+  }}
+  return 0_u64;
+}}
+"
+        ));
+        field_range_verdict(&source, None);
+    }
+}
+
+#[test]
+fn a_pages_field_below_a_range_element_remains_an_ordinary_field() {
+    let source = field_range_program(
+        "struct Row {
+  pages: Slots<u8, 8>;
+}
+
+fn inspect(rows: &[Row]) -> result: u64 reads(rows) {
+  if 0_u64 < rows^.len {
+    let count = rows^[0_u64].pages.len;
+    invariant same: count == rows^[0_u64].pages.len;
+    return count;
+  }
+  return 0_u64;
+}
+",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn a_ring_is_not_an_element_projection_base() {
+    let source = field_range_program(
+        "fn inspect(rows: &Ring<u64, 8>) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k] == 0_u64;
+} {
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn range_facts_discharge_page_and_segment_borrow_bounds_at_their_sites() {
+    for (storage, bound, borrowed, expected) in [
+        ("Paged<u8>", "data^.pages.len", "data^.pages[i]", None),
+        (
+            "Paged<u8>",
+            "data^.len",
+            "data^.pages[i]",
+            Some(SemanticRule::Op4),
+        ),
+        ("Segments<u8>", "data^.len", "data^[i]", None),
+    ] {
+        let source = field_range_program(&format!(
+            "fn inspect(data: &{storage}, indices: &Array<u64, 1>) -> result: unit reads(data), reads(indices) contract {{
+  requires forall valid(k in 0_u64..1_u64): indices^[k] < {bound};
+}} {{
+  let i = indices^[0_u64];
+  let part = &{borrowed};
+  return unit;
+}}
+"
+        ));
+        field_range_verdict(&source, expected);
+    }
+}
+
+#[test]
+fn a_page_below_a_range_element_uses_its_projected_page_count_for_the_bound() {
+    let source = field_range_program(
+        "fn inspect(rows: &[Paged<u8>], indices: &Array<u64, 1>) -> result: unit reads(rows), reads(indices) contract {
+  requires rows^.len == 1_u64;
+  requires forall valid(k in 0_u64..1_u64): indices^[k] < rows^[0_u64].pages.len;
+} {
+  let i = indices^[0_u64];
+  let part = &rows^[0_u64].pages[i];
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, None);
 }

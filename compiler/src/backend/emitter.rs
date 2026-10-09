@@ -16,8 +16,11 @@ mod floating;
 mod floor;
 mod frames;
 mod frontier;
+mod handler_words;
+mod indexed;
 mod integer;
 mod operations;
+mod paged;
 mod parallel;
 pub(super) mod places;
 mod reinterpret;
@@ -80,6 +83,8 @@ impl From<std::fmt::Error> for BackendFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LlvmModule {
     pub(crate) model: Module,
+    /// Whole-program enum layout cannot be partitioned after emission.
+    pub(crate) threaded_layout: bool,
     text: String,
     ledger: Vec<String>,
 }
@@ -101,13 +106,22 @@ impl LlvmModule {
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
-        self.model.encode()
+        let mut bytes = vec![u8::from(self.threaded_layout)];
+        bytes.extend(self.model.encode());
+        bytes
     }
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        let (&threaded_layout, bytes) = bytes.split_first()?;
+        let threaded_layout = match threaded_layout {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let model = Module::decode(bytes)?;
         Some(Self {
             text: model.render(),
             model,
+            threaded_layout,
             ledger: Vec::new(),
         })
     }
@@ -192,11 +206,27 @@ pub(crate) fn sequential_entry_symbol(
 }
 
 /// Emits the same ordinary callable ABI with a selected physical target layout.
+#[cfg(test)]
 pub(crate) fn emit_llvm_with_layout(
     program: &IrProgram,
     target: TargetLayout,
 ) -> Result<LlvmModule, BackendFailure> {
     emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
+}
+
+pub(crate) use handler_words::prepare_dispatch_layout;
+
+/// Emits using the same explicit layout plan that selected nominal storage.
+pub(crate) fn emit_prepared_llvm(
+    prepared: &handler_words::PreparedDispatch<'_>,
+    target: TargetLayout,
+) -> Result<LlvmModule, BackendFailure> {
+    emit_module(
+        &prepared.program,
+        target,
+        WindowAddressFacts::Emit,
+        &prepared.plan,
+    )
 }
 
 /// Controls only the optional fact about a window's normalized address
@@ -209,10 +239,26 @@ pub(super) enum WindowAddressFacts {
     Withhold,
 }
 
+#[cfg(test)]
 pub(super) fn emit_llvm_with_window_address_facts(
     program: &IrProgram,
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
+) -> Result<LlvmModule, BackendFailure> {
+    let selected = prepare_dispatch_layout(program, target, false)?;
+    emit_module(
+        &selected.program,
+        target,
+        window_address_facts,
+        &selected.plan,
+    )
+}
+
+fn emit_module(
+    program: &IrProgram,
+    target: TargetLayout,
+    window_address_facts: WindowAddressFacts,
+    dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
@@ -257,6 +303,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                 frontiers: &frontiers,
                 grain: None,
                 window_address_facts,
+                dispatch_layout,
             },
         )?;
         functions.append(emitter.emit()?);
@@ -282,6 +329,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                     frontiers: &frontiers,
                     grain: Some(grain),
                     window_address_facts,
+                    dispatch_layout,
                 },
             )?
             .emit()?,
@@ -316,6 +364,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                         frontiers: &frontiers,
                         grain: None,
                         window_address_facts,
+                        dispatch_layout,
                     },
                 )?
                 .emit()?,
@@ -396,18 +445,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
         let mut abort = Signature::new("abort", "void", Vec::new());
         abort.suffix = " noreturn".to_owned();
         text.declare(abort);
-    }
-    if has_heap_storage || cleanup::program_has_general_run(program)? {
-        text.declare(Signature::new(
-            "malloc",
-            "ptr",
-            vec![Parameter::unnamed("i64")],
-        ));
-        text.declare(Signature::new(
-            "free",
-            "void",
-            vec![Parameter::unnamed("ptr")],
-        ));
     }
     if latched_resource_record {
         text.append(resource_record_latch_fallback()?);
@@ -553,12 +590,44 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.text("\n");
     text.append(floor_runtime_fallback()?);
     text.text("\n");
+    // A declaration selects the allocator unit for text-only linkers. Use
+    // emitted references, including cleanup helpers and parallel thunks,
+    // rather than resource types: Shared storage comes from the runtime pool.
+    for signature in [
+        Signature::new(
+            "wf__heap_retake",
+            "ptr",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+            ],
+        ),
+        Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
+        Signature::new(
+            "wf__heap_give",
+            "void",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+        ),
+    ] {
+        if text
+            .entities
+            .iter()
+            .any(|entity| entity.references.symbols.contains(&signature.name))
+        {
+            text.declare(signature);
+        }
+    }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     Ok(LlvmModule {
         text: text.render(),
         model: text,
+        threaded_layout: program
+            .nominals()
+            .iter()
+            .any(|nominal| nominal.handler_words != 0),
         ledger,
     })
 }
@@ -659,7 +728,14 @@ fn incoming_parameter(
         format!("ptr %wf.arg.v{}", value.ordinal())
     } else if parameter.is_range() {
         let (pointer, count) = incoming_range_parts(value);
-        format!("ptr{facts} {pointer}, i64 {count}")
+        if matches!(parameter.ty(), IrType::Run { .. }) {
+            format!(
+                "ptr{facts} {pointer}, i64 %wf.arg.v{}.lo, i64 {count}",
+                value.ordinal()
+            )
+        } else {
+            format!("ptr{facts} {pointer}, i64 {count}")
+        }
     } else {
         format!(
             "{}{facts} {}",
@@ -683,10 +759,15 @@ fn incoming_parameters(
         )]
     } else if parameter.is_range() {
         let (pointer, count) = incoming_range_parts(value);
-        vec![
-            Parameter::named(format!("ptr{facts}"), pointer),
-            Parameter::named("i64", count),
-        ]
+        let mut parts = vec![Parameter::named(format!("ptr{facts}"), pointer)];
+        if matches!(parameter.ty(), IrType::Run { .. }) {
+            parts.push(Parameter::named(
+                "i64",
+                format!("%wf.arg.v{}.lo", value.ordinal()),
+            ));
+        }
+        parts.push(Parameter::named("i64", count));
+        parts
     } else {
         let ty = llvm_type_with_references(program, parameter.ty(), &mut references.types)?;
         vec![Parameter::named(format!("{ty}{facts}"), value_name(value))]
@@ -1399,6 +1480,9 @@ struct FunctionEmitter<'program, 'state> {
     frame: FunctionFramePlan,
     storage: FunctionStoragePlan,
     result_slot: Option<usize>,
+    /// Slots of by-value parameters read in place through the pointer the
+    /// caller passed, with no entry copy (compiler/storage-placement).
+    incoming_places: HashMap<usize, String>,
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
@@ -1452,6 +1536,8 @@ struct FunctionEmitter<'program, 'state> {
     /// What the dispatch lowering did with this function's loops around a
     /// `match`, for the developer ledger (compiler/match-dispatch-lowering).
     dispatch_ledger: Vec<String>,
+    /// Composition-wide word ownership and constructor addresses.
+    dispatch_layout: &'state handler_words::DispatchLayoutPlan,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1473,6 +1559,7 @@ struct ModuleState<'state> {
     frontiers: &'state RecursiveFrontiers,
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
+    dispatch_layout: &'state handler_words::DispatchLayoutPlan,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1490,6 +1577,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frontiers,
             grain,
             window_address_facts,
+            dispatch_layout,
         } = module;
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
@@ -1548,6 +1636,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frame,
             storage,
             result_slot,
+            incoming_places: HashMap::new(),
             materialized: HashMap::new(),
             pin_names: HashMap::new(),
             temporary: 0,
@@ -1564,6 +1653,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             dispatch: None,
             slot_uses: std::cell::RefCell::new(HashSet::new()),
             dispatch_ledger: Vec::new(),
+            dispatch_layout,
         })
     }
 
@@ -1600,6 +1690,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// for an empty range, so it is `nonnull`. Its extent is `len` elements,
     /// known only at run time and possibly zero, so it states no
     /// `dereferenceable` extent.
+    ///
+    /// A Run carries a directory pointer, origin and count. Disjoint logical
+    /// runs may share that directory, so it receives no `noalias` promise.
+    /// The directory is an interior pointer past the cell's three-word header,
+    /// nonnull even at zero capacity, and cannot be modified through a Run.
+    /// `readonly` describes accesses based on this pointer, not an independent
+    /// allocation: element stores use the page pointers loaded from it. Growth
+    /// invalidates the Run before replacing the cell. REF-3 supplies the same
+    /// no-capture boundary as for ordinary references.
     fn reference_parameter_facts(
         &self,
         index: usize,
@@ -1607,7 +1706,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<String, BackendFailure> {
         let (mode, referent) = match ty {
             IrType::Address(referent) => (crate::IrSourceMode::Reference, Some(referent)),
-            IrType::Range { .. } => (crate::IrSourceMode::Range, None),
+            IrType::Range { .. } | IrType::Run { .. } => (crate::IrSourceMode::Range, None),
             _ => return Ok(String::new()),
         };
         // A waiting function's ramp keeps every reference it is handed in its
@@ -1631,8 +1730,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Ok(String::new());
         }
         let mut facts = String::new();
-        if !aliasing_admitted_row(self.function.name()) {
+        if !matches!(ty, IrType::Run { .. }) && !aliasing_admitted_row(self.function.name()) {
             facts.push_str(" noalias");
+        }
+        if matches!(ty, IrType::Run { .. }) {
+            facts.push_str(" readonly");
         }
         facts.push_str(" nonnull ");
         facts.push_str(crate::toolchain::facts().no_capture_attribute);
@@ -1773,13 +1875,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(())
     }
 
-    fn emit(mut self) -> Result<Module, BackendFailure> {
+    /// Shared by dispatch preplanning and emission, so constructor addresses
+    /// use the exact same destination-form symbol as the emitted arms.
+    fn body_abi(&self) -> Result<(String, String, FunctionAbi, FunctionAbi, bool), BackendFailure> {
         let declaration = self.function.blocks().is_empty();
-        let reachable = if declaration {
-            Vec::new()
-        } else {
-            self.reachable_blocks()?
-        };
         // A declaration names a linked definition by its public ABI. A
         // definition whose result returns in registers is emitted as its
         // destination-form body under an internal symbol, followed by the
@@ -1812,6 +1911,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             symbol.clone()
         };
+        Ok((symbol, body_symbol, public, abi, entry))
+    }
+
+    fn emit(mut self) -> Result<Module, BackendFailure> {
+        let declaration = self.function.blocks().is_empty();
+        let reachable = self.reachable_blocks()?;
+        let waiting = self.function.waits();
+        let (symbol, body_symbol, public, abi, entry) = self.body_abi()?;
         let (mut parameters, mut references) = self.signature_parameters(&abi)?;
         let result = if abi.result().uses_destination() {
             "void".to_owned()
@@ -1828,6 +1935,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        if !declaration {
+            self.select_incoming_places(&public, &abi, waiting);
+        }
         if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
@@ -1865,6 +1975,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let (pointer, count) = incoming_range_parts(*value);
             let pair = self.output.type_name(self.program, parameter.ty())?;
             let name = value_name(*value);
+            if matches!(parameter.ty(), IrType::Run { .. }) {
+                writeln!(self.entry_prelude,
+                    "  {name}.data = insertvalue {pair} poison, ptr {pointer}, 0\n  {name}.lo = insertvalue {pair} {name}.data, i64 %wf.arg.v{}.lo, 1\n  {name} = insertvalue {pair} {name}.lo, i64 {count}, 2", value.ordinal()).map_err(|_| BackendFailure::TextEmission)?;
+                continue;
+            }
             writeln!(
                 self.entry_prelude,
                 "  {name}.data = insertvalue {pair} poison, ptr {pointer}, 0\n  \
@@ -1896,7 +2011,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // A result can alias any consumed caller input. Snapshot
                 // every other indirect input first, then initialize the one
                 // entry group using the result. Scalar/address parameters
-                // already arrived as SSA values before either pass.
+                // already arrived as SSA values before either pass, and an
+                // input read in place (`select_incoming_places`) is not
+                // copied.
                 for writes_result in [false, true] {
                     for ((value, _), parameter) in
                         self.function.parameters().iter().zip(abi.parameters())
@@ -1906,7 +2023,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                                 self.storage.allocation_root(slot) == result_slot
                             })
                         });
-                        if !parameter.is_indirect() || uses_result != writes_result {
+                        let in_place = self
+                            .storage
+                            .slot(*value)
+                            .is_some_and(|slot| self.incoming_places.contains_key(&slot));
+                        if !parameter.is_indirect() || in_place || uses_result != writes_result {
                             continue;
                         }
                         let destination = self.value_place(*value)?;
@@ -1947,6 +2068,40 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
         }
         Ok(module)
+    }
+
+    /// Selects the by-value parameters this definition reads in place
+    /// through the pointer its caller passed, with no entry copy
+    /// (compiler/storage-placement). A caller hands over the storage of the
+    /// value it consumes, which stays untouched for the whole synchronous
+    /// call when the definition has no result destination that the caller
+    /// could have placed in that storage, no frame that outlives the call,
+    /// no deferred hand-out, and no split part, and when the parameter's
+    /// slot is a complete, unexposed allocation holding only the parameter
+    /// and block parameters carrying it unchanged on every incoming edge.
+    /// Transfers into a selected slot are elided by `emit_place_edge`;
+    /// updates, reinitializations and other definitions keep the entry copy.
+    fn select_incoming_places(&mut self, public: &FunctionAbi, abi: &FunctionAbi, waiting: bool) {
+        if waiting
+            || public.result().uses_destination()
+            || !self.function.overlaps().is_empty()
+            || self.dispatch.is_some()
+        {
+            return;
+        }
+        for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
+            if !parameter.is_indirect() || !self.storage.holds_only(*value) {
+                continue;
+            }
+            let Some(slot) = self.storage.slot(*value) else {
+                continue;
+            };
+            if Some(slot) == self.result_slot {
+                continue;
+            }
+            self.incoming_places
+                .insert(slot, format!("%wf.arg.v{}", value.ordinal()));
+        }
     }
 
     /// Every parameter of this definition's signature, with the facts the
@@ -2015,29 +2170,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(module)
     }
 
-    /// Source checking retains the conservative continuation of every loop
-    /// [FN-1]. An executable loop with no break has no edge to that block,
-    /// which may nevertheless carry lowered parameters and more dead CFG.
+    /// Lowering may allocate predecessor-free exits, including the sealed
+    /// exit of a break-free loop [FN-1], with unused block parameters.
     /// Emit only the entry-reachable graph: a predecessor-free phi is not
     /// LLVM, and a dead cycle must not supply an incoming value to a live phi.
     fn reachable_blocks(&self) -> Result<Vec<bool>, BackendFailure> {
-        let mut reachable = vec![false; self.function.blocks().len()];
-        let mut pending = vec![0_usize];
-        while let Some(index) = pending.pop() {
-            let visited = reachable.get_mut(index).ok_or(BackendFailure::InvalidIr)?;
-            if *visited {
-                continue;
-            }
-            *visited = true;
-            match self.function.blocks()[index].terminator() {
-                IrTerminator::Jump { target, .. } => pending.push(target.index()),
-                IrTerminator::Match { targets, .. } => {
-                    pending.extend(targets.iter().map(|target| target.block().index()));
-                }
-                IrTerminator::Return { .. } | IrTerminator::Unreachable => {}
-            }
-        }
-        Ok(reachable)
+        dispatch::reachable(self.function)
     }
 
     fn collect_incoming(&self, reachable: &[bool]) -> Result<Vec<Vec<Incoming>>, BackendFailure> {
@@ -2148,6 +2286,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => {
                 self.materialize_operands([*slice, *index])?;
             }
+            IrInstruction::IndexedMark {
+                address, private, ..
+            } => {
+                self.materialize_operands([*address, *private])?;
+            }
             IrInstruction::Store { address, .. } => {
                 // A stored aggregate is transferred from its backing below.
                 // Loading it into SSA first lets SROA expand a large array
@@ -2183,6 +2326,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 ty,
                 operation,
             } => self.emit_definition(*result, *ty, operation),
+            IrInstruction::IndexedMark {
+                address,
+                private,
+                constant,
+                value_type,
+            } => self.emit_indexed_mark(
+                &self.value_name(*address),
+                &self.value_name(*private),
+                *constant,
+                *value_type,
+            ),
             IrInstruction::StoreSlice {
                 slice,
                 index,
@@ -2297,6 +2451,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 captures,
                 weight,
                 work,
+                indexed,
             } => self.emit_loop_split(
                 result,
                 ty,
@@ -2309,6 +2464,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     captures,
                     weight: *weight,
                     work: work.as_ref(),
+                    indexed,
                 },
             ),
             IrOperation::Integer {
@@ -2384,6 +2540,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 value,
                 ..
             } => self.emit_segments_fill(result, ty, *nominal, *lengths, *value),
+            IrOperation::PagedPageLen { element } => self.emit_paged_page_len(result, ty, *element),
+            IrOperation::PagedPage { paged, index } => {
+                self.emit_paged_page(result, ty, *paged, *index)
+            }
             IrOperation::SegmentsMeasure { segments } => {
                 self.emit_segments_measure(result, ty, *segments)
             }
@@ -2445,7 +2605,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
-                self.emit_slice_range(result, ty, *slice, *start, *end)
+                self.emit_slice_range(result, ty, *slice, *start, *end, None)
+            }
+            IrOperation::IndexedRange {
+                slice,
+                start,
+                end,
+                private_type,
+            } => self.emit_slice_range(result, ty, *slice, *start, *end, Some(*private_type)),
+            IrOperation::IndexedAddress {
+                slice,
+                offset,
+                private,
+                projection,
+                private_type,
+                ..
+            } => {
+                let range_type = self.value_type(*slice).ok_or(BackendFailure::InvalidIr)?;
+                let prefix = format!("indexed.address.{}", self.next_temporary()?);
+                let pointer = self.indexed_pointer(
+                    &prefix,
+                    (&self.value_name(*slice), range_type),
+                    &self.value_name(*offset),
+                    &self.value_name(*private),
+                    projection,
+                    *private_type,
+                )?;
+                writeln!(
+                    self.output,
+                    "  {} = getelementptr i8, ptr {pointer}, i64 0",
+                    self.value_name(result)
+                )?;
+                Ok(())
             }
             IrOperation::SliceMeasure { slice } => self.emit_slice_length(result, ty, *slice),
             IrOperation::SliceIndex {
@@ -2874,7 +3065,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let reads_content = match drop.ty() {
-            IrType::Range { .. } => false,
+            IrType::Range { .. } | IrType::Run { .. } => false,
             IrType::Array { .. } | IrType::Window { .. } => {
                 type_requires_cleanup(self.program, drop.ty())?
             }
@@ -3087,6 +3278,7 @@ pub(super) fn llvm_type_with_references(
         // A `&[T]` range reference is a pointer and one count [REF-4]; it is
         // a reference kind, so no storage ever holds one.
         IrType::Range { .. } => Ok("{ ptr, i64 }".to_owned()),
+        IrType::Run { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // [SHARE-1] a key set is its count, its one measure, and a pointer to
         // the runtime's store; the entries an entry binding names are the
         // statement's record of its hold, the set's first position in it and
@@ -3135,6 +3327,7 @@ pub(super) fn llvm_type_with_references(
                 )?
             };
             Ok(match shape {
+                IrWindowShape::Paged => return Err(BackendFailure::InvalidIr),
                 IrWindowShape::Slots => format!("{{ i64, [{length} x {element}] }}"),
                 IrWindowShape::Ring => format!("{{ i64, i64, [{length} x {element}] }}"),
             })
@@ -3152,6 +3345,7 @@ pub(super) fn llvm_type_with_references(
                 references,
             )?;
             Ok(match shape {
+                IrWindowShape::Paged => paged::CELL.to_owned(),
                 IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
             })

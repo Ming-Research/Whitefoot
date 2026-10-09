@@ -3,7 +3,7 @@ alias Inputs = std::process::Inputs;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "One write half passed as both roots of move_file: writes(from_root) and writes(to_root) substitute to the same place, so the call is refused; a rename within one directory is rename_file.";
-  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall) = move inputs;
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let from = array_filled::<u8, 3>(value: 97_u8);
   let to = array_filled::<u8, 3>(value: 98_u8);

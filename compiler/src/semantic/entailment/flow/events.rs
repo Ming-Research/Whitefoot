@@ -148,7 +148,9 @@ impl Input<'_, '_> {
             return false;
         }
         let mut descriptor = support.clone();
-        descriptor.path.push(PlaceStep::Measure(measure));
+        descriptor
+            .path
+            .push(PlaceStep::Measure(measure.support_word()));
         // The fact's own place goes first: [WIN-2]'s liveness is a question
         // about the window above its index [`Reasoning::event_live_bounds`].
         self.resolved_places_overlap(separations, &descriptor, written)
@@ -160,9 +162,12 @@ impl Input<'_, '_> {
     pub(super) fn is_range_descriptor_support(&self, support: &ResolvedPlace) -> bool {
         let resolved = self.places.resolve(support.root, &support.path);
         !resolved.is_empty()
-            && resolved
-                .iter()
-                .all(|place| matches!(place.path.last(), Some(PlaceStep::Range(_))))
+            && resolved.iter().all(|place| {
+                matches!(
+                    place.path.last(),
+                    Some(PlaceStep::Range(_) | PlaceStep::Page(_))
+                )
+            })
     }
 
     /// Whether every resolved write reaches one named part or descriptor
@@ -239,11 +244,13 @@ impl Input<'_, '_> {
         (resolved, holders)
     }
 
-    /// An ordinary-let origin is available only while the binding whose
-    /// initializer it describes has not itself been written or consumed.
-    /// This key guard is separate from the goal's value support: invalidating
-    /// it stops future alias expansion without erasing a signed snapshot fact
-    /// that an earlier branch already established.
+    /// An ordinary-let origin, comparison [ENT-3] (b) or goal, is available
+    /// only while the binding whose initializer it describes has not itself
+    /// been written — directly, through a reference or by a call's projected
+    /// `writes` — or consumed [ENT-5]. This key guard is separate from the
+    /// goal's value support: invalidating it stops future alias expansion
+    /// without erasing a signed snapshot fact that an earlier branch already
+    /// established.
     pub(super) fn event_kills_goal_origin_binding(
         &self,
         separations: &dyn SeparationOracle,
@@ -857,6 +864,12 @@ impl Reasoning<'_, '_, '_> {
             events
                 .iter()
                 .any(|event| self.event_kills_goal(separations, goal, event))
+        });
+        state.origins.retain(|binding, _| {
+            !events.iter().any(|event| {
+                self.input
+                    .event_kills_goal_origin_binding(separations, *binding, event)
+            })
         });
         state.goal_origins.retain(|binding, _| {
             !events.iter().any(|event| {
