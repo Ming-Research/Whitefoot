@@ -686,9 +686,8 @@ above on the 14900K with counters unset, six rotating rounds, base
 | Plain series, 40-160 arms | 0.010-0.220 s | equal | 1.000 | 1.000 | same |
 
 Halo's check falls by 11.2%: every head round (7.70-7.80 s) lies below
-every base and twin round (8.63-8.73 s). This sits inside the profile's
-overlapping estimate of three to twelve points for the three reductions;
-the panel does not apportion the saving among them. The v2h and 640-arm
+every base and twin round (8.63-8.73 s). The panel does not apportion the
+saving among the three reductions. The v2h and 640-arm
 results are within twin spread, as expected: their time is in the affine
 index and joins, which these changes do not touch, and the series still
 grows about tenfold per doubling. The 320-arm head rounds lie above every
