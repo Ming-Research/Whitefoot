@@ -628,7 +628,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 owner.value_role(),
             )? {
-                let measured = self.check_indexed_place_rooted(
+                let measured = self.check_storage_place_rooted(
                     context,
                     place,
                     bindings,
@@ -636,6 +636,7 @@ impl<'unit> Checker<'_, 'unit> {
                     place,
                     loop_depth,
                     owner.value_role(),
+                    RequiredReferent::IndexableStorage,
                 )?;
                 if let Some(declaration) = measured.root_declaration()
                     && !allowed_values.contains(&declaration)
