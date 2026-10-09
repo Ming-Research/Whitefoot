@@ -1533,6 +1533,11 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
     } else {
         "printf(\"F%u;\", id);"
     };
+    let release_record_old = if observe_u64_payload {
+        release_record
+    } else {
+        "printf(\"F%u;\", old_id);"
+    };
     format!(
         r#"#include <stddef.h>
 #include <inttypes.h>
@@ -1585,6 +1590,39 @@ void wf_test_release(void *allocation, uint64_t bytes) {{
         }}
     }}
     abort();
+}}
+
+/* `grow` [OP-10] reallocates its block. The observer books that as one new
+   allocation id, a release of the old one, and the real realloc: the same
+   A-then-F events the former malloc, copy and free produced, and a refusal of
+   the request returns NULL with the old block still held. */
+void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
+    if (allocation == NULL) return wf_test_allocate(size);
+    lock_observer();
+    unsigned id = ++attempts;
+    if (id > {limit}) abort();
+    unsigned old_id = 0;
+    for (unsigned candidate = 1; candidate < id && candidate <= {limit}; ++candidate) {{
+        if (held[candidate] == allocation) {{
+            old_id = candidate;
+            break;
+        }}
+    }}
+    if (old_id == 0 || requested[old_id] != old_bytes) abort();
+    if (id == {refused}) {{
+        printf("X%u;", id);
+        unlock_observer();
+        return NULL;
+    }}
+    printf("A%u;", id);
+    held[old_id] = NULL;
+    {release_record_old}
+    void *moved = realloc(allocation, size);
+    if (moved == NULL) abort();
+    held[id] = moved;
+    requested[id] = size;
+    unlock_observer();
+    return moved;
 }}
 "#
     )

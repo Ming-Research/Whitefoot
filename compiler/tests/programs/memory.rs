@@ -1,7 +1,7 @@
 use super::support::{build_program, compile_program};
 
 #[test]
-fn heap_reading_tracks_a_box_and_returns_to_a_zero_byte_bound() {
+fn heap_reading_tracks_a_box_and_grown_cell_and_returns_to_its_initial_bound() {
     let program = build_program(&compile_program("memory_statistics.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
