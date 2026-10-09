@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Copied cells and helper-call updates in indexed reductions
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Loop permission admits a copied-cell accumulator operand and helper calls whose callee treats a reference parameter as an indexed accumulator, identifying families by resolved storage, because both preserve the per-cell order-independence argument and recover the six natural spellings that kept Snowghost below its criterion. Lowering gives every root with a call-updated family one private block per leaf with the root's storage shape and measures, all of that root's families in it, identity-filled for operations and filled with the constant's inverted-low-bit sentinel for marks, because a callee indexes the whole root by logical index and may read its measures, so a dense family slab cannot be passed; passing dense slabs or rewriting the callee are rejected ([lowering](../research/investigations/indexed-reductions/DESIGN.md#lowering)).
+
 ## 2026-10-09 Conditional calls join statement groups
 
 Nodes: compiler/parallel-lowering
