@@ -1,0 +1,40 @@
+# The concurrent map's runtime test under AddressSanitizer and under
+# ThreadSanitizer, on every push and pull request that changes the map's
+# runtime or its test. Some of its failures change no outcome of an ordinary
+# run: a read of a freed node whose result is discarded, or a race two
+# threads win in one order only. The owner chose to run both on every such
+# change and to merge none that fails them (status board, 2026-10-09). The
+# ordinary builds of the same test run in the gate's runtime group.
+name: map-sanitizers
+
+on:
+  push:
+    paths:
+      - compiler/src/backend/concurrent_map.c
+      - compiler/src/backend/concurrent_map.h
+      - compiler/src/backend/concurrent_map_test.c
+      - compiler/src/backend/keyed_table.c
+      - compiler/src/backend/completion/bridge.h
+      - compiler/Makefile
+      - .github/workflows/map-sanitizers.yml
+  workflow_dispatch:
+
+concurrency:
+  group: map-sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitizers:
+    name: map sanitizers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: AddressSanitizer and UndefinedBehaviorSanitizer
+        run: make -C compiler concurrent-map-test-sanitized COMPLETION_TMP="$RUNNER_TEMP/map-sanitizers"
+      - name: ThreadSanitizer
+        run: make -C compiler concurrent-map-test-tsan COMPLETION_TMP="$RUNNER_TEMP/map-sanitizers"

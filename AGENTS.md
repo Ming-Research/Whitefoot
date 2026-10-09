@@ -80,7 +80,9 @@ Whitefoot's extra merge preconditions:
    never a gate dependency. `make check-groups` lists the groups and
    [Checks](#checks) says where each runs.
 2. Specification approvals are recorded in `spec/log.md`.
-3. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
+3. When the merge changes the concurrent map's runtime or its test,
+   `map-sanitizers.yml` passes on the exact revision being merged.
+4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
@@ -207,6 +209,8 @@ build time apart from test and program execution.
   Linux (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
+  `map-sanitizers.yml` on every push that changes the concurrent map's
+  runtime or its test (that test under AddressSanitizer and ThreadSanitizer),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
   experiments and never a gate.

@@ -92,6 +92,20 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #else
 #define WORD_TESTS 1
 #endif
+/* Whether timing ratios between threads hold in this build. ThreadSanitizer
+ * slows every thread by an unequal factor, so waits outlast their patience
+ * far more often than on real hardware; its build checks for races, and the
+ * ordinary builds keep the ratios. */
+#if defined(__SANITIZE_THREAD__)
+#define TIMED_RATIOS 0
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define TIMED_RATIOS 0
+#endif
+#endif
+#ifndef TIMED_RATIOS
+#define TIMED_RATIOS 1
+#endif
 /* Whether this build narrows entries' hashes, so that most keys share one;
  * the map's source defines the mask itself when the build does not. */
 #define SHARED_HASHES (!WORD_TESTS)
@@ -2051,7 +2065,7 @@ static void holds_move_amounts(uint64_t capacity, uint64_t patient) {
     /* Keys with different hashes and ordinary patience: a hold holds the
      * map only after a wait no cycle causes or when the table is full, so
      * nearly every hold holds its entries. */
-    if (!SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
+    if (TIMED_RATIOS && !SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
         fail("holds held the whole map more than once in twenty (whole, holds)", atomic_load(&set_wholes),
              atomic_load(&set_holds));
     check_cells(map, "holds and keyed statements miscounted the cells they took (counted, taken)");
