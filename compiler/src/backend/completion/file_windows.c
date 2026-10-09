@@ -498,9 +498,14 @@ static wf_file_result wf_file_windows_socket_connect(
     return result;
 }
 
-/* Waits until the listener has a connection or the running operation's
- * deadline passes: zero to accept, or the error that ends the accept. */
-static int wf_file_windows_await_listener(SOCKET listener) {
+/* Waits until the socket is ready for events or the running operation's
+ * bound ends: zero to make the operation, or the error that ends it.  A
+ * blocking Winsock accept, receive or send is not one `CancelSynchronousIo`
+ * ends, so a helper making one for a bounded record -- a deadline, or a
+ * watch [PRE-2] -- waits for readiness in bounded polls and gives up itself
+ * once the deadline passes or the driver marks the bound fired.  An
+ * unbounded record makes its call at once, as before. */
+static int wf_file_windows_await_socket(SOCKET target, SHORT events) {
     for (;;) {
         uint64_t deadline = wf_file_running_deadline();
         uint64_t now;
@@ -517,8 +522,8 @@ static int wf_file_windows_await_listener(SOCKET listener) {
         milliseconds = (deadline - now + 999999u) / 1000000u;
         if (milliseconds > 50u) milliseconds = 50u;
         memset(&entry, 0, sizeof(entry));
-        entry.fd = listener;
-        entry.events = POLLRDNORM;
+        entry.fd = target;
+        entry.events = events;
         ready = WSAPoll(&entry, 1, (INT)milliseconds);
         if (ready > 0) return 0;
         if (ready < 0) return wf_file_windows_socket_error();
@@ -545,12 +550,9 @@ static wf_file_result wf_file_windows_socket_accept(wf_file_request *request) {
         return result;
     }
     {
-        /* A blocking accept is not one `CancelSynchronousIo` ends, so an
-         * accept with a deadline waits for its listener in bounded polls and
-         * gives up itself once the deadline passes [PRE-2].  The listener is
-         * this program's alone, so a connection it reports is still there
-         * for the accept. */
-        int waited = wf_file_windows_await_listener(listener);
+        /* The listener is this program's alone, so a connection it reports
+         * is still there for the accept. */
+        int waited = wf_file_windows_await_socket(listener, POLLRDNORM);
         if (waited != 0) {
             result.head.error_code = waited;
             return result;
@@ -620,6 +622,20 @@ static wf_file_result wf_file_windows_socket_transfer(
     if (connection == INVALID_SOCKET) {
         result.head.error_code = (int)ERROR_INVALID_HANDLE;
         return result;
+    }
+    {
+        /* A receive this direction's reader alone makes finds the bytes or
+         * the end the poll reported still there; a send may still wait for
+         * buffer space beyond what the poll reported, and then completes
+         * with the host's own outcome. */
+        int waited = wf_file_windows_await_socket(
+            connection,
+            receiving ? POLLRDNORM : POLLWRNORM
+        );
+        if (waited != 0) {
+            result.head.error_code = waited;
+            return result;
+        }
     }
     transferred = receiving
         ? recv(
