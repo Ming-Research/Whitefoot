@@ -1,0 +1,179 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add(k: u64);
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+fn run(code: &Box<Slots<Op>>, count0: u64) -> r: u64 reads(code) {
+  let n = code^.inner.len;
+  if n == 0_u64 {
+    return 0_u64;
+  }
+  let pc = 0_u64;
+  let acc = 0_u64;
+  let count = count0;
+  let r0 = 0_u64;
+  let r1 = 1_u64;
+  let r2 = 2_u64;
+  let r3 = 3_u64;
+  let r4 = 4_u64;
+  let r5 = 5_u64;
+  let r6 = 6_u64;
+  let r7 = 7_u64;
+  let r8 = 8_u64;
+  let r9 = 9_u64;
+  let r10 = 10_u64;
+  let r11 = 11_u64;
+  let r12 = 12_u64;
+  let r13 = 13_u64;
+  let r14 = 14_u64;
+  let r15 = 15_u64;
+  let r16 = 16_u64;
+  let r17 = 17_u64;
+  let r18 = 18_u64;
+  let r19 = 19_u64;
+  let r20 = 20_u64;
+  let r21 = 21_u64;
+  let r22 = 22_u64;
+  let r23 = 23_u64;
+  let r24 = 24_u64;
+  let r25 = 25_u64;
+  let r26 = 26_u64;
+  let r27 = 27_u64;
+  let r28 = 28_u64;
+  let r29 = 29_u64;
+  let r30 = 30_u64;
+  let r31 = 31_u64;
+  loop (
+    invariant inb: pc < n
+  ) {
+    match code^.inner[pc] {
+      Add(k: kv) => {
+        let next = pc + 1_u64;
+        if next < n {
+          set acc = acc +wrap kv^;
+          set r0 = r0 +wrap kv^;
+          set r1 = r1 +wrap kv^;
+          set r2 = r2 +wrap kv^;
+          set r3 = r3 +wrap kv^;
+          set r4 = r4 +wrap kv^;
+          set r5 = r5 +wrap kv^;
+          set r6 = r6 +wrap kv^;
+          set r7 = r7 +wrap kv^;
+          set r8 = r8 +wrap kv^;
+          set r9 = r9 +wrap kv^;
+          set r10 = r10 +wrap kv^;
+          set r11 = r11 +wrap kv^;
+          set r12 = r12 +wrap kv^;
+          set r13 = r13 +wrap kv^;
+          set r14 = r14 +wrap kv^;
+          set r15 = r15 +wrap kv^;
+          set r16 = r16 +wrap kv^;
+          set r17 = r17 +wrap kv^;
+          set r18 = r18 +wrap kv^;
+          set r19 = r19 +wrap kv^;
+          set r20 = r20 +wrap kv^;
+          set r21 = r21 +wrap kv^;
+          set r22 = r22 +wrap kv^;
+          set r23 = r23 +wrap kv^;
+          set r24 = r24 +wrap kv^;
+          set r25 = r25 +wrap kv^;
+          set r26 = r26 +wrap kv^;
+          set r27 = r27 +wrap kv^;
+          set r28 = r28 +wrap kv^;
+          set r29 = r29 +wrap kv^;
+          set r30 = r30 +wrap kv^;
+          set r31 = r31 +wrap kv^;
+          set pc = next;
+        } else {
+          return 0_u64;
+        }
+      }
+      Dec() => {
+        let next = pc + 1_u64;
+        if next < n {
+          set count = count -wrap 1_u64;
+          set pc = next;
+        } else {
+          return 0_u64;
+        }
+      }
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+        } else {
+          return 0_u64;
+        }
+      }
+      Halt() => {
+        let sum0 = acc +wrap r0;
+        let sum1 = sum0 +wrap r1;
+        let sum2 = sum1 +wrap r2;
+        let sum3 = sum2 +wrap r3;
+        let sum4 = sum3 +wrap r4;
+        let sum5 = sum4 +wrap r5;
+        let sum6 = sum5 +wrap r6;
+        let sum7 = sum6 +wrap r7;
+        let sum8 = sum7 +wrap r8;
+        let sum9 = sum8 +wrap r9;
+        let sum10 = sum9 +wrap r10;
+        let sum11 = sum10 +wrap r11;
+        let sum12 = sum11 +wrap r12;
+        let sum13 = sum12 +wrap r13;
+        let sum14 = sum13 +wrap r14;
+        let sum15 = sum14 +wrap r15;
+        let sum16 = sum15 +wrap r16;
+        let sum17 = sum16 +wrap r17;
+        let sum18 = sum17 +wrap r18;
+        let sum19 = sum18 +wrap r19;
+        let sum20 = sum19 +wrap r20;
+        let sum21 = sum20 +wrap r21;
+        let sum22 = sum21 +wrap r22;
+        let sum23 = sum22 +wrap r23;
+        let sum24 = sum23 +wrap r24;
+        let sum25 = sum24 +wrap r25;
+        let sum26 = sum25 +wrap r26;
+        let sum27 = sum26 +wrap r27;
+        let sum28 = sum27 +wrap r28;
+        let sum29 = sum28 +wrap r29;
+        let sum30 = sum29 +wrap r30;
+        let sum31 = sum30 +wrap r31;
+        return sum31;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let r = run(code: &code, count0: 1000_u64);
+  if r == 99496_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
