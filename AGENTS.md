@@ -209,8 +209,9 @@ build time apart from test and program execution.
   Linux (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
-  `map-sanitizers.yml` on every push that changes the concurrent map's
-  runtime or its test (that test under AddressSanitizer and ThreadSanitizer),
+  `map-sanitizers.yml` on every push to a PR that changes the concurrent
+  map's runtime or its test (that test under AddressSanitizer and
+  ThreadSanitizer, on the PR's head),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
   experiments and never a gate.

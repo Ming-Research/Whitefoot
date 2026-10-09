@@ -1,5 +1,6 @@
 # The concurrent map's runtime test under AddressSanitizer and under
-# ThreadSanitizer, on every push that changes the map's runtime or its test.
+# ThreadSanitizer, on every push to a pull request that changes the map's
+# runtime or its test, so each head of such a pull request has its run.
 # Some of its failures change no outcome of an ordinary run: a read of a freed
 # node whose result is discarded, or a race two threads win in one order
 # only. The owner chose to run both on every such change and to merge none
@@ -8,7 +9,7 @@
 name: map-sanitizers
 
 on:
-  push:
+  pull_request:
     paths:
       - compiler/src/backend/concurrent_map.c
       - compiler/src/backend/concurrent_map.h
@@ -20,7 +21,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: map-sanitizers-${{ github.ref }}
+  group: map-sanitizers-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +38,11 @@ jobs:
     env:
       CC: clang
     steps:
+      # The pull request's head, the revision a merge would take, rather
+      # than the merge commit a pull request run checks out by default.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set the scratch root
         run: |
           echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
