@@ -30,7 +30,15 @@ pub(crate) struct SyntaxView<'unit> {
     /// Every node ordered by its path, so a path finds its node by binary
     /// search.
     by_path: OnceLock<Vec<NodeId>>,
+    descendants: OnceLock<Result<DescendantIndex, SyntaxViewFailure>>,
     direct_terminals: Vec<Vec<usize>>,
+}
+
+/// Strict subtree intervals and production lists use preorder positions,
+/// independently of the canonical topology's postorder node identities.
+struct DescendantIndex {
+    intervals: Vec<std::ops::Range<usize>>,
+    by_production: Vec<Vec<(usize, NodeId)>>,
 }
 
 impl<'unit> SyntaxView<'unit> {
@@ -50,6 +58,7 @@ impl<'unit> SyntaxView<'unit> {
             syntax,
             paths: OnceLock::new(),
             by_path: OnceLock::new(),
+            descendants: OnceLock::new(),
             direct_terminals,
         })
     }
@@ -319,20 +328,47 @@ impl<'unit> SyntaxView<'unit> {
         node: NodeId,
         production: Production,
     ) -> Result<Vec<NodeId>, SyntaxViewFailure> {
-        let mut matches = Vec::new();
-        let mut pending = self
-            .children(node)?
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
-        while let Some(candidate) = pending.pop() {
-            if self.production(candidate)? == production {
-                matches.push(candidate);
+        // Validate the requested identity before initializing the whole-view
+        // index, retaining the ordinary missing-node failure.
+        self.children(node)?;
+        let index = self
+            .descendants
+            .get_or_init(|| self.build_descendants())
+            .as_ref()
+            .map_err(|failure| *failure)?;
+        let interval = &index.intervals[node.index()];
+        let entries = &index.by_production[production.index()];
+        let start = entries.partition_point(|(position, _)| *position < interval.start);
+        let end = entries.partition_point(|(position, _)| *position < interval.end);
+        Ok(entries[start..end].iter().map(|(_, node)| *node).collect())
+    }
+
+    fn build_descendants(&self) -> Result<DescendantIndex, SyntaxViewFailure> {
+        let mut index = DescendantIndex {
+            intervals: vec![0..0; self.topology().nodes.len()],
+            by_production: vec![Vec::new(); crate::syntax::grammar::productions().len()],
+        };
+        let mut position = 0;
+        let mut pending = vec![(self.root(), false)];
+        while let Some((node, exiting)) = pending.pop() {
+            if exiting {
+                index.intervals[node.index()].end = position;
+                continue;
             }
-            pending.extend(self.children(candidate)?.iter().rev().copied());
+            index.by_production[self.production(node)?.index()].push((position, node));
+            position += 1;
+            // Starting after this node excludes the root even when its
+            // production is the requested one. Leaves have an empty range.
+            index.intervals[node.index()].start = position;
+            pending.push((node, true));
+            pending.extend(
+                self.children(node)?
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, false)),
+            );
         }
-        Ok(matches)
+        Ok(index)
     }
 
     pub(crate) fn conditional_blocks(
@@ -997,11 +1033,9 @@ mod tests {
         let crate::LexOutcome::Complete(lexed) = crate::lex(&bundle, limits.lexer) else {
             panic!("the view fixture lexes");
         };
-        let crate::TerminalOutcome::Complete(classified) = crate::classify_terminals(
-            &lexed,
-            crate::ACTIVE_KERNEL_SPEC_HASH,
-            limits.terminals,
-        ) else {
+        let crate::TerminalOutcome::Complete(classified) =
+            crate::classify_terminals(&lexed, crate::ACTIVE_KERNEL_SPEC_HASH, limits.terminals)
+        else {
             panic!("the view fixture classifies");
         };
         let crate::ParseOutcome::Complete(parsed) = crate::parse(classified, limits.parser) else {
@@ -1034,6 +1068,79 @@ mod tests {
             paths.insert(path, node);
         }
         paths
+    }
+
+    /// Independent recursive child walk: neither intervals, paths nor numeric
+    /// node ordering participate in the expected strict preorder.
+    fn walked_descendants(
+        topology: &FinalizedTopology,
+        root: NodeId,
+        production: Production,
+        result: &mut Vec<NodeId>,
+    ) {
+        for &child in topology.node_children(root).unwrap() {
+            if topology.node(child).unwrap().production == production {
+                result.push(child);
+            }
+            walked_descendants(topology, child, production, result);
+        }
+    }
+
+    #[test]
+    fn lazy_descendants_match_child_walk_before_and_after_indexing() {
+        let mut distinguishes_node_id_sort = false;
+        let mut saw_empty = false;
+        for source in [
+            b"fn probe() -> result: unit pure {\n}\n".as_slice(),
+            b"const first: i32 = 1_i32;\n\nconst second: i32 = 2_i32;\n",
+            include_bytes!(
+                "../../../tests/conformance/cases/x-gram-combo-flat-call-construct-match.wf"
+            ),
+        ] {
+            let syntax = canonical(source);
+            let topology = &syntax.finalized.topology;
+            for index in 0..topology.nodes.len() {
+                let node = NodeId::from_index(index).unwrap();
+                let view = SyntaxView::new(&syntax).unwrap();
+                view.children(node).unwrap();
+                assert!(view.descendants.get().is_none());
+                let invalid = NodeId::from_index(topology.nodes.len()).unwrap();
+                assert_eq!(
+                    view.descendants_with(invalid, Production::Expr),
+                    Err(SyntaxViewFailure::InvalidCanonicalTree)
+                );
+                assert!(view.descendants.get().is_none());
+                // Every node is a cold first query, including leaves and
+                // interior nodes whose own production must be excluded.
+                let production = topology.node(node).unwrap().production;
+                let mut expected = Vec::new();
+                walked_descendants(topology, node, production, &mut expected);
+                assert_eq!(view.descendants_with(node, production).unwrap(), expected);
+                assert!(view.descendants.get().is_some());
+                assert!(view.paths.get().is_none());
+                assert!(view.by_path.get().is_none());
+                for &production in crate::syntax::grammar::productions() {
+                    let mut expected = Vec::new();
+                    walked_descendants(topology, node, production, &mut expected);
+                    saw_empty |= expected.is_empty();
+                    assert!(!expected.contains(&node));
+                    let mut sorted = expected.clone();
+                    sorted.sort_unstable_by_key(|node| node.index());
+                    distinguishes_node_id_sort |= sorted != expected;
+                    for _ in 0..2 {
+                        assert_eq!(view.descendants_with(node, production).unwrap(), expected);
+                    }
+                }
+            }
+        }
+        assert!(
+            saw_empty,
+            "empty and absent-production results are exercised"
+        );
+        assert!(
+            distinguishes_node_id_sort,
+            "postorder IDs cannot pass as preorder"
+        );
     }
 
     #[test]

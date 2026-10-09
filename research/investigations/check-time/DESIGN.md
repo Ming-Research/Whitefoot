@@ -638,8 +638,9 @@ share to `BoundStore::slots_for`.
   queries over one resolved unit. Each query keeps its own visited set.
   `SyntaxView` constructs paths on the first path request and the sorted
   reverse index only on its first lookup; path components reserve the known
-  tree depth. The immutable syntax is their only input. Descendant DFS stays
-  unchanged: finalized node IDs are postorder, while its result is preorder;
+  tree depth. The immutable syntax is their only input. Those reductions left
+  descendant DFS unchanged: finalized node IDs are postorder, while its result
+  is preorder;
   an indexed replacement needs an additional ordered subtree representation,
   beyond these local setup changes. No semantic judgments are cached.
 - **B — provenance.** A nested hash index keys the complete region-free
@@ -704,3 +705,79 @@ that scope: A4, D2, C4, T4–T6, G1–G3 and DC1–DC3 passed source inspection;
 DC4 and all executable validation, design-lint counts/readiness and performance
 remain unverified. The tests' claimed mutation failures are by inspection,
 not executed results. D1, T1, T7, T8 and V3 are not applicable to this diff.
+
+## The second profile and three further reductions
+
+Question: do direct declaration lookup, indexed syntax descendants and reusable
+coefficient storage reduce Halo's package check while preserving every verdict,
+diagnostic, selected proof and source attribution? Compare unchanged Halo source
+with base/twin/head on the 14900K; reject the performance hypothesis if head does
+not improve beyond paired base/twin variation. The supplied `sol-next.txt`
+analysis of [Halo-wf run 37906684746](https://github.com/Ming-Research/Halo-wf/actions/runs/37906684746)
+uses `wf-exp-555a926b5fbc` on the 14900K; check without perf is 7.750 s.
+These profile shares overlap and must not be added or read as predicted savings.
+
+| Profile entry | Inclusive share | Self share |
+|---|---:|---:|
+| Effect projection (`effect_paths_for_place`) | 3.81% | 3.44% |
+| Syntax descendants | 4.32% | 4.04% |
+| Affine target / candidate residual proof | 12.80% / 11.77% | — |
+| Residual formation | 3.02% | 1.04% |
+| Join transport / frontier sealing | 22.09% / 21.87% | — |
+| L0 join orchestration / `join_at_once` | 5.41% / 4.68% | — / 0.48% |
+| Closure globally / predecessor closure within `join_at_once` | 9.38% / 0.45% | — |
+| Kills / pre-kill materialization / all materialization | 7.10% / 5.63% / 7.49% | — |
+| Contributing-input clone / all flow clones / all bound-store clones | 0.42% / 1.00% / 0.57% | — |
+
+At least approximately 16.68 percentage points of transport lie outside
+`join_at`; loop relation proving has a 13.04% global share, without isolated
+frontier ancestry. Global memmove (4.26%) and bulk layout (0.93% inclusive)
+do not establish join-specific savings. Kills and materialization are adjacent
+flow work, not direct join calls. These observations do not select the deferred
+A1 join redesign.
+
+1. Effect projection, captured-parameter classification and atomic-binder
+   classification use the dense declaration accessor, which returns the record
+   formerly found by equality scan. Binding search, capture validity, missing
+   records and path conversion retain their behavior.
+2. The syntax view lazily builds strict subtree intervals and production lists
+   in preorder. Queries slice those lists without walking the subtree, exclude
+   their root and retain discovery order despite postorder NodeIds. Consumers
+   keep their calls. The additional design line is proposed; the index contains
+   written syntax only.
+3. Pair formation borrows its premises and reuses two coefficient buffers.
+   Candidate residuals and their at-most-two tightenings reuse query-local
+   buffers. Interval requests read the already canonical coefficient order.
+   Checked operations, limits, candidate/tightening order and selected parents
+   remain in their former sequence; no proof-answer cache is added. Buffer
+   growth, proof-parent vectors and unchanged L0 preparation can still allocate.
+   The certificate's initial owned residual remains to preserve its diagnostic
+   formation order; automatic-premise collection and other owning arithmetic
+   consumers remain outside this change.
+
+Unit tests retain the old declaration scan for every role and absent identity;
+compare cold and warm descendants with an independent child walk over nested,
+sibling, empty and repeated-production syntax; and compare affine arithmetic,
+candidate traces, source choices and selected parents with the allocating paths.
+Wrong dense lookup or role classification, root inclusion, NodeId sorting,
+stale scratch after a failed candidate, regrouped MIN cancellation, dropped
+formation limits, reordered tightenings and later-witness selection each have
+an assertion that distinguishes them. Existing proof-family fixtures now also
+compare the old traversal, including DIRECT and the final L0 family. These
+failure conditions are established by inspection, not executed mutations.
+
+Validation and timing pending. No build, test, clippy, gate or performance run
+was executed locally; the added cases and formatting must be checked in CI on
+the work branch before this diff can claim validation. No specification or
+conformance verdict changes are proposed.
+
+An independent read-only completion review (inherited model; exact identifier
+unavailable) covered the complete working diff against `df58869aec` and its
+direct consumers, applicable A/D/C/T/V checks and G1–G3/DC1–DC4. It found two
+issues, both fixed and re-inspected: the declaration test now calls the actual
+checker methods, and the copied affine reference uses the correct work-counter
+module path. No findings remain within that source-inspection scope; executable
+preservation and DC4's validation evidence remain unverified. A subsequent local
+allocation repair uses `reserve_exact` in the shared merge so existing owning
+callers retain the former initial capacity request; its arithmetic and limits
+are unchanged. This repair was inspected by the implementing agent.

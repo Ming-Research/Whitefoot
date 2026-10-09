@@ -2,6 +2,8 @@ Decision: Resolution, checking, module-graph reading and the driver consume shar
 
 Decision: A borrowed syntax view constructs node paths and their reverse lookup only on demand, and declaration-read queries share immutable adjacency and module roots within one resolved unit while retaining separate traversal state, because [Halo's profile and source inspection](../../research/investigations/check-time/DESIGN.md#halos-profile-and-the-first-cost-reductions) identify repeated setup for consumers that do not use paths or change the resolved input, instead of eager path construction and rebuilding the same declaration graph for each module. These indices retain syntax and resolution data only; every semantic judgment and the resulting paths, read sets and source attribution remain unchanged.
 
+Decision: A borrowed syntax view also builds, on its first descendant query, a preorder index of subtree intervals and per-production node lists, because [the second Halo profile](../../research/investigations/check-time/DESIGN.md#the-second-profile-and-three-further-reductions) shows repeated full descendant walks, instead of walking the subtree on every query. The index describes written form only.
+
 Rejected:
 - A separately allocated normalized syntax tree: rejected because the existing owned syntax already supplies identity and source locations, while another tree would require identity translation and duplicate storage without a current consumer.
 - Moving semantic judgments into the syntax views: rejected because grammar alternatives describe written form and cannot decide rules that depend on resolved declarations, checked types or proof facts.
