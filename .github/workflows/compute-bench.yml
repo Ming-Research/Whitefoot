@@ -8,15 +8,18 @@
 # unaligned and an aligned compiler, timed on a hosted runner or the owner's
 # i9-14900K. Remove that job with the investigation's harness when the
 # alignment decision no longer needs re-measuring.
+# With `experiment: par-suite` it serves the generated --par baseline suite
+# and reuses the formal paired instrument. Its H1 cells are observations;
+# incomplete data, checksum errors and a failed formal null control stop it.
 #
 # research-boundary: manual-only
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
 #
-# FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
+# SCOREBOARD FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
 # nothing else. The manual `compare` step's exit status is the reducer's, and the
 # reducer fails only on a missing or malformed row. No ratio, no spread, no
-# ordering and no elapsed time selects a pass anywhere in this workflow.
+# ordering and no elapsed time selects a pass in the scoreboard job.
 # Performance-regression verdicts belong to compute-regression.yml, outside
 # deterministic `make check`. `timeout-minutes` bounds a stuck runner and
 # decides no source-language result.
@@ -34,17 +37,17 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, or the code-placement experiment
+        description: The compute scoreboard, code placement, or the par-suite baseline
         type: choice
-        options: [scoreboard, placement]
+        options: [scoreboard, placement, par-suite]
         default: scoreboard
       placement_runner:
-        description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
+        description: Where placement or par-suite runs, GitHub or the owner's i9-14900K runner
         type: choice
         options: [github, 14900k]
         default: github
       placement_rounds:
-        description: Placement experiment rounds over every image, kernel and width
+        description: Placement or par-suite rounds over every image and width (par-suite requires at least 3)
         type: string
         default: "10"
       placement_unaligned:
@@ -97,7 +100,7 @@ defaults:
 # per group, so a third dispatch replaces the waiting one.
 concurrency:
   group: compute-bench-${{ github.ref }}-${{ inputs.experiment }}-${{ inputs.placement_runner }}${{ inputs.experiment == 'placement' && inputs.placement_runner == 'github' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: ${{ inputs.experiment != 'placement' }}
+  cancel-in-progress: ${{ inputs.experiment == 'scoreboard' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -107,7 +110,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -243,6 +246,71 @@ jobs:
             ${{ runner.temp }}/results/raw.tsv
             ${{ runner.temp }}/results/table.txt
             ${{ runner.temp }}/results/logs/
+
+  par-suite:
+    name: par-suite (${{ inputs.placement_runner }})
+    if: inputs.experiment == 'par-suite'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the host tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in /usr/bin/clang cargo make python3 git awk sed timeout lscpu; do
+            command -v "$tool"
+          done
+          lscpu
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-${{ runner.arch }}-par-suite-${{ inputs.placement_runner }}-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-par-suite-${{ inputs.placement_runner }}-
+      - name: Build the compiler and qualify the instrument
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          make -C research/experiments/par-suite BUILD="$RUNNER_TEMP/par-instrument" "$RUNNER_TEMP/par-instrument/measure"
+          python3 -B research/experiments/par-suite/check.py "$RUNNER_TEMP/par-instrument/measure"
+      - name: Small visible pilot
+        run: |
+          python3 -B research/experiments/par-suite/run.py \
+            --compiler "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
+            --build-dir "$RUNNER_TEMP/par-pilot-build" --results "$RUNNER_TEMP/par-pilot" \
+            --phase pilot --rounds 3 --workers 1 2 \
+            --startup-ns 0 --allowance-source uncalibrated-zero
+      - name: Measure the frozen baseline grid for a verdict
+        env:
+          ROUNDS: ${{ inputs.placement_rounds }}
+          PLACEMENT_RUNNER: ${{ inputs.placement_runner }}
+        run: |
+          widths=(1 2 4 8 16)
+          if [ "$PLACEMENT_RUNNER" = 14900k ]; then widths+=(32); fi
+          python3 -B research/experiments/par-suite/run.py \
+            --compiler "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
+            --build-dir "$RUNNER_TEMP/par-build" --results "$RUNNER_TEMP/par-results" \
+            --phase verdict --rounds "$ROUNDS" --workers "${widths[@]}" default \
+            --startup-ns 0 --allowance-source uncalibrated-zero
+          cat "$RUNNER_TEMP/par-results/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-suite-${{ inputs.placement_runner }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/par-results/
+            ${{ runner.temp }}/par-pilot/
+            ${{ runner.temp }}/par-build/generated/
+            ${{ runner.temp }}/par-build/images/
+            ${{ runner.temp }}/par-build/kernels-seq/
+            ${{ runner.temp }}/par-build/kernels-par/
 
   placement:
     name: placement (${{ inputs.placement_runner }})
