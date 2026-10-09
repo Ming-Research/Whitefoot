@@ -4,7 +4,8 @@ struct Zeroes {
 }
 
 fn build() -> result: Zeroes pure {
-  return Zeroes(cells: [1_u64]);
+  let cells = array_filled::<u64, 1>(value: 1_u64);
+  return Zeroes(cells: cells);
 }
 
 fn main() -> status: std::process::ExitStatus pure {

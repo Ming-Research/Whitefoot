@@ -2267,12 +2267,16 @@ fn range_facts_discharge_every_integer_domain_family() {
     for (ty, bound, expression) in [
         ("u64", "0_u64 < xs^[k]", "9_u64 / x"),
         ("u64", "0_u64 < xs^[k]", "9_u64 % x"),
+        ("u64", "0_u64 < xs^[k]", "x / x"),
+        ("u64", "0_u64 < xs^[k]", "x % x"),
         ("i64", "-9223372036854775808_i64 < xs^[k]", "ineg(x)"),
         ("i64", "-9223372036854775808_i64 < xs^[k]", "iabs(x)"),
         ("i64", "0_i64 < xs^[k]", "-9223372036854775808_i64 / x"),
         ("i64", "0_i64 < xs^[k]", "-9223372036854775808_i64 % x"),
         ("u32", "xs^[k] < 64_u32", "ishl(1_u64, x)"),
         ("u32", "xs^[k] < 64_u32", "ishr(1_u64, x)"),
+        ("u32", "xs^[k] < 32_u32", "ishl(x, x)"),
+        ("u32", "xs^[k] < 32_u32", "ishr(x, x)"),
         ("u64", "xs^[k] < 256_u64", "cvt::<u64, u8>(x)"),
     ] {
         let source = field_range_program(&format!(
@@ -2287,6 +2291,10 @@ fn range_integer_domains_refuse_their_boundary_twins() {
     for (ty, bound, expression, rule) in [
         ("u64", "xs^[k] == 0_u64", "9_u64 / x", SemanticRule::Op2),
         ("u64", "xs^[k] == 0_u64", "9_u64 % x", SemanticRule::Op2),
+        ("u64", "xs^[k] == 0_u64", "x / x", SemanticRule::Op2),
+        ("u64", "xs^[k] == 0_u64", "x % x", SemanticRule::Op2),
+        ("u32", "xs^[k] == 32_u32", "ishl(x, x)", SemanticRule::Op2),
+        ("u32", "xs^[k] == 32_u32", "ishr(x, x)", SemanticRule::Op2),
         (
             "i64",
             "xs^[k] == -9223372036854775808_i64",
@@ -2424,9 +2432,11 @@ fn deferred_arithmetic_capacity_is_never_an_invariant_rejection() {
 
 #[test]
 fn an_imprecise_walk_cannot_reject_a_deferred_requirement() {
-    let source = String::from_utf8(nest(10)).unwrap().replace(
+    let depth = 10;
+    let indent = "  ".repeat(depth + 1);
+    let source = String::from_utf8(nest(depth)).unwrap().replace(
         "let got = positive(cells: &cells.inner[0_u64..4_u64]);",
-        "let x = cells.inner[0_u64];\nlet got = need(value: x);",
+        &format!("let x = cells.inner[0_u64];\n{indent}let got = need(value: x);"),
     );
     let source = format!(
         "fn need(value: u64) -> result: u64 pure contract {{\n  requires value > 0_u64;\n}} {{\n  return value;\n}}\n\n{source}"

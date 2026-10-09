@@ -2386,6 +2386,7 @@ The complete function declarations are the following records, each written as th
 fn box_new<T>(value: T) -> result: Box<T> pure;
 fn array_filled<T: copy, const n: u64>(value: T) -> result: Array<T, n> pure contract {
   ensures result.len == n;
+  ensures forall filled(k in 0_u64..result.len): result[k] == value;
 };
 fn slots_new<T, const n: u64>() -> result: Slots<T, n> pure contract {
   ensures result.len == 0_u64;
@@ -2932,7 +2933,7 @@ public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter
 Its state is the L0 relation state, [ENT-2]'s finite signed opaque goals, [ENT-6]'s exact current-value images and specification-fixed automatic affine images, and the finite affine theorems admitted by [INV-1] and [PRF-1].
 Complete-state obligation discharge [ENT-6], ordinary-call requirement discharge [FN-8], verified normal-return proof [FN-9], loop induction and program-point invariant checking [INV-1], and local certificate checking [PRF-1] are post-resolution source-acceptance judgments under [DIAG-1].
 They are identical in facts-on and facts-off compilation and are not an optimizer-fact family.
-[RANGE-2] fixes which of their obligations this derivation leaves undischarged are judged next by the range judgment.
+Which of their obligations this derivation leaves undischarged are judged next by the range judgment is fixed by [RANGE-2].
 
 The fact sources are exactly the executed control-flow edges, independently proved function requirements at callee entry, declaration and type properties fixed by this specification, constants, compiler-owned structural consequences enumerated by [ENT-3], verified earlier-SCC normal-result publications [FN-9], and machine-proved header or local invariant targets.
 A runtime-origin value is an ordinary typed term in those judgments; its origin is neither a fact source nor a reason to discard an otherwise derived fact [SCOPE-2].

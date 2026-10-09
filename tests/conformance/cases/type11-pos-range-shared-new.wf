@@ -4,7 +4,7 @@ struct Zeroes {
 }
 
 fn publish(z: Zeroes) -> result: Shared<Zeroes> pure {
-  return shared_new::<Zeroes>(value: move z);
+  return shared_new::<Zeroes>(value: z);
 }
 
 fn main() -> status: std::process::ExitStatus pure {

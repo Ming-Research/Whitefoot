@@ -2443,9 +2443,19 @@ impl<'program> Walker<'program> {
                     }
                     _ => None,
                 };
-                // Never prove the domain using a fresh unknown already bounded
-                // by the result type. Only the mathematical result can pay it.
-                let goal = exact.clone().map_or(Value::Unknown, Value::Int);
+                // A nonlinear product is representable but has no affine
+                // relation to its operands. Its mathematical value has no
+                // result-type bounds until OP-2 is discharged: a typed opaque
+                // value here would prove its own overflow obligation.
+                let goal = match (exact.as_ref(), operation, values.as_slice()) {
+                    (Some(value), _, _) => Value::Int(value.clone()),
+                    (None, CheckedIntegerOperation::MultiplyExact, [left, right])
+                        if !left.is_constant() && !right.is_constant() =>
+                    {
+                        Value::Int(self.world.opaque(None))
+                    }
+                    _ => Value::Unknown,
+                };
                 self.ordinary_domain(
                     state,
                     carrier,
