@@ -13,7 +13,7 @@ Decision: cancel_fire declares waits and performs one held shared-state transiti
 Rejected:
 - Nodrop sources and watches closed explicitly: rejected because proof's review of v0.111 found that this exposes only two forgotten-fire mistakes at compile time, while it blocks storing sources in droppable shared state; explicit consumption does not prove that a source was fired.
 - Host-specific non-empty release for cancellation handles (option A): rejected because their state is ordinary shared runtime memory, whose retain can be released by a private shared field without a release rule selected by host origin.
-- Making only sources droppable (option A″): rejected because a watch retains the same ordinary shared state and has no separate must-close resource obligation to justify nodrop.
+- Making only sources droppable: rejected because a watch retains the same ordinary shared state and has no separate must-close resource obligation to justify nodrop.
 - S2, one bound value replacing the deadline: rejected because a copy watch naming runtime state needs another lifetime rule when the state is released while copies remain, and it hides the explicit per-wait watch chosen by the owner.
 - S3, a watch set on the context: rejected because ambient cancellation hides the capability from the wait's parameters, needs an escape for a must-finish wait and needs another inheritance rule for spawned contexts.
 - S4, a watch bound into a resource handle: rejected because sleeps have no such handle and mixed cancellable and must-finish use of one resource needs two bindings.
