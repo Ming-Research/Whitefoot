@@ -1,0 +1,32 @@
+enum HostOutcome {
+  Stop();
+}
+
+interface Host<E> {
+  fn call(env: &E, vm: &u64, stack: &Box<Slots<u64>>) -> outcome: HostOutcome writes(env), writes(vm), writes(stack) contract {
+    ensures stack^.inner.len == entry(stack)^.inner.len;
+  };
+}
+
+fn stop(actual_env: &u64, actual_vm: &u64, actual_stack: &Box<Slots<u64>>) -> stopped: HostOutcome pure {
+  return HostOutcome::Stop();
+}
+
+binding StopHost : Host<u64> {
+  call = stop;
+}
+
+fn observe<interface Host<E>>(env: &E, vm: &u64, stack: &Box<Slots<u64>>) -> size: u64 writes(env), writes(vm), writes(stack) contract {
+  ensures size == entry(stack)^.inner.len;
+} {
+  let outcome = Host<E>::call(env: env, vm: vm, stack: stack);
+  return stack^.inner.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let state = 0_u64;
+  let machine = 0_u64;
+  let values = box_slots_new::<u64>(capacity: 4_u64);
+  let observed = observe::<StopHost>(env: &state, vm: &machine, stack: &values);
+  return std::process::exit_status(code: 0_u8);
+}
