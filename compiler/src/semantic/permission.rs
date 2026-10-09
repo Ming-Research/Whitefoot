@@ -1154,6 +1154,7 @@ impl<'check> Program<'check> {
     /// here.
     fn classify(&self, places: &PlaceMap, statement: &'check CheckedStatement) -> Classified {
         let conditional = conditional_call(statement);
+        let mut storage_effects = CallStorageEffects::default();
         let (node, binding, call, label, footprint) = match statement {
             // A source proof is checked before permission and erased before
             // lowering: no runtime evaluation, effect, exit edge, or
@@ -1171,20 +1172,24 @@ impl<'check> Program<'check> {
                 binding,
                 value,
             } => {
-                let mut footprint = self.value_footprint(places, value, node_path);
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
                 // "a `let`'s defined binding is a write path" [PAR-1]. This
                 // is what makes reading what an earlier statement defines a
                 // footprint conflict rather than a rule of its own.
-                footprint.writes.push(Access {
-                    place: ResolvedPlace::binding(*binding),
-                    argument: node_path.clone(),
+                let footprint = footprint.map(|mut footprint| {
+                    footprint.writes.push(Access {
+                        place: ResolvedPlace::binding(*binding),
+                        argument: node_path.clone(),
+                    });
+                    footprint
                 });
                 let projection = call_projection(value);
                 let label = projection
                     .as_ref()
                     .map_or("a let statement", |_| "a call statement");
                 let call = projection.map(|projection| projection.call.clone());
-                (Some(node_path), Some(*binding), call, label, Ok(footprint))
+                (Some(node_path), Some(*binding), call, label, footprint)
             }
             CheckedStatement::Set {
                 node_path,
@@ -1192,15 +1197,13 @@ impl<'check> Program<'check> {
                 value,
                 ..
             } => {
-                let mut footprint = self.value_footprint(places, value, node_path);
-                set_target_place(places, target, node_path, &mut footprint);
-                (
-                    Some(node_path),
-                    None,
-                    None,
-                    "a set statement",
-                    Ok(footprint),
-                )
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
+                let footprint = footprint.map(|mut footprint| {
+                    set_target_place(places, target, node_path, &mut footprint);
+                    footprint
+                });
+                (Some(node_path), None, None, "a set statement", footprint)
             }
             // Exit-bearing forms.
             CheckedStatement::PropagateLet { node_path, .. } => (
@@ -1240,38 +1243,26 @@ impl<'check> Program<'check> {
                 arms,
                 ..
             } => {
-                let mut footprint = self.value_footprint(places, value, call);
-                let mut result = Ok(());
-                for arm in arms {
-                    for child in &arm.body {
-                        match self.classify(places, child).footprint {
-                            Ok(child) => footprint.absorb(&child),
-                            Err(refusal) => result = Err(refusal),
-                        }
-                    }
-                }
+                let (footprint, effects) =
+                    self.member_effects(places, value, call, arms.iter().flat_map(|arm| &arm.body));
+                storage_effects = effects;
                 (
                     Some(call),
                     None,
                     Some(call.clone()),
                     "a call-rooted match",
-                    result.map(|()| footprint),
+                    footprint,
                 )
             }
             CheckedStatement::Match { .. } if conditional.is_some() => {
-                let conditional = conditional.expect("matched conditional call");
-                let footprint =
-                    self.classify(places, conditional.statement)
-                        .footprint
-                        .map(|child| {
-                            let mut footprint = self.value_footprint(
-                                places,
-                                conditional.scrutinee,
-                                conditional.site,
-                            );
-                            footprint.absorb(&child);
-                            footprint
-                        });
+                let conditional = conditional.as_ref().expect("matched conditional call");
+                let (footprint, effects) = self.member_effects(
+                    places,
+                    conditional.scrutinee,
+                    conditional.site,
+                    [conditional.statement],
+                );
+                storage_effects = effects;
                 (
                     Some(conditional.site),
                     None,
@@ -1365,13 +1356,14 @@ impl<'check> Program<'check> {
             | CheckedStatement::DropExpression {
                 node_path, value, ..
             } => {
-                let footprint = self.value_footprint(places, value, node_path);
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
                 let projection = call_projection(value);
                 let label = projection
                     .as_ref()
                     .map_or("an expression statement", |_| "a call statement");
                 let call = projection.map(|projection| projection.call.clone());
-                (Some(node_path), None, call, label, Ok(footprint))
+                (Some(node_path), None, call, label, footprint)
             }
         };
         let callee_name = statement_value(statement)
@@ -1382,12 +1374,6 @@ impl<'check> Program<'check> {
                     .map(|signature| signature.name.clone())
             })
             .unwrap_or_else(|| label.to_owned());
-        let storage_effects = statement_value(statement)
-            .and_then(|value| {
-                call_projection(value)
-                    .map(|call| self.call_storage_effects(places, value, call.call))
-            })
-            .unwrap_or_default();
         Classified {
             site: node.cloned().map(|statement| PermissionSite {
                 statement,
@@ -1398,6 +1384,37 @@ impl<'check> Program<'check> {
             }),
             footprint,
         }
+    }
+
+    /// Collect both boundaries from the same value and absorbed statements.
+    /// In particular, a match member includes its scrutinee and every acting
+    /// arm, even though only its root or guarded call can be handed out.
+    fn member_effects(
+        &self,
+        places: &PlaceMap,
+        value: &CheckedExpression,
+        node: &NodePath,
+        children: impl IntoIterator<Item = &'check CheckedStatement>,
+    ) -> (Result<Footprint, Refusal>, CallStorageEffects) {
+        let mut footprint = self.value_footprint(places, value, node);
+        let mut storage_effects = self.call_storage_effects(places, value, node);
+        let mut result = Ok(());
+        for statement in children {
+            let child = self.classify(places, statement);
+            match child.footprint {
+                Ok(child) => footprint.absorb(&child),
+                Err(refusal) => result = Err(refusal),
+            }
+            if let Some(site) = child.site {
+                storage_effects
+                    .borrowed
+                    .extend(site.storage_effects.borrowed);
+                storage_effects
+                    .released
+                    .extend(site.storage_effects.released);
+            }
+        }
+        (result.map(|()| footprint), storage_effects)
     }
 
     /// Resolve the call's lifetime boundary while the checker's reference

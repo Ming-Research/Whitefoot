@@ -2030,7 +2030,7 @@ fn proved_disjoint_owning_ranges_keep_recursive_overlap_and_lane_emission() {
             pair.first
                 .storage_effects
                 .conflict(
-                    &crate::semantic::places::UnprovedSeparations,
+                    &crate::semantic::UnprovedSeparations,
                     &pair.second.storage_effects,
                 )
                 .is_some()
@@ -2217,6 +2217,426 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
 
+const STORAGE_MATCH_CHECK: &str = r#"enum Arm {
+  Active();
+  Inactive();
+}
+
+fn check(a: &Bool) -> result: Arm pure {
+  return Active();
+}
+"#;
+
+#[test]
+fn call_rooted_match_arm_borrow_preserves_owned_call_entry_order() {
+    let source = format!(
+        r#"{STORAGE_MATCH_CHECK}
+fn ignore(part: &u64) -> result: unit pure {{
+  return unit;
+}}
+
+fn consume(value: Box<u64>) -> result: unit pure {{
+  return unit;
+}}
+
+fn pair(x: Bool) -> result: unit pure {{
+  let p = box_new::<u64>(value: 0_u64);
+  match check(a: &x) {{
+    Active() => {{
+      ignore(part: &p.inner);
+    }}
+    Inactive() => {{
+    }}
+  }}
+  consume(value: move p);
+  return unit;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    for source in [
+        source.clone(),
+        source.replace(
+            "Active() => {\n      ignore(part: &p.inner);\n    }\n    Inactive() => {\n    }",
+            "Active() => {\n    }\n    Inactive() => {\n      ignore(part: &p.inner);\n    }",
+        ),
+    ] {
+        assert_call_rooted_match_storage_boundary(
+            source.as_bytes(),
+            "check",
+            "consume",
+            Some("s2 releases storage at move p overlapping storage at &p.inner borrowed by s1"),
+        );
+    }
+}
+
+#[test]
+fn call_rooted_match_arm_release_preserves_borrowed_call_entry_order() {
+    let source = format!(
+        r#"{STORAGE_MATCH_CHECK}
+fn ignore(part: &Box<u64>) -> result: unit pure {{
+  return unit;
+}}
+
+fn replace(cell: &Box<u64>) -> result: unit writes(cell) {{
+  let fresh = box_new::<u64>(value: 1_u64);
+  set cell^ = move fresh;
+  return unit;
+}}
+
+fn pair(x: Bool) -> result: unit pure {{
+  let p = box_new::<u64>(value: 0_u64);
+  match check(a: &x) {{
+    Active() => {{
+      replace(cell: &p);
+    }}
+    Inactive() => {{
+    }}
+  }}
+  ignore(part: &p);
+  return unit;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    assert_call_rooted_match_storage_boundary(
+        source.as_bytes(),
+        "check",
+        "ignore",
+        Some("s1 releases storage at &p overlapping storage at &p borrowed by s2"),
+    );
+    // A match can only finish an actualized group. Put it last as well to
+    // observe the storage cut in the emitted actualization ledger.
+    let match_last = source
+        .replace("  match check", "  ignore(part: &p);\n  match check")
+        .replace("  }\n  ignore(part: &p);", "  }");
+    assert_call_rooted_match_storage_boundary(
+        match_last.as_bytes(),
+        "ignore",
+        "check",
+        Some("s2 releases storage at &p overlapping storage at &p borrowed by s1"),
+    );
+}
+
+#[test]
+fn call_rooted_match_arm_borrow_of_proved_disjoint_owning_range_still_overlaps() {
+    // Bind the ranges before the pair so this isolates propagation of the
+    // arm's storage effects and consumption of the pair's retained proof.
+    let source = IGNORED_OWNING_RANGE
+        .replace(
+            "fn pair(values: &[Box<u64>], middle: u64)",
+            "fn pair(values: &[Box<u64>], middle: u64, x: Bool)",
+        )
+        .replace(
+            "  replace(values: &values^[0_u64..middle]);\n  ignore(values: &values^[middle..count]);",
+            "  let left = &values^[0_u64..middle];\n  let right = &values^[middle..count];\n  replace(values: left);\n  match check(a: &x) {\n    Active() => {\n      ignore(values: right);\n    }\n    Inactive() => {\n    }\n  }",
+        );
+    let source = format!("{STORAGE_MATCH_CHECK}\n{source}");
+    assert_call_rooted_match_storage_boundary(source.as_bytes(), "replace", "check", None);
+    let overlapping = source.replace(
+        "let right = &values^[middle..count]",
+        "let right = &values^[0_u64..count]",
+    );
+    assert_call_rooted_match_storage_boundary(
+        overlapping.as_bytes(),
+        "replace",
+        "check",
+        Some("s1 releases storage at left overlapping storage at right borrowed by s2"),
+    );
+}
+
+fn assert_call_rooted_match_storage_boundary(
+    source: &[u8],
+    first: &str,
+    second: &str,
+    conflict_suffix: Option<&str>,
+) {
+    with_checked(source, |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("pair")
+            .expect("pair permissions");
+        let pair = permissions
+            .pairs
+            .iter()
+            .find(|pair| pair.first.callee_name == first && pair.second.callee_name == second)
+            .expect("call-rooted match and its adjacent call");
+        assert!(pair.first.call.is_some() && pair.second.call.is_some());
+        assert!(
+            pair.verdict.is_eligible(),
+            "source permission stays intact: {pair:?}"
+        );
+        assert!(
+            pair.first
+                .storage_effects
+                .conflict(
+                    &crate::semantic::UnprovedSeparations,
+                    &pair.second.storage_effects,
+                )
+                .is_some(),
+            "arm effects must survive even when proof separates them: {pair:?}"
+        );
+        let boundary = permissions
+            .storage_pairs
+            .iter()
+            .find(|boundary| {
+                boundary.first == pair.first.statement && boundary.second == pair.second.statement
+            })
+            .expect("the match member's pair-local storage boundary");
+        assert_eq!(
+            boundary.conflict.is_some(),
+            conflict_suffix.is_some(),
+            "{boundary:?}"
+        );
+        if let Some(suffix) = conflict_suffix {
+            assert!(
+                boundary.ledger.starts_with("PAR actualization  test.wf:"),
+                "{}",
+                boundary.ledger
+            );
+            assert!(
+                boundary
+                    .ledger
+                    .contains(&format!("pair({first}, {second}) through line ")),
+                "{}",
+                boundary.ledger
+            );
+            assert!(
+                boundary
+                    .ledger
+                    .ends_with(&format!("narrowed: release/borrow conflict; {suffix}")),
+                "{}",
+                boundary.ledger
+            );
+        } else {
+            assert!(
+                checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "pair")
+                    .expect("checked pair")
+                    .entailment
+                    .permission_separations
+                    .iter()
+                    .any(|proof| {
+                        proof.query.first == pair.first.statement
+                            && proof.query.second == pair.second.statement
+                            && proof.discharged
+                    }),
+                "the match member needs its own retained separation proof"
+            );
+        }
+        let ledger = boundary.ledger.clone();
+        let program =
+            lower_checked(checked, OverlapLowering::On).expect("match storage boundary lowers");
+        let pair = function(&program, "pair");
+        let calls = calls_to(&program, pair, &[first, second]);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            pair.overlaps()
+                .iter()
+                .any(|group| calls.iter().all(|call| group.members.contains(call))),
+            conflict_suffix.is_none(),
+            "{:?}",
+            pair.overlaps()
+        );
+        let lines = program
+            .actualization_ledger()
+            .iter()
+            .filter(|line| line.contains("release/borrow conflict"))
+            .collect::<Vec<_>>();
+        // A match dispatch ends its IR block; a following call cannot join
+        // that group even without a storage conflict. Only a match-last pair
+        // can be narrowed by this boundary during actualization.
+        let emitted = conflict_suffix.is_some() && second == "check";
+        assert_eq!(lines.len(), usize::from(emitted), "{lines:?}");
+        if emitted {
+            assert_eq!(lines[0], &ledger);
+        }
+    });
+}
+
+#[test]
+fn conditional_borrow_preserves_owned_call_entry_order() {
+    let source = format!(
+        r#"fn ignore(part: &u64) -> result: unit pure {{
+  return unit;
+}}
+
+fn consume(value: Box<u64>) -> result: unit pure {{
+  return unit;
+}}
+
+fn pair(go: Bool) -> result: unit pure {{
+  let p = box_new::<u64>(value: 0_u64);
+  if go {{
+    ignore(part: &p.inner);
+  }}
+  consume(value: move p);
+  return unit;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    assert_conditional_storage_boundary(
+        source.as_bytes(),
+        "consume",
+        Some("s2 releases storage at move p overlapping storage at &p.inner borrowed by s1"),
+    );
+}
+
+#[test]
+fn conditional_release_preserves_borrowed_call_entry_order() {
+    let source = format!(
+        r#"fn ignore(part: &Box<u64>) -> result: unit pure {{
+  return unit;
+}}
+
+fn replace(cell: &Box<u64>) -> result: unit writes(cell) {{
+  let fresh = box_new::<u64>(value: 1_u64);
+  set cell^ = move fresh;
+  return unit;
+}}
+
+fn pair(go: Bool) -> result: unit pure {{
+  let p = box_new::<u64>(value: 0_u64);
+  if go {{
+    replace(cell: &p);
+  }}
+  ignore(part: &p);
+  return unit;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    assert_conditional_storage_boundary(
+        source.as_bytes(),
+        "ignore",
+        Some("s1 releases storage at &p overlapping storage at &p borrowed by s2"),
+    );
+}
+
+#[test]
+fn conditional_borrow_of_proved_disjoint_owning_range_still_overlaps() {
+    // Bind the ranges before the guard: the conditional-call shape admits
+    // forwarding a reference, but not speculative range formation in its arm.
+    let source = IGNORED_OWNING_RANGE
+        .replace(
+            "fn pair(values: &[Box<u64>], middle: u64)",
+            "fn pair(values: &[Box<u64>], middle: u64, go: Bool)",
+        )
+        .replace(
+            "  replace(values: &values^[0_u64..middle]);\n  ignore(values: &values^[middle..count]);",
+            "  let left = &values^[0_u64..middle];\n  let right = &values^[middle..count];\n  if go {\n    ignore(values: right);\n  }\n  replace(values: left);",
+        );
+    assert_conditional_storage_boundary(source.as_bytes(), "replace", None);
+}
+
+fn assert_conditional_storage_boundary(source: &[u8], next: &str, conflict_suffix: Option<&str>) {
+    with_checked(source, |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("pair")
+            .expect("pair permissions");
+        let pair = permissions
+            .pairs
+            .iter()
+            .find(|pair| {
+                pair.first.callee_name == "a conditional call" && pair.second.callee_name == next
+            })
+            .expect("conditional call followed by an ordinary call");
+        assert!(pair.first.call.is_some());
+        assert!(
+            pair.verdict.is_eligible(),
+            "source permission stays intact: {pair:?}"
+        );
+        assert!(
+            pair.first
+                .storage_effects
+                .conflict(
+                    &crate::semantic::UnprovedSeparations,
+                    &pair.second.storage_effects
+                )
+                .is_some(),
+            "the guarded call must retain its storage effects even when proof separates them: {pair:?}"
+        );
+        let boundary = permissions
+            .storage_pairs
+            .iter()
+            .find(|boundary| {
+                boundary.first == pair.first.statement && boundary.second == pair.second.statement
+            })
+            .expect("conditional call's pair-local storage boundary");
+        assert_eq!(
+            boundary.conflict.is_some(),
+            conflict_suffix.is_some(),
+            "{boundary:?}"
+        );
+        if conflict_suffix.is_none() {
+            assert!(
+                checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "pair")
+                    .expect("checked pair")
+                    .entailment
+                    .permission_separations
+                    .iter()
+                    .any(|proof| {
+                        proof.query.first == pair.first.statement
+                            && proof.query.second == pair.second.statement
+                            && proof.discharged
+                    }),
+                "the guard's pair needs its own retained separation proof"
+            );
+        }
+        let program = lower_checked(checked, OverlapLowering::On)
+            .expect("conditional storage boundary lowers");
+        let guard = program
+            .functions()
+            .iter()
+            .find(|function| function.name().starts_with("_par_cond_"))
+            .expect("the permitted conditional member is outlined");
+        let pair = function(&program, "pair");
+        let calls = calls_to(&program, pair, &[guard.name(), next]);
+        assert_eq!(calls.len(), 2, "guard and following call");
+        assert_eq!(
+            pair.overlaps()
+                .iter()
+                .any(|group| calls.iter().all(|call| group.members.contains(call))),
+            conflict_suffix.is_none(),
+            "{:?}",
+            pair.overlaps()
+        );
+        let lines = program
+            .actualization_ledger()
+            .iter()
+            .filter(|line| line.contains("release/borrow conflict"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines.len(),
+            usize::from(conflict_suffix.is_some()),
+            "{lines:?}"
+        );
+        if let Some(suffix) = conflict_suffix {
+            let line = lines[0];
+            assert!(line.starts_with("PAR actualization  test.wf:"), "{line}");
+            assert!(
+                line.contains(&format!("pair(a conditional call, {next}) through line ")),
+                "{line}"
+            );
+            assert!(
+                line.ends_with(&format!("narrowed: release/borrow conflict; {suffix}")),
+                "{line}"
+            );
+        }
+    });
+}
+
 #[test]
 fn ignored_range_borrows_plan_storage_separations_and_report_actual_cuts() {
     for (endpoints, reverse) in [
@@ -2377,7 +2797,7 @@ fn paged_cell_growth_preserves_formation_and_borrow_entry_order() {
                 pair.first
                     .storage_effects
                     .conflict(
-                        &crate::semantic::places::UnprovedSeparations,
+                        &crate::semantic::UnprovedSeparations,
                         &pair.second.storage_effects
                     )
                     .is_some(),
@@ -2476,7 +2896,7 @@ fn main() -> status: std::process::ExitStatus pure {
             pair.first
                 .storage_effects
                 .conflict(
-                    &crate::semantic::places::UnprovedSeparations,
+                    &crate::semantic::UnprovedSeparations,
                     &pair.second.storage_effects
                 )
                 .is_some(),
