@@ -280,6 +280,14 @@ impl<'program> IrBuilder<'program> {
         let Some(permission) = self.permitted_loop(node_path) else {
             return Ok(false);
         };
+        // Phase 2 replaces this refusal with private-root call-form lowering.
+        if permission
+            .indexed
+            .iter()
+            .any(|family| !family.calls.is_empty())
+        {
+            return Ok(false);
+        }
         let Some(actualization) = permission.actualization else {
             return Ok(false);
         };

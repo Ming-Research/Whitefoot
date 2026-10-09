@@ -395,7 +395,7 @@ pub(crate) fn analyze_permission(
     signatures: &[PermissionSignature],
     selected: &[bool],
 ) -> PermissionMetadata {
-    let program = Program { signatures };
+    let program = Program::new(functions, signatures);
     PermissionMetadata {
         functions: functions
             .iter()
@@ -419,11 +419,12 @@ pub(crate) fn plan_permission_separations(
     function: &CheckedFunction,
     signatures: &[PermissionSignature],
 ) -> Vec<PermissionSeparationQuery> {
-    let program = Program { signatures };
+    let program = Program::new(&[], signatures);
     program.plan_function_separations(function)
 }
 
 pub(super) struct Program<'check> {
+    pub(super) indexed_summaries: super::loop_permission::IndexedSummaries<'check>,
     signatures: &'check [PermissionSignature],
 }
 
@@ -579,6 +580,16 @@ enum Refusal {
 }
 
 impl<'check> Program<'check> {
+    pub(super) fn new(
+        functions: &'check [CheckedFunction],
+        signatures: &'check [PermissionSignature],
+    ) -> Self {
+        Self {
+            signatures,
+            indexed_summaries: super::loop_permission::IndexedSummaries::new(functions),
+        }
+    }
+
     fn plan_function_separations(
         &self,
         function: &'check CheckedFunction,
@@ -2166,7 +2177,7 @@ fn push_reference_holder_read(
 /// The match is exhaustive on purpose. A future expression form that reads
 /// caller storage must be classified here rather than silently contributing
 /// nothing, because a missing operand read widens permission.
-fn collect_operand_reads(
+pub(super) fn collect_operand_reads(
     places: &PlaceMap,
     expression: &CheckedExpression,
     node: &NodePath,

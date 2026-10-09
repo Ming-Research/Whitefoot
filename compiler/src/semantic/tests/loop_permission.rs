@@ -3609,3 +3609,241 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
         assert!(reason.contains(expected), "{reason}");
     }
 }
+
+#[test]
+fn indexed_copied_cell_shapes_are_permitted() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-copied-cell.wf");
+    let table = permission_of(source);
+    for function in ["reduce", "copied_direct"] {
+        let judged = only_loop(&table, function);
+        assert_eq!(judged.verdict, LoopVerdict::PermittedEligible, "{judged:?}");
+        assert_eq!(judged.combines, vec!["+wrap"]);
+        assert_eq!(judged.indexed.len(), 1);
+        assert!(judged.indexed[0].calls.is_empty());
+    }
+}
+
+#[test]
+fn indexed_calls_retain_family_substitutions_and_ledger_wording() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-helper-call.wf");
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}");
+        };
+        for (function, callee) in [
+            ("reduce", "mark"),
+            ("composed", "forward"),
+            ("nested_owner", "mark"),
+        ] {
+            let judged = only_loop(&program.data.permission, function);
+            assert_eq!(judged.verdict, LoopVerdict::PermittedEligible, "{judged:?}");
+            assert_eq!(judged.combines, vec!["ior"]);
+            assert_eq!(judged.indexed.len(), 1);
+            let family = &judged.indexed[0];
+            assert_eq!(family.calls.len(), 1);
+            let mapping = &family.calls[0];
+            let target = program
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == callee)
+                .unwrap();
+            assert_eq!(mapping.function, target.id);
+            assert_eq!(mapping.argument, 0);
+            assert_eq!(
+                mapping.callee_root.binding(),
+                Some(target.parameters[0].binding)
+            );
+            let mut mapped = mapping.actual.clone();
+            mapped.path.extend(mapping.callee_root.place_path());
+            let caller = program
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == function)
+                .unwrap();
+            let places = super::super::places::PlaceMap::for_function(caller);
+            assert_eq!(
+                places.resolve(family.root.root, &family.root.place_path()),
+                vec![mapped]
+            );
+        }
+        let paired = only_loop(&program.data.permission, "two_roots");
+        assert_eq!(paired.verdict, LoopVerdict::PermittedEligible, "{paired:?}");
+        assert_eq!(paired.indexed.len(), 2);
+        assert_eq!(paired.indexed[0].calls[0].argument, 0);
+        assert_eq!(paired.indexed[1].calls[0].argument, 1);
+        assert_eq!(
+            paired.indexed[0].calls[0].call,
+            paired.indexed[1].calls[0].call
+        );
+        assert!(
+            program
+                .data
+                .permission_ledger
+                .iter()
+                .any(|line| line.text.contains("indexed reductions under ior"))
+        );
+    });
+}
+
+#[test]
+fn copied_cells_and_helper_calls_deny_the_first_failed_indexed_condition() {
+    for (source, expected) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-copied-cell-twice.wf"
+            )
+            .as_slice(),
+            "copy must be immutable and used exactly once",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-copied-cell-root-read.wf"
+            )
+            .as_slice(),
+            "no intervening root access",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-copied-cell-wrong-cell.wf"
+            )
+            .as_slice(),
+            "target's subscripted place",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-check-before-update.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-unsummarized.wf"
+            )
+            .as_slice(),
+            "each indexed write",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-argument-read.wf"
+            )
+            .as_slice(),
+            "every other argument",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-mixed-operations.wf"
+            )
+            .as_slice(),
+            "one fixed operation or one constant",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-recursive.wf"
+            )
+            .as_slice(),
+            "acyclic",
+        ),
+    ] {
+        let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
+            panic!("expected the indexed-family condition");
+        };
+        assert!(reason.contains(expected), "{expected}: {reason}");
+    }
+}
+
+#[test]
+fn indexed_summary_cache_reuses_successes_and_cycle_denials_per_parameter() {
+    use super::super::permission::{PermissionSignature, Program};
+    for (source, recursive) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-helper-call.wf")
+                .as_slice(),
+            false,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-helper-recursive.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("{outcome:?}");
+            };
+            let functions = &checked.data.functions;
+            let signatures = functions
+                .iter()
+                .map(|function| PermissionSignature {
+                    name: function.name.clone(),
+                    parameter_declarations: function
+                        .parameters
+                        .iter()
+                        .map(|p| p.declaration)
+                        .collect(),
+                    parameter_modes: function.parameters.iter().map(|p| p.mode).collect(),
+                    // Release pricing does not participate in indexed summaries.
+                    parameter_releases: vec![false; function.parameters.len()],
+                    reads: function.declared_state_reads.clone(),
+                    writes: function.declared_state_writes.clone(),
+                })
+                .collect::<Vec<_>>();
+            let program = Program::new(functions, &signatures);
+            let function = functions
+                .iter()
+                .find(|f| f.name == if recursive { "mark" } else { "forward" })
+                .unwrap();
+            let first = program.indexed_summaries.get(&program, function.id, 0);
+            if recursive {
+                assert!(first.as_ref().unwrap_err().reason.contains("acyclic"));
+            } else {
+                assert_eq!(first.as_ref().unwrap().len(), 1);
+            }
+            assert_eq!(
+                program.indexed_summaries.computations.get(),
+                if recursive { 1 } else { 2 }
+            );
+            let repeated = program.indexed_summaries.get(&program, function.id, 0);
+            assert_eq!(first, repeated);
+            assert_eq!(
+                program.indexed_summaries.computations.get(),
+                if recursive { 1 } else { 2 }
+            );
+            let other = program.indexed_summaries.get(&program, function.id, 1);
+            assert!(other.unwrap_err().reason.contains("reference parameter"));
+            assert_eq!(
+                program.indexed_summaries.computations.get(),
+                if recursive { 2 } else { 3 }
+            );
+            if !recursive {
+                let paired = functions.iter().find(|f| f.name == "paired").unwrap();
+                let before = program.indexed_summaries.computations.get();
+                let left = program
+                    .indexed_summaries
+                    .get(&program, paired.id, 0)
+                    .unwrap();
+                let right = program
+                    .indexed_summaries
+                    .get(&program, paired.id, 1)
+                    .unwrap();
+                assert_eq!(left[0].root.binding(), Some(paired.parameters[0].binding));
+                assert_eq!(right[0].root.binding(), Some(paired.parameters[1].binding));
+                assert_eq!(program.indexed_summaries.computations.get(), before + 2);
+                assert_eq!(
+                    program
+                        .indexed_summaries
+                        .get(&program, paired.id, 0)
+                        .unwrap(),
+                    left
+                );
+                assert_eq!(program.indexed_summaries.computations.get(), before + 2);
+            }
+        });
+    }
+}
