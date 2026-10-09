@@ -33,7 +33,12 @@ impl FunctionStoragePlan {
         function: &IrFunction,
         sequential: bool,
     ) -> Result<(), BackendFailure> {
-        if function.blocks().is_empty() || function.waits() || !function.overlaps().is_empty() {
+        // A sequential clone executes these groups and its callees in source
+        // order. Only the overlapping world has deferred reads beyond a call.
+        if function.blocks().is_empty()
+            || function.waits()
+            || (!sequential && !function.overlaps().is_empty())
+        {
             return Ok(());
         }
         if !function
@@ -312,7 +317,10 @@ impl<'a> SnapshotFacts<'a> {
             .get(callee as usize)
             .ok_or(BackendFailure::InvalidIr)?;
         let mut positions = BTreeSet::new();
-        if !function.blocks().is_empty() && !function.waits() && function.overlaps().is_empty() {
+        if !function.blocks().is_empty()
+            && !function.waits()
+            && (self.sequential || function.overlaps().is_empty())
+        {
             let graph = FlowGraph::from_function(self.program, function, self.sequential)?;
             let abi = FunctionAbi::build(self.program, function)?;
             if !(0..graph.blocks.len()).any(|block| graph.reentered(block)) {
@@ -575,7 +583,7 @@ impl<'a> SnapshotFacts<'a> {
                     let Some(signature) = callee.source_signature() else {
                         return Ok(true);
                     };
-                    if callee.waits() || !callee.overlaps().is_empty() {
+                    if callee.waits() || (!self.sequential && !callee.overlaps().is_empty()) {
                         return Ok(true);
                     }
                     for (position, argument) in arguments.iter().enumerate() {

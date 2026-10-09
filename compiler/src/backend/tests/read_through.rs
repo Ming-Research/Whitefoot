@@ -129,7 +129,8 @@ fn moved_owner(flag: Bool) -> result: u64 pure {
   let initial = Value::Number(n: 7_u64);
   let cell = box_new::<Value>(value: initial);
   let holder = Holder(cell: move cell);
-  let v = holder.cell.inner;
+  let source = &holder.cell.inner;
+  let v = source^;
   if flag {
     let wrapped = Wrapper(held: move holder);
     touch(value: &wrapped);
@@ -268,7 +269,7 @@ fn snapshot(program: &IrProgram, name: &str) -> IrValueId {
         .functions()
         .iter()
         .find(|function| function.name() == name)
-        .expect("fixture function");
+        .unwrap_or_else(|| panic!("missing fixture function {name}"));
     let (address, ty) = function
         .blocks()
         .iter()
@@ -286,7 +287,7 @@ fn snapshot(program: &IrProgram, name: &str) -> IrValueId {
             }
             _ => None,
         })
-        .expect("indexed snapshot Load");
+        .unwrap_or_else(|| panic!("{name}: missing snapshot Load of Value"));
     let layout = crate::target::validate_static_storage(
         crate::target::TargetLayout::host().expect("host layout"),
         program,
@@ -396,6 +397,8 @@ fn read_through_snapshot_placement_preserves_old_values_and_call_boundaries() {
         ("before_push", false),
         ("unrelated", true),
         ("unrelated_store", true),
+        // The explicit reference read makes this a Load snapshot; reading
+        // holder.cell.inner directly lowers as BoxDeref, outside this planner.
         ("moved_owner", false),
         ("after_use", true),
         ("mutable_argument", false),

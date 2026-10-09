@@ -677,17 +677,21 @@ new interval only when no old snapshot carry is live into it. Uses employ
 the captured address, never a recomputed index. All uses must stay in the
 enclosing part or one possible split arm, and potential dispatch-header
 loads stay excluded because header instructions can be hoisted. Waiting and
-overlap functions remain excluded. These rules use no source names and add
-no proof, diagnostic, specification or verdict change.
+overlapping execution remain excluded. Overlap restrictions follow the world
+being emitted, including callee eligibility and call invalidation: a sequential
+clone executes its body and reachable calls without deferred hand-outs, so
+retained overlap annotations do not exclude it. Source stability, waiting,
+exposure and split-part restrictions still apply. These rules use no source
+names and add no proof, diagnostic, specification or verdict change.
 
 #### Destination-result calls
 
 The caller-side restriction was unnecessary and is removed. A read-through
 call still requires a checked own parameter, an acyclic synchronous body,
-no overlap, and an unexposed complete slot holding only that parameter and
-not serving as its result. Acyclicity excludes split callees. A destination
-result does not invalidate that proof: such callees already capture their
-indirect inputs before a body or result write. Passing a stable element
+no overlapping execution, and an unexposed complete slot holding only that
+parameter and not serving as its result. Acyclicity excludes split callees.
+A destination result does not invalidate that proof: such callees already
+capture their indirect inputs before a body or result write. Passing a stable element
 address removes the caller's redundant capture while preserving the callee's
 ABI-required capture.
 
@@ -748,7 +752,10 @@ partitioning and the final copy traffic require rebuilt Halo IR to confirm.
   explicit copy assertions even if allocation or the earlier element stays put.
 - Unrelated-root writes and writes after the last use: no snapshot copy.
 - Moving a Box owner into a wrapper released before the use: retain the copy,
-  so the observation cannot read freed storage.
+  so the observation cannot read freed storage. The fixture reads through an
+  explicit reference to the Box content to produce a Load; a direct
+  `holder.cell.inner` expression lowers as BoxDeref and does not exercise
+  Load snapshot placement.
 - Mutable by-value consumers: privately materialize at the use. An exposed
   snapshot binding still copies at the Load, and subsequent source reads
   check that local mutation did not change the source.
