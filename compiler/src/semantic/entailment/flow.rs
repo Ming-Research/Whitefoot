@@ -103,7 +103,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
