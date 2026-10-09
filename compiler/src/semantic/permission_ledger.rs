@@ -276,6 +276,7 @@ fn loop_detail<Source: LedgerSource>(
     // so the line carries it rather than leaving a reader to infer it from
     // silence.
     let carried = match judged.combines.as_slice() {
+        [] if !judged.indexed.is_empty() => "indexed constant marks".to_owned(),
         [] => "no accumulator".to_owned(),
         combines if !judged.indexed.is_empty() => {
             format!("indexed reductions under {}", combines.join(", "))

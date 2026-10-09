@@ -110,7 +110,7 @@ impl Input<'_, '_> {
         self.function
             .parameters
             .get(ordinal as usize)
-            .is_some_and(|parameter| parameter.mode == CheckedMode::Range)
+            .is_some_and(|parameter| parameter.mode.is_range())
     }
 
     pub(super) fn available_postconditions(
@@ -1701,13 +1701,7 @@ impl Reasoning<'_, '_, '_> {
             // [TYPE-8, REF-4] the callee's own parameter kind supplies the
             // [MSR-1] row: the caller's actual may be any place that names a
             // range, and the element type it carries has no row at all.
-            self.postcondition_measure_term(
-                measure,
-                root,
-                &projections,
-                ty,
-                mode == CheckedMode::Range,
-            )
+            self.postcondition_measure_term(measure, root, &projections, ty, mode.is_range())
         } else {
             self.vocabulary
                 .postcondition_place_term(root, &projections, ty)

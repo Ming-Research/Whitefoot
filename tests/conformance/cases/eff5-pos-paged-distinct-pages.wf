@@ -1,0 +1,21 @@
+fn copy_first(from: &[u64], into: &[u64]) -> result: unit reads(from), writes(into) {
+  if from^.len > 0_u64 {
+    if into^.len > 0_u64 {
+      set into^[0_u64] = from^[0_u64];
+    }
+  }
+  return unit;
+}
+
+fn edit(p: &Paged<u64>, first: u64, second: u64) -> result: unit reads(p.len), reads(p.pages[first]), writes(p.pages[second]) contract {
+  requires first < p^.pages.len;
+  requires second < p^.pages.len;
+  requires first != second;
+} {
+  copy_first(from: &p^.pages[first], into: &p^.pages[second]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

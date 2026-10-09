@@ -1,0 +1,7 @@
+struct Inline {
+  elements: Paged<u64>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

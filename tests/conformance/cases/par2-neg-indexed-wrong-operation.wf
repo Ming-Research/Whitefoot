@@ -1,13 +1,14 @@
-fn reduce() -> result: u64 pure {
-  doc "The operation is outside the scalar accumulator admitted set.";
-  let cells = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
+fn reduce() -> result: i64 pure {
+  doc "Signed +sat is outside the scalar accumulator admitted set.";
+  let cells = box_array_filled::<i64>(count: 4_u64, value: 0_i64);
   for (i in 0_u64..4_u64) {
-    set cells.inner[0_u64] = cells.inner[0_u64] +sat 1_u64;
+    set cells.inner[0_u64] = cells.inner[0_u64] +sat 1_i64;
   }
   return cells.inner[0_u64];
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let result = reduce();
+  doc "Signed saturation remains valid sequential source.";
+  let reduced = reduce();
   return std::process::exit_status(code: 0_u8);
 }

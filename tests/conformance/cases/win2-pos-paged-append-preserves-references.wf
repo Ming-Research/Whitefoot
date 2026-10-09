@@ -1,0 +1,30 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 11_u64);
+  let item = &p.inner[0_u64];
+  let run = &p.inner[0_u64..1_u64];
+  if p.inner.pages.len > 0_u64 {
+    let page = &p.inner.pages[0_u64];
+    let width = page^.len;
+    place_back(window: &p.inner, value: 22_u64);
+    if item^ != 11_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if run^[0_u64] != 11_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if page^.len != width {
+      return std::process::exit_status(code: 3_u8);
+    }
+    if page^.len == 1_u64 {
+      if page^[0_u64] != 11_u64 {
+        return std::process::exit_status(code: 4_u8);
+      }
+    } else {
+      return std::process::exit_status(code: 5_u8);
+    }
+  } else {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

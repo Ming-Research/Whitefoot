@@ -22,6 +22,11 @@ pub(super) struct PreparedTarget<'target> {
 
 enum TargetStorage<'target> {
     Place(&'target CheckedWritablePlace),
+    IndexedMark {
+        address: IrValueId,
+        private: IrValueId,
+        constant: IrConstant,
+    },
     Address {
         address: IrValueId,
         referent: IrAddressed,
@@ -65,7 +70,15 @@ impl IrBuilder<'_> {
                 let IrType::Address(referent) = self.value_type(address)? else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
-                address_kind(address, referent)
+                if let Some((private, constant)) = self.indexed_mark(root) {
+                    TargetStorage::IndexedMark {
+                        address,
+                        private,
+                        constant,
+                    }
+                } else {
+                    address_kind(address, referent)
+                }
             }
             CheckedSetTarget::Place(place) => {
                 if place.declares {
@@ -226,7 +239,7 @@ impl IrBuilder<'_> {
                     target_domain: *target_domain,
                 },
             )?,
-            TargetStorage::Place(_) => {
+            TargetStorage::Place(_) | TargetStorage::IndexedMark { .. } => {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
         };
@@ -245,6 +258,21 @@ impl IrBuilder<'_> {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
         match &target.kind {
+            TargetStorage::IndexedMark {
+                address,
+                private,
+                constant,
+            } => {
+                self.current_block_mut()?
+                    .instructions
+                    .push(IrInstruction::IndexedMark {
+                        address: *address,
+                        private: *private,
+                        constant: *constant,
+                        value_type: target.ty,
+                    });
+                Ok(())
+            }
             TargetStorage::Address { address, referent } => {
                 self.store_addressed(*address, value, *referent)
             }

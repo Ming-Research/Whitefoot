@@ -382,7 +382,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<String, CheckStop> {
         Ok(match mode {
             CheckedMode::Own => "own".to_owned(),
-            CheckedMode::Reference | CheckedMode::Range => "&".to_owned(),
+            CheckedMode::Reference | CheckedMode::Range | CheckedMode::Run => "&".to_owned(),
         })
     }
 
@@ -2062,6 +2062,9 @@ impl<'unit> TypeContext<'unit> {
         // element type, not a reference to one element: what the checked
         // value carries is the element type, so rendering the mode and the
         // type apart would name `&T` where the source wrote the range.
+        if mode == CheckedMode::Run {
+            return Ok(format!("&Run<{}>", self.checked_type_name(ty)?));
+        }
         if mode == CheckedMode::Range {
             return Ok(format!("&[{}]", self.checked_type_name(ty)?));
         }

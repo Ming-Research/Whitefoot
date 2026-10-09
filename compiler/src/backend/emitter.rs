@@ -20,6 +20,7 @@ mod handler_words;
 mod indexed;
 mod integer;
 mod operations;
+mod paged;
 mod parallel;
 pub(super) mod places;
 mod reinterpret;
@@ -727,7 +728,14 @@ fn incoming_parameter(
         format!("ptr %wf.arg.v{}", value.ordinal())
     } else if parameter.is_range() {
         let (pointer, count) = incoming_range_parts(value);
-        format!("ptr{facts} {pointer}, i64 {count}")
+        if matches!(parameter.ty(), IrType::Run { .. }) {
+            format!(
+                "ptr{facts} {pointer}, i64 %wf.arg.v{}.lo, i64 {count}",
+                value.ordinal()
+            )
+        } else {
+            format!("ptr{facts} {pointer}, i64 {count}")
+        }
     } else {
         format!(
             "{}{facts} {}",
@@ -751,10 +759,15 @@ fn incoming_parameters(
         )]
     } else if parameter.is_range() {
         let (pointer, count) = incoming_range_parts(value);
-        vec![
-            Parameter::named(format!("ptr{facts}"), pointer),
-            Parameter::named("i64", count),
-        ]
+        let mut parts = vec![Parameter::named(format!("ptr{facts}"), pointer)];
+        if matches!(parameter.ty(), IrType::Run { .. }) {
+            parts.push(Parameter::named(
+                "i64",
+                format!("%wf.arg.v{}.lo", value.ordinal()),
+            ));
+        }
+        parts.push(Parameter::named("i64", count));
+        parts
     } else {
         let ty = llvm_type_with_references(program, parameter.ty(), &mut references.types)?;
         vec![Parameter::named(format!("{ty}{facts}"), value_name(value))]
@@ -1677,6 +1690,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// for an empty range, so it is `nonnull`. Its extent is `len` elements,
     /// known only at run time and possibly zero, so it states no
     /// `dereferenceable` extent.
+    ///
+    /// A Run carries a directory pointer, origin and count. Disjoint logical
+    /// runs may share that directory, so it receives no `noalias` promise.
+    /// The directory is an interior pointer past the cell's three-word header,
+    /// nonnull even at zero capacity, and cannot be modified through a Run.
+    /// `readonly` describes accesses based on this pointer, not an independent
+    /// allocation: element stores use the page pointers loaded from it. Growth
+    /// invalidates the Run before replacing the cell. REF-3 supplies the same
+    /// no-capture boundary as for ordinary references.
     fn reference_parameter_facts(
         &self,
         index: usize,
@@ -1684,7 +1706,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<String, BackendFailure> {
         let (mode, referent) = match ty {
             IrType::Address(referent) => (crate::IrSourceMode::Reference, Some(referent)),
-            IrType::Range { .. } => (crate::IrSourceMode::Range, None),
+            IrType::Range { .. } | IrType::Run { .. } => (crate::IrSourceMode::Range, None),
             _ => return Ok(String::new()),
         };
         // A waiting function's ramp keeps every reference it is handed in its
@@ -1708,8 +1730,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Ok(String::new());
         }
         let mut facts = String::new();
-        if !aliasing_admitted_row(self.function.name()) {
+        if !matches!(ty, IrType::Run { .. }) && !aliasing_admitted_row(self.function.name()) {
             facts.push_str(" noalias");
+        }
+        if matches!(ty, IrType::Run { .. }) {
+            facts.push_str(" readonly");
         }
         facts.push_str(" nonnull ");
         facts.push_str(crate::toolchain::facts().no_capture_attribute);
@@ -1950,6 +1975,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let (pointer, count) = incoming_range_parts(*value);
             let pair = self.output.type_name(self.program, parameter.ty())?;
             let name = value_name(*value);
+            if matches!(parameter.ty(), IrType::Run { .. }) {
+                writeln!(self.entry_prelude,
+                    "  {name}.data = insertvalue {pair} poison, ptr {pointer}, 0\n  {name}.lo = insertvalue {pair} {name}.data, i64 %wf.arg.v{}.lo, 1\n  {name} = insertvalue {pair} {name}.lo, i64 {count}, 2", value.ordinal()).map_err(|_| BackendFailure::TextEmission)?;
+                continue;
+            }
             writeln!(
                 self.entry_prelude,
                 "  {name}.data = insertvalue {pair} poison, ptr {pointer}, 0\n  \
@@ -2256,6 +2286,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => {
                 self.materialize_operands([*slice, *index])?;
             }
+            IrInstruction::IndexedMark {
+                address, private, ..
+            } => {
+                self.materialize_operands([*address, *private])?;
+            }
             IrInstruction::Store { address, .. } => {
                 // A stored aggregate is transferred from its backing below.
                 // Loading it into SSA first lets SROA expand a large array
@@ -2291,6 +2326,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 ty,
                 operation,
             } => self.emit_definition(*result, *ty, operation),
+            IrInstruction::IndexedMark {
+                address,
+                private,
+                constant,
+                value_type,
+            } => self.emit_indexed_mark(
+                &self.value_name(*address),
+                &self.value_name(*private),
+                *constant,
+                *value_type,
+            ),
             IrInstruction::StoreSlice {
                 slice,
                 index,
@@ -2494,6 +2540,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 value,
                 ..
             } => self.emit_segments_fill(result, ty, *nominal, *lengths, *value),
+            IrOperation::PagedPageLen { element } => self.emit_paged_page_len(result, ty, *element),
+            IrOperation::PagedPage { paged, index } => {
+                self.emit_paged_page(result, ty, *paged, *index)
+            }
             IrOperation::SegmentsMeasure { segments } => {
                 self.emit_segments_measure(result, ty, *segments)
             }
@@ -2555,7 +2605,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
-                self.emit_slice_range(result, ty, *slice, *start, *end)
+                self.emit_slice_range(result, ty, *slice, *start, *end, None)
+            }
+            IrOperation::IndexedRange {
+                slice,
+                start,
+                end,
+                private_type,
+            } => self.emit_slice_range(result, ty, *slice, *start, *end, Some(*private_type)),
+            IrOperation::IndexedAddress {
+                slice,
+                offset,
+                private,
+                projection,
+                private_type,
+                ..
+            } => {
+                let range_type = self.value_type(*slice).ok_or(BackendFailure::InvalidIr)?;
+                let prefix = format!("indexed.address.{}", self.next_temporary()?);
+                let pointer = self.indexed_pointer(
+                    &prefix,
+                    (&self.value_name(*slice), range_type),
+                    &self.value_name(*offset),
+                    &self.value_name(*private),
+                    projection,
+                    *private_type,
+                )?;
+                writeln!(
+                    self.output,
+                    "  {} = getelementptr i8, ptr {pointer}, i64 0",
+                    self.value_name(result)
+                )?;
+                Ok(())
             }
             IrOperation::SliceMeasure { slice } => self.emit_slice_length(result, ty, *slice),
             IrOperation::SliceIndex {
@@ -2984,7 +3065,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let reads_content = match drop.ty() {
-            IrType::Range { .. } => false,
+            IrType::Range { .. } | IrType::Run { .. } => false,
             IrType::Array { .. } | IrType::Window { .. } => {
                 type_requires_cleanup(self.program, drop.ty())?
             }
@@ -3197,6 +3278,7 @@ pub(super) fn llvm_type_with_references(
         // A `&[T]` range reference is a pointer and one count [REF-4]; it is
         // a reference kind, so no storage ever holds one.
         IrType::Range { .. } => Ok("{ ptr, i64 }".to_owned()),
+        IrType::Run { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // [SHARE-1] a key set is its count, its one measure, and a pointer to
         // the runtime's store; the entries an entry binding names are the
         // statement's record of its hold, the set's first position in it and
@@ -3245,6 +3327,7 @@ pub(super) fn llvm_type_with_references(
                 )?
             };
             Ok(match shape {
+                IrWindowShape::Paged => return Err(BackendFailure::InvalidIr),
                 IrWindowShape::Slots => format!("{{ i64, [{length} x {element}] }}"),
                 IrWindowShape::Ring => format!("{{ i64, i64, [{length} x {element}] }}"),
             })
@@ -3262,6 +3345,7 @@ pub(super) fn llvm_type_with_references(
                 references,
             )?;
             Ok(match shape {
+                IrWindowShape::Paged => paged::CELL.to_owned(),
                 IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
             })

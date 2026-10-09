@@ -1,0 +1,37 @@
+fn fill(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (j in 0_u64..count) {
+    set part^[j] = 8_u64;
+  }
+  return unit;
+}
+
+fn partition(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+  ensures p^.len == entry(p)^.len;
+} {
+  for (i in 0_u64..2_u64) {
+    let lo = i * 2_u64;
+    let hi = lo + 2_u64;
+    fill(part: &p^[lo..hi]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "PAR-2 permits the two disjoint Run arguments as proved range references.";
+  let p = box_paged_new::<u64>(capacity: 4_u64);
+  for (
+    i in 0_u64..4_u64,
+    invariant length: p.inner.len == i
+  ) {
+    place_back(window: &p.inner, value: 0_u64);
+  }
+  partition(p: &p.inner);
+  for (i in 0_u64..4_u64) {
+    if p.inner[i] != 8_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

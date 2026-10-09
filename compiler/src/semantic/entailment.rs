@@ -107,7 +107,7 @@ impl CallTransport {
     /// carries, its own rule classifying how far such a write reaches.
     pub(crate) const fn of_declaration(mode: CheckedMode, row_writes_here: bool) -> Self {
         match mode {
-            CheckedMode::Range => Self::ViewedRange,
+            CheckedMode::Range | CheckedMode::Run => Self::ViewedRange,
             CheckedMode::Own => Self::Value,
             CheckedMode::Reference if !row_writes_here => Self::ReadOnlyReference,
             CheckedMode::Reference => Self::Conservative,

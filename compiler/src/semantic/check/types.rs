@@ -114,7 +114,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(node, Production::Type)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let ty = self.parse_type_with(check_context, ty_node, substitution)?;
+            let ty = if mode == CheckedMode::Run {
+                self.run_type_argument_with(check_context, ty_node, substitution)?
+            } else {
+                self.parse_type_with(check_context, ty_node, substitution)?
+            };
             // A reference parameter names a path into storage its caller
             // owns, so only the by-value position stores a shape inline.
             self.types.reject_placement(
@@ -220,6 +224,16 @@ impl<'unit> Checker<'_, 'unit> {
                     .declarations
                     .use_at(check_context, node, LexicalUseRole::Type)?;
             match usage.target() {
+                ResolvedTarget::Prelude(id) if id == BuiltinPreludeId::RUN => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Type8,
+                        node,
+                        SemanticIssueKind::type_mismatch(
+                            "Run<T> only in a parameter kind &Run<T>",
+                            "Run used as a type",
+                        ),
+                    );
+                }
                 ResolvedTarget::Prelude(id) if id == BuiltinPreludeId::BOOL => {
                     if targs.is_some() {
                         return self.types.declarations.issue_node(
@@ -448,6 +462,7 @@ impl<'unit> Checker<'_, 'unit> {
             crate::ContainerShape::Slots => "Slots<T, N> or Slots<T>",
             crate::ContainerShape::Ring => "Ring<T, N> or Ring<T>",
             crate::ContainerShape::Segments => "Segments<T>",
+            crate::ContainerShape::Paged => "Paged<T>",
             crate::ContainerShape::KeySet => "KeySet with no type argument",
             crate::ContainerShape::Entries => "Entries<V> with one value type",
             crate::ContainerShape::Box => "Box<T> with one referent type",
@@ -577,6 +592,14 @@ impl<'unit> Checker<'_, 'unit> {
                 element: self.types.intern_element(element_type)?,
                 capacity,
             }),
+            (crate::ContainerShape::Paged, None) => Ok(CheckedType::Window {
+                shape: WindowShape::Paged,
+                element: self.types.intern_element(element_type)?,
+                capacity: None,
+            }),
+            (crate::ContainerShape::Paged, Some(_)) => {
+                mismatch("a capacity argument, which Paged<T> does not take")
+            }
             (crate::ContainerShape::Ring, capacity) => Ok(CheckedType::Window {
                 shape: WindowShape::Ring,
                 element: self.types.intern_element(element_type)?,
@@ -597,6 +620,56 @@ impl<'unit> Checker<'_, 'unit> {
                 _,
             ) => Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
+    }
+
+    pub(super) fn run_type_argument_with(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        substitution: &GenericSubstitution,
+    ) -> Result<CheckedType, CheckStop> {
+        let Some(targs) = self.types.declarations.tree.argument_list(node)? else {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    "Run<T> with exactly one type argument",
+                    "Run with no written type-argument list",
+                ),
+            );
+        };
+        let arguments = self
+            .types
+            .declarations
+            .tree
+            .children_with(targs, Production::Targ)?;
+        let [value] = arguments.as_slice() else {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    "Run<T> with exactly one type argument",
+                    "a Run type-argument list of a different length",
+                ),
+            );
+        };
+        let Some(value) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(*value, Production::Type)?
+        else {
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    "a type in the Run type-argument position",
+                    "a const argument in the Run type-argument position",
+                ),
+            );
+        };
+        let value = self.parse_type_with(check_context, value, substitution)?;
+        Ok(value)
     }
 
     pub(super) fn option_type_argument_with(
@@ -1251,7 +1324,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 root: declaration,
                 steps: Vec::new(),
             },
-            if parameter.mode == CheckedMode::Range {
+            if parameter.mode.is_range() {
                 SelectedPlaceType::Range(parameter.ty)
             } else {
                 SelectedPlaceType::Value(parameter.ty)
@@ -1612,6 +1685,15 @@ impl<'unit> TypeContext<'unit> {
             )
         } else if matches!(found, CheckedType::Nominal(_)) {
             "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned()
+        } else if matches!(
+            found,
+            CheckedType::Segments { .. }
+                | CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                }
+        ) {
+            "wrap it in a Box and pass a reference to its content".to_owned()
         } else {
             "wrap it in a Box, or write the constant-capacity form".to_owned()
         };
@@ -1649,7 +1731,14 @@ impl<'unit> TypeContext<'unit> {
                 if let Some(capacity) = capacity {
                     result.push(self.atomic_const_order(capacity)?);
                 }
-                (if shape == WindowShape::Slots { 12 } else { 13 }, None)
+                (
+                    match shape {
+                        WindowShape::Slots => 12,
+                        WindowShape::Ring => 13,
+                        WindowShape::Paged => 26,
+                    },
+                    None,
+                )
             }
             CheckedType::Segments { element } => (14, Some(element)),
             CheckedType::KeySet => (18, None),
@@ -2223,11 +2312,43 @@ impl<'unit> TypeContext<'unit> {
             .first_child_with(path_node, Production::Epbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let (mut path, mut ty) = self.declarations.effect_root(effect, base, parameters)?;
-        for suffix in self
+        let suffixes = self
             .declarations
             .tree
-            .children_with(path_node, Production::Epsuffix)?
-        {
+            .children_with(path_node, Production::Epsuffix)?;
+        let mut suffixes = suffixes.into_iter();
+        while let Some(suffix) = suffixes.next() {
+            if matches!(
+                ty,
+                SelectedPlaceType::Value(CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                })
+            ) && self.declarations.tree.source_spelling(suffix)? == ".pages"
+            {
+                let Some(next) = suffixes.next() else {
+                    return self
+                        .declarations
+                        .invalid_effect_row(suffix, EFF1_FIELD_OF_NON_STRUCT);
+                };
+                if self.declarations.tree.source_spelling(next)? == ".len" {
+                    path.steps
+                        .push(CheckedEffectStep::Measure(CheckedMeasure::Length));
+                    ty = SelectedPlaceType::Value(CheckedType::Integer(IntegerType::U64));
+                } else {
+                    let (step, selected) = self.effect_index_step(next, ty, parameters)?;
+                    let (CheckedEffectStep::Index(index), SelectedPlaceType::Value(element)) =
+                        (step, selected)
+                    else {
+                        return self
+                            .declarations
+                            .invalid_effect_row(next, EFF1_FIELD_OF_NON_STRUCT);
+                    };
+                    path.steps.push(CheckedEffectStep::Page(index));
+                    ty = SelectedPlaceType::Range(element);
+                }
+                continue;
+            }
             let (step, next) =
                 self.effect_step(check_context, effect, path_node, suffix, ty, parameters)?;
             path.steps.push(step);

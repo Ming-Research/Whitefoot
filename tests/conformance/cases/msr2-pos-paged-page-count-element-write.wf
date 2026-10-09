@@ -1,0 +1,37 @@
+fn one_page(p: &Paged<u64>) -> result: unit pure contract {
+  requires p^.pages.len == 1_u64;
+} {
+  return unit;
+}
+
+fn count(p: &Paged<u64>) -> result: u64 reads(p.len) {
+  return p^.pages.len;
+}
+
+fn page_width(p: &Paged<u64>, k: u64) -> result: u64 reads(p.pages[k].len), reads(p.len) contract {
+  requires k < p^.pages.len;
+} {
+  let page = &p^.pages[k];
+  return page^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 3_u64);
+  if p.inner.pages.len == 1_u64 {
+    set p.inner[0_u64] = 7_u64;
+    invariant pages: p.inner.pages.len == 1_u64;
+    one_page(p: &p.inner);
+    let width = page_width(p: &p.inner, k: 0_u64);
+    if width != 1_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let got = count(p: &p.inner);
+  if got != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

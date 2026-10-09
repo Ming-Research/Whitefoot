@@ -65,6 +65,7 @@ impl PlaceMember {
 /// reference is not storage of its own, so a resolved place never carries one
 /// — the `^` step has already been replaced by the path the reference
 /// names [REF-1].
+#[derive(Clone)]
 pub(super) struct ElaboratedPlace {
     /// The source declaration the *written* base names. For a `^` path
     /// that is the reference binding, whose [REF-2] validity the caller
@@ -454,6 +455,41 @@ impl<'unit> Checker<'_, 'unit> {
         mut place: ElaboratedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<ElaboratedPlace, CheckStop> {
+        if suffixes.len() >= 2 {
+            let split = suffixes.len() - 2;
+            let pages = self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[split])?;
+            let len = self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[split + 1])?;
+            if pages == ".pages" && len == ".len" {
+                let mut base = self.elaborate_place_members(
+                    check_context,
+                    carrier,
+                    &suffixes[..split],
+                    place.clone(),
+                    bindings,
+                )?;
+                if base.mode == CheckedMode::Own
+                    && !base.range_referent
+                    && matches!(
+                        base.ty,
+                        CheckedType::Window {
+                            shape: super::super::super::model::WindowShape::Paged,
+                            ..
+                        }
+                    )
+                {
+                    base.measure = Some(CheckedMeasure::Pages);
+                    return Ok(base);
+                }
+            }
+        }
         for &suffix in suffixes {
             if matches!(
                 self.types.declarations.tree.place_suffix(suffix)?,
@@ -657,7 +693,7 @@ impl<'unit> Checker<'_, 'unit> {
             ty: inner.ty,
             proof: self.body.exact_description(local),
         };
-        inner.range_referent = inner.mode == CheckedMode::Range;
+        inner.range_referent = inner.mode.is_range();
         inner.mode = CheckedMode::Own;
         inner.resolved = ResolvedPlaceSet {
             identity,
@@ -735,6 +771,40 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
             .spelling();
+        if name == "pages"
+            && matches!(
+                ty,
+                CheckedType::Window {
+                    shape: super::super::super::model::WindowShape::Paged,
+                    ..
+                }
+            )
+        {
+            let parent = self
+                .declarations
+                .tree
+                .parent(suffix)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            let suffixes = self
+                .declarations
+                .tree
+                .children_with(parent, Production::Psuffix)?;
+            let position = suffixes
+                .iter()
+                .position(|node| *node == suffix)
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            let indexed = suffixes
+                .get(position + 1)
+                .map(|next| self.declarations.tree.subscript_offset(*next))
+                .transpose()?
+                .flatten()
+                .is_some();
+            return self.declarations.issue_node(
+                if indexed { SemanticRule::Op4 } else { SemanticRule::Type10 },
+                if indexed { suffixes[position + 1] } else { suffix },
+                SemanticIssueKind::ReservedPseudoField { spelling: name.to_owned(), mechanical_fix: "read `p.pages.len` or borrow one initialized page as `&p.pages[k]`" },
+            );
+        }
         self.declarations
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
@@ -849,7 +919,7 @@ impl<'unit> TypeContext<'unit> {
                 let Some(local) = bindings.values().find(|local| local.binding == binding) else {
                     return Ok(None);
                 };
-                range = local.mode == CheckedMode::Range;
+                range = local.mode.is_range();
                 local.ty
             }
             PlaceRoot::Constant(id) => self.constant(id)?.declared_type,
@@ -891,7 +961,7 @@ impl<'unit> TypeContext<'unit> {
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty
                 }
-                PlaceStep::Index(_) | PlaceStep::Range(_) => {
+                PlaceStep::Index(_) | PlaceStep::Range(_) | PlaceStep::Page(_) => {
                     // [TYPE-9] a segment and the run of every element are
                     // runs of T, as a range step's referent is.
                     let (element, run) = if range {
@@ -909,7 +979,7 @@ impl<'unit> TypeContext<'unit> {
                             _ => return Ok(None),
                         }
                     };
-                    range = run || matches!(step, PlaceStep::Range(_));
+                    range = run || matches!(step, PlaceStep::Range(_) | PlaceStep::Page(_));
                     element
                 }
                 PlaceStep::Measure(_) => CheckedType::Integer(IntegerType::U64),
@@ -1232,7 +1302,7 @@ impl<'unit> TypeContext<'unit> {
                     // header validity equation. It has no live type here.
                     return Ok(None);
                 };
-                if local.mode == CheckedMode::Range {
+                if local.mode.is_range() {
                     PathType::Range(local.ty)
                 } else {
                     PathType::Value(local.ty)
@@ -1325,7 +1395,7 @@ impl<'unit> TypeContext<'unit> {
                         },
                     });
                 }
-                PlaceStep::Range(_) => {
+                PlaceStep::Range(_) | PlaceStep::Page(_) => {
                     ty = PathType::Range(match ty {
                         PathType::Range(element) => element,
                         PathType::Value(current) => match current {
@@ -1370,7 +1440,7 @@ impl<'unit> TypeContext<'unit> {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => {
                         let name = self.declarations.declaration_spelling(local.declaration)?;
-                        range = local.mode == CheckedMode::Range;
+                        range = local.mode.is_range();
                         if local.mode.is_reference() {
                             (format!("{name}^"), Some(local.ty))
                         } else {
@@ -1448,6 +1518,14 @@ impl<'unit> TypeContext<'unit> {
                             ty = None;
                         }
                     }
+                }
+                PlaceStep::Page(offset) => {
+                    rendered.push_str(&format!(
+                        ".pages[{}]",
+                        self.declarations.render_captured_offset(offset, bindings)?
+                    ));
+                    ty = self.selected_element(ty, range)?;
+                    range = true;
                 }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!(
