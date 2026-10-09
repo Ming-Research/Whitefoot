@@ -708,8 +708,8 @@ fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bo
         | CheckedExpression::BoxTake { binding: named, .. } => *named == binding,
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
-        | CheckedExpression::ReadStorage { root, .. }
-        | CheckedExpression::BorrowSegment { root, .. } => root.binding() == Some(binding),
+        | CheckedExpression::ReadStorage { root, .. } => root.binding() == Some(binding),
+        CheckedExpression::BorrowSegment { root, .. } => root.binding() == Some(binding),
         CheckedExpression::ArrayMeasure { root, .. }
         | CheckedExpression::ArrayIndex { root, .. } => {
             matches!(root, CheckedArrayRoot::Binding { binding: named, .. } if *named == binding)

@@ -31,7 +31,8 @@ impl PreludeInventory {
         for phase in 0..5 {
             if phase == 1 || phase == 3 {
                 for builtin in PRELUDE_DECLARATIONS {
-                    let numeric = builtin.class == Some(DeclarationClass::NumericBound);
+                    let numeric = builtin.class == Some(DeclarationClass::NumericBound)
+                        || builtin.id == crate::BuiltinPreludeId::RUN;
                     if numeric != (phase == 3) {
                         continue;
                     }

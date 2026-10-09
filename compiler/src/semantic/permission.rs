@@ -1419,6 +1419,7 @@ fn substituted_steps(path: &CheckedStatePath) -> Vec<PlaceStep> {
                 field: *field,
             },
             super::model::CheckedEffectStep::Index(_) => PlaceStep::Index(CapturedValue::unknown()),
+            super::model::CheckedEffectStep::Page(_) => PlaceStep::Page(CapturedValue::unknown()),
             super::model::CheckedEffectStep::Range { .. } => PlaceStep::Range(CapturedRange {
                 start: CapturedValue::unknown(),
                 end: CapturedValue::unknown(),
@@ -1957,7 +1958,6 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::BoxTake { binding, .. }
         | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         CheckedExpression::BorrowAddressed { root, .. }
-        | CheckedExpression::BorrowSegment { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.binding(),
         CheckedExpression::BufferMeasure { root, .. }
@@ -1966,6 +1966,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => Some(place.root.binding),
+        CheckedExpression::BorrowSegment { root, .. } => root.binding(),
         CheckedExpression::RangeOf { source, .. } => source.binding(),
         CheckedExpression::ArrayMeasure { root, .. }
         | CheckedExpression::ArrayIndex { root, .. } => match root {
@@ -2012,7 +2013,8 @@ fn push_reference_holder_read(
 /// This is the storage the *caller* touches while building an actual: a value
 /// read out of a binding, a field, a `^` [TYPE-7], a subscript. Forming a
 /// reference names a path and reads no content beyond its own index and
-/// endpoint atoms [REF-1, REF-4], so it contributes nothing here — the
+/// endpoint atoms [REF-1, REF-4], except that forming a Paged page also reads
+/// its length word. Other formation contributes nothing here — the
 /// callee's declared row already covers whatever it reaches through that
 /// reference. Naming a local reference variable, to pass it, read through
 /// it or form a range from it, reads that variable's own binding as well,
@@ -2058,7 +2060,14 @@ fn collect_operand_reads(
         // Naming a path reads no content: a reference formation evaluates its
         // index and endpoint atoms, which are this expression's own children
         // and are walked below [REF-1, REF-4].
-        CheckedExpression::BorrowAddressed { .. } | CheckedExpression::BorrowSegment { .. } => {}
+        CheckedExpression::BorrowAddressed { .. } => {}
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            if matches!(segment, super::CheckedSegmentSelect::Page(_)) {
+                let (root, mut path) = root.place();
+                path.push(PlaceStep::Measure(CheckedMeasure::Length));
+                read(footprint, places.resolve(root, &path));
+            }
+        }
         CheckedExpression::Binding { binding, .. } => {
             read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
         }

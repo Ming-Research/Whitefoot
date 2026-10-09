@@ -199,6 +199,7 @@ pub(crate) enum GoalProjection {
     /// logical one, its captured value is immutable once the place is formed
     /// [REF-1], and the obligation it owes is discharged there [MSR-4].
     Subscript(super::places::CapturedValue),
+    Page(super::places::CapturedValue),
     /// One [REF-4] range step of the base reached so far, both endpoints
     /// captured where the range was formed [REF-1].
     ///
@@ -236,6 +237,7 @@ impl GoalProjection {
             Self::Field(field) => PlaceStep::Field(field),
             Self::Payload { variant, field } => PlaceStep::Payload { variant, field },
             Self::Subscript(offset) => PlaceStep::Index(offset),
+            Self::Page(offset) => PlaceStep::Page(offset),
             Self::Range(range) => PlaceStep::Range(range),
             Self::FormalSubscript { .. } => PlaceStep::Index(CapturedValue::unknown()),
         }

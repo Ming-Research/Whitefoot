@@ -1,0 +1,55 @@
+fn fill(page: &[u64]) -> result: unit writes(page) {
+  let count = page^.len;
+  for (j in 0_u64..count) {
+    set page^[j] = 9_u64;
+  }
+  return unit;
+}
+
+fn fill_pages(p: &Paged<u64>) -> result: unit writes(p) contract {
+  ensures p^.len == entry(p)^.len;
+} {
+  let count = p^.pages.len;
+  for (k in 0_u64..count) {
+    fill(page: &p^.pages[k]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "PAR-2 permits fill_pages: each iteration writes one distinct page through a contiguous range parameter.";
+  let p = box_paged_new::<u64>(capacity: 1025_u64);
+  if p.inner.pages.len != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  for (
+    i in 0_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
+    place_back(window: &p.inner, value: 0_u64);
+  }
+  fill_pages(p: &p.inner);
+  let size = paged_page_len::<u64>();
+  let count = p.inner.pages.len;
+  let seen = 0_u64;
+  for (k in 0_u64..count) {
+    let page = &p.inner.pages[k];
+    let width = page^.len;
+    if width == 0_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if width > size {
+      return std::process::exit_status(code: 3_u8);
+    }
+    set seen = seen +wrap width;
+  }
+  if seen != 1025_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  for (i in 0_u64..1025_u64) {
+    if p.inner[i] != 9_u64 {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

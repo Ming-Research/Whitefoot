@@ -1,0 +1,41 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Zero capacity, unchanged capacity and growth preserve the Slots window contract; contents are checked after growth across page boundaries.";
+  let p = box_paged_new::<u64>(capacity: 0_u64);
+  grow_paged(cell: &p, capacity: 0_u64);
+  grow_paged(cell: &p, capacity: 1_u64);
+  place_back(window: &p.inner, value: 7_u64);
+  grow_paged(cell: &p, capacity: 1025_u64);
+  invariant carried: p.inner.len == 1_u64;
+  for (
+    i in 1_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
+    place_back(window: &p.inner, value: i);
+  }
+  grow_paged(cell: &p, capacity: 8193_u64);
+  invariant kept: p.inner.len == 1025_u64;
+  if p.inner.cap != 8193_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if p.inner[0_u64] != 7_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  for (i in 1_u64..1025_u64) {
+    if p.inner[i] != i {
+      return std::process::exit_status(code: 3_u8);
+    }
+  }
+  set p.inner[0_u64] = 19_u64;
+  let last = take_back(window: &p.inner);
+  if last != 1024_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  place_back(window: &p.inner, value: 23_u64);
+  if p.inner[1024_u64] != 23_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if p.inner[0_u64] != 19_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

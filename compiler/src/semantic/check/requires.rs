@@ -1640,7 +1640,12 @@ impl<'unit> TypeContext<'unit> {
         };
         let (projections, measured_type) = self.clause_member_projections(
             check_context,
-            &suffixes[..suffixes.len() - 1],
+            &suffixes[..suffixes.len()
+                - if measure == CheckedMeasure::Pages {
+                    2
+                } else {
+                    1
+                }],
             datum_type,
             false,
             bindings,
@@ -1682,6 +1687,32 @@ impl<'unit> TypeContext<'unit> {
         let (&last, prefix) = suffixes
             .split_last()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if measure == CheckedMeasure::Length
+            && !prefix.is_empty()
+            && self
+                .declarations
+                .tree
+                .source_spelling(*prefix.last().unwrap())?
+                == ".pages"
+        {
+            let (_, reached) = self.clause_member_projections(
+                check_context,
+                &prefix[..prefix.len() - 1],
+                base,
+                range_referent,
+                bindings,
+                expanded_bindings,
+            )?;
+            if matches!(
+                reached,
+                CheckedType::Window {
+                    shape: super::super::model::WindowShape::Paged,
+                    ..
+                }
+            ) {
+                return Ok(Some(CheckedMeasure::Pages));
+            }
+        }
         let (ty, range_referent) = if prefix.is_empty() {
             (base, range_referent)
         } else {
@@ -1978,7 +2009,7 @@ impl<'unit> TypeContext<'unit> {
                             .cloned()
                             .ok_or(SemanticCompilerFailure::InvalidResolution)?,
                         local.mode != CheckedMode::Own,
-                        local.mode == CheckedMode::Range,
+                        local.mode.is_range(),
                     )
                 }
                 DeclarationClass::NamedConst => {
@@ -2045,8 +2076,13 @@ impl<'unit> TypeContext<'unit> {
             bindings,
             expanded_bindings,
         )?;
-        let fields_only = if measure.is_some() {
-            &suffixes[..suffixes.len() - 1]
+        let fields_only = if let Some(measure) = measure {
+            &suffixes[..suffixes.len()
+                - if measure == CheckedMeasure::Pages {
+                    2
+                } else {
+                    1
+                }]
         } else {
             suffixes
         };

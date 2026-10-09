@@ -1,0 +1,6 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  let q = slots_new::<u64, 1>();
+  append(destination: &p.inner, source: &q);
+  return std::process::exit_status(code: 0_u8);
+}

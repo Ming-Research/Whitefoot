@@ -1,0 +1,26 @@
+fn update(p: &Paged<u64>, page: u64, index: u64) -> result: unit reads(p.len), reads(p.pages[page]), writes(p[index]) contract {
+  requires page < p^.pages.len;
+  requires index < p^.len;
+} {
+  let selected = &p^.pages[page];
+  if selected^.len > 0_u64 {
+    let value = selected^[0_u64];
+    set p^[index] = value;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 11_u64);
+  place_back(window: &p.inner, value: 22_u64);
+  if p.inner.pages.len > 0_u64 {
+    update(p: &p.inner, page: 0_u64, index: 1_u64);
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if p.inner[1_u64] != 11_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
