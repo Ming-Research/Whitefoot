@@ -296,6 +296,63 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
 }
 
 #[test]
+fn split_dispatch_keeps_one_struct_and_passes_its_pointer_to_every_part() {
+    let module = emit(
+        br#"enum Step {
+  Again(left: u64);
+  Done();
+}
+
+fn run(first: Step) -> result: u64 pure {
+  let step = first;
+  loop {
+    match step {
+      Again(left: n) => {
+        let left = n^;
+        if left == 0_u64 {
+          return 0_u64;
+        }
+        let next = left -wrap 1_u64;
+        set step = Step::Again(left: next);
+        continue;
+      }
+      Done() => {
+        return 1_u64;
+      }
+    }
+  }
+  return 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = Step::Again(left: 2_u64);
+  let result = run(first: first);
+  if result == 0_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#,
+    );
+    assert_split(&module, "wf_run", 2);
+    let enclosing = emitted_body(&module, "run");
+    assert_eq!(enclosing.matches("%wf.frame = alloca {").count(), 1);
+    assert_eq!(enclosing.matches(" = alloca ").count(), 1, "{enclosing}");
+    assert!(enclosing.contains(", ptr %wf.frame, i32 0, i32 "));
+    let call = enclosing
+        .lines()
+        .find(|line| line.contains("@wf_run.dispatch("))
+        .expect("the enclosing function calls dispatch");
+    assert!(call.contains("ptr %wf.frame"), "{call}");
+    for symbol in ["wf_run.dispatch", "wf_run.arm.0", "wf_run.arm.1"] {
+        let part = definition(&module, symbol);
+        let signature = part.lines().next().expect("a part signature");
+        assert_eq!(signature.matches("ptr %wf.frame").count(), 1, "{part}");
+        assert!(!part.contains("%wf.frame = alloca"), "{part}");
+    }
+}
+
+#[test]
 fn a_result_returned_through_its_destination_threads_the_destination_through_every_part() {
     let module = emit(enum_interpreter().as_bytes());
     let base = if module.contains(" @wf_run.body(") {

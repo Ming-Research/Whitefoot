@@ -2829,15 +2829,20 @@ rarely insert at the same place.
   Reopen with the first consumer whose loop spills a value its hot arms
   read, or a host without `preserve_none`.
 
-- **Firn GET retains an Entry copy because its existing byte slot makes the
-  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
+- **Validate Firn GET's Entry copy after separating mixed-alignment roots.**
+  Amendment S removes atomic `i1` hold flags, and LLVM
   eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
-  prior 72-byte copy: its ordinary `i8` slot fails
-  `plan_target_frame`'s independent-slot alignment test in
-  `compiler/src/target.rs`. Investigate separating slots with different
-  alignments without changing their lifetimes or alias facts. Reopen with
-  firn GET performance work; validate the normal GET path's optimized IR
+  prior 72-byte copy under the former uniform-alignment restriction: its
+  ordinary `i8` slot forced a shared frame. Independent allocation planning
+  now admits mixed alignments in `compiler/src/target.rs`; whether it removes
+  this copy remains unverified. Reopen with firn GET performance work;
+  inspect the actual emitted frame and validate the normal GET path's optimized IR
   loses the copy while the frame and borrow tests retain their observations.
+  The existing word-sized lazy-group flags also remain: their earlier
+  frame-separation rationale no longer establishes an advantage over one
+  Boolean per lazy group. If flag storage or generated code becomes material,
+  compare the two with the same frame layout and workload, checking lazy
+  acquisition and release behavior; no flag-width change is selected here.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
@@ -2854,6 +2859,21 @@ rarely insert at the same place.
   worth a compiler change only if it is no more than 2% slower there.
   Reopen when the wasm interpreter's profile shows register pressure the
   convention cannot hold, or when a target without `preserve_none` matters.
+
+- **Split interpreter loops retain shared-frame snapshot copies.** Split
+  dispatch parts keep one `%wf.frame`, so separating ordinary frame roots
+  does not address a dead snapshot copy inside a split interpreter loop.
+  Halo's call path has the 32-byte `Step` returned by `enter_lua` copied into
+  the loop slot, and `prepare` reads a 16-byte `Value` into a temporary.
+  Impact: these transfers can survive even if the ordinary mixed-alignment
+  witness loses its copy; their runtime cost and exact cause remain to be
+  qualified separately. Change: trace the two destinations and their uses
+  across split parts, then evaluate destination forwarding or more precise
+  part-local storage while preserving the shared frame's lifetime and part
+  signatures. Validate emitted and optimized IR plus native snapshot
+  preservation cases and Halo's call path under the same compiler revision.
+  Reopen when Halo's call-path profile identifies these copies as material;
+  defer because ordinary allocation provenance does not change split frames.
 
 ## Code structure
 
@@ -2995,6 +3015,34 @@ rarely insert at the same place.
   verdicts on the `range*` cases and by the permission tests. Reopen with
   the next change to how either resolves a place, or when a range verdict
   differs from what the ownership judgment says the code touches.
+
+- **Split dispatch part-local allocas take the whole frame's alignment.**
+  `compiler/src/backend/emitter/dispatch.rs`, `FunctionFramePlan::render_split`,
+  emits each part-local alloca with `self.target.struct_layout().align()`
+  (the audited alloca was at line 524). Impact: a bound using those roots'
+  natural alignments would not cover the stronger alignments actually emitted;
+  the ordinary independent-root bound does not qualify these allocations.
+  Change: qualify each part's emitted allocation set with its actual
+  alignments, or select and qualify natural alignments for its local roots
+  while preserving alignments promised at every use. Validate a mixed-alignment
+  split with a low-alignment local root and a more-aligned shared root, exact
+  address-domain boundaries and overflow, and the existing split behavior.
+  Reopen before claiming complete split-part storage qualification or changing
+  part-local allocation layout; deferred from ordinary frame separation.
+
+- **Generated storage outside TargetFramePlan lacks complete frame accounting.**
+  Context groups (`compiler/src/backend/emitter/contexts.rs`,
+  `context_group_prelude`), shared records (`shared.rs`, `record_prelude`),
+  dispatch pins (`dispatch.rs`, part preludes) and cleanup temporaries
+  (`cleanup.rs`) allocate outside the plan. Impact: its extent cannot be
+  described as qualifying all generated storage, even when every planned root
+  fits; the full extent's representability remains unverified. Change: route
+  these reservations through a shared target-qualified inventory, preserving
+  their lifetimes and ABI alignment requirements. Validate that each emitted
+  reservation participates, with target-boundary and overflow cases for each
+  class and unchanged waiting, shared, dispatch and cleanup behavior. Reopen
+  before extending any of these allocation paths or claiming complete frame
+  qualification; deferred because this change covers the existing planned roots.
 
 ## Open language questions
 

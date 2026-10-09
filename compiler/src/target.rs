@@ -275,18 +275,23 @@ impl TargetFrameSlot {
     }
 }
 
-/// A logical slot's field and offset in the complete qualification layout.
+/// A logical slot's field and offset in the fallback struct layout.
 /// When slots are emitted independently, each pointer is allocation-relative
-/// zero; this offset is then footprint accounting, not a physical address.
+/// zero; the struct offset is not an independent allocation's address.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct TargetFrameField {
     physical_index: u32,
     offset: u64,
+    layout: TargetAggregateLayout,
 }
 
 impl TargetFrameField {
     pub(super) const fn physical_index(self) -> u32 {
         self.physical_index
+    }
+
+    pub(super) const fn alignment(self) -> u64 {
+        self.layout.align
     }
 
     #[cfg(test)]
@@ -299,19 +304,20 @@ impl TargetFrameField {
 /// independent allocation roots to LLVM.
 ///
 /// `physical_fields` includes explicit inter-slot and tail padding. Therefore
-/// the LLVM struct rendered from it has exactly `layout`, even for a logical
-/// byte array whose requested address alignment is stronger than its natural
-/// type alignment. `logical_fields` maps each source/emitter slot, in the
+/// the LLVM struct rendered from it has exactly `struct_layout`, even for a
+/// logical byte array whose requested address alignment is stronger than its
+/// natural type alignment. `logical_fields` maps each source/emitter slot, in the
 /// caller's order, to the physical field that owns it. Positive-sized roots
-/// with one common natural alignment and no padding may instead be separate
-/// allocations: every ordering has the same complete extent. Other frames
-/// keep the struct allocation, including zero-sized or over-aligned roots.
+/// with natural requested alignments may instead be separate allocations,
+/// after `independent_extent` checks an extent bound for any root ordering.
+/// Zero-sized or over-aligned roots keep the struct allocation. Split dispatch
+/// frames always use the struct, whose pointer their parts exchange.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TargetFramePlan {
     physical_fields: Vec<TargetStorageType>,
     logical_fields: Vec<TargetFrameField>,
-    layout: TargetAggregateLayout,
-    independent_slot_alignment: Option<u64>,
+    struct_layout: TargetAggregateLayout,
+    independent_slots: bool,
 }
 
 impl TargetFramePlan {
@@ -323,12 +329,40 @@ impl TargetFramePlan {
         self.logical_fields.get(index).copied()
     }
 
-    pub(super) const fn layout(&self) -> TargetAggregateLayout {
-        self.layout
+    pub(super) const fn struct_layout(&self) -> TargetAggregateLayout {
+        self.struct_layout
     }
 
-    pub(super) const fn independent_slot_alignment(&self) -> Option<u64> {
-        self.independent_slot_alignment
+    /// Qualify independent roots using their emitted alignments. Each root
+    /// can need at most alignment - 1 bytes before it, and the complete extent
+    /// at most maximum alignment - 1 bytes after it. This is a bound, not the
+    /// struct size or the machine stack size (which also includes spills).
+    /// Call only when emitting independent roots: split dispatch keeps the
+    /// already-qualified struct and its exact offsets instead.
+    pub(super) fn independent_extent(
+        &self,
+        target: TargetLayout,
+    ) -> Result<Option<u64>, TargetLayoutFailure> {
+        if !self.independent_slots || self.is_empty() {
+            return Ok(None);
+        }
+        let mut extent = 0;
+        for field in &self.logical_fields {
+            let padded = checked_add(
+                field.layout.size,
+                field.alignment() - 1,
+                target,
+                TargetObject::StackFrame,
+            )?;
+            extent = checked_add(extent, padded, target, TargetObject::StackFrame)?;
+        }
+        extent = checked_add(
+            extent,
+            self.struct_layout.align - 1,
+            target,
+            TargetObject::StackFrame,
+        )?;
+        Ok(Some(extent))
     }
 
     pub(super) const fn is_empty(&self) -> bool {
@@ -337,7 +371,8 @@ impl TargetFramePlan {
 }
 
 /// Constructs and validates one complete compiler-generated frame before its
-/// allocation is rendered.
+/// struct allocation is rendered. An ordinary emitter additionally calls
+/// `independent_extent` before emitting separate roots.
 ///
 /// This consumes the emitter's actual slot descriptions. It does not inspect
 /// generated LLVM and it is not an acceptance replay: the resulting physical
@@ -352,7 +387,6 @@ pub(super) fn plan_target_frame(
     let mut logical_fields = Vec::with_capacity(slots.len());
     let mut size = 0_u64;
     let mut frame_alignment = 1_u64;
-    let mut common_slot_alignment = None;
     let mut independent_slots = true;
 
     for slot in slots {
@@ -364,12 +398,7 @@ pub(super) fn plan_target_frame(
             return Err(TargetLayoutFailure::InvalidIr);
         }
         let start = align_up(target, size, requested, TargetObject::StackFrame)?;
-        independent_slots &= requested == layout.align
-            && layout.size > 0
-            && layout.size % requested == 0
-            && start == size
-            && common_slot_alignment.is_none_or(|alignment| alignment == requested);
-        common_slot_alignment = Some(requested);
+        independent_slots &= requested == layout.align && layout.size > 0;
         if start != size {
             physical_fields.push(TargetStorageType::bytes(start - size));
         }
@@ -379,13 +408,16 @@ pub(super) fn plan_target_frame(
         logical_fields.push(TargetFrameField {
             physical_index,
             offset: start,
+            layout: TargetAggregateLayout {
+                size: layout.size,
+                align: requested,
+            },
         });
         size = checked_add(start, layout.size, target, TargetObject::StackFrame)?;
         frame_alignment = frame_alignment.max(requested);
     }
 
     let complete = align_up(target, size, frame_alignment, TargetObject::StackFrame)?;
-    independent_slots &= complete == size;
     if complete != size {
         physical_fields.push(TargetStorageType::bytes(complete - size));
     }
@@ -393,11 +425,11 @@ pub(super) fn plan_target_frame(
     Ok(TargetFramePlan {
         physical_fields,
         logical_fields,
-        layout: TargetAggregateLayout {
+        struct_layout: TargetAggregateLayout {
             size: complete,
             align: frame_alignment,
         },
-        independent_slot_alignment: independent_slots.then_some(common_slot_alignment).flatten(),
+        independent_slots,
     })
 }
 

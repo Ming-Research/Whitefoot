@@ -473,6 +473,33 @@ observed through `--emit-llvm`, runtime results remain unverified. Remove
 the temporary job and option once its conclusions are recorded here; keep
 the witnesses as evidence.
 
+### Selected follow-up: independent mixed-alignment roots
+
+The owner selected separate allocations for ordinary positive-sized roots
+with natural requested alignment. The question for the next `inplace-lets`
+CI run is whether removing the uniform-alignment restriction makes the mixed
+witness lose its dead 152-byte snapshot copy, as the uniform witness did.
+Compare both witnesses under the same toolchain and inspect their raw frame
+allocations, optimized copies and the before-use snapshot falsifier. Retention
+of the dead copy despite separate roots and surviving aggregate calls would
+reject this explanation for the mixed witness. The job does not execute the
+falsifier, so native snapshot correctness still needs the maintained tests.
+
+The independent extent is the checked sum of `size + emitted_alignment - 1`
+over roots, plus `maximum_alignment - 1`. Each preceding gap is at most its
+root's alignment minus one; final padding is at most the maximum minus one,
+so the bound covers any ordering. For `i8, i64, i8, i64`, the earlier proposed
+sum of sizes plus maximum alignment gives 26 bytes, but aligned starts
+`0, 8, 16, 24` need 32 bytes. The selected bound is 39 bytes. Both the sum and
+final padding addition must reject arithmetic overflow and target-domain
+overflow. This qualifies only planned roots, not machine spills or allocations
+outside the plan; exact stored-type qualification remains separate.
+
+Split dispatch frames, parallel lane frames and context argument frames keep
+their shared-object interfaces; zero-sized and over-aligned ordinary roots
+keep the struct fallback. No post-change CI or runtime result is recorded yet.
+The temporary job remains for this comparison.
+
 ### Candidate rule, not an implementation selection
 
 A by-value let could read through its source place when, on every path from

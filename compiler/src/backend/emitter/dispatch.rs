@@ -505,7 +505,7 @@ impl FunctionFramePlan {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let frame_type = format!("{{ {} }}", fields.join(", "));
-        let align = self.target.layout().align();
+        let align = self.target.struct_layout().align();
         let mut text = String::new();
         if enclosing {
             writeln!(text, "  %wf.frame = alloca {frame_type}, align {align}")
