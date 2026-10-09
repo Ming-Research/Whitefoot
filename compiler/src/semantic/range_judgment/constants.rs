@@ -12,7 +12,7 @@ pub(super) fn value(world: &mut World, state: &mut State, value: &CheckedValue) 
         CheckedValue::Integer { ty, bits } => Value::Int(Linear::constant(
             crate::semantic::entailment::integer_value(*ty, *bits),
         )),
-        CheckedValue::Bool(truth) => Value::Bool(super::world::Cond::Constant(*truth)),
+        CheckedValue::Bool(truth) => world.boolean(super::world::Cond::Constant(*truth)),
         CheckedValue::Struct { fields, .. } => Value::Struct(
             fields
                 .iter()
@@ -110,7 +110,8 @@ pub(crate) fn judge(
     for (position, conclusion) in formed.conclusions.iter().enumerate() {
         let (mut units, choices) = state.premises(&world);
         units.extend(formed.premises.iter().cloned());
-        units.push(super::world::negated(conclusion));
+        units.extend(conclusion.guards.iter().cloned());
+        units.push(super::world::negated(&conclusion.conclusions[0]));
         match facts::judge(
             &mut world,
             &[],
@@ -119,7 +120,15 @@ pub(crate) fn judge(
             Query {
                 units,
                 choices,
-                rules: Vec::new(),
+                rules: formed.conditions.clone(),
+                support: formed
+                    .conclusions
+                    .iter()
+                    .zip(&clause.conclusions)
+                    .filter(|(_, written)| written.projected)
+                    .flat_map(|(rule, _)| rule.guards.iter().chain(&rule.conclusions))
+                    .cloned()
+                    .collect(),
             },
         ) {
             Ok(Verdict::Refuted) => {}

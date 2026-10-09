@@ -7,7 +7,7 @@ fn filled_with<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure cont
   ensures result.inner.len == count;
   ensures forall same(k in 0_u64..result.inner.len): result.inner[k] == value;
 } {
-  doc "Builds an array of count copies of value; the postcondition states something only where T is an integer type.";
+  doc "Builds an array of count copies of value; the postcondition relates integer values and the integer projections of copy aggregates.";
   let made = box_array_filled::<T>(count: count, value: value);
   return move made;
 }
@@ -24,7 +24,7 @@ fn first_seven(cells: &[u64]) -> result: u64 reads(cells) contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The u64 instance's postcondition gives the call its requirement; the Mark instance's states nothing and owes nothing.";
+  doc "The u64 instance's postcondition gives the call its requirement; the Mark instance relates the value fields of its elements.";
   let numbers = filled_with::<u64>(count: 3_u64, value: 7_u64);
   let got = first_seven(cells: &numbers.inner[0_u64..3_u64]);
   let mark = Mark(value: 1_u64);

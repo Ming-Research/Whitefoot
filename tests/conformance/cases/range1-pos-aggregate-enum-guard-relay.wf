@@ -1,0 +1,21 @@
+enum Flow {
+  Open(block: u64);
+  Close(block: u64);
+}
+
+fn relay<T: copy>(targets: &[T], markers: &[u64], value: T) -> result: unit pure contract {
+  requires targets^.len == markers^.len;
+  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;
+  requires forall guarded(k in 0_u64..targets^.len) when targets^[k] == value: markers^[k] == 0_u64;
+  ensures forall zero(k in 0_u64..markers^.len): markers^[k] == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let value = Flow::Open(block: 3_u64);
+  let targets = array_filled::<Flow, 1>(value: value);
+  let markers = array_filled::<u64, 1>(value: 0_u64);
+  relay::<Flow>(targets: &targets[0_u64..1_u64], markers: &markers[0_u64..1_u64], value: value);
+  return std::process::exit_status(code: 0_u8);
+}

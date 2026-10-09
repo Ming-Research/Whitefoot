@@ -1,0 +1,28 @@
+struct Block {
+  entry_slot: u32;
+  storage: Box<u64>;
+}
+
+fn promise<T>(targets: &[T]) -> result: unit pure contract {
+  ensures forall same(k in 0_u64..targets^.len): targets^[k] == targets^[0_u64];
+} {
+  return unit;
+}
+
+fn need(targets: &[Block]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..targets^.len): targets^[k].entry_slot == 0_u32;
+} {
+  return unit;
+}
+
+fn forward(targets: &[Block]) -> result: unit pure contract {
+  requires forall first(k in 0_u64..targets^.len) when k == 0_u64: targets^[k].entry_slot == 0_u32;
+} {
+  promise::<Block>(targets: targets);
+  need(targets: targets);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Aggregate equality in generic range clauses
+
+Nodes: language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "should an equality in a generic range clause expand by field when the element is a struct?" (translated).
+
+Summary: At a concrete instance an `==` between two values of one copy aggregate type stands for the equality of every integer projection, so a fill constructor's content fact holds for a struct of integers; a rule only for the fill constructors was refused because user generic functions would still say nothing.
+
 ## 2026-10-09 Segment and page selectors as direct bases
 
 Nodes: language/ownership/range-reference, language/checks-and-proofs/proof-identity

@@ -1228,8 +1228,8 @@ fn generic_range_postcondition_is_judged_at_concrete_instances() {
                     .iter()
                     .any(|post| post.owed && post.clause.name == "same"))
                 .count(),
-            1,
-            "only the integer instance owes the content postcondition"
+            2,
+            "integer and copy aggregate instances both owe the content postcondition"
         );
     });
 }
@@ -2599,4 +2599,202 @@ fn a_state_excluded_match_continuation_discharges_its_deferred_sites() {
         "enum Route {\n  Live();\n  Dead();\n}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n      return unit;\n    }\n    Dead() => {\n    }\n  }\n  let value = xs^[i];\n  return unit;\n}\n",
     );
     field_range_verdict(&source, None);
+}
+
+#[test]
+fn aggregate_range_negatives_name_the_consumer_call() {
+    for (source, callee) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-filled-struct.wf"
+            )
+            .as_slice(),
+            "need(",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-filled-enum.wf"
+            )
+            .as_slice(),
+            "need(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-enum-tag.wf")
+                .as_slice(),
+            "same::<Flow>(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-bool-tag.wf")
+                .as_slice(),
+            "same::<Bool>(",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-bool-write.wf"
+            )
+            .as_slice(),
+            "same::<Bool>(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-noncopy.wf")
+                .as_slice(),
+            "need(",
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected the consumer's range rejection: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+            assert!(
+                matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, .. } if *site == "a call"),
+                "{issue:?}"
+            );
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(source[start..].starts_with(callee.as_bytes()), "{issue:?}");
+        });
+    }
+}
+
+#[test]
+fn aggregate_range_enum_expansion_retains_separate_payload_domains() {
+    use super::super::range_facts::{
+        CheckedRangeProjection as Projection, CheckedRangeTerm as Term,
+    };
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/range1-pos-aggregate-generic-requirement.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the enum requirement must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        let clause = &function.range_facts.requirements[0];
+        assert_eq!(
+            clause.conclusions.len(),
+            3,
+            "one tag and both declared payloads"
+        );
+        for (index, relation) in clause.conclusions.iter().enumerate() {
+            assert!(relation.projected);
+            let Term::Read {
+                projection,
+                guarded_from,
+                ..
+            } = &relation.left
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(*guarded_from, Some(0));
+            let Term::ValueProjection {
+                projection: value_path,
+                ..
+            } = &relation.right
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(
+                projection, value_path,
+                "both sides select the same integer path"
+            );
+            match (index, projection.as_slice()) {
+                (0, [Projection::Tag(2)]) => {}
+                (
+                    1,
+                    [
+                        Projection::Payload {
+                            variant: 0,
+                            field: 0,
+                            variants: 2,
+                        },
+                    ],
+                ) => {}
+                (
+                    2,
+                    [
+                        Projection::Payload {
+                            variant: 1,
+                            field: 0,
+                            variants: 2,
+                        },
+                    ],
+                ) => {}
+                _ => panic!("{relation:?}"),
+            }
+        }
+    });
+}
+
+#[test]
+fn aggregate_range_postconditions_read_the_parameter_at_entry() {
+    let good =
+        include_str!("../../../../tests/conformance/cases/range1-pos-aggregate-entry-value.wf");
+    let bad = good.replace(
+        "  let made = array_filled::<T, 1>(value: value);\n  set value = other;",
+        "  set value = other;\n  let made = array_filled::<T, 1>(value: value);",
+    );
+    assert_ne!(
+        bad, good,
+        "the negative must move replacement before the fill"
+    );
+    for (source, rejected) in [(good.as_bytes(), false), (bad.as_bytes(), true)] {
+        with_semantics(source, |outcome| match (rejected, outcome) {
+            (false, SemanticOutcome::Complete(_)) => {}
+            (true, SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(
+                    source[start..].starts_with(b"return made;"),
+                    "the changed value must fail at its producer's return: {issue:?}"
+                );
+            }
+            (_, outcome) => panic!("rejected={rejected}: {outcome:?}"),
+        });
+    }
+}
+
+#[test]
+fn aggregate_range_large_array_reports_the_existing_instance_ceiling() {
+    let source = field_range_program(
+        "fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<u32, 1000000000>], value: Array<u32, 1000000000>) -> result: unit pure {\n  same::<Array<u32, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+        assert!(
+            matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, missing, .. } if *site == "a call" && missing.contains("256 instances")),
+            "{issue:?}"
+        );
+    });
+}
+
+#[test]
+fn aggregate_range_large_array_without_integer_projections_is_empty() {
+    let source = field_range_program(
+        "struct Flag {\n  value: f32;\n}\n\nfn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<Flag, 1000000000>], value: Array<Flag, 1000000000>) -> result: unit pure {\n  same::<Array<Flag, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        assert_eq!(
+            function.range_facts.requirements.len(),
+            1,
+            "the aggregate equality forms even when its projection conjunction is empty"
+        );
+        assert!(function.range_facts.requirements[0].conclusions.is_empty());
+    });
 }

@@ -1,0 +1,25 @@
+struct Header {
+  slot: u32;
+}
+
+struct Block {
+  first: u64;
+  second: i32;
+  header: Header;
+  entries: Array<u32, 2>;
+}
+
+fn need(targets: &[Block]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..targets^.len): targets^[k].first == 7_u64, targets^[k].second == 9_i32, targets^[k].header.slot == 11_u32, targets^[k].entries[0_u64] == 13_u32, targets^[k].entries[1_u64] == 13_u32;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let entries = array_filled::<u32, 2>(value: 13_u32);
+  let header = Header(slot: 11_u32);
+  let block = Block(first: 7_u64, second: 9_i32, header: header, entries: entries);
+  let targets = array_filled::<Block, 1>(value: block);
+  need(targets: &targets[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

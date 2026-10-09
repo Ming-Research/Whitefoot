@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.118: aggregate equality in generic range clauses
+
+Rules: changed RANGE-1
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "should an equality in a generic range clause expand by field when the element is a struct?" (translated): an `==` between two values of one copy aggregate type reads, at a concrete instance, as the equality of each integer projection.
+
+Summary: A generic range clause states nothing at a concrete instance whose type parameter is not an integer, so `array_filled`'s and `box_array_filled`'s "every element equals value" said nothing for a struct, and a consumer of a struct-filled array could not prove a field fact (Snowghost-wf's filled-field witness). RANGE-1 now reads an `==` between two values of one copy struct, enum or `Array` type as the conjunction of equalities of their integer projections, enum payloads under their tag; every other non-integer clause still states nothing. A projection formed from a by-value parameter denotes its value at entry. Selection ground: equal copy values have equal integer parts, so each projected equality follows from the stated one, and the range judgment already reads those projections.
+
 ## 2026-10-09 v0.117: segment and page selectors as direct bases
 
 Rules: changed OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2, ENT-3

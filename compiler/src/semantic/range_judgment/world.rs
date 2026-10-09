@@ -305,6 +305,17 @@ impl World {
         Linear::atom(atom)
     }
 
+    /// Preserve ordinary branch facts and give the value a stable enum tag.
+    /// Only a constant fixes that tag; RANGE-2 leaves other expression values
+    /// unknown. Copies retain the tag, while each new value gets its own.
+    pub(super) fn boolean(&mut self, condition: Cond) -> Value {
+        let tag = match &condition {
+            Cond::Constant(truth) => Linear::constant(i128::from(!*truth)),
+            _ => self.opaque(Some(IntegerType::U8)),
+        };
+        Value::Bool(condition, tag)
+    }
+
     pub(super) fn joined(
         &mut self,
         join: JoinId,
@@ -485,7 +496,9 @@ pub(super) enum View {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Value {
     Int(Linear),
-    Bool(Cond),
+    /// Keep the ordinary condition and the declaration-order enum tag.
+    /// Bool's prelude order is True = 0, False = 1 [PRE-1, RANGE-2].
+    Bool(Cond, Linear),
     Ref(View),
     /// An owned aggregate stored at this location.
     Owned(Location),
@@ -766,7 +779,7 @@ impl State {
         for (binding, ty) in exposed {
             let fresh = match self.values.get(&binding) {
                 Some(Value::Int(_)) => Value::Int(world.opaque(ty)),
-                Some(Value::Bool(_)) => Value::Bool(Cond::Unknown),
+                Some(Value::Bool(..)) => world.boolean(Cond::Unknown),
                 _ => continue,
             };
             // Logged as a written binding, so a loop header forgets it too.
@@ -983,6 +996,19 @@ pub(super) fn join_values(
     {
         return Value::Int(world.joined(join, values, None));
     }
+    if let Some(tags) = all
+        .iter()
+        .map(|value| match value {
+            Value::Bool(_, tag) => Some(tag.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        return Value::Bool(
+            Cond::Unknown,
+            world.joined(join, tags, Some(IntegerType::U8)),
+        );
+    }
     if all.iter().all(|value| {
         matches!(
             value,
@@ -1067,6 +1093,11 @@ pub(super) fn stored_projections(
     match value {
         Value::Int(value) => {
             values.insert(path.clone(), Stored::Int(value.clone()));
+        }
+        Value::Bool(_, tag) => {
+            path.push(CheckedRangeProjection::Tag(2));
+            values.insert(path.clone(), Stored::Int(tag.clone()));
+            path.pop();
         }
         Value::Struct(fields) => {
             for (ordinal, field) in fields.iter().enumerate() {
@@ -1168,7 +1199,7 @@ pub(super) fn stored_projections(
 }
 
 /// Capture aggregate definitions in a zero-index version for lazy projections.
-fn snapshot_version(
+pub(super) fn snapshot_version(
     world: &mut World,
     values: BTreeMap<Vec<CheckedRangeProjection>, Stored>,
 ) -> VersionId {

@@ -11,6 +11,9 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
+mod aggregate;
+use aggregate::RangeOperand;
+
 use crate::syntax::NodeId;
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::syntax::views::PlaceSuffix;
@@ -43,7 +46,8 @@ enum RangeGeneric {
     /// parameter is taken as an integer.
     Symbolic,
     /// A concrete instance of a generic function: a value or element whose
-    /// type is not an integer leaves the clause stating nothing here.
+    /// type is not an integer is expanded for copy aggregate equality,
+    /// and otherwise leaves the clause stating nothing here.
     Instance,
 }
 
@@ -106,8 +110,12 @@ impl Checker<'_, '_> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             // A binder's endpoints see the binders before it and never itself.
-            let start = self.range_atom(context, *start, bindings, &names)?;
-            let end = self.range_atom(context, *end, bindings, &names)?;
+            let start = self
+                .range_atom(context, *start, bindings, &names)?
+                .integer(&names);
+            let end = self
+                .range_atom(context, *end, bindings, &names)?
+                .integer(&names);
             let bound = self
                 .types
                 .declarations
@@ -151,13 +159,10 @@ impl Checker<'_, '_> {
                 .first_terminal_position(relation)?
                 < colon
             {
-                guards.push(checked);
+                guards.extend(checked);
             } else {
-                conclusions.push(checked);
+                conclusions.extend(checked);
             }
-        }
-        if conclusions.is_empty() {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
         if names.unformed.get() {
             self.body.unformed_range_facts.insert(declaration);
@@ -307,10 +312,10 @@ impl Checker<'_, '_> {
         Ok(Some(CheckedRangeClause {
             declaration: context.function.declaration,
             name: String::new(),
-            node: relation.node.clone(),
+            node: self.types.declarations.tree.path(expression)?.clone(),
             binders: Vec::new(),
             guards: Vec::new(),
-            conclusions: vec![relation],
+            conclusions: relation,
         }))
     }
 
@@ -332,18 +337,15 @@ impl Checker<'_, '_> {
 
     /// [RANGE-1] the integer type a value or element of type `ty` gives a
     /// term: a type parameter's is an integer at the symbolic instance, and
-    /// at a concrete instance a type that is not an integer leaves the clause
-    /// stating nothing.
+    /// a concrete noninteger operand keeps a placeholder until its comparison
+    /// expands aggregate equality or leaves the clause stating nothing.
     fn range_integer(ty: CheckedType, names: &RangeNames) -> Option<IntegerType> {
         match (ty, names.generic) {
             (CheckedType::Integer(integer), _) => Some(integer),
             (CheckedType::Generic(_) | CheckedType::GenericInt(_), RangeGeneric::Symbolic) => {
                 Some(IntegerType::U64)
             }
-            (_, RangeGeneric::Instance) => {
-                names.unformed.set(true);
-                Some(IntegerType::U64)
-            }
+            (_, RangeGeneric::Instance) => Some(IntegerType::U64),
             _ => None,
         }
     }
@@ -455,7 +457,10 @@ impl Checker<'_, '_> {
             }
             let mut arguments = Vec::with_capacity(atoms.len());
             for atom in atoms {
-                arguments.push(self.range_atom(context, atom, bindings, &names)?);
+                arguments.push(
+                    self.range_atom(context, atom, bindings, &names)?
+                        .integer(&names),
+                );
             }
             uses.push(CheckedRangeUse {
                 node: self.types.declarations.tree.path(step)?.clone(),
@@ -548,7 +553,10 @@ impl Checker<'_, '_> {
         };
         let mut arguments = Vec::new();
         for atom in atoms {
-            arguments.push(self.range_atom(context, atom, bindings, &names)?);
+            arguments.push(
+                self.range_atom(context, atom, bindings, &names)?
+                    .integer(&names),
+            );
         }
         Ok(Some(CheckedRangeUse {
             node: self.types.declarations.tree.path(step)?.clone(),
@@ -705,7 +713,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeRelation, CheckStop> {
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
         self.range_comparison(context, node, node, bindings, names)
     }
 
@@ -718,7 +726,7 @@ impl Checker<'_, '_> {
         operator: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeRelation, CheckStop> {
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
         let expressions = self
             .types
             .declarations
@@ -752,12 +760,7 @@ impl Checker<'_, '_> {
         };
         let left = self.range_expression(context, *left, bindings, names)?;
         let right = self.range_expression(context, *right, bindings, names)?;
-        Ok(CheckedRangeRelation {
-            node: self.types.declarations.tree.path(node)?.clone(),
-            left,
-            comparison,
-            right,
-        })
+        self.range_comparison_operands(context, node, comparison, left, right, names)
     }
 
     fn range_expression(
@@ -766,7 +769,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         let children = self.types.declarations.tree.children(node)?.to_vec();
         let Some((&first, rest)) = children.split_first() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -774,7 +777,11 @@ impl Checker<'_, '_> {
         if rest.len() % 2 != 0 {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
-        let mut terms = vec![(1_i128, self.range_product(context, first, bindings, names)?)];
+        let first = self.range_product(context, first, bindings, names)?;
+        if rest.is_empty() {
+            return Ok(first);
+        }
+        let mut terms = vec![(1_i128, first.integer(names))];
         for pair in rest.as_chunks::<2>().0 {
             let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -784,9 +791,13 @@ impl Checker<'_, '_> {
                 b"-" => -1_i128,
                 _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
             };
-            terms.push((sign, self.range_product(context, pair[1], bindings, names)?));
+            terms.push((
+                sign,
+                self.range_product(context, pair[1], bindings, names)?
+                    .integer(names),
+            ));
         }
-        Ok(range_sum(terms))
+        Ok(range_sum(terms).into())
     }
 
     fn range_product(
@@ -795,7 +806,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         let factors = self
             .types
             .declarations
@@ -804,8 +815,12 @@ impl Checker<'_, '_> {
         match factors.as_slice() {
             [factor] => self.range_factor(context, *factor, bindings, names),
             [left, right] => {
-                let left_term = self.range_factor(context, *left, bindings, names)?;
-                let right_term = self.range_factor(context, *right, bindings, names)?;
+                let left_term = self
+                    .range_factor(context, *left, bindings, names)?
+                    .integer(names);
+                let right_term = self
+                    .range_factor(context, *right, bindings, names)?
+                    .integer(names);
                 let (constant, value) = match (&left_term, &right_term) {
                     (CheckedRangeTerm::Constant(constant), _) => (*constant, right_term),
                     (_, CheckedRangeTerm::Constant(constant)) => (*constant, left_term),
@@ -818,7 +833,7 @@ impl Checker<'_, '_> {
                         );
                     }
                 };
-                Ok(range_sum(vec![(constant, value)]))
+                Ok(range_sum(vec![(constant, value)]).into())
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -830,7 +845,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         if let Some(nested) = self
             .types
             .declarations
@@ -861,7 +876,7 @@ impl Checker<'_, '_> {
         atom: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         if let Some(literal) = self
             .types
             .declarations
@@ -878,7 +893,7 @@ impl Checker<'_, '_> {
                     "write integer literals with a concrete suffix such as `_u64`",
                 );
             };
-            return Ok(CheckedRangeTerm::Constant(integer_value(ty, bits)));
+            return Ok(CheckedRangeTerm::Constant(integer_value(ty, bits)).into());
         }
         if self
             .types
@@ -915,7 +930,7 @@ impl Checker<'_, '_> {
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -982,13 +997,13 @@ impl Checker<'_, '_> {
             if !suffixes.is_empty() {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
-            return Ok(CheckedRangeTerm::Bound(*position));
+            return Ok(CheckedRangeTerm::Bound(*position).into());
         }
         if let Some(position) = names.iterations.get(&declaration) {
             if !suffixes.is_empty() {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
-            return Ok(CheckedRangeTerm::Iteration(*position));
+            return Ok(CheckedRangeTerm::Iteration(*position).into());
         }
         if class == DeclarationClass::NamedConst && suffixes.is_empty() {
             let Some(constant) = self.types.constants.get(&declaration).copied() else {
@@ -1003,7 +1018,7 @@ impl Checker<'_, '_> {
                     "name an integer const",
                 );
             };
-            return Ok(CheckedRangeTerm::Constant(integer_value(*ty, *bits)));
+            return Ok(CheckedRangeTerm::Constant(integer_value(*ty, *bits)).into());
         }
         if class != DeclarationClass::Value {
             return self.invalid_range(
@@ -1061,7 +1076,7 @@ impl Checker<'_, '_> {
         mut selected: Selected,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         let mut path = Vec::new();
         let last = suffixes.len();
         let mut index = 0;
@@ -1094,7 +1109,9 @@ impl Checker<'_, '_> {
                     );
                 }
                 PlaceSuffix::Index { offset } => {
-                    let index_term = self.range_atom(context, offset, bindings, names)?;
+                    let index_term = self
+                        .range_atom(context, offset, bindings, names)?
+                        .integer(names);
                     let base = CheckedRangePlace {
                         root,
                         path: path.clone(),
@@ -1124,8 +1141,9 @@ impl Checker<'_, '_> {
                             };
                             return match self.types.declarations.tree.place_suffix(next)? {
                                 PlaceSuffix::Index { offset } => {
-                                    let element_index =
-                                        self.range_atom(context, offset, bindings, names)?;
+                                    let element_index = self
+                                        .range_atom(context, offset, bindings, names)?
+                                        .integer(names);
                                     self.range_element_suffixes(
                                         context,
                                         next,
@@ -1151,7 +1169,8 @@ impl Checker<'_, '_> {
                                     Ok(CheckedRangeTerm::SegmentLength {
                                         place: base,
                                         segment: Box::new(index_term),
-                                    })
+                                    }
+                                    .into())
                                 }
                                 _ => self.invalid_range(
                                     SemanticRule::Range1,
@@ -1206,7 +1225,8 @@ impl Checker<'_, '_> {
                             place: CheckedRangePlace { root, path },
                             measure: CheckedMeasure::Pages,
                             shape: CheckedRangeShape::Run,
-                        });
+                        }
+                        .into());
                     }
                     if at_end && (name == "len" || name == "cap") {
                         let measure = if name == "len" {
@@ -1232,7 +1252,8 @@ impl Checker<'_, '_> {
                                 place: CheckedRangePlace { root, path },
                                 measure,
                                 shape,
-                            });
+                            }
+                            .into());
                         }
                     }
                     let Selected::Value(value) = selected else {
@@ -1252,7 +1273,11 @@ impl Checker<'_, '_> {
         }
         match selected {
             Selected::Value(ty) if path.is_empty() && Self::range_integer(ty, names).is_some() => {
-                Ok(CheckedRangeTerm::Value(root))
+                Ok(RangeOperand::typed(
+                    CheckedRangeTerm::Value(root),
+                    ty,
+                    names,
+                ))
             }
             _ => self.invalid_range(
                 SemanticRule::Range1,
@@ -1315,7 +1340,7 @@ impl Checker<'_, '_> {
         mut selected: CheckedType,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<CheckedRangeTerm, CheckStop> {
+    ) -> Result<RangeOperand, CheckStop> {
         let mut projection = Vec::new();
         let mut position = 0;
         while position < suffixes.len() {
@@ -1337,7 +1362,9 @@ impl Checker<'_, '_> {
                         );
                     }
                 };
-                let index = self.range_atom(context, offset, bindings, names)?;
+                let index = self
+                    .range_atom(context, offset, bindings, names)?
+                    .integer(names);
                 projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                 indices.push(index);
                 selected = if matches!(selected, CheckedType::Segments { .. }) {
@@ -1490,13 +1517,19 @@ impl Checker<'_, '_> {
         let Some(element) = Self::range_integer(selected, names) else {
             return self.not_integer_element(suffixes.last().copied().unwrap_or(node));
         };
-        Ok(CheckedRangeTerm::Read {
-            place,
-            shape,
-            indices,
-            projection,
-            element,
-        })
+        Ok(RangeOperand::typed(
+            CheckedRangeTerm::Read {
+                place,
+                shape,
+                indices,
+                projection,
+                element,
+                implicit_indices: Vec::new(),
+                guarded_from: None,
+            },
+            selected,
+            names,
+        ))
     }
 
     fn member_name(&self, suffix: NodeId) -> Result<String, CheckStop> {

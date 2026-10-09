@@ -1,0 +1,22 @@
+struct Block {
+  entry_slot: u32;
+}
+
+fn fill<T: copy>(value: T) -> result: Array<T, 1> pure contract {
+  ensures forall same(k in 0_u64..result.len): result[k] == value;
+} {
+  let made = array_filled::<T, 1>(value: value);
+  return made;
+}
+
+fn need(targets: &[Block]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..targets^.len): targets^[k].entry_slot == 0_u32;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let targets = fill::<Block>(value: Block(entry_slot: 0_u32));
+  need(targets: &targets[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
