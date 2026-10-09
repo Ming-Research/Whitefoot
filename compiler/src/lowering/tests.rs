@@ -3089,6 +3089,9 @@ fn borrowed_access(values: &{storage}, item: u64, slot: u64) -> result: u64 writ
 }} {{
   doc "Read and replace the same element through its bound range reference.";
   let part = &{selector};
+  if slot >= part^.len {{
+    return 0_u64;
+  }}
   let previous = part^[slot];
   set part^[slot] = previous;
   return previous;

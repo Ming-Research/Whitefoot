@@ -1003,6 +1003,59 @@ fn main() -> status: std::process::ExitStatus pure {{
     );
 }
 
+/// Every selector recorded inside a proof-only measure must be answered,
+/// even when the measure's value is nonnegative without any additional fact.
+#[test]
+fn direct_run_measures_judge_selectors_in_requirements_and_invariants() {
+    for (storage, selector, outer_bound) in [
+        ("Segments<u64>", "values^[item]", "values^.len"),
+        ("Paged<u64>", "values^.pages[item]", "values^.pages.len"),
+    ] {
+        for in_requirement in [true, false] {
+            for bound in ["<", "<="] {
+                let (requirement, invariant) = if in_requirement {
+                    (format!("requires 0_u64 <= {selector}.len;"), String::new())
+                } else {
+                    (
+                        String::new(),
+                        format!("invariant nonnegative: 0_u64 <= {selector}.len;"),
+                    )
+                };
+                let source = format!(
+                    r#"fn inspect(values: &{storage}, item: u64) -> result: unit reads(values) contract {{
+  requires item {bound} {outer_bound};
+  {requirement}
+}} {{
+  {invariant}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+                );
+                if bound == "<" {
+                    assert_accepts(source.as_bytes());
+                } else {
+                    with_semantics(source.as_bytes(), |outcome| {
+                        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                            panic!("selector bound must be rejected: {outcome:?}");
+                        };
+                        assert_eq!(issue.rule(), SemanticRule::Op4);
+                        let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } =
+                            issue.kind()
+                        else {
+                            panic!("expected the selector's bounds obligation: {issue:?}");
+                        };
+                        assert_eq!(residual, &format!("item < {outer_bound}"));
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// The checked paths, rather than merely acceptance, must identify the same
 /// storage under direct access and a bound range, with ordinary OWN-7 answers.
 #[test]
@@ -1017,6 +1070,9 @@ fn direct_segment_elements_retain_borrowed_place_identity() {
 } {
   doc "Direct elements and borrowed elements carry one checked storage path.";
   let first_run = &runs^[0_u64];
+  if slot >= first_run^.len {
+    return 0_u64;
+  }
   let direct_first = runs^[0_u64][slot];
   let borrowed_first = first_run^[slot];
   let direct_second = runs^[1_u64][slot];

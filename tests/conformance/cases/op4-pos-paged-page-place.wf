@@ -14,6 +14,9 @@ fn main() -> status: std::process::ExitStatus pure {
   doc "Direct page lengths track current extents while a borrowed page retains its captured length.";
   let storage = box_paged_new::<u64>(capacity: 3_u64);
   place_back(window: &storage.inner, value: 7_u64);
+  if storage.inner.pages.len != 1_u64 {
+    return std::process::exit_status(code: 10_u8);
+  }
   let captured = &storage.inner.pages[0_u64];
   if storage.inner.pages[0_u64].len != 1_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -21,6 +24,9 @@ fn main() -> status: std::process::ExitStatus pure {
   place_back(window: &storage.inner, value: 11_u64);
   if captured^.len != 1_u64 {
     return std::process::exit_status(code: 2_u8);
+  }
+  if storage.inner.pages.len != 1_u64 {
+    return std::process::exit_status(code: 11_u8);
   }
   if storage.inner.pages[0_u64].len != 2_u64 {
     return std::process::exit_status(code: 3_u8);
@@ -34,6 +40,9 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   if storage.inner.len != 2_u64 {
     return std::process::exit_status(code: 9_u8);
+  }
+  if storage.inner.pages[0_u64].len != 2_u64 {
+    return std::process::exit_status(code: 12_u8);
   }
   let borrowed = &storage.inner.pages[0_u64];
   if borrowed^.len != 2_u64 {

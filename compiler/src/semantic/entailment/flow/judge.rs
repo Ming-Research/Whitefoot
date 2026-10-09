@@ -1209,6 +1209,11 @@ impl Analyzer<'_, '_> {
                 | CheckedExpression::RangeIndex { place, .. } => {
                     self.judge_range_element_place(place, states);
                 }
+                CheckedExpression::RangeMeasure { root, .. } => {
+                    // A direct run measure carries its selector's formation;
+                    // it owes the same bounds as the corresponding borrow.
+                    self.judge_children_reach_parent(root.formation.as_deref(), states);
+                }
                 _ => {}
             }
         }
@@ -1221,15 +1226,7 @@ impl Analyzer<'_, '_> {
     ) {
         for expression in expression.postorder() {
             if let CheckedAffineExpressionKind::Measure(measure) = &expression.kind {
-                match measure.as_ref() {
-                    CheckedExpression::ContainerMeasure { root, .. } => {
-                        self.judge_place_subscripts(root, states);
-                    }
-                    CheckedExpression::RangeElementMeasure { place, .. } => {
-                        self.judge_range_element_place(place, states);
-                    }
-                    _ => {}
-                }
+                self.judge_clause_places(std::slice::from_ref(measure.as_ref()), states);
             }
         }
     }

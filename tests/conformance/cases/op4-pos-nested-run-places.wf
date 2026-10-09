@@ -4,6 +4,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let segments = box_segments_filled::<u64>(lengths: &widths.inner[0_u64..1_u64], value: 7_u64);
   let pages = box_paged_new::<Box<Segments<u64>>>(capacity: 1_u64);
   place_back(window: &pages.inner, value: move segments);
+  if pages.inner.pages.len != 1_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
   if pages.inner.pages[0_u64].len != 1_u64 {
     return std::process::exit_status(code: 1_u8);
   }
