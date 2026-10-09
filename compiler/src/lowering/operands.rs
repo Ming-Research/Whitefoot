@@ -96,7 +96,8 @@ impl IrTerminator {
 macro_rules! operation_operands {
     ($operation:expr, $iter:ident, $value:path) => {
         match $operation {
-            IrOperation::Constant(_)
+            IrOperation::DemandRequested
+            | IrOperation::Constant(_)
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin

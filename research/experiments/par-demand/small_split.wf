@@ -1,0 +1,39 @@
+fn mark(cells: &Box<Array<u64>>, lo: u64, hi: u64, salt: u64) -> result: unit writes(cells) contract {
+  requires lo <= hi;
+  requires hi <= cells^.inner.len;
+} {
+  for @mark (i in lo..hi) {
+    set cells^.inner[i] = i +wrap salt;
+  }
+  return unit;
+}
+
+fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
+  let cells = box_array_filled::<u64>(count: 4096_u64, value: 0_u64);
+  let lo = 0_u64;
+  let n = 0_u64;
+  loop @walk {
+    if n == repetitions {
+      break @walk;
+    }
+    if lo >= 4000_u64 {
+      set lo = 0_u64;
+    }
+    let hi = lo +wrap extent;
+    if lo <= hi {
+      if hi <= cells.inner.len {
+        let done = mark(cells: &cells, lo: lo, hi: hi, salt: n +wrap seed);
+      }
+    }
+    set lo = lo +wrap 7_u64;
+    set n = n +wrap 1_u64;
+  }
+  let checksum = 0_u64;
+  let at = 0_u64;
+  loop @read {
+    if at >= cells.inner.len { break @read; }
+    set checksum = checksum +wrap cells.inner[at];
+    set at = at +wrap 1_u64;
+  }
+  return checksum;
+}

@@ -16,7 +16,7 @@ use whitefoot::{
     split_module,
 };
 
-use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
+use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects_for_mode};
 pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);
@@ -135,8 +135,14 @@ fn link_module_with_driver_arguments(
     let needs_heap = llvm.contains("@wf__heap_take(")
         || llvm.contains("@wf__heap_give(")
         || llvm.contains("@wf__heap_retake(");
-    let (sources, objects) =
-        append_runtime_objects(&mut command, directory, None, None, needs_heap);
+    let (sources, objects) = append_runtime_objects_for_mode(
+        &mut command,
+        directory,
+        None,
+        None,
+        needs_heap,
+        llvm.contains("@wf__par_demand_mode("),
+    );
     let compilation = run_command(
         command
             .args(HOST_OPTIMIZATION_ARGUMENTS)

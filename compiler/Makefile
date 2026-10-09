@@ -232,7 +232,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-demand-test sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -311,6 +311,14 @@ $(SCHED_PROBE_OBJECT_DIR)/$(1).o: $(SCHED_DIR)/$(2).c $(SCHED_DIR)/core.c $(SCHE
 	$$(CC) $(COMPLETION_BASE_CFLAGS) $(3) -c "$$<" -o "$$@"
 endef
 $(eval $(call scheduler-image,sched-smoke,smoke,-DWF_SCHED_TEST))
+$(SCHED_PROBE_OBJECT_DIR)/entry-demand.o: $(SCHED_DIR)/entry.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_PAR_DEMAND=1 -c "$<" -o "$@"
+$(eval $(call scheduler-image,sched-demand,demand_probe,,$(SCHED_PROBE_OBJECT_DIR)/entry-demand.o $(SCHED_PROBE_OBJECT_DIR)/prim_host.o))
+sched-demand-test: $(COMPLETION_TMP)/sched-demand
+	WF_PAR_DEMAND=on "$(COMPLETION_TMP)/sched-demand"
+	WF_PAR_DEMAND=off-never-request "$(COMPLETION_TMP)/sched-demand"
+.PHONY: sched-demand-test
 $(SCHED_PROBE_OBJECT_DIR)/entry-deque.o: $(SCHED_DIR)/entry.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -c "$<" -o "$@"

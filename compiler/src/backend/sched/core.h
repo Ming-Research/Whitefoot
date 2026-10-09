@@ -20,6 +20,8 @@ void wf__par_publish(void *frame, void (*run)(void *));
 void wf__par_join(void *frame);
 void wf__par_release(void *frame);
 int wf__par_pool_active(void);
+/* Starts/attaches the demand pool on first use, then reads this lane. */
+uint64_t wf__par_demand_requested(void);
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);
 uint64_t wf__par_recursion_budget(void);
 unsigned long wf__par_grants(void);

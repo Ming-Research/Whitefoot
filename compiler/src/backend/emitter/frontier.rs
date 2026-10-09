@@ -79,11 +79,17 @@ impl RecursiveFrontiers {
                     IrInstruction::Define {
                         operation:
                             IrOperation::LoopSplit {
-                                splitter, chunk, ..
+                                splitter,
+                                chunk,
+                                weight,
+                                ..
                             },
                         ..
                     } => {
-                        edges[ordinal].extend([*splitter as usize, *chunk as usize]);
+                        if !program.par_demand || *weight != 0 {
+                            edges[ordinal].push(*splitter as usize);
+                        }
+                        edges[ordinal].push(*chunk as usize);
                     }
                     _ => {}
                 }

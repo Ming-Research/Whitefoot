@@ -856,6 +856,9 @@ pub enum IrWorkEstimate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrOperation {
     Constant(IrConstant),
+    /// Target-private scheduling advice, only in the demand slice driver.
+    /// Defines Bool; no source judgment consumes it.
+    DemandRequested,
     Call {
         function: u32,
         arguments: Vec<IrValueId>,
@@ -1954,6 +1957,7 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    pub(crate) par_demand: bool,
     /// OP-9 ceilings before target representation choices, indexed by nominal.
     pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,
     pub(crate) nominals: Vec<IrNominal>,

@@ -6,6 +6,7 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod demand;
 mod loops;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
@@ -63,9 +64,14 @@ pub(crate) fn lower_checked_from(
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,
 ) -> Result<IrProgram, LoweringFailure> {
+    let par_demand = matches!(overlap, OverlapLowering::Demand { .. });
     let sequential_compute_refusal = matches!(
         overlap,
         OverlapLowering::OnWithSequentialRefusal { .. }
+            | OverlapLowering::Demand {
+                sequential_refusal: true,
+                ..
+            }
             | OverlapLowering::OnWithRecursionBudget {
                 sequential_refusal: true,
                 ..
@@ -77,13 +83,16 @@ pub(crate) fn lower_checked_from(
     // default or `--no-overlap` build names the budget nowhere.
     let recursion_budget = match overlap {
         OverlapLowering::Off => None,
-        OverlapLowering::OnWithRecursionBudget { budget, .. } => Some(budget),
+        OverlapLowering::OnWithRecursionBudget { budget, .. }
+        | OverlapLowering::Demand { budget, .. } => Some(budget),
         OverlapLowering::On
         | OverlapLowering::OnWithCallGrain
         | OverlapLowering::OnWithSequentialRefusal { .. } => Some(RecursionBudget::default()),
     };
     let call_grain = match overlap {
-        OverlapLowering::Off | OverlapLowering::On => CallGrain::Every,
+        OverlapLowering::Off | OverlapLowering::On | OverlapLowering::Demand { .. } => {
+            CallGrain::Every
+        }
         OverlapLowering::OnWithCallGrain => CallGrain::WorkUnit,
         OverlapLowering::OnWithSequentialRefusal { call_grain }
         | OverlapLowering::OnWithRecursionBudget { call_grain, .. } => call_grain,
@@ -150,7 +159,8 @@ pub(crate) fn lower_checked_from(
         OverlapLowering::On
         | OverlapLowering::OnWithCallGrain
         | OverlapLowering::OnWithSequentialRefusal { .. }
-        | OverlapLowering::OnWithRecursionBudget { .. } => Some(&checked.data.permission),
+        | OverlapLowering::OnWithRecursionBudget { .. }
+        | OverlapLowering::Demand { .. } => Some(&checked.data.permission),
         OverlapLowering::Off => None,
     };
     // Where a synthesized function's ordinal starts. A [PAR-2] split appends
@@ -158,7 +168,7 @@ pub(crate) fn lower_checked_from(
     // `Call` still indexes one flat table.
     let source_functions =
         u32::try_from(physical.variants.len()).map_err(|_| LoweringFailure::CounterOverflow)?;
-    let synthesis = SynthesisCell::new(Synthesis::new(source_functions));
+    let synthesis = SynthesisCell::new(Synthesis::new(source_functions, par_demand));
     let symbols = physical
         .variants
         .iter()
@@ -202,6 +212,9 @@ pub(crate) fn lower_checked_from(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    if par_demand {
+        demand::prune_and_report(&mut functions, &mut actualization);
+    }
     let nominal_ceilings = nominals
         .iter()
         .map(|nominal| {
@@ -210,6 +223,7 @@ pub(crate) fn lower_checked_from(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        par_demand,
         nominal_ceilings,
         nominals,
         elements,

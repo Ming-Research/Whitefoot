@@ -48,6 +48,8 @@ pub(crate) const LINK_LIBRARIES: &[&str] = whitefoot::HOST_LINK_LIBRARIES;
 pub(crate) const LINK_LIBRARIES: &[&str] = &["-lws2_32", "-lshell32"];
 
 static DEFAULT_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+static DEMAND_DEFAULT_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+static DEMAND_C11_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static C11_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
@@ -158,7 +160,7 @@ const UNITS: &[&str] = &[
     "heap.c",
 ];
 
-fn stage_sources(directory: &Path) -> Vec<PathBuf> {
+fn stage_sources(directory: &Path, demand: bool) -> Vec<PathBuf> {
     for name in ["completion", "sched"] {
         std::fs::create_dir_all(directory.join(name)).expect("stage native source directory");
     }
@@ -166,24 +168,36 @@ fn stage_sources(directory: &Path) -> Vec<PathBuf> {
         .iter()
         .map(|(name, source)| {
             let path = directory.join(name);
+            let source = if demand {
+                whitefoot::demand_runtime_source(name, source)
+            } else {
+                source
+            };
             std::fs::write(&path, source).expect("write native source unit");
             path
         })
         .collect()
 }
 
-fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
+fn compile_objects(c_standard: Option<&str>, demand: bool) -> Vec<Vec<u8>> {
     let sequence = NEXT_BUILD.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
         "whitefoot-native-objects-{}-{sequence}",
         std::process::id()
     ));
     std::fs::create_dir(&directory).expect("create unique native object build directory");
-    let _sources = stage_sources(&directory);
+    let _sources = stage_sources(&directory, demand);
     let objects = UNITS
         .iter()
         .enumerate()
         .map(|(index, name)| {
+            if demand && *name != "sched/core.c" && *name != "sched/entry.c" {
+                let ordinary = match c_standard {
+                    None => DEFAULT_OBJECTS.get_or_init(|| compile_objects(None, false)),
+                    Some(_) => C11_OBJECTS.get_or_init(|| compile_objects(Some("c11"), false)),
+                };
+                return ordinary[index].clone();
+            }
             let object = directory.join(format!("unit-{index}.o"));
             let mut command = Command::new(CLANG);
             if let Some(standard) = c_standard {
@@ -231,10 +245,27 @@ pub(crate) fn append_runtime_objects(
     observer: Option<&Path>,
     needs_heap: bool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let sources = stage_sources(directory);
+    append_runtime_objects_for_mode(command, directory, c_standard, observer, needs_heap, false)
+}
+
+/// Demand changes only the two scheduler units; all other cached objects are
+/// reused from the ordinary mode, and old callers retain their construction.
+pub(crate) fn append_runtime_objects_for_mode(
+    command: &mut Command,
+    directory: &Path,
+    c_standard: Option<&str>,
+    observer: Option<&Path>,
+    needs_heap: bool,
+    demand: bool,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let sources = stage_sources(directory, demand);
     let objects = match c_standard {
-        None => DEFAULT_OBJECTS.get_or_init(|| compile_objects(None)),
-        Some("c11") => C11_OBJECTS.get_or_init(|| compile_objects(Some("c11"))),
+        None if demand => DEMAND_DEFAULT_OBJECTS.get_or_init(|| compile_objects(None, true)),
+        Some("c11") if demand => {
+            DEMAND_C11_OBJECTS.get_or_init(|| compile_objects(Some("c11"), true))
+        }
+        None => DEFAULT_OBJECTS.get_or_init(|| compile_objects(None, false)),
+        Some("c11") => C11_OBJECTS.get_or_init(|| compile_objects(Some("c11"), false)),
         Some(other) => panic!("unrecorded native test dialect: {other}"),
     };
     // These includes also reach a fresh observer, exactly as in the original

@@ -52,6 +52,17 @@ pub const COMPLETION_WINDOWS_IOCP_SOURCE: &str = include_str!("completion/window
 pub const SCHED_CORE_HEADER: &str = include_str!("sched/core.h");
 /// The scheduler core embedded in the compiler.
 pub const SCHED_CORE_SOURCE: &str = include_str!("sched/core.c");
+/// Select the demand experiment's two C units. Callers use this only when
+/// the emitted module defines `wf__par_demand_mode`; the default runtime
+/// preprocesses out all demand state and hot-path instructions.
+pub fn demand_runtime_source(path: &str, ordinary: &'static str) -> &'static str {
+    match path {
+        "sched/core.c" => concat!("#define WF_PAR_DEMAND 1\n", include_str!("sched/core.c")),
+        "sched/entry.c" => concat!("#define WF_PAR_DEMAND 1\n", include_str!("sched/entry.c")),
+        _ => ordinary,
+    }
+}
+
 /// The seven primitives the core reaches shared state through.
 pub const SCHED_PRIM_HEADER: &str = include_str!("sched/prim.h");
 /// The host's implementation of those primitives.

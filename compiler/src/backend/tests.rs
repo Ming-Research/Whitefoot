@@ -37,6 +37,7 @@ mod integer_negation;
 mod loop_split;
 mod match_dispatch;
 mod owned_places;
+mod par_demand;
 mod parallel;
 /// Union-laid-out payload enums (compiler/payload-enum-layout).
 mod payload_enums;
@@ -381,6 +382,7 @@ fn append_runtime_units_with_library_defines(
     directory: &Path,
     library_defines: &[String],
     needs_heap: bool,
+    demand: bool,
 ) -> Option<Vec<&'static str>> {
     let units = [
         ("heap.c", crate::HEAP_SOURCE),
@@ -424,6 +426,11 @@ fn append_runtime_units_with_library_defines(
     std::fs::create_dir_all(directory.join("completion")).expect("stage completion directory");
     std::fs::create_dir_all(directory.join("sched")).expect("stage scheduler directory");
     for (name, source) in units {
+        let source = if demand {
+            crate::demand_runtime_source(name, source)
+        } else {
+            source
+        };
         std::fs::write(directory.join(name), source).expect("write ordinary library unit");
     }
     let mut artifacts: Vec<_> = units.into_iter().map(|(name, _)| name).collect();
@@ -556,12 +563,13 @@ fn build_linked_executable_inner(
         // These inputs and options are immutable for this test executable.
         // Keep each program and observer fresh, but compile the ordinary
         // library once. Macro-interposed cases retain their own C build below.
-        let (sources, objects) = crate::native_test_support::append_runtime_objects(
+        let (sources, objects) = crate::native_test_support::append_runtime_objects_for_mode(
             &mut command,
             directory,
             Some("c11"),
             None,
             needs_heap,
+            llvm.contains("@wf__par_demand_mode("),
         );
         staged_units.extend(sources);
         staged_units.extend(objects);
@@ -575,6 +583,7 @@ fn build_linked_executable_inner(
             directory,
             library_defines,
             needs_heap,
+            llvm.contains("@wf__par_demand_mode("),
         ) {
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
         }

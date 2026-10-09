@@ -521,3 +521,47 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
         }
     }
 }
+
+/// Request-on, request-off and the one-worker clone all preserve maintained
+/// programs' results. Their ordinary tests provide independent result oracles.
+#[test]
+fn demand_parallel_programs_match_sequential_at_one_and_four_workers() {
+    for name in [
+        "parallel/tree.wf",
+        "parallel/range_fold.wf",
+        "parallel/indexed_reductions.wf",
+    ] {
+        let source = super::support::read_program(name);
+        let reference = build_program(&compile_program(name)).run_with_workers(Some("1"));
+        assert!(reference.status.success(), "{name}: {reference:?}");
+        let module = whitefoot::compile_with_overlap(
+            &[whitefoot::SourceInput::new(name, &source)],
+            whitefoot::CompilerLimits::default(),
+            whitefoot::OverlapLowering::Demand {
+                budget: whitefoot::RecursionBudget::RuntimeDerived,
+                sequential_refusal: false,
+            },
+        )
+        .expect("demand program compiles");
+        let program = build_program(&module);
+        for workers in ["1", "4"] {
+            for requests in ["on", "off-never-request"] {
+                let output =
+                    program.run_with_settings(Some(workers), &[("WF_PAR_DEMAND", requests)]);
+                assert_eq!(
+                    output.status.code(),
+                    reference.status.code(),
+                    "{name}/{workers}/{requests}: {output:?}"
+                );
+                assert_eq!(
+                    output.stdout, reference.stdout,
+                    "{name}/{workers}/{requests}"
+                );
+                assert_eq!(
+                    output.stderr, reference.stderr,
+                    "{name}/{workers}/{requests}"
+                );
+            }
+        }
+    }
+}

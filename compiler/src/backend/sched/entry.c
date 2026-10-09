@@ -3,6 +3,9 @@
 #include "prim.h"
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(WF_PAR_DEMAND)
+#include <string.h>
+#endif
 
 int wf__sched_setting(
     const char *name,
@@ -171,3 +174,26 @@ int wf__sched_lanes(void) {
 }
 uint64_t wf__sched_split_work(void) { return split_work; }
 void wf__runtime_start(void) { (void)wf__sched_lanes(); }
+
+#if defined(WF_PAR_DEMAND)
+/* This setting is consulted once when a --par-demand pool starts (or its
+ * first accessor attaches). Ordinary --par never interprets it. */
+static unsigned demand_initialized;
+static int demand_requests = 1;
+static void initialize_demand(void) {
+    char text[WF_PRIM_SETTING_BYTES];
+    int state = wf_prim_setting_text("WF_PAR_DEMAND", text, sizeof(text));
+    if (state == 0 || (state == 1 && (text[0] == '\0' || strcmp(text, "on") == 0))) return;
+    if (state == 1 && strcmp(text, "off-never-request") == 0) {
+        demand_requests = 0;
+        return;
+    }
+    fputs("whitefoot scheduler: WF_PAR_DEMAND must be on or off-never-request\n", stderr);
+    fflush(stderr);
+    _Exit(1);
+}
+int wf__sched_demand_requests(void) {
+    wf__sched_once(&demand_initialized, initialize_demand);
+    return demand_requests;
+}
+#endif

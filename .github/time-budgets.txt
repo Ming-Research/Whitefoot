@@ -64,3 +64,8 @@ performance-slow-control        55     -      -
 performance-shifted-images      10     -      -
 performance-placement-control   45     -      -
 performance-comparison          45     -      -
+
+# Manual par-demand prototype: provisional execution caps, not measured stage
+# costs. Calibrate after the first hosted sizing batch; no gate depends on it.
+par-demand/build                1200   -      -
+par-demand/measure              5400   -      -

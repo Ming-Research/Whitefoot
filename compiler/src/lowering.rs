@@ -295,6 +295,14 @@ pub enum OverlapLowering {
     /// Emit sequential ordinary calls.
     #[default]
     Off,
+    /// Research-only demand hand-out. All permitted groups remain available;
+    /// static small splits are pruned and other non-indexed splits use slices.
+    Demand {
+        /// Keep the existing recursion budget and its sequential cut.
+        budget: RecursionBudget,
+        /// Retain the existing optional refused-edge clone policy.
+        sequential_refusal: bool,
+    },
     /// Outline eligible ordinary calls and counted-loop groups, offering
     /// every permitted call.
     On,

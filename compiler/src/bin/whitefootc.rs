@@ -37,7 +37,7 @@ use whitefoot::{
     FLOOR_WINDOWS_RUNTIME_SOURCE, SCHED_PRIM_WINDOWS_SOURCE, WINDOWS_RUNTIME_SOURCE,
 };
 
-const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
+const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-demand] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
 [--stack-ledger] [--dispatch-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
 
 // The compiler walks typed source and lowering trees recursively. Windows
@@ -915,6 +915,11 @@ fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
         staged.extend_from_slice(COMPLETION_PLATFORM_UNITS);
         compiled.extend_from_slice(COMPLETION_COMPILE_UNITS);
     }
+    if llvm.contains("@wf__par_demand_mode(") {
+        for unit in &mut staged {
+            unit.source = whitefoot::demand_runtime_source(unit.relative_path, unit.source);
+        }
+    }
     (staged, compiled)
 }
 
@@ -1368,6 +1373,7 @@ struct Options {
     /// refusal uses the parallel body's ordinary-call fallback. Windows
     /// compute offers require the native runtime at link time.
     par: bool,
+    par_demand: bool,
     /// Which permitted call offers `--par` publishes: the work-unit grain by
     /// default, every permitted offer under `--par-call-grain off`.
     call_grain: CallGrain,
@@ -1450,6 +1456,7 @@ impl Options {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut emit_llvm = false;
         let mut par = false;
+        let mut par_demand = false;
         let mut call_grain = None;
         let mut sequential_refusal = false;
         let mut recursive_frontier = None;
@@ -1493,6 +1500,10 @@ impl Options {
                     diagnostic_format = true;
                 }
                 "--par" => par = true,
+                "--par-demand" => {
+                    par = true;
+                    par_demand = true;
+                }
                 "--par-call-grain" => {
                     cursor += 1;
                     let grain = match arguments.get(cursor).map(String::as_str) {
@@ -1732,6 +1743,11 @@ impl Options {
         if par && no_overlap {
             return Err("--no-overlap and --par select opposite lowerings: write one".to_owned());
         }
+        if par_demand && call_grain.is_some() {
+            return Err(
+                "--par-demand retains every permitted group; omit --par-call-grain".to_owned(),
+            );
+        }
         if call_grain.is_some() && !par {
             return Err("--par-call-grain requires --par".to_owned());
         }
@@ -1744,6 +1760,7 @@ impl Options {
         Ok(Self {
             emit_llvm,
             par,
+            par_demand,
             call_grain: call_grain.unwrap_or_default(),
             sequential_refusal,
             recursive_frontier,
@@ -1777,6 +1794,11 @@ impl Options {
     fn overlap(&self) -> OverlapLowering {
         if self.no_overlap {
             OverlapLowering::Off
+        } else if self.par_demand {
+            OverlapLowering::Demand {
+                budget: self.recursive_frontier.unwrap_or_default(),
+                sequential_refusal: self.sequential_refusal,
+            }
         } else if let Some(budget) = self.recursive_frontier {
             OverlapLowering::OnWithRecursionBudget {
                 budget,
@@ -1851,6 +1873,30 @@ mod tests {
     fn parse(arguments: &[&str]) -> Result<Options, String> {
         let owned: Vec<String> = arguments.iter().map(|value| (*value).to_owned()).collect();
         Options::parse(&owned)
+    }
+
+    #[test]
+    fn demand_marker_selects_only_the_two_experiment_runtime_units() {
+        let (ordinary, ordinary_compiled) = runtime_units("declare ptr @wf__par_acquire_lane(i64)");
+        let (demand, demand_compiled) =
+            runtime_units("define i32 @wf__par_demand_mode() { ret i32 1 }");
+        assert_eq!(ordinary_compiled, demand_compiled);
+        assert_eq!(ordinary.len(), demand.len());
+        for (plain, selected) in ordinary.iter().zip(&demand) {
+            assert_eq!(plain.relative_path, selected.relative_path);
+            if matches!(plain.relative_path, "sched/core.c" | "sched/entry.c") {
+                assert_eq!(
+                    selected.source,
+                    format!("#define WF_PAR_DEMAND 1\n{}", plain.source)
+                );
+            } else {
+                assert_eq!(plain.source, selected.source);
+            }
+        }
+        let (after, _) = runtime_units("declare ptr @wf__par_acquire_lane(i64)");
+        for (before, after) in ordinary.iter().zip(&after) {
+            assert_eq!(before.source, after.source);
+        }
     }
 
     /// The ordinary linked library uses one platform link set independent of
@@ -2022,6 +2068,35 @@ mod tests {
         let (logical, display) = source_names(Path::new("programs/wc.wf"), 0);
         assert_eq!(display, "programs/wc.wf");
         assert_eq!(logical, "programs/wc.wf");
+    }
+
+    #[test]
+    fn demand_implies_parallel_and_keeps_existing_budget_controls() {
+        let options = parse(&["--par-demand", "value.wf"]).unwrap();
+        assert!(options.par && options.par_demand);
+        assert_eq!(
+            options.overlap(),
+            OverlapLowering::Demand {
+                budget: RecursionBudget::RuntimeDerived,
+                sequential_refusal: false,
+            }
+        );
+        assert!(parse(&["--par-demand", "--no-overlap", "value.wf"]).is_err());
+        assert!(parse(&["--par-demand", "--par-call-grain", "auto", "value.wf"]).is_err());
+        assert!(matches!(
+            parse(&[
+                "--par-demand",
+                "--par-recursive-frontier",
+                "off",
+                "value.wf"
+            ])
+            .unwrap()
+            .overlap(),
+            OverlapLowering::Demand {
+                budget: RecursionBudget::Off,
+                ..
+            }
+        ));
     }
 
     /// The dispatch ledger shares stdout with nothing else.

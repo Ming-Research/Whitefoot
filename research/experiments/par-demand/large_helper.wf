@@ -1,0 +1,20 @@
+fn helper(n: u64, seed: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in 0_u64..n) {
+    let mixed = irotl(i, 13_u32) *wrap 6364136223846793005_u64;
+    set total = total +wrap mixed;
+  }
+  return total;
+}
+fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
+  let i = 0_u64;
+  let total = seed;
+  loop @repeat {
+    if i == repetitions { break @repeat; }
+    let a = helper(n: extent, seed: total);
+    let b = helper(n: extent, seed: i);
+    set total = a +wrap b;
+    set i = i +wrap 1_u64;
+  }
+  return total;
+}

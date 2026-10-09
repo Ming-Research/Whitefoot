@@ -183,6 +183,7 @@ pub(crate) struct Synthesis {
     /// Where the synthesized functions start: the source function count, since
     /// they are appended after every source function.
     base: u32,
+    pub(super) demand: bool,
     functions: Vec<Option<IrFunction>>,
     /// How many helpers each source function has synthesized,
     /// which numbers the next one's symbol within that function alone.
@@ -194,9 +195,10 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
-    pub(crate) fn new(base: u32) -> Self {
+    pub(crate) fn new(base: u32, demand: bool) -> Self {
         Self {
             base,
+            demand,
             functions: Vec::new(),
             local: HashMap::new(),
             ledger: Vec::new(),
@@ -1074,6 +1076,15 @@ impl<'program> IrBuilder<'program> {
         capture_types: &[IrType],
         indexed: &[crate::ir::IrIndexedReduction],
     ) -> Result<IrFunction, LoweringFailure> {
+        if self.synthesis.borrow().demand && indexed.is_empty() {
+            return self.build_demand_driver(
+                (ordinal, name),
+                chunk,
+                actualization,
+                result_type,
+                capture_types,
+            );
+        }
         let mut builder = IrBuilder::new(
             self.context(),
             result_type,
@@ -1297,7 +1308,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// Materializes the combine's identity element.
-    fn identity_value(
+    pub(super) fn identity_value(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1307,7 +1318,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// One application of the admitted combine.
-    fn combine_values(
+    pub(super) fn combine_values(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1329,7 +1340,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// A two-way branch on a `Bool`, the shape every guard in this module uses.
-    fn branch(
+    pub(super) fn branch(
         &mut self,
         condition: IrValueId,
         when_true: IrBlockId,

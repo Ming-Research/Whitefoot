@@ -1,0 +1,18 @@
+fn leaf(v: u64) -> result: u64 pure { return v *wrap 3_u64; }
+fn spine(n: u64, v: u64) -> result: u64 pure {
+  if n == 0_u64 { return v; }
+  let a = spine(n: n -wrap 1_u64, v: v +wrap 1_u64);
+  let b = leaf(v: v);
+  return a +wrap b;
+}
+fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
+  let i = 0_u64;
+  let total = seed;
+  loop @repeat {
+    if i == repetitions { break @repeat; }
+    let value = spine(n: extent, v: i);
+    set total = total +wrap value;
+    set i = i +wrap 1_u64;
+  }
+  return total;
+}

@@ -6,6 +6,9 @@
 #include "prim.h"
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(WF_PAR_DEMAND)
+#include <stdatomic.h>
+#endif
 
 #define WF_PAR_MAX_LANES WF_SCHED_MAX_THREADS
 #define WF_PAR_FRAME_BYTES WF_SCHED_FRAME_BYTES
@@ -320,6 +323,11 @@ struct wf__par_slot {
 };
 
 struct wf__par_lane {
+#if defined(WF_PAR_DEMAND)
+    /* Demand is advice, never task/result synchronization. A private cache
+     * line keeps idle writers away from the owner's hot deque fields. */
+    _Alignas(WF_PAR_CACHE_LINE) _Atomic uint64_t request;
+#endif
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
     _Alignas(WF_PAR_CACHE_LINE) unsigned long long top;
@@ -335,6 +343,28 @@ struct wf__par_lane {
 };
 
 static struct wf__par_lane wf__par_lanes[WF_PAR_MAX_LANES];
+#if defined(WF_PAR_DEMAND)
+/* The --par-demand module supplies a strong marker. Read once before lazy
+ * pool startup, including startup through the legacy indexed splitter. */
+#ifndef WF_PAR_DEMAND_MODE
+__attribute__((weak)) int wf__par_demand_mode(void) { return 0; }
+#define WF_PAR_DEMAND_MODE() wf__par_demand_mode()
+#endif
+static _Atomic int wf__par_demand_posts;
+static unsigned wf__par_demand_initialized;
+static _Thread_local int wf__par_demand_attached;
+static void wf__par_enable_demand(void) {
+    atomic_store_explicit(&wf__par_demand_posts, WF_PAR_DEMAND_MODE() ? wf__sched_demand_requests() : 0, memory_order_relaxed);
+}
+static void wf__par_request(struct wf__par_lane *victim) {
+    if (!atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) return;
+    uint64_t expected = 0;
+    if (atomic_load_explicit(&victim->request, memory_order_relaxed) == 0)
+        atomic_compare_exchange_strong_explicit(&victim->request, &expected, 1,
+            memory_order_relaxed, memory_order_relaxed);
+}
+
+#endif
 
 /* Relaxed scan bound, reduced after partial startup. Even a stale larger
  * value names initialized empty deques; it never grants an unstarted lane. */
@@ -904,6 +934,12 @@ static struct wf__par_slot *wf__par_find(struct wf__par_lane *lane) {
             return slot;
         }
     }
+#if defined(WF_PAR_DEMAND)
+    /* One victim per failed scan, rotated by the same per-lane random seed.
+     * Skip self. No deque cell is touched by the request itself. */
+    if (&wf__par_lanes[offset] == lane) offset = (offset + 1) % count;
+    wf__par_request(&wf__par_lanes[offset]);
+#endif
     return NULL;
 }
 
@@ -1183,6 +1219,9 @@ static void wf__par_worker_main(void *opaque) {
 
 static void wf__par_prepare(struct wf__par_lane *lane, int index) {
     int slot;
+#if defined(WF_PAR_DEMAND)
+    atomic_init(&lane->request, 0);
+#endif
     lane->top = 0;
     lane->bottom = 0;
     lane->seed = 0x9e3779b97f4a7c15ull * (unsigned long long)(index + 1);
@@ -1203,6 +1242,9 @@ static void wf__par_start(void) {
     unsigned levels;
     int started = 0;
     if (requested < 2) return;
+#if defined(WF_PAR_DEMAND)
+    wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);
+#endif
     /* The oversubscription test, answered once, here, because it is a property
      * of the pool and not of a lane's current state: the lanes this pool is
      * about to run against the CPUs this process may actually use. Lanes at or
@@ -1289,6 +1331,20 @@ static struct wf__par_lane *wf__par_attach(void) {
     return wf__par_self;
 }
 
+#if defined(WF_PAR_DEMAND)
+uint64_t wf__par_demand_requested(void) {
+    if (!wf__par_demand_attached) {
+        wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);
+        wf__par_demand_attached = 1;
+        /* Starting the pool cannot wait for an offer: an offer itself waits
+         * for a request, and otherwise the first request could never exist. */
+        if (!wf__par_self && !wf__par_attached) (void)wf__par_attach();
+    }
+    return wf__par_self ? atomic_load_explicit(&wf__par_self->request, memory_order_relaxed) : 0;
+}
+
+#endif
+
 void *wf__par_acquire_lane(uint64_t bytes) {
     struct wf__par_lane *lane = wf__par_self;
     struct wf__par_slot *slot;
@@ -1318,6 +1374,12 @@ void *wf__par_acquire_lane(uint64_t bytes) {
 void wf__par_publish(void *frame, void (*fn)(void *)) {
     struct wf__par_slot *slot = (struct wf__par_slot *)frame;
     slot->run = fn;
+#if defined(WF_PAR_DEMAND)
+    /* Clear before publication. A later idle request survives this publish;
+     * races may over-request but cannot affect correctness or lose tasks. */
+    if (atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed))
+        atomic_store_explicit(&slot->home->request, 0, memory_order_relaxed);
+#endif
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
     wf__par_push(slot->home, slot);
 #if defined(WF_PAR_TRACE)

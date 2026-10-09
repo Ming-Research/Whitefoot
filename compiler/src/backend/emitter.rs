@@ -277,8 +277,15 @@ fn emit_module(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
+    let demand_splitters = parallel::retained_demand_splitters(program);
     let mut functions = Module::default();
     for (ordinal, function) in program.functions().iter().enumerate() {
+        if program.par_demand
+            && function.synthesis() == Some(crate::IrSynthesis::Splitter)
+            && !demand_splitters.contains(&(ordinal as u32))
+        {
+            continue;
+        }
         // A member of a budgeted component keeps its ordinary symbol and its
         // ordinary signature, and that symbol obtains the initial budget and
         // enters the family. The body itself is emitted once, below.
@@ -541,6 +548,9 @@ fn emit_module(
     }
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
+    if program.par_demand && (thunks.is_used() || thunks.queries_demand) {
+        text.append(parallel::demand_runtime(windows)?);
+    }
     if thunks.is_used() {
         text.text("\n");
         text.append(if windows {
@@ -2459,6 +2469,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         match operation {
+            IrOperation::DemandRequested => self.emit_demand_requested(&value_name(result)),
             IrOperation::Constant(constant) => self.emit_constant(result, ty, *constant),
             IrOperation::Call {
                 function,

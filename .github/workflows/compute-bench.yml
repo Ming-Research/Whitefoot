@@ -13,6 +13,11 @@
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
 #
+# With `experiment: par-demand`, a hosted sizing batch precedes the selected
+# runner's interleaved demand experiment. Its pass/fail/inconclusive verdicts
+# are report data; only malformed evidence or construction/correctness errors
+# fail this manual workflow. No research path enters the formal gate.
+#
 # FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
 # nothing else. The manual `compare` step's exit status is the reducer's, and the
 # reducer fails only on a missing or malformed row. No ratio, no spread, no
@@ -34,9 +39,9 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, or the code-placement experiment
+        description: The compute scoreboard, code placement, or demand hand-out experiment
         type: choice
-        options: [scoreboard, placement]
+        options: [scoreboard, placement, par-demand]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -97,7 +102,7 @@ defaults:
 # per group, so a third dispatch replaces the waiting one.
 concurrency:
   group: compute-bench-${{ github.ref }}-${{ inputs.experiment }}-${{ inputs.placement_runner }}${{ inputs.experiment == 'placement' && inputs.placement_runner == 'github' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: ${{ inputs.experiment != 'placement' }}
+  cancel-in-progress: ${{ inputs.experiment == 'scoreboard' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -107,7 +112,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +361,76 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  par-demand-sizing:
+    name: par-demand (hosted build and sizing)
+    if: inputs.experiment == 'par-demand'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both compilers and compare legacy emission
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          git worktree add --detach "$RUNNER_TEMP/par-demand-base" ac5f1498a431df3043fe42a5ce38f4eaf750e4c0
+          make -C "$RUNNER_TEMP/par-demand-base/compiler" build
+          make -C compiler build
+          make -C research/experiments/par-demand legacy-identity \
+            BUILD="$RUNNER_TEMP/par-demand" \
+            BASE_WFC="$RUNNER_TEMP/par-demand-base/compiler/target/gate/whitefootc"
+      - name: Check the experiment reducer with wrong and missing evidence
+        run: python3 -m unittest discover -s research/experiments/par-demand -p test_harness.py
+      - name: Build and verify the four images of every workload
+        run: |
+          perl .github/run-check.pl par-demand/build \
+            make -C research/experiments/par-demand build verify BUILD="$RUNNER_TEMP/par-demand"
+          { git rev-parse HEAD; cargo --version; /usr/bin/clang --version; lscpu; } > "$RUNNER_TEMP/par-demand/build-host.txt"
+          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par}/*; do
+            if [[ "$image" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
+          done
+      - name: Small hosted sizing sample
+        run: |
+          perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
+            --build "$RUNNER_TEMP/par-demand" --sizing --rounds 1
+          mkdir "$RUNNER_TEMP/par-demand/sizing"
+          mv "$RUNNER_TEMP/par-demand"/{identity.json,measurements.tsv,summary.json} "$RUNNER_TEMP/par-demand/sizing/"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/par-demand-images.tar.gz" par-demand
+      - uses: actions/upload-artifact@v4
+        with:
+          name: par-demand-images
+          path: ${{ runner.temp }}/par-demand-images.tar.gz
+
+  par-demand:
+    name: par-demand (${{ inputs.placement_runner }})
+    if: inputs.experiment == 'par-demand'
+    needs: par-demand-sizing
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: par-demand-images
+          path: ${{ runner.temp }}
+      - name: Interleave arms, widths and rounds; rerun an exceeded bound once
+        env:
+          ROUNDS: ${{ inputs.placement_rounds }}
+          RUNNER: ${{ inputs.placement_runner }}
+          WHITEFOOT_CHECK_TIMEOUT: "5400"
+        run: |
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/par-demand-images.tar.gz"
+          { lscpu; cat /proc/self/status; printf 'runner=%s rounds=%s\n' "$RUNNER" "$ROUNDS"; } > "$RUNNER_TEMP/par-demand/measurement-host.txt"
+          sizing=()
+          if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
+          perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
+            --build "$RUNNER_TEMP/par-demand" --rounds "$ROUNDS" "${sizing[@]}"
+          python3 research/experiments/par-demand/summarize.py "$RUNNER_TEMP/par-demand/measurements.tsv" \
+            --inspection "$RUNNER_TEMP/par-demand/inspection.json" "${sizing[@]}" > "$RUNNER_TEMP/par-demand/summary.json"
+          cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-demand-results-${{ inputs.placement_runner }}
+          path: ${{ runner.temp }}/par-demand

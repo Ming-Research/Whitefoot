@@ -308,6 +308,33 @@ pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFail
     Ok(module)
 }
 
+/// The private lane layout stays in C. The accessor's hot path is a TLS
+/// pointer read, null branch and relaxed atomic word load; without LTO the
+/// emitted call adds call/return overhead, measured by this prototype.
+pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
+    let mut module = Module::default();
+    // The marker enables posting before even a legacy indexed splitter starts
+    // the pool. A later first group must not find all helpers parked unasked.
+    let mode = Signature::new("wf__par_demand_mode", "i32", vec![]);
+    let mut body = FunctionBody::default();
+    body.open_block("entry".to_owned());
+    body.instructions("  ret i32 1\n", &[]);
+    module.define(mode.define(body, "")?);
+    module.text("\n");
+    let mut signature = Signature::new("wf__par_demand_requested", "i64", vec![]);
+    if windows {
+        module.declare(signature);
+    } else {
+        signature.linkage = Linkage::Weak;
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  ret i64 0\n", &[]);
+        module.define(signature.define(body, "")?);
+        module.text("\n");
+    }
+    Ok(module)
+}
+
 /// The symbol one function's sequential clone is emitted under.
 ///
 /// It lives in the same reserved `wf__par_` namespace as the runtime's own
@@ -315,6 +342,30 @@ pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFail
 /// function can never collide with a function the writer declared.
 pub(crate) fn sequential_clone_symbol(name: &str) -> String {
     format!("wf__par_seq_{name}")
+}
+
+/// The drivers that demand pruning left with an actual caller. Keep this
+/// selection shared with clone reachability and the executable launcher.
+pub(super) fn retained_demand_splitters(program: &IrProgram) -> HashSet<u32> {
+    if !program.par_demand {
+        return HashSet::new();
+    }
+    program
+        .functions()
+        .iter()
+        .flat_map(|f| f.blocks())
+        .flat_map(|b| b.instructions())
+        .filter_map(|i| match i {
+            IrInstruction::Define {
+                operation:
+                    IrOperation::LoopSplit {
+                        splitter, weight, ..
+                    },
+                ..
+            } if *weight != 0 => Some(*splitter),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The functions that need a sequential clone: every function on some path
@@ -361,15 +412,19 @@ pub(crate) fn sequential_clone_symbol(name: &str) -> String {
 /// default compilation: the default build carries no overlap group at all, so
 /// there is one world and this changes nothing about it.
 pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
+    let retained = retained_demand_splitters(program);
     let functions = program.functions();
     let mut callees: Vec<Vec<u32>> = vec![Vec::new(); functions.len()];
     let mut hands_out = Vec::with_capacity(functions.len());
     for (ordinal, function) in functions.iter().enumerate() {
         hands_out.push(
-            function
-                .overlaps()
-                .iter()
-                .any(|overlap| !overlap.handed_out().is_empty()),
+            (!program.par_demand
+                || function.synthesis() != Some(IrSynthesis::Splitter)
+                || retained.contains(&(ordinal as u32)))
+                && function
+                    .overlaps()
+                    .iter()
+                    .any(|overlap| !overlap.handed_out().is_empty()),
         );
         for block in function.blocks() {
             for instruction in block.instructions() {
@@ -388,9 +443,14 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
                     // the splitter and the sequential world calls the chunk, so
                     // each world's reachability has to hold the one it uses.
                     IrOperation::LoopSplit {
-                        splitter, chunk, ..
+                        splitter,
+                        chunk,
+                        weight,
+                        ..
                     } => {
-                        callees[ordinal].push(*splitter);
+                        if !program.par_demand || *weight != 0 {
+                            callees[ordinal].push(*splitter);
+                        }
                         callees[ordinal].push(*chunk);
                     }
                     _ => {}
@@ -470,6 +530,7 @@ pub(crate) struct ParallelThunks {
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
+    pub(super) queries_demand: bool,
     /// The thunks of started contexts [WAIT-3], which name the bridge's context
     /// entry points and no compute scheduler symbol.
     context_definitions: Module,
@@ -576,6 +637,17 @@ pub(crate) struct ComputeHandedOut {
 pub(crate) type HandedOut = ComputeHandedOut;
 
 impl FunctionEmitter<'_, '_> {
+    pub(super) fn emit_demand_requested(&mut self, condition: &str) -> Result<(), BackendFailure> {
+        self.parallel.queries_demand = true;
+        let word = format!("%{}", self.next_temporary()?);
+        self.output.symbol("wf__par_demand_requested");
+        writeln!(
+            self.output,
+            "  {word} = call i64 @wf__par_demand_requested()\n  {condition} = icmp ne i64 {word}, 0"
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// Hands one member of an overlap group to a worker lane.
     ///
     /// Acquires a lane first and builds the frame only inside the granted edge,
@@ -681,10 +753,37 @@ impl FunctionEmitter<'_, '_> {
 
             {
                 self.output.symbol("wf__par_acquire_lane");
-                write!(
-                    self.output,
-                    "  {frame} = call ptr @wf__par_acquire_lane(i64 {emission_argument_0})\n  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}\n"
-                )
+                if self.program.par_demand
+                    && self.function.synthesis() != Some(IrSynthesis::Splitter)
+                {
+                    let condition = format!("%{}", self.next_temporary()?);
+                    let acquired = format!("%{}", self.next_temporary()?);
+                    let check = format!("par.demand.v{}", result.ordinal());
+                    let acquire = format!("par.acquire.v{}", result.ordinal());
+                    let merge = format!("par.acquired.v{}", result.ordinal());
+                    writeln!(self.output, "  br label %{check}")?;
+                    self.output.open_block(check.clone());
+                    self.emit_demand_requested(&condition)?;
+                    writeln!(
+                        self.output,
+                        "  br i1 {condition}, label %{acquire}, label %{merge}"
+                    )?;
+                    self.output.open_block(acquire.clone());
+                    writeln!(
+                        self.output,
+                        "  {acquired} = call ptr @wf__par_acquire_lane(i64 {emission_argument_0})\n  br label %{merge}"
+                    )?;
+                    self.output.open_block(merge);
+                    writeln!(
+                        self.output,
+                        "  {frame} = phi ptr [ null, %{check} ], [ {acquired}, %{acquire} ]\n  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}"
+                    )
+                } else {
+                    write!(
+                        self.output,
+                        "  {frame} = call ptr @wf__par_acquire_lane(i64 {emission_argument_0})\n  {granted} = icmp ne ptr {frame}, null\n  br i1 {granted}, label %{offer}, label %{offered}\n"
+                    )
+                }
             }?;
             self.output.open_block(offer.to_string());
         };
@@ -753,7 +852,9 @@ impl FunctionEmitter<'_, '_> {
         ty: IrType,
         split: &LoopSplitSite<'_>,
     ) -> Result<(), BackendFailure> {
-        let target = if self.sequential_clones.is_some() {
+        let direct_chunk =
+            self.sequential_clones.is_some() || (self.program.par_demand && split.weight == 0);
+        let target = if direct_chunk {
             split.chunk
         } else {
             split.splitter
@@ -769,7 +870,7 @@ impl FunctionEmitter<'_, '_> {
         // splitter otherwise share the typed internal parameter/result ABI.
         let expected = declared
             .len()
-            .checked_sub(usize::from(self.sequential_clones.is_none()))
+            .checked_sub(usize::from(!direct_chunk))
             .ok_or(BackendFailure::InvalidIr)?;
         if expected != split.captures.len() + 3
             || abi.result().ty() != ty
@@ -807,7 +908,11 @@ impl FunctionEmitter<'_, '_> {
         }
 
         let callee = self.callee_symbol(target, function.name());
-        if self.sequential_clones.is_some() {
+        if direct_chunk {
+            return self.emit_split_call(result, abi.result(), &callee, arguments);
+        }
+        if self.program.par_demand && split.indexed.is_empty() {
+            arguments.push(format!("i64 {}", split.weight));
             return self.emit_split_call(result, abi.result(), &callee, arguments);
         }
 

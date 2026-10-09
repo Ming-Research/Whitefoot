@@ -1,0 +1,27 @@
+fn work(n: u64, seed: u64) -> result: u64 pure {
+  let i = 0_u64;
+  let value = seed;
+  loop @work {
+    if i == n { break @work; }
+    set value = irotl(value, 7_u32) +wrap i;
+    set i = i +wrap 1_u64;
+  }
+  return value;
+}
+fn helper(n: u64, seed: u64) -> result: u64 pure {
+  let a = work(n: n, seed: seed);
+  let b = work(n: n, seed: seed +wrap 1_u64);
+  return ixor(a, b);
+}
+fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
+  let i = 0_u64;
+  let total = seed;
+  loop @repeat {
+    if i == repetitions { break @repeat; }
+    let n = iand(total, 31_u64);
+    let value = helper(n: n, seed: total);
+    set total = total +wrap value;
+    set i = i +wrap 1_u64;
+  }
+  return total;
+}

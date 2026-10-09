@@ -9,5 +9,6 @@ int wf__sched_setting(const char *name, unsigned long ceiling, unsigned long *va
 unsigned long wf__sched_helper_ceiling(void);
 int wf__sched_lanes(void);
 uint64_t wf__sched_split_work(void);
+int wf__sched_demand_requests(void);
 int wf__sched_report(char *buffer, size_t capacity);
 #endif
