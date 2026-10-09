@@ -848,20 +848,6 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
-- **A frame holding a one-byte slot keeps every slot in one aggregate.**
-  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
-  separate allocations only when they share one alignment. A function with
-  an atomic statement's `i1` unit flags therefore gets one frame aggregate,
-  and LLVM keeps copies into its fields that separate allocations would let
-  it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
-  to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
-  copy costs nothing measurable: moving the match into a helper removed it
-  and `RPOP` measured 0.998 over 9 pairs, and giving every slot its own
-  allocation did not make it faster
-  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)). Match a borrowed
-  scrutinee's tag through its address when a measured path pays for the
-  copy.
-
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn

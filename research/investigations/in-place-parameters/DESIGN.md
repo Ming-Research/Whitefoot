@@ -390,11 +390,10 @@ will be made from hosted-runner code inspection.
 
 ### CI experiment and current evidence
 
-The temporary `inplace-lets` job in
-[compute-bench.yml](../../../.github/workflows/compute-bench.yml) is selected
-only by the new manual experiment option. The scoreboard now selects only
-`scoreboard`, so this dispatch runs neither scoreboard nor placement jobs.
-It uses hosted `ubuntu-24.04`, installs the exact LLVM major in
+The temporary `inplace-lets` job, now removed, was a manual experiment option
+of `compute-bench.yml`; its definition is in this branch's history at
+[`0a0776ce9`](https://github.com/Ming-Research/Whitefoot/blob/0a0776ce9/.github/workflows/compute-bench.yml).
+It used hosted `ubuntu-24.04`, installs the exact LLVM major in
 `.github/llvm-major` by the gate's setup, builds the compiler with the `gate`
 profile under `run-check.pl compiler/build`, and processes the no-write
 control first, then the other four witnesses. Each is emitted with
@@ -415,7 +414,7 @@ counts and frame sizes are observations, not pass/fail thresholds. The job
 does not link or execute these programs, so emitted artifacts alone will
 not establish their exit status.
 
-Dispatch: `gh workflow run compute-bench.yml --repo Ming-Research/Whitefoot --ref claude/inplace-lets -f experiment=inplace-lets`.
+It was dispatched with `-f experiment=inplace-lets` on this branch while the job existed.
 
 **First result**
 ([run 37858726701](https://github.com/Ming-Research/Whitefoot/actions/runs/37858726701),
