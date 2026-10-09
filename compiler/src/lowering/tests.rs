@@ -1838,6 +1838,20 @@ fn main() -> status: std::process::ExitStatus pure waits {
   atomic t = &store[k] when present(slot: t) {
     let ref_value = &t^;
   }
+  let wrappers = shared_map_new::<Option<Counter>>(capacity: 1_u64);
+  atomic t = &store[k], u = &wrappers[k] {
+    let value = Counter(stamp: 1_u64);
+    set t^ = Some<Counter>(value: value);
+    match u^ {
+      Some(value: v) => {
+        set t = &v^;
+        set t^ = None<Counter>();
+      }
+      None() => {
+        return std::process::exit_status(code: 0_u8);
+      }
+    }
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1854,9 +1868,10 @@ fn main() -> status: std::process::ExitStatus pure waits {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let (single, rebound) = flags.split_at(11);
         assert_eq!(
-            flags,
-            vec![
+            single,
+            [
                 (false, false),
                 (false, true),
                 (false, true),
@@ -1870,6 +1885,11 @@ fn main() -> status: std::process::ExitStatus pure waits {
                 (false, true),
             ]
         );
+        // A target whose reference the body rebinds keeps the whole-entry
+        // write it made before; the other target's write stays in its payload.
+        let mut rebound = rebound.to_vec();
+        rebound.sort_unstable();
+        assert_eq!(rebound, [(false, false), (false, true)]);
     });
 }
 
