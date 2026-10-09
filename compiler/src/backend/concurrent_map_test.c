@@ -94,6 +94,20 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #else
 #define WORD_TESTS 1
 #endif
+/* Whether timing ratios between threads hold in this build. ThreadSanitizer
+ * slows every thread by an unequal factor, so waits outlast their patience
+ * far more often than on real hardware; its build checks for races, and the
+ * ordinary builds keep the ratios. */
+#if defined(__SANITIZE_THREAD__)
+#define TIMED_RATIOS 0
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define TIMED_RATIOS 0
+#endif
+#endif
+#ifndef TIMED_RATIOS
+#define TIMED_RATIOS 1
+#endif
 /* Whether this build narrows entries' hashes, so that most keys share one;
  * the map's source defines the mask itself when the build does not. */
 #define SHARED_HASHES (!WORD_TESTS)
@@ -2070,7 +2084,7 @@ static void holds_move_amounts(uint64_t capacity, uint64_t patient) {
     /* Keys with different hashes and ordinary patience: a hold holds the
      * map only after a wait no cycle causes or when the table is full, so
      * nearly every hold holds its entries. */
-    if (!SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
+    if (TIMED_RATIOS && !SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
         fail("holds held the whole map more than once in twenty (whole, holds)", atomic_load(&set_wholes),
              atomic_load(&set_holds));
     check_cells(map, "holds and keyed statements miscounted the cells they took (counted, taken)");
@@ -3426,7 +3440,11 @@ static void *release_reserves(void *arg) {
 
 /* A release needs no statement, so it can meet a swap, which only needs no
  * statement inside either map: each reserve moves with its map or is
- * released, never both, so destroying both maps frees each array once. */
+ * released, never both, so destroying both maps frees each array once.
+ * Without the swap's locks, 2,000 rounds fail 5 of 5 runs under ASan and
+ * under TSan (map-sanitizers.yml) but about 1 in 5 in a plain build, which
+ * takes 20,000 rounds to fail reliably; the sanitizer builds are the ones
+ * this race is left to, and the plain builds keep the shorter run. */
 static void reserves_release_beside_swaps(void) {
     wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
     wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
@@ -3438,7 +3456,7 @@ static void reserves_release_beside_swaps(void) {
     atomic_store(&released_bytes, 0);
     pthread_t releaser;
     pthread_create(&releaser, NULL, release_reserves, maps);
-    for (unsigned round = 0; round < 20000; round++) {
+    for (unsigned round = 0; round < 2000; round++) {
         for (int m = 0; m < 2; m++)
             for (unsigned step = 0; step < 16; step++, next[m]++) {
                 wf_cmap_remove(users[m], key_of(next[m] - 64));
@@ -3450,7 +3468,7 @@ static void reserves_release_beside_swaps(void) {
     atomic_store(&releasing_stop, 1);
     pthread_join(releaser, NULL);
     if (atomic_load(&released_bytes) == 0)
-        fail("no release met a reserve beside the swaps (rounds)", 20000, 0);
+        fail("no release met a reserve beside the swaps (rounds)", 2000, 0);
     for (int m = 0; m < 2; m++)
         if (wf_cmap_count(maps[m]) != 64)
             fail("a map lost or gained keys beside releases and swaps (count, expected)", wf_cmap_count(maps[m]), 64);

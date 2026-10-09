@@ -527,6 +527,20 @@ does not hold the revision back. AGENTS.md "Checks" states the steps.
 largest gaps between case completions, and `WHITEFOOT_TEST_TIMINGS` records
 the shared helpers' phases per case.
 
+### The map sanitizers
+
+`map-sanitizers.yml` runs the concurrent map's test under AddressSanitizer
+(`map-asan`) and ThreadSanitizer (`map-tsan`) on every push that changes the
+map's runtime or its test. Three runs on Whitefoot#311's branch (37918319834,
+37920968896, 37924587182) took, on ubuntu-24.04 and macos-15:
+
+| Stage | linux runs (s) | macos runs (s) | budget linux | budget macos |
+| --- | --- | --- | ---: | ---: |
+| map-asan | 17.9, 13.5, 21.1 | 13.1, 11.6, 9.1 | 30 | 20 |
+| map-tsan | 25.2, 21.1, 24.9 | 33.7, 23.7, 19.3 | 35 | 45 |
+
+Each budget is 1.25 times the slowest run, rounded up to 5 s.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
