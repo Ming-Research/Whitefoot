@@ -77,18 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **Atomic binding-use checking omits loop-header invariants.** SHARE-2
-  requires the guard and block together to name every atomic binding, but
-  `statement_mentions` in `compiler/src/semantic/check/control/atomic.rs`
-  visits a loop's endpoints and body without its header invariants. An
-  atomic binding named only by an admitted measure in a header can therefore
-  receive `AtomicBindingUnused` before entailment. This is a source-inspected
-  discrepancy; no execution has confirmed it. Extend the existing mention
-  traversal over checked affine relations, with a positive case naming a
-  binding only in a header and a negative control naming it nowhere. Keep
-  this separate from measure-place admission; reopen when completing
-  SHARE-2's proof-only binding-use coverage.
-
 - **Wide-match checking still grows about tenfold per doubling of arms.**
   The demanded affine L0 index cut the natural wasm interpreter's check to
   0.215 of its base on the 14900K but left the plain constant-assignment
@@ -823,6 +811,20 @@ rarely insert at the same place.
   admit a suffixed literal whose suffix matches the const parameter's type.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
+
+- **Atomic binding-use checking omits proof-only mentions.** SHARE-2
+  requires the guard and block together to name every atomic binding, but
+  `statement_mentions` in `compiler/src/semantic/check/control/atomic.rs`
+  visits a loop's endpoints and body without its header invariants and
+  returns false for `CheckedStatement::Proof(_)`. Impact: an atomic binding
+  named only in a loop-header invariant, a body `invariant_stmt` or a proof
+  use can receive a false `AtomicBindingUnused` before entailment. This is
+  a source-inspected discrepancy; no execution has confirmed it. Change:
+  extend the existing mention traversal over checked header relations and
+  body proofs, including their proof uses. Validate with positive cases
+  naming a binding only in each of those three positions and a negative
+  control naming it nowhere. Keep this separate from measure-place
+  admission; reopen when completing SHARE-2's proof-only binding-use coverage.
 
 ## Containers and storage lowering
 
