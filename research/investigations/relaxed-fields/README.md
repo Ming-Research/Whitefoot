@@ -289,7 +289,7 @@ cells; no unmentioned exclusive hold or join orders their accesses.
 |---|---|
 | Lost update: `c=5`; A and B each do `r=load(c); store(c,r+1)` | Both read 5 and the final value is 6. Serial execution of these two increments gives 7. This isolates the LFU lost-update mechanism; it is not a claim that every probabilistic LFU access increments. |
 | Multi-target: a relaxed counter starts at 0; A1 does `a=fetch_add(counter,1); store(stamp,1)`, A2 does `b=fetch_add(counter,1); store(stamp,2)` | `a=0, b=1`, but stamp modification order is 2 then 1. No serial order of the two complete blocks matches both. The counter is itself relaxed: an ordinary counter exclusively held by both complete blocks would serialize them and forbid this outcome under the handoff rule. |
-| IRIW: `x=y=0`; writers store `x=1` and `y=1`; reader C loads x then y, reader D loads y then x | C sees `(1,0)` and D sees `(1,0)`. Each cell is coherent, but the readers disagree on cross-cell order; there is no single order of whole blocks producing both observations. This is permission, not a promise that each backend exhibits it. |
+| IRIW: `x=y=0`; writers store `x=1` and `y=1`; reader C loads x then y, reader D loads y then x | C sees `x=1, y=0`; D sees `y=1, x=0`. Each cell is coherent, but the readers disagree on cross-cell order; there is no single order of whole blocks producing both observations. This is permission, not a promise that each backend exhibits it. |
 
 **No thin-air values: retain the promise, add its missing condition.** Merely
 requiring a read to have a store source does not prevent cyclic justification:
@@ -301,12 +301,34 @@ reads-from edges is acyclic ([RC11 §3.2, Definition 1][rc11]). This excludes
 that execution while permitting the three litmus outcomes above. Neither the
 words “C11 relaxed” nor the LLVM ordering name alone are the Whitefoot proof.
 
-The cost is real: preserving load-to-later-store order on weak targets can
-require dependencies or barriers beyond plain scalar instructions. The RC11
-paper proves stronger mappings for Power/ARMv7 (§§5–6); it is not an AArch64
-or general embedded-target qualification. Inspect each selected mapping,
-including orders already supplied by holds, before promising one instruction
-per operation. An alternative is
+**The LLVM lowering cost bears directly on a one-instruction promise.**
+LLVM `monotonic` does not order a load before a later store to another cell
+([ordering constraints][llvm-order]). Nor does ordinary IR preserve a false
+dependency: LLVM 21.1.0's [branch folding][llvm-fold-branch] removes a
+conditional branch whose successors coincide. The RC11 paper's fake
+control-dependency mapping (§§5–6) therefore cannot simply be written in IR
+and assumed to survive optimization. A realistic lowering through existing
+LLVM mechanisms uses an acquire load or a suitable fence to retain the
+load-to-later-store edge ([LLVM acquire code generation][llvm-atomic]); a
+cheaper dependency-based route needs a new IR mechanism and its optimization
+contract. This is a mapping obligation, not a new source publication right.
+
+For native-width accesses in qualified ordinary RAM, the cost of that edge is:
+
+| Target | Ordering cost beyond a plain relaxed access |
+|---|---|
+| x86 TSO | No extra machine fence; TSO already preserves load-to-store order. The compiler must still preserve the required edge ([RC11 §4][rc11]). “Free” here means no added hardware ordering instruction, not unrestricted LLVM motion. |
+| AArch64 | An acquire load such as `LDAPR` with the required RCpc feature, or `LDAR` otherwise, instead of a plain `LDR` ([Arm's compiler mapping][arm-rcpc]). It can remain one memory instruction while imposing real ordering constraints. |
+| ARMv7 | An acquire mapping such as `ldr; dmb` adds a hardware barrier ([LLVM acquire mapping][llvm-atomic]; [RC11 §6][rc11]). |
+| RISC-V RVWMO | `fence r,w` between the load and later store orders that pair; a general acquire mapping may use a stronger fence such as `fence r,rw` ([RV32I memory-ordering instructions][rv32]). The precise LLVM sequence still needs qualification. |
+| Qualified single-core MCU | For this edge alone, a compiler barrier suffices when all accessors execute on that core and no DMA/other bus master shares the cell. This follows from the single-core accessor premise; it does not remove separate device, hold-handoff or interrupt-exclusion requirements. Whether a selected LLVM lowering avoids a hardware fence remains unverified. |
+
+Weakly ordered multicore therefore has a real ordering cost, even when the
+scalar width is native; a universal promise of one plain instruction is not
+justified. Inspect each selected mapping, including orders already supplied
+by holds. These are source-grounded mappings and conditional deductions,
+not emitted-code or timing results for Whitefoot. The RC11 proof does not
+qualify AArch64, RISC-V or the full mixed Whitefoot model. An alternative is
 to permit causally unsupported scalar values explicitly, subject to their
 type bounds and no authority over other storage. That would weaken this
 draft's promise and needs the owner's choice; it is not recommended merely
@@ -511,9 +533,10 @@ Weak ordering is compatible with the proposed per-cell relaxed (`monotonic`)
 guarantee: it needs indivisibility and per-cell coherence, not a strong global
 order or publication of unrelated data. This does not remove the proposed
 model's **additional** no-thin-air obligation or the hold/publication/join
-handoff rules. Those may require compiler constraints, dependencies or
-barriers on a weak target and remain part of qualification. A single-copy
-atomic access is not by itself a proof of the complete event model.
+handoff rules. The LLVM mapping above needs an acquire/fence or a new IR
+mechanism to retain the required load-to-store edges; these costs remain
+part of qualification. A single-copy atomic access is not by itself a proof
+of the complete event model.
 
 ### Single-core interrupt exclusion versus a hidden lock
 
@@ -586,6 +609,18 @@ in an ISR, deadlock on the preempted holder. Multicore weak targets without
 RMW cannot obtain an atomic RMW merely by masking local interrupts. They
 retain native load/store capabilities and explicitly refuse unsupported RMW.
 
+This also constrains the **hold runtime**, not just relaxed fields. The
+current map read pin increments and decrements a shared reader count with
+RMWs ([concurrent_map.c:1206–1219,1279–1281][cmap]); a native `u32` stamp alone
+does not make that read-hold path available. The dual-core Cortex-M0+ RP2040
+has no CPU RMW instruction but does have SIO hardware spinlocks
+([RP2040 datasheet §§2.3.1.3,2.4.3.3][rp2040-datasheet]). Those could support a
+separately qualified hold implementation; they do not make a hidden lock
+acceptable for the scalar operation. Whether `atomic` statements can be
+offered on such a multicore port at all depends on its hold/lifetime and
+handoff implementation, which remains unverified, even if no relaxed RMW
+is exposed to the writer.
+
 Whitefoot's embedded runtime model is undefined today. This decision needs
 the above target/runtime premises and their enforcement, not a choice of
 embedded scheduler, interrupt API or complete port. A cooperative runtime
@@ -631,10 +666,11 @@ loads/stores without explicit alignment, including aggregate copies
 [emitter/places.rs:788–843][places-emitter]); “unordered” would instead name
 an LLVM atomic ordering. A relaxed field would add the first source scalar
 atomic operations. It needs explicit IR operations emitting `load atomic`,
-`store atomic` and, if offered, `atomicrmw`, all with `monotonic` ordering and
-qualified alignment. LLVM requires explicit `align` on atomic
-[loads][llvm-load] and [stores][llvm-store]; the no-thin-air obligation may require
-additional ordering beyond those monotonic operations.
+`store atomic` and, if offered, `atomicrmw`, with qualified alignment and at
+least the per-cell `monotonic` guarantees. LLVM requires explicit `align` on
+atomic [loads][llvm-load] and [stores][llvm-store]. The no-thin-air choice in
+decision 5 additionally requires the acquire/fence or new-IR mapping above;
+an all-`monotonic` lowering alone does not establish it.
 
 Qualification should fix the target features, runtime and field layout, and
 inspect emitted code and linked symbols for each declared operation. GCC's
@@ -776,11 +812,16 @@ not portable to the embedded native-width profiles above. The `u32` stamp
 fragment needs only 32-bit load/store and no RMW provider.
 
 There is no implicit conversion to T, no reference to the raw inner integer,
-and no ordinary `set` into its representation. Recommend refusing direct
-whole-cell replacement after publication: `writes(cell)` at `&Relaxed<T>`
-then permits the atomic operations, not a hidden plain replacement. The
-alternative is to define such replacement as exactly one atomic store of T;
-leaving it an ordinary write while allowing a read hold is unsound. Replacing
+and no ordinary `set` into its representation. Recommend a static rule:
+direct whole-cell replacement is forbidden through any reference and allowed
+only on an owned binding, subject to ordinary ownership/exclusion rules.
+The check uses the source access root's kind, not a publication state a callee
+cannot know; a reference alias retains the reference restriction.
+`writes(cell)` at `&Relaxed<T>` permits the explicit atomic operations,
+never direct replacement, even for an unpublished or exclusively held cell.
+The alternative is to define replacement through a reference as exactly one
+atomic store of T; leaving it an ordinary write while allowing a read hold
+is unsound. Replacing
 or moving the enclosing owner remains an exclusive, quiescent operation;
 its layout/lifetime treatment must preserve the atomic representation.
 Initialization before publication is exclusive. Recommend uniform atomic
@@ -918,10 +959,16 @@ explanation of the old loss. All shapes admitting mutation under read holds
   unrelated pointers to memory modified by any means during the call.
   Another context's atomic store violates that promise when the helper accesses the cell,
   despite being data-race-free. Suppress `noalias` on references whose
-  referent can contain a relaxed leaf, including aggregates and range
-  elements; carry this structural property through generic/exported
-  interfaces. A reference to a separately proved ordinary subfield may keep
-  its justified attributes. Audit inlining metadata and all derived aliases.
+  referent can contain a relaxed leaf **inline**: struct fields, enum
+  payloads, array/range elements, or a generic T that may instantiate to such
+  storage. Carry this property through generic/exported interfaces.
+  LLVM's [“based on” relation][llvm-based] does not extend from the address
+  of a Box or handle slot to the pointer loaded out of it merely because of
+  that load. Suppression for separately allocated leaves reached only through
+  such a pointer is conservative, not required by this argument; inspect
+  the actual derived pointer and any separate attributes on it. A reference
+  to a separately proved ordinary subfield may keep its justified attributes.
+  Audit inlining metadata and all derived aliases.
 * Qualify **both** OWN-9 consequences: neither exclusive reachability of a
   written relaxed place nor immutability of a read relaxed place follows
   during a call. Ordinary payload remains protected. The backend-facts
@@ -1476,6 +1523,13 @@ load/store mapping that tears or calls a hidden lock; a libcall in a default
 Clang probe instead identifies compiler/provider work still needed, never a
 reason to exclude that CPU from Whitefoot's intended targets.
 
+The monotonic probes below isolate width/provider behavior and preserve
+that comparison; they do not establish the no-thin-air contract. Before
+qualifying a WF profile under decision 5's recommended rule, also inspect
+load-then-store fragments using its selected acquire/fence mapping, retain
+the optimized IR, and count the resulting ordering instructions. A native
+monotonic load/store result alone cannot validate the one-instruction claim.
+
 Use a pinned Clang/LLVM with ARM and RISC-V backends. The predictions below
 are grounded in **LLVM 21.1.0 source inspection**, not a local probe result;
 if the experiment pins another version, inspect its corresponding paths
@@ -1605,9 +1659,12 @@ cycles and stale loads after reader-to-writer handoff; rejection of racing
 raw/atomic access, unqualified aggregate snapshots and invalid guards/proofs;
 ordinary-payload stability under replacement/deletion/resize;
 cross-module helpers and inspection that their
-relaxed-containing reference parameters carry no `noalias`; wrapping boundary
-and no-lost-update RMW; aliasing targets, multi-target ordinary invariants,
-and aggregate movement. Include missing-key, nested-map and forced whole-hold
+reference parameters with inline relaxed leaves carry no `noalias`; wrapping
+boundary and no-lost-update RMW; aliasing targets, multi-target ordinary invariants,
+and aggregate movement. For decision 9's recommended rule, check refusal of
+direct cell replacement through a reference even when unpublished or held
+exclusively, and permitted replacement on an owned binding under its ordinary
+ownership obligations. Include missing-key, nested-map and forced whole-hold
 fallback cases, and inspect matching/copies for plain loads or memory
 intrinsics overlapping a relaxed leaf. An independent event model should be
 the oracle, with runtime sanitizers/stress as additional implementation
@@ -1658,15 +1715,52 @@ for a shape. These are open research decisions, not approvals or spec edits.
 4. **How should a callable declare relaxed observations and mutation?**
    Recommend S1-W's truthful rows and declared-type/path hold selection, with
    conservative PAR conflicts including loads, the OWN-9 qualification and
-   suppression of `noalias` for relaxed-containing referents. S1-A needs a
-   demonstrated advantage to reopen CAP-1, EFF-1 and the effects decision.
+   suppression of `noalias` for referents with inline relaxed leaves. S1-A
+   needs a demonstrated advantage to reopen CAP-1, EFF-1 and the effects decision.
    S1-R is rejected by the store/store counterexample. Confidence 3/5:
    signatures carry the relevant type, but generic/exported interfaces and
    the complete coverage/alias algebra still need validation. Embedded
    instruction or interrupt lowering does not change the recommendation;
    operation requirements must compose separately from effect rows.
-5. **Which target-capability model should govern scalar operations, and may
-   a single-core target declare interrupt-masked RMW?** The owner's embedded
+5. **Must relaxed values exclude cyclic thin-air justification?**
+
+   **Background.** With `x=y=0`, A does `r=load(x); store(y,r)` and B does
+   `s=load(y); store(x,s)`. Each load of 42 can be justified only by the other
+   context's store of that loaded value. The proposed acyclic
+   program-order/reads-from rule excludes this cycle ([RC11 §3.2][rc11]).
+   LLVM `monotonic` supplies neither the needed load-to-later-store order
+   across cells nor preservation of false dependencies. The lowering cost
+   described above must therefore be settled before decision 6's target/RMW
+   policy or any one-instruction promise.
+
+   **Options.**
+
+   **A (recommended): retain the no-invented-value promise** with acyclic
+   program-order/reads-from and qualified lowering. Existing LLVM mechanisms
+   require an acquire load or suitable fence: AArch64 `LDAPR`/`LDAR`, ARMv7
+   `ldr; dmb`, or RISC-V `fence r,w` or stronger. A cheaper preserved-dependency
+   route requires a new IR mechanism. x86 TSO needs no extra hardware fence;
+   under the stated single-core accessor premises only a compiler barrier
+   is needed for this edge. Weakly ordered multicore pays real ordering
+   cost, and AArch64's one-instruction acquire still orders more than a plain
+   load. This option preserves the promised causality boundary but requires
+   the mixed-model proof and per-target qualification.
+
+   **B (not recommended): explicitly permit causally unsupported but
+   type-valid scalar values**, with no proof or publication authority. This
+   avoids the extra ordering imposed solely by A's acyclicity rule; coherence
+   and hold-handoff obligations remain. Its risk is weakening the stated
+   scalar behavior even when no initialization or independent computation
+   supplied a value. Keeping pointers out does not settle that tradeoff.
+
+   **Confidence 3/5.** The cycle and LLVM ordering/optimization gap are
+   supported by the cited model and source inspection. Whitefoot's full mixed
+   model, selected emitted sequences and measured weak-target cost remain
+   unverified; a validated cheaper mapping could change the cost assessment.
+
+6. **Which target-capability model should govern scalar operations, and may
+   a single-core target declare interrupt-masked RMW?** Subject to decision
+   5's causal-model choice and ordering cost, the owner's embedded
    target requirement rules out an intersection bounded by today's five ABIs.
    M0/M0+ and RV32IMC provide native 32-bit load/store without hardware RMW;
    `u64` access on those cores can tear. Recommend P1: deterministic target
@@ -1687,37 +1781,54 @@ for a shape. These are open research decisions, not approvals or spec edits.
    2/5 on WF target/runtime qualification: there is no embedded port or fixed
    CPU-feature contract today. The embedded CI code-shape probe and a port's
    context/interrupt contract could change the implementation recommendation;
-   desktop throughput alone cannot settle it. The no-thin-air ordering cost
-   remains subject to the separate causal-model decision below.
-6. **Which nontransactional outcomes may firn accept for the stamp?**
+   desktop throughput alone cannot settle it. Native width alone cannot
+   establish a promise of one plain instruction per load/store under decision 5.
+7. **Which nontransactional outcomes may firn accept for the stamp?**
    Recommend load/store LRU and an explicit evaluation of LFU lost updates,
    stale/regressing clocks, script rollback and introspection; choose CAS
    only if the desired accuracy/behavior requires it. Alternatively retain
    exact transaction semantics for those consumers. Confidence 2/5: Redis's
    algorithm and current firn paths are known, but concurrent behavior and
    eviction quality under the new semantics have not been measured.
-7. **May relaxed cells be used as wait conditions or publication flags?**
+8. **May relaxed cells be used as wait conditions or publication flags?**
    Recommend no in the first design: use existing guarded Shared state for
    synchronization, and specify snapshots only for scalar hints. A broader
    choice must add a visibility/progress/publication model and proofs, plus
    notifications on read-hold completion for any admitted wait conditions.
    Confidence 3/5: the safety boundary is clear; useful reliable polling may
    justify more later.
-8. **Must relaxed values exclude cyclic thin-air justification?** Recommend
-   retaining the no-invented-value promise with the proposed acyclic
-   program-order/reads-from condition and qualified lowering. Alternatively
-   explicitly permit causally unsupported but type-valid scalars, with no
-   proof/publication authority; that weakens the promised behavior.
-   Confidence 3/5: the cycle counterexample is clear and RC11 provides a
-   reference condition, but Whitefoot's mixed model and weak-target cost remain
-   unverified. Resolve this before fixing a one-instruction promise.
-9. **What does whole-cell replacement mean after publication?** Recommend
-   refusing direct replacement of the published cell and requiring its
-   explicit atomic store; enclosing-owner replacement remains exclusive and
-   quiescent. Alternatively specify whole-cell replacement as one atomic
-   store of T. Neither permits a plain write through a read-held leaf.
-   Confidence 3/5: the ambiguity is concrete; the chosen type/placement rules
-   must make the published boundary statically checkable.
+9. **Where is direct whole-cell replacement allowed?**
+
+   **Background.** A callee with `cell: &Relaxed<T>` cannot determine from
+   that signature whether the cell is published. A rule forbidding replacement
+   only after publication therefore supplies no modular refusal for
+   `set cell^ = ...` (a schematic proposed replacement, not current syntax
+   for an implemented type). `writes(cell)` must not authorize a plain write
+   racing another reader. The rule needs a statically visible boundary.
+
+   **Options.**
+
+   **A (recommended): forbid direct whole-cell replacement through any
+   reference; allow it only on an owned binding**, subject to ordinary
+   ownership/exclusion rules. A callee decides from the source access root alone;
+   even an unpublished or exclusively held reference uses explicit atomic
+   operations. This costs some replacement convenience but gives the signature
+   a uniform contract without publication tracking. Enclosing-owner
+   replacement remains exclusive and quiescent, preserving cell lifetime
+   and representation; it cannot bypass exclusion under a read hold.
+
+   **B (not recommended): define whole-cell replacement through a reference
+   as one atomic store of T.** This makes replacement notation usable for
+   shared cells without a publication test, but requires a precise payload
+   extraction/consumption rule for the opaque noncopyable replacement value
+   and its operation capability/effect checks. It duplicates the explicit
+   store and must never lower to a plain cell/aggregate copy. No such rule
+   or lowering has been validated here.
+
+   **Confidence 3/5.** A's root-kind test resolves the specific modularity
+   ambiguity without knowing publication state; the complete type/placement,
+   ownership and aggregate-replacement rules remain unverified. A demonstrated
+   need for B together with a sound replacement rule could reopen the choice.
 
 ## What is established and what remains unverified
 
@@ -1732,6 +1843,11 @@ obligations, stable node addresses and direct slot access, the read release's
 lack of guard notification, the absence of fixed CPU-feature settings,
 the need for relaxed load/load conflicts, and the ENT-2/TYPE-11/guard exclusion
 points. The event model and control protocol are proposals, not results.
+The thin-air cost analysis now distinguishes LLVM's missing ordering edge
+and false-dependency preservation from target hardware cost. Its acquire/fence
+examples are source-grounded mapping candidates, not measured Whitefoot code.
+The static owned-root replacement rule is a proposal, and the alias audit
+distinguishes inline relaxed storage from pointers loaded out of a handle.
 Architecture and runtime sources establish why embedded native load/store,
 hardware RMW and single-core interrupt exclusion must be separated. The
 owner's requirement preserves weak embedded CPUs in the intended target scope;
@@ -1820,6 +1936,8 @@ Whitefoot qualification results.
 [c11]: https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf
 [llvm-order]: https://llvm.org/docs/LangRef.html#atomic-memory-ordering-constraints
 [llvm-noalias]: https://llvm.org/docs/LangRef.html#noalias
+[llvm-based]: https://llvm.org/docs/LangRef.html#pointer-aliasing-rules
+[llvm-fold-branch]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Transforms/Utils/Local.cpp#L134-L167
 [llvm-memory]: https://llvm.org/docs/LangRef.html#memory-model-for-concurrent-operations
 [llvm-load]: https://llvm.org/docs/LangRef.html#load-instruction
 [llvm-store]: https://llvm.org/docs/LangRef.html#store-instruction
@@ -1835,6 +1953,7 @@ Whitefoot qualification results.
 [arm-atomic]: https://documentation-service.arm.com/static/68c223238a337a2bc6645c0a
 [arm-lse]: https://developer.arm.com/community/arm-community-blogs/b/tools-software-ides-blog/posts/making-the-most-of-the-arm-architecture-in-gcc-10
 [arm-order]: https://developer.arm.com/community/arm-community-blogs/b/tools-software-ides-blog/posts/armv8-sequential-consistency
+[arm-rcpc]: https://developer.arm.com/community/arm-community-blogs/b/tools-software-ides-blog/posts/enabling-rcpc-in-gcc-and-llvm
 [gcc-atomic]: https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html
 [clang-atomic]: https://clang.llvm.org/doxygen/stdatomic_8h_source.html
 [arm-v6m]: https://documentation-service.arm.com/static/5f8ff05ef86e16515cdbf826
@@ -1862,4 +1981,5 @@ Whitefoot qualification results.
 [riscv-csrs]: https://docs.riscv.org/reference/isa/v20240411/priv/priv-csrs.html
 [riscv-privilege]: https://docs.riscv.org/reference/isa/v20240411/priv/machine.html
 [rp2040]: https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html
+[rp2040-datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 [14900k]: https://www.intel.com/content/www/us/en/products/sku/236773/intel-core-i9-processor-14900k-36m-cache-up-to-6-00-ghz/specifications.html
