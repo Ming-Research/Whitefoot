@@ -8,7 +8,7 @@ Decision: A range over Paged has its own parameter-only reference kind &Run<T>, 
 
 Decision: A page reference is one captured page step contained in the filled window, distinct proved page indices separate their descendants, and a page conservatively overlaps every element index and range at the same Paged origin, because the selected fact language has no relation between a slot and its page, instead of inferring such separation from target-dependent page arithmetic. Its captured extent follows the same append-preserving and removal-invalidating lifetime as a Slots range; formation reads the length word so that it cannot overlap an append that changes the extent.
 
-Decision: Run-selecting segment and page places are direct bases for length reads and element reads or writes, because they name exactly the place their `&` forms resolve to and add no proof or permission mechanism, instead of requiring a borrow before every length read or element access. A run selector is a place, never a value.
+Decision: Run-selecting segment and page places are direct bases for length reads and further element subscripts whose selected places have ordinary element-place uses, because they name exactly the place their `&` forms resolve to and add no proof or permission mechanism, instead of requiring a borrow before every length read or element access or limiting selected elements to reads and writes. A run selector is a place, never a value.
 
 Rejected:
 - `Slice` and `MutSlice` as first-class values that may be bound, moved, stored, or returned: rejected because a value that reaches storage it does not own is a reference in value clothing, which the closure of aggregates under owned values and the no-escape rule for references both exclude.

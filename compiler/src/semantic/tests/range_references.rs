@@ -1093,13 +1093,105 @@ fn main() -> status: std::process::ExitStatus pure {{
     );
 }
 
-/// [ENT-2] separate direct reads of one page share a term while its owner
-/// length and selector support remain unchanged.
+/// [ENT-3.S6] an inline page borrow's call proof retains the formation
+/// equality between distinct captured and direct length terms. A segment
+/// borrow instead reuses the direct length's ordinary index identity [ENT-2].
 #[test]
-fn direct_page_length_reuses_a_fact_at_a_later_read() {
-    assert_accepts(include_bytes!(
-        "../../../../tests/conformance/cases/ent2-pos-direct-page-length-reuse.wf"
-    ));
+fn run_borrow_length_keeps_page_formation_evidence_and_segment_identity() {
+    use crate::semantic::entailment::{DerivationNode, FlowEventKind, Relation, TermKind};
+    use crate::semantic::model::CheckedMeasure;
+    use crate::semantic::places::PlaceStep;
+
+    with_semantics(
+        include_bytes!(
+            "../../../../tests/conformance/cases/ent2-pos-run-borrow-length-at-formation.wf"
+        ),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("{outcome:?}");
+            };
+            let page = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "inspect_page")
+                .expect("page helper")
+                .entailment;
+            assert_eq!(page.call_goals.len(), 1);
+            let root = page.call_goals[0].derivation.expect("discharged call goal");
+            let mut pending = vec![root];
+            let mut seen = vec![false; page.derivations.nodes.len()];
+            let mut found_formation = false;
+            while let Some(id) = pending.pop() {
+                if std::mem::replace(&mut seen[id.0 as usize], true) {
+                    continue;
+                }
+                let node = &page.derivations.nodes[id.0 as usize];
+                pending.extend(node.parent_ids());
+                let DerivationNode::SourceBound {
+                    relation:
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: 0,
+                        },
+                    event,
+                    ..
+                } = node
+                else {
+                    continue;
+                };
+                if page.derivations.events[event.0 as usize].kind != FlowEventKind::S6 {
+                    continue;
+                }
+                let (
+                    TermKind::Measure(CheckedMeasure::Length, captured),
+                    TermKind::Measure(CheckedMeasure::Length, direct),
+                ) = (
+                    &page.inventory.terms[left.0 as usize],
+                    &page.inventory.terms[right.0 as usize],
+                )
+                else {
+                    continue;
+                };
+                let mut current = captured.clone();
+                let Some(PlaceStep::Page(index)) = current.path.last_mut() else {
+                    continue;
+                };
+                *index = index.goal_identity();
+                if captured != direct && &current == direct {
+                    found_formation = true;
+                }
+            }
+            assert!(
+                found_formation,
+                "the call proof must use the page's S6 equality"
+            );
+
+            let segment = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "inspect_segment")
+                .expect("segment helper")
+                .entailment;
+            assert_eq!(segment.call_goals.len(), 1);
+            assert!(segment.call_goals[0].derivation.is_some());
+            let segment_lengths = segment
+                .inventory
+                .terms
+                .iter()
+                .filter(|term| {
+                    matches!(term, TermKind::Measure(CheckedMeasure::Length, place)
+                    if matches!(place.path.last(), Some(PlaceStep::Index(_))))
+                })
+                .count();
+            assert_eq!(
+                segment_lengths, 1,
+                "direct and borrowed segment lengths share one term"
+            );
+        },
+    );
 }
 
 /// [MSR-2] canonical identity does not make a direct page length immutable:
@@ -1115,14 +1207,10 @@ fn direct_page_length_fact_dies_after_place_back() {
     );
 }
 
-/// [ENT-2, REF-4] a guard on the formed borrow's own length establishes the
-/// captured-length fact that survives append; no equality with a direct page
-/// length is assumed. A later direct read cannot inherit that captured value.
+/// [ENT-3.S6, MSR-2] append kills the formation equality's direct term while
+/// the captured-length fact survives; the later direct read remains unproved.
 #[test]
-fn borrowed_page_length_survives_append_without_identifying_a_later_direct_read() {
-    assert_accepts(include_bytes!(
-        "../../../../tests/conformance/cases/ent2-pos-borrowed-page-length-after-append.wf"
-    ));
+fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
     assert_call_goal(
         include_bytes!(
             "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"

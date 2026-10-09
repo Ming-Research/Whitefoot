@@ -8,8 +8,8 @@ fn inspect(p: &Paged<u64>) -> result: u64 writes(p) contract {
   requires 0_u64 < p^.pages.len;
   requires p^.len < p^.cap;
 } {
-  let captured = &p^.pages[0_u64];
-  if captured^.len == 1_u64 {
+  if p^.pages[0_u64].len == 1_u64 {
+    let captured = &p^.pages[0_u64];
     place_back(window: p, value: 0_u64);
     return one(length: captured^.len);
   }

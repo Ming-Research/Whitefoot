@@ -1,3 +1,14 @@
+fn read_element(value: &u64) -> result: u64 reads(value) {
+  return value^;
+}
+
+fn read_selected(s: &Segments<u64>, i: u64, j: u64) -> result: u64 reads(s) contract {
+  requires i < s^.len;
+  requires j < s^[i].len;
+} {
+  return read_element(value: &s^[i][j]);
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   doc "A page element can own segments whose direct accesses retain every enclosing place step.";
   let widths = box_array_filled::<u64>(count: 1_u64, value: 2_u64);
@@ -20,6 +31,10 @@ fn main() -> status: std::process::ExitStatus pure {
   let selected = &pages.inner.pages[0_u64][0_u64].inner[0_u64][1_u64];
   if selected^ != 13_u64 {
     return std::process::exit_status(code: 4_u8);
+  }
+  let passed = read_selected(s: &pages.inner.pages[0_u64][0_u64].inner, i: 0_u64, j: 1_u64);
+  if passed != 13_u64 {
+    return std::process::exit_status(code: 6_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }

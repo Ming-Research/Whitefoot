@@ -1039,7 +1039,7 @@ impl<'unit> Checker<'_, 'unit> {
                 carrier,
                 place_node,
                 suffixes[position],
-                &suffixes[..position],
+                &written_suffixes[..written_suffixes.len() - 1],
                 root,
                 root_type,
                 root_binding.as_ref(),
@@ -1581,7 +1581,7 @@ impl<'unit> Checker<'_, 'unit> {
         carrier: NodeId,
         place_node: NodeId,
         suffix: NodeId,
-        base_suffixes: &[NodeId],
+        written_base_suffixes: &[NodeId],
         root: PlaceRoot,
         root_type: CheckedType,
         root_binding: Option<&LocalBinding>,
@@ -1596,20 +1596,72 @@ impl<'unit> Checker<'_, 'unit> {
         else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
+        let base_suffixes = &written_base_suffixes[usize::from(written_deref)..];
         // [REF-4] re-slicing: the base is the run another range names, whose
         // element type the `^` already selected [TYPE-7].
         let range_base = written_deref && root_binding.is_some_and(|local| local.mode.is_range());
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
-        let (source, base_places, element_type) = if range_base && !base_suffixes.is_empty() {
-            // [REF-4, OP-4] an indexable place below one element of the run
-            // a range names: the element is selected as a borrow of it
-            // would be, and the storage walk continues below it.
+        // [OP-4] an element below a direct run selector is an ordinary
+        // element place, including when its array or window is sliced.
+        let direct_range = if let Some(last) = self
+            .types
+            .declarations
+            .tree
+            .last_subscript(written_base_suffixes)?
+        {
+            let last = self.run_element_subscript(
+                context,
+                place_node,
+                written_base_suffixes,
+                bindings,
+                last,
+            )?;
+            self.selected_run_place(
+                context,
+                place_node,
+                &written_base_suffixes[..last],
+                bindings,
+                loop_depth,
+                LexicalUseRole::PlaceBase,
+            )?
+            .map(|range| (range, last))
+        } else {
+            None
+        };
+        let element_base = if let Some((range, last)) = direct_range {
+            carried = range.offsets;
+            Some((
+                range.root,
+                range.resolved.members,
+                &written_base_suffixes[last..],
+            ))
+        } else if range_base && !base_suffixes.is_empty() {
             let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            let Some(offset_node) = self
-                .types
-                .declarations
-                .tree
-                .subscript_offset(base_suffixes[0])?
+            Some((
+                CheckedRangeRoot {
+                    formation: None,
+                    binding: local.binding,
+                    element: self.types.intern_element(local.ty)?,
+                    element_type: local.ty,
+                },
+                local
+                    .reference
+                    .as_ref()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                    .paths
+                    .clone(),
+                base_suffixes,
+            ))
+        } else {
+            None
+        };
+        let (source, base_places, element_type) = if let Some((range, bases, suffixes)) =
+            element_base
+        {
+            // [REF-4, OP-4] an indexable place below one element of the run
+            // selected directly or named by a reference: select the element
+            // as its borrow does, then continue the storage walk below it.
+            let Some(offset_node) = self.types.declarations.tree.subscript_offset(suffixes[0])?
             else {
                 return self
                     .types
@@ -1626,13 +1678,13 @@ impl<'unit> Checker<'_, 'unit> {
             );
             let (path, ty, offsets) = self.resolve_storage_path(
                 context,
-                &base_suffixes[1..],
-                local.ty,
+                &suffixes[1..],
+                range.element_type,
                 bindings,
                 loop_depth,
                 true,
             )?;
-            carried.effects = offset.effects.union(offsets.effects);
+            carried.effects = carried.effects.union(offset.effects).union(offsets.effects);
             carried.accesses.extend(offset.accesses);
             carried.accesses.extend(offsets.accesses);
             if matches!(
@@ -1665,13 +1717,8 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             };
-            let named = local
-                .reference
-                .as_ref()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                .paths
-                .iter()
-                .cloned()
+            let named = bases
+                .into_iter()
                 .map(|mut place| {
                     place.path.push(PlaceStep::Index(captured));
                     place
@@ -1680,19 +1727,13 @@ impl<'unit> Checker<'_, 'unit> {
                     place
                 })
                 .collect();
-            let range_element = self.types.intern_element(local.ty)?;
             (
                 CheckedRangeSource::Element(Box::new(crate::semantic::CheckedRangeElementPlace {
-                    root: CheckedRangeRoot {
-                        formation: None,
-                        binding: local.binding,
-                        element: range_element,
-                        element_type: local.ty,
-                    },
+                    root: range,
                     offset: offset.expression,
                     path,
                     ty,
-                    obligation: self.types.declarations.tree.path(base_suffixes[0])?.clone(),
+                    obligation: self.types.declarations.tree.path(suffixes[0])?.clone(),
                     target_domain: CheckedTargetDomainObligation::ElementAddress,
                     captured,
                 })),

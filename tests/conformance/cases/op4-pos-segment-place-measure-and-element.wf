@@ -26,6 +26,13 @@ fn array_element_length(rows: &Segments<Array<u64, 4>>, segment: u64, offset: u6
   requires offset < rows^[segment].len;
 } {
   doc "The run length in a contract counts complete arrays rather than their four inner elements.";
+  let tail = &rows^[segment][offset][1_u64..4_u64];
+  if tail^.len != 3_u64 {
+    return 0_u64;
+  }
+  if tail^[0_u64] != 17_u64 {
+    return 0_u64;
+  }
   return rows^[segment][offset].len;
 }
 
@@ -62,6 +69,7 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 6_u8);
   }
   let row = array_filled::<u64, 4>(value: 9_u64);
+  set row[1_u64] = 17_u64;
   let array_widths = box_array_filled::<u64>(count: 1_u64, value: 2_u64);
   let arrays = box_segments_filled::<Array<u64, 4>>(lengths: &array_widths.inner[0_u64..1_u64], value: row);
   if arrays.inner[0_u64].len != 2_u64 {
