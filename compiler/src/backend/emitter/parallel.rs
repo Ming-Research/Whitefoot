@@ -899,7 +899,7 @@ impl FunctionEmitter<'_, '_> {
                         .map_err(|_| BackendFailure::TextEmission)?;
                     return Ok(result);
                 }
-                if !matches!(ty, IrType::Range { .. }) {
+                if !matches!(ty, IrType::Range { .. } | IrType::Run { .. }) {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let result = format!("%{}", self.next_temporary()?);
@@ -907,9 +907,14 @@ impl FunctionEmitter<'_, '_> {
                     let emitted_type_0 = self.output.type_name(self.program, ty)?;
                     writeln!(
                         self.output,
-                        "  {result} = extractvalue {} {}, 1",
+                        "  {result} = extractvalue {} {}, {}",
                         emitted_type_0,
-                        self.value_name(*value)
+                        self.value_name(*value),
+                        if matches!(ty, IrType::Run { .. }) {
+                            2
+                        } else {
+                            1
+                        }
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1176,6 +1181,14 @@ pub(super) fn thunk_arguments(
             // The field still owns the complete argument payload. The callee
             // snapshots this content into its own activation before mutation.
             rendered.push(format!("ptr %p{index}"));
+        } else if matches!(parameter.ty(), IrType::Run { .. }) {
+            let _ = writeln!(
+                body,
+                "  %a{index} = load {field_type}, ptr %p{index}\n  %a{index}.data = extractvalue {field_type} %a{index}, 0\n  %a{index}.lo = extractvalue {field_type} %a{index}, 1\n  %a{index}.len = extractvalue {field_type} %a{index}, 2"
+            );
+            rendered.push(format!(
+                "ptr %a{index}.data, i64 %a{index}.lo, i64 %a{index}.len"
+            ));
         } else if parameter.is_range() {
             // A range reference's pair crosses the call as its element
             // pointer and count, the same split every call route passes.

@@ -3,6 +3,7 @@
 //! integer-domain and separation proofs, and the measure terms they read.
 
 use super::*;
+use std::cell::Ref;
 
 impl Vocabulary {
     pub(super) fn intern_measure(
@@ -289,6 +290,7 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Length,
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
+            CheckedMeasure::Pages,
         ] {
             let term = self.vocabulary.intern_measure(cell_measure, &path);
             let bound = match cell_measure.cell(measured) {
@@ -3085,8 +3087,10 @@ impl Reasoning<'_, '_, '_> {
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
+        super::super::work::affine_final_family_start();
+        let l0 = query.l0;
         let mut ordinal = 0;
-        while let Some(entry) = query.l0.ordered_entry(ordinal, query.closed, check) {
+        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
             ordinal += 1;
             let Some(mut parents) =
                 self.affine_candidate_residual_proof(target, &entry.inequality, query, check)
@@ -3106,6 +3110,7 @@ impl Reasoning<'_, '_, '_> {
             parents.dedup();
             return Some(parents);
         }
+        super::super::work::affine_final_family_exhausted();
         None
     }
 
@@ -3128,8 +3133,10 @@ impl Reasoning<'_, '_, '_> {
             && Rc::ptr_eq(&cached.closed, &closed)
             && cached.index.candidates == candidates
         {
+            super::super::work::affine_query(true);
             return (closed, Rc::clone(&cached.index));
         }
+        super::super::work::affine_query(false);
         let index = Rc::new(LazyAffineL0Index::new(candidates));
         self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
             closed: Rc::clone(&closed),
@@ -3256,7 +3263,7 @@ impl LazyAffineL0Index {
             candidates,
             by_image,
             exact: RefCell::default(),
-            ordered: RefCell::default(),
+            complete: RefCell::default(),
         }
     }
 
@@ -3270,10 +3277,21 @@ impl LazyAffineL0Index {
         terms: &[AffineCoefficient],
         closed: &ClosedState,
         check: &mut AffineCheckState,
-    ) -> Option<AffineL0Entry> {
-        if let Some(entry) = self.exact.borrow().get(terms) {
-            return entry.clone();
+    ) -> Option<Ref<'_, AffineL0Entry>> {
+        if self.complete.borrow().is_some() {
+            return self.complete_entry(terms);
         }
+        if let Ok(entry) = Ref::filter_map(self.exact.borrow(), |exact| exact.get(terms)) {
+            return Ref::filter_map(entry, Option::as_ref).ok();
+        }
+        // Cached absence counts as one cold demand too. Promote before the
+        // Nth scan, bounding the total lazy left scans by N * (N - 1).
+        if self.exact.borrow().len() + 1 >= self.candidates.len() {
+            super::super::work::affine_cold_demand(0);
+            self.promote(closed, check);
+            return self.complete_entry(terms);
+        }
+        super::super::work::affine_cold_demand(self.candidates.len());
         let mut selected: Option<AffineL0Entry> = None;
         let mut right_key = Vec::new();
         for left in &self.candidates {
@@ -3308,45 +3326,82 @@ impl LazyAffineL0Index {
         }
         // None is also memoized: repeating an absent DIRECT vector should
         // not repeat the candidate search on an unchanged state.
-        self.exact
-            .borrow_mut()
-            .insert(terms.into(), selected.clone());
-        selected
+        self.exact.borrow_mut().insert(terms.into(), selected);
+        self.exact_entry(terms)
     }
 
-    /// The final AUTO family can use *any* image, including images disjoint
-    /// from the target's atoms. Discover its next vector in the full builder's
-    /// row-major first-occurrence order, then demand that vector's strongest
-    /// witness (which may occur later). Earlier DIRECT lookups do not change
-    /// this cursor or order. Stop scanning as soon as the caller has a proof.
+    fn exact_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
+        Ref::filter_map(self.exact.borrow(), |exact| {
+            exact.get(terms).and_then(Option::as_ref)
+        })
+        .ok()
+    }
+
+    fn complete_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
+        Ref::filter_map(self.complete.borrow(), |complete| {
+            let index = complete.as_ref()?;
+            index
+                .by_terms
+                .get(terms)
+                .map(|&ordinal| &index.entries[ordinal])
+        })
+        .ok()
+    }
+
+    /// Build once per residency in original pair order. Prior exact demands
+    /// cannot seed this order: a vector's strongest witness may appear after
+    /// its first occurrence, and equal bounds keep the earlier witness.
+    fn promote(&self, closed: &ClosedState, check: &mut AffineCheckState) {
+        if self.complete.borrow().is_some() {
+            return;
+        }
+        let mut index = AffineL0Index::default();
+        for left in &self.candidates {
+            for right in &self.candidates {
+                let Some(bound) = closed.tight_bound(left.term, right.term) else {
+                    continue;
+                };
+                let Ok(inequality) =
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+                else {
+                    continue;
+                };
+                let ordinal = *index
+                    .by_terms
+                    .entry(inequality.terms().into())
+                    .or_insert(index.entries.len());
+                let entry = AffineL0Entry {
+                    inequality,
+                    left: left.term,
+                    right: right.term,
+                    bound,
+                };
+                if ordinal == index.entries.len() {
+                    index.entries.push(entry);
+                } else if entry.inequality.upper() < index.entries[ordinal].inequality.upper() {
+                    index.entries[ordinal] = entry;
+                }
+            }
+        }
+        *self.complete.borrow_mut() = Some(index);
+        self.exact.borrow_mut().clear();
+        super::super::work::affine_promotion();
+    }
+
+    /// Entering the final AUTO family promotes even if its first member
+    /// succeeds. Enumeration and all residual lookups then borrow the complete
+    /// map, including negative answers, without rescanning left candidates.
     fn ordered_entry(
         &self,
         ordinal: usize,
         closed: &ClosedState,
         check: &mut AffineCheckState,
-    ) -> Option<AffineL0Entry> {
-        let mut order = self.ordered.borrow_mut();
-        while order.terms.len() <= ordinal {
-            let left = self.candidates.get(order.left)?;
-            let right = &self.candidates[order.right];
-            order.right += 1;
-            if order.right == self.candidates.len() {
-                order.left += 1;
-                order.right = 0;
-            }
-            let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                continue;
-            };
-            let Ok(inequality) =
-                AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-            else {
-                continue;
-            };
-            if order.seen.insert(inequality.terms().into()) {
-                order.terms.push(inequality.terms().into());
-            }
-        }
-        self.entry(&order.terms[ordinal], closed, check)
+    ) -> Option<Ref<'_, AffineL0Entry>> {
+        self.promote(closed, check);
+        Ref::filter_map(self.complete.borrow(), |complete| {
+            complete.as_ref()?.entries.get(ordinal)
+        })
+        .ok()
     }
 }
 

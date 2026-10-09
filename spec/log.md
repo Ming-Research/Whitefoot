@@ -11,7 +11,7 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.107: offset disequalities, invariant L0 facts and origin transport
+## 2026-10-09 v0.109: offset disequalities, invariant L0 facts and origin transport
 
 Rules: added ENT-3.S16, ENT-4.OT; changed ENT-2, ENT-3, ENT-4, ENT-5, ENT-6, MSR-4, FN-8, INV-1, CALL-6
 
@@ -19,6 +19,21 @@ Owner-approved: On the shared status board of 2026-10-09, written in Chinese, th
 
 Summary: An L0 disequality carries an offset, `t1 - t2 != c`, normalized with constants through Z, so `cursor <= 4` and `cursor != 4` derive `cursor <= 3`; ENT-4's closure, derivability and negation and ENT-5's joins follow the offset, the joins keeping only finite candidates. ENT-3.S16 lets a proved header or local invariant whose normalized conclusion is exactly a difference bound also establish that ordinary L0 fact, with ordinary support, kills and joins. ENT-4.OT forms a query-local view in which a `let` binding and its defining right-hand side are one proposition while the binding holds it under ENT-3, built on the holds definition approved for v0.104, transporting signed proofs in both directions and publishing no flow fact; ENT-6, MSR-4, FN-8, INV-1 and CALL-6 read that view, cite S16 or use ENT-4's contradiction judgment. Selection ground: an interpreter loop with an equality sentinel test, and computed Boolean or parity bindings, otherwise needed source workarounds the checker could prove unnecessary.
 
+## 2026-10-08 v0.108: address-stable paged storage
+
+Rules: changed GRAM-3, GRAM-5, GIVE-1, TYPE-2, TYPE-6, TYPE-7, TYPE-8, TYPE-9, TYPE-10, OWN-1, OWN-7, REF-1, REF-4, PROV-6, STOR-1, STOR-3, STOR-6, STOR-8, WIN-1, WIN-2, OP-4, OP-9, OP-10, OP-13, OP-14, OP-15, EFF-1, EFF-5, PAR-2, PRE-1, ENT-2, MSR-1, MSR-2, CALL-3, INV-1, RANGE-1
+
+Owner-approved: In the session of 2026-10-06 and 2026-10-07, written in Chinese, after the design rounds on Snowghost's nested access concluded that the root problem is storage: "Q122, do it all at once" (translated), selecting a built-in `Paged<T>` with Snowghost's requirements R1 to R6; after the cards that presented the page length fixed by the language stride ceiling as Q135 and the Paged specification and design-tree text as Q136: "135 and 136 approved" (translated); after the card that presented the header-first cell as Q147: "approve them all" (translated); on the status board on 2026-10-08, after the card that presented judging the C3 criterion on the like-for-like Snowghost port, re-approving the header-first cell and not adopting the X1/X2 allocation experiments: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: `Paged<T>` is a fifth storage shape, placed only in `Box` content: a runtime-capacity window whose slots live in fixed pages of B elements, B the largest power of two with B times the language stride ceiling at most 4096, so growth (`grow_paged`) copies directory words and never moves an element, and `p[i]` is one ordinary index step with the bound `i < p.len` and the proof model of `Slots` (exact places, index separation, `apart` certificates, PAR-2 element families). `&p[lo..hi]` forms the parameter-only reference kind `&Run<T>`, which may cross pages and is never a `&[T]`; `p.pages.len` and `&p.pages[k]` give each page as a contiguous `&[T]` with a captured initialized extent. Construction, back placement and removal, `free_empty`, release order, checked allocation sizes and the no-heap rule extend to the shape; ENT-2's proof paths cover page selectors with per-formation identity. The selection ground is Snowghost's need for growable storage whose published slots never move, after returned references and visitors were rejected (research/investigations/paged-storage/DESIGN.md), and the C3 attribution, which found the like-for-like port's whole layout stage within noise of the hand-written pages on the i9-14900K. Paged roots for indexed accumulators remain deferred.
+
+## 2026-10-08 v0.107: more indexed reduction forms
+
+Rules: changed PAR-2
+
+Owner-approved: On the status board on 2026-10-08, written in Chinese, after the card that presented Snowghost's count of 0 of 32 candidate loops permitted by v0.102's indexed reductions and recommended keeping the rule and admitting a len read of the indexed root, a single-assignment temporary, constant marks, integer or Bool fields of record cells and unsigned `+sat`, then recounting: "choose A" (translated), which superseded the earlier "choose A" deferring constant marks; in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: PAR-2's indexed accumulators admit measure reads of the exact indexed root (its length is already unchanged in the body); an update written through one fresh, immutable, single-use temporary in the same block (`let t = R[e] op x; set R[e] = t`); unsigned `+sat` for scalar and indexed accumulators, which is associative and commutative with identity zero, while signed `+sat` stays excluded; indexed mark families, whose every write stores one fixed integer or Bool constant, so each cell ends as that constant when some iteration wrote it and keeps its incoming value otherwise; and integer or Bool fields of record cells as independent families, each with its own operation or constant. The selection ground is the pre-registered criterion: Snowghost's 32 histogram-like denied loops were all refused under v0.102 because their spellings fell outside `set R[e] = R[e] op x` ([results](../research/investigations/indexed-reductions/DESIGN.md)).
 ## 2026-10-09 v0.106: a break-free loop has no normal successor
 
 Rules: changed FN-1, GIVE-1, ENT-5

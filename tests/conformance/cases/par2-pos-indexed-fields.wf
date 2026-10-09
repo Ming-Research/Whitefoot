@@ -1,0 +1,77 @@
+struct Row {
+  tag: u8;
+  count: u64;
+  enabled: Bool;
+}
+
+fn reduce() -> result: u64 pure {
+  doc "Two dense field families share a strided record root; sibling tags and untouched cells retain their incoming values.";
+  let disabled = False();
+  let seed = Row(tag: 93_u8, count: 7_u64, enabled: disabled);
+  let rows = array_filled::<Row, 4>(value: seed);
+  let enabled = True();
+  for (i in 0_u64..128_u64) {
+    let bucket = i % 2_u64;
+    let next = 1_u64 +wrap rows[bucket].count;
+    set rows[bucket].count = next;
+    set rows[bucket].enabled = bor(rows[bucket].enabled, enabled);
+  }
+  for (cell in 0_u64..4_u64) {
+    if rows[cell].tag != 93_u8 {
+      return 1_u64;
+    }
+    let expected = 7_u64;
+    if cell < 2_u64 {
+      set expected = 71_u64;
+      let wrong = bnot(rows[cell].enabled);
+      if wrong {
+        return 2_u64;
+      }
+    } else if rows[cell].enabled {
+      return 3_u64;
+    }
+    if rows[cell].count != expected {
+      return 4_u64;
+    }
+  }
+  return 0_u64;
+}
+
+fn different_maps() -> result: u64 pure {
+  doc "Different affine maps of sibling fields select independent indexed families.";
+  let disabled = False();
+  let seed = Row(tag: 93_u8, count: 7_u64, enabled: disabled);
+  let rows = array_filled::<Row, 5>(value: seed);
+  let enabled = True();
+  for (i in 0_u64..4_u64) {
+    let next = i + 1_u64;
+    set rows[i].count = rows[i].count +wrap 1_u64;
+    set rows[next].enabled = bor(rows[next].enabled, enabled);
+  }
+  if rows[0_u64].count != 8_u64 {
+    return 1_u64;
+  }
+  if rows[4_u64].count != 7_u64 {
+    return 2_u64;
+  }
+  if rows[0_u64].enabled {
+    return 3_u64;
+  }
+  let missing = bnot(rows[4_u64].enabled);
+  if missing {
+    return 4_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = reduce();
+  if result != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let maps = different_maps();
+  if maps != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

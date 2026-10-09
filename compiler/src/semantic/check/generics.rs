@@ -248,11 +248,13 @@ impl GenericSubstitution {
 /// base case of that fact is this list and every other boundary's fact is the
 /// union of the facts of the calls its body exhibits. Frame-resident
 /// construction and conversion rows are not allocations [EFF-1].
-pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 6] = [
+pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 8] = [
     "box_new",
     "box_array_filled",
     "box_segments_filled",
     "box_slots_new",
+    "box_paged_new",
+    "grow_paged",
     "box_ring_new",
     "grow",
 ];

@@ -849,6 +849,58 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
+/// The RHS reads the old element before allocating the replacement. The
+/// displaced struct then releases both nested fields in declaration order;
+/// scope exit releases the replacement and finally the enclosing Slots Box.
+#[test]
+fn struct_element_assignment_releases_nested_fields_once_in_order() {
+    let source = br#"struct Tail {
+  last: Box<u64>;
+}
+
+struct Pair {
+  first: Box<u64>;
+  rest: Tail;
+}
+
+fn replacement(old: &Pair) -> result: Pair reads(old) {
+  doc "Reads the displaced owners while constructing the new value.";
+  let next_left = old^.first.inner +wrap 10_u64;
+  let next_right = old^.rest.last.inner +wrap 10_u64;
+  let left = box_new::<u64>(value: next_left);
+  let right = box_new::<u64>(value: next_right);
+  let ending = Tail(last: move right);
+  return Pair(first: move left, rest: move ending);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the new values after replacing a nested struct in a Slots element.";
+  let left = box_new::<u64>(value: 11_u64);
+  let right = box_new::<u64>(value: 12_u64);
+  let ending = Tail(last: move right);
+  let initial = Pair(first: move left, rest: move ending);
+  let slots = box_slots_new::<Pair>(capacity: 1_u64);
+  place_back(window: &slots.inner, value: move initial);
+  set slots.inner[0_u64] = replacement(old: &slots.inner[0_u64]);
+  if slots.inner[0_u64].first.inner != 21_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if slots.inner[0_u64].rest.last.inner != 22_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = super::emit_lowered(source, super::OverlapLowering::Off);
+    let observed = retain_calls(&module)
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
+    let output = compile_link_and_run(&observed, Some(&allocation_observer(5, 0)), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, b"A1;A2;A3;A4;A5;F1;F2;F4;F5;F3;");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
 /// A [SET-1] commit through a payload-step reference updates the child owner
 /// inside its cell, and [WIN-3] releases the displaced child there; the
 /// caller's tree then owns the replacement and not a copied enum's slot.

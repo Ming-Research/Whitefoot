@@ -104,7 +104,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
@@ -741,7 +741,6 @@ struct AffineL0Entry {
     bound: i128,
 }
 
-#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
@@ -758,22 +757,14 @@ struct AffineL0Cache {
     index: Rc<LazyAffineL0Index>,
 }
 
-/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
-/// the ordered final AUTO family fill independent memos: querying a vector
-/// early must not move its first occurrence in the final family's order.
+/// Candidate grouping is linear in the inventory. Early DIRECT lookups are
+/// lazy; final-family entry or N cold demands promotes to the complete index.
+/// Demand order never changes the final family's first-occurrence order.
 struct LazyAffineL0Index {
     candidates: Vec<AffineL0Candidate>,
     by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
     exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
-    ordered: RefCell<AffineL0Order>,
-}
-
-#[derive(Default)]
-struct AffineL0Order {
-    left: usize,
-    right: usize,
-    terms: Vec<Box<[AffineCoefficient]>>,
-    seen: WordHashSet<Box<[AffineCoefficient]>>,
+    complete: RefCell<Option<AffineL0Index>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
@@ -2005,6 +1996,7 @@ mod indexed_goal_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,
@@ -2236,6 +2228,7 @@ mod range_argument_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,
