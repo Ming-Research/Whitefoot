@@ -195,10 +195,9 @@ pub(crate) fn judge_program(
             if !selected.get(index).copied().unwrap_or(false)
                 || function.body.is_none()
                 || !takes_part(function, |callee| {
-                    functions.get(callee.0 as usize).is_some_and(|callee| {
-                        !callee.range_facts.requirements.is_empty()
-                            || !callee.range_facts.postconditions.is_empty()
-                    })
+                    functions
+                        .get(callee.0 as usize)
+                        .is_some_and(|callee| callee.range_facts.has_boundary())
                 })
                 || deferred_records(function).is_none()
             {

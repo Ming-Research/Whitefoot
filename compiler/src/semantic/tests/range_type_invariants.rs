@@ -114,11 +114,14 @@ fn construction(slot: u64) -> String {
     format!(
         "{CONTEXT}fn build() -> result: Context pure {{
   let payloads = slots_new::<Flow, 64>();
-  place_back(window: &payloads, value: Flow::Open(block: 0_u64));
+  let opening = Flow::Open(block: 0_u64);
+  place_back(window: &payloads, value: opening);
   let orders = slots_new::<Order, 16>();
-  place_back(window: &orders, value: Order(payloads: move payloads));
+  let order = Order(payloads: move payloads);
+  place_back(window: &orders, value: move order);
   let blocks = slots_new::<Block, 64>();
-  place_back(window: &blocks, value: Block(entry_slot: {slot}_u64, owner: 0_u64, normal_y: 0_i64));
+  let block = Block(entry_slot: {slot}_u64, owner: 0_u64, normal_y: 0_i64);
+  place_back(window: &blocks, value: block);
   return Context(orders: move orders, blocks: move blocks);
 }}
 "
@@ -249,10 +252,16 @@ fn take_back_preserves_the_remaining_prefix() {
 
 #[test]
 fn deeper_subscripts_keep_all_selection_positions() {
-    check("fn deep(xs: &[Slots<Slots<u64, 2>, 2>]) -> result: unit pure contract {
-  requires forall held(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
-  ensures forall kept(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
+    check("fn need(xs: &[Slots<Slots<u64, 2>, 2>]) -> result: unit pure contract {
+  requires forall kept(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
 } {
+  return unit;
+}
+
+fn deep(xs: &[Slots<Slots<u64, 2>, 2>]) -> result: unit pure contract {
+  requires forall held(b in 0_u64..xs^.len, k in 0_u64..xs^[b].len) when 0_u64 < xs^[b][k].len: xs^[b][k][0_u64] == 0_u64;
+} {
+  need(xs: xs);
   return unit;
 }
 ", None);
@@ -318,7 +327,8 @@ fn insert(slot: &str) -> String {
   requires forall fresh(b in 0_u64..c^.orders.len, k in 0_u64..c^.orders[b].payloads.len): c^.orders[b].payloads[k].Open.block != target;
 }} {{
   let next_slot = c^.orders[owner].payloads.len;
-  place_back(window: &c^.orders[owner].payloads, value: Flow::Open(block: target));
+  let opening = Flow::Open(block: target);
+  place_back(window: &c^.orders[owner].payloads, value: opening);
   set c^.blocks[target].entry_slot = {slot};
   set c^.blocks[target].owner = owner;
   return unit;
@@ -355,7 +365,8 @@ fn finish_sequence_uses_one_range_invariant_over_the_processed_prefix() {
     invariant forall prefix(j in 0_u64..k): c^.orders[0_u64].payloads[j].Open.block == pending^[j], c^.blocks[c^.orders[0_u64].payloads[j].Open.block].entry_slot == j, c^.blocks[c^.orders[0_u64].payloads[j].Open.block].owner == 0_u64
   ) {{
     let target = pending^[k];
-    place_back(window: &c^.orders[0_u64].payloads, value: Flow::Open(block: target));
+    let opening = Flow::Open(block: target);
+    place_back(window: &c^.orders[0_u64].payloads, value: opening);
     set c^.blocks[target].entry_slot = k;
     set c^.blocks[target].owner = 0_u64;
   }}
@@ -373,7 +384,7 @@ fn constant_construction_is_judged_by_the_range_derivation() {
   invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
 }}
 
-const checked: Zeroes = Zeroes(cells:[{value}_u64]);
+const zeroes: Zeroes = Zeroes(cells:[{value}_u64]);
 "
         );
         check(

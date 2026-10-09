@@ -1105,8 +1105,8 @@ fn field_range_noninteger_field_rejects_at_range1() {
 }
 
 #[test]
-fn field_range_second_index_rejects_at_range1() {
-    let source = field_range_formation("", "Slots<u64, 8>", "[0_u64]");
+fn field_range_subscript_of_scalar_rejects_at_range1() {
+    let source = field_range_formation("", "u64", "[0_u64]");
     field_range_verdict(&source, Some(SemanticRule::Range1));
 }
 

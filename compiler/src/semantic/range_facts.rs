@@ -230,13 +230,19 @@ pub(crate) struct CheckedRangeFacts {
 }
 
 impl CheckedRangeFacts {
+    /// Whether a call to this function makes its caller participate in RANGE-2.
+    /// Lifted ordinary FN-9 relations supply facts to an existing range walk;
+    /// they do not themselves declare a range boundary.
+    pub(crate) fn has_boundary(&self) -> bool {
+        !self.requirements.is_empty() || self.postconditions.iter().any(|post| post.owed)
+    }
+
     /// Whether the function states no range clause the range judgment owes.
     pub(crate) fn is_empty(&self) -> bool {
-        self.requirements.is_empty()
+        !self.has_boundary()
             && self.constructions.is_empty()
             && self.atomics.is_empty()
             && self.loops.is_empty()
-            && !self.postconditions.iter().any(|post| post.owed)
     }
 
     /// Whether `declaration` names one of these range facts.

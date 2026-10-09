@@ -3067,8 +3067,7 @@ impl<'unit> TypeContext<'unit> {
             ));
         }
         for (callee, checked) in callees.iter_mut().zip(functions) {
-            callee.range_boundary = !checked.function.range_facts.requirements.is_empty()
-                || !checked.function.range_facts.postconditions.is_empty();
+            callee.range_boundary = checked.function.range_facts.has_boundary();
         }
         Ok(callees)
     }

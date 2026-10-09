@@ -779,22 +779,76 @@ rarely insert at the same place.
   Reopen when a range-invariant consumer needs multiple possibly aliased
   targets; the current single-target consumer does not require this support.
 
-- **Validate the range-invariant loop writer against fixed instantiation.**
-  The new `finish_sequence` unit fixture appends pending block IDs and sets
-  their entry slots, with one range invariant describing the processed
-  prefix. Its pending inverse is an entry fact. The backedge's slot/owner
-  query may contain `pending[k]` through the write definition but obtain
-  `pending[j]` only from the prefix instance; RANGE-3 step 1 forbids those
-  instance reads from forming another pending-inverse instance. This may
-  prevent preservation after the loop header forgets written slot fields.
-  No execution has tested that concern. Adding a pending-bound guard is
-  not an established repair: it also needs proof at the final implicit
-  postcondition, where the pending read may again appear only in an instance.
-  Reopen immediately on CI's result for
-  `finish_sequence_uses_one_range_invariant_over_the_processed_prefix`;
-  inspect the exact open conclusion and ground reads. If the fixed rule
-  cannot close the requested writer, present the minimal derivation gap to
-  the owner before changing the rule or replacing the requested fixture.
+- **Resolve the processed-prefix writer's range derivation gap.**
+  `finish_sequence_uses_one_range_invariant_over_the_processed_prefix` in
+  `compiler/src/semantic/tests/range_type_invariants.rs` appends pending
+  block IDs and updates their entry slots and owners. Its fixture now names
+  the constructed `Flow` before passing it to `place_back`, as GRAM-4
+  requires; its expected acceptance and invariant are unchanged. The
+  supplied CI log stops this fixture at parsing, so the following is a
+  source-level derivation analysis, not an observed solver result.
+  On the backedge, let P be pending, O the payloads at the arbitrary header,
+  B the blocks there, B0 the entry blocks, and O'/B' the state after appending
+  P[k] and writing that block. For an old position `0 <= j < k`, the second
+  prefix conclusion owes `B'[O'[j].Open.block].entry_slot == j`.
+  Its ground reads and their write definitions include P[k], O'[j]/O[j],
+  their tags and lengths, and the corresponding B'/B entry slots. They do
+  not include P[j]: that value first arrives from the active prefix's
+  instance. RANGE-3 step 1 can therefore instantiate the entry pending
+  inverse at k but not at j; an instance's reads cannot trigger another
+  instance. A residual branch can set `k=1`, `j=0`,
+  `O[j].Open.block=P[j]=P[k]=q`, `B[q].entry_slot=0`, and
+  `B0[q].entry_slot=1`. The prefix and the instantiated entry inverse at k
+  both hold, while the write makes `B'[q].entry_slot=1`, leaving the owed
+  equality to j false. The full entry inverse excludes duplicate pending
+  targets, but that missing j instance is precisely what this derivation
+  cannot use after the loop header forgets the written slot projection.
+  The problem builder snapshots ground reads before adding instances in
+  `compiler/src/semantic/range_judgment/facts.rs`; each conclusion has its
+  own query in `compiler/src/semantic/range_judgment/walk.rs`.
+  Reopen immediately after the repaired fixture reaches this obligation in
+  CI. Confirm its first open conclusion and ground reads, then ask the owner
+  to select a language/proof design that closes the witness. Do not add a
+  runtime guard, strengthen the fixture, change its expected verdict, or
+  extend the specified instantiation procedure without that decision.
+
+- **Reconcile the false range-use certificate's diagnostic expectation.**
+  `inv1-neg-false-target-with-range-fact` expects INV-1, but its local
+  invariant `t < 0_u64` has a written `use valid(i)` block. INV-1 explicitly
+  assigns an invariant with a proof block to PRF-1; RANGE-4 adds its written
+  instances without changing that diagnostic ownership. Keeping the block's
+  identity before filtering range uses now yields PRF-1 with a failed
+  combination, consistent with those rules. The expected verdict is left
+  unchanged pending the owner's specification/evidence decision. Reopen
+  before merging this conformance change, settle diagnostic ownership, and
+  validate both false blockless invariants and failed range-use blocks in CI.
+
+- **Set the scope of range proof in a generic source schema.**
+  `validate_generic_body_entailment` in `compiler/src/semantic/check.rs`
+  now runs the range judgment over canonical symbolic instances.
+  `range1-pos-generic-instance` fails on the symbolic `filled_with<T>`:
+  RANGE-1 forms T-valued atoms as integers, but the range walk represents
+  an own T parameter as storage, so the callee's `value` and the caller's
+  return obligation receive unrelated unknown integer values.
+  `range1-pos-generic-unformed-postcondition` fails the symbolic
+  `first_of<T>` with NoSelectedNormalExit before the concrete Mark instance
+  can leave its noninteger clause unformed. RANGE-1 specifies symbolic
+  formation and concrete noninteger omission, while ENT-1/FN-2 still require
+  a source-schema judgment. The range-field-terms investigation's proposed
+  wording assigns facts and obligations to concrete instances, but the
+  active RANGE-3 wording does not explicitly delimit the symbolic proof
+  sites. Choose whether symbolic range clauses are formed only, or also
+  proved wherever representable. The recommended repair retains symbolic
+  discharge of representable ordinary obligations and postpones range-clause
+  proof and selected-exit obligations to concrete instances; a narrower
+  type-dependent postponement is another choice. Do not remove symbolic
+  ordinary checking: `symbolic_generic_body_defers` in
+  `compiler/src/semantic/tests/range_ordinary.rs` depends on it.
+  Reopen immediately when that scope is settled. Validate both unchanged
+  conformance cases, the symbolic deferral case, malformed symbolic clauses,
+  concrete invalid integer postconditions and unformed noninteger clauses
+  in CI. These two regressions remain unfixed pending that scope decision;
+  no verdict or proof check has been weakened to make them pass.
 
 ## Containers and storage lowering
 
