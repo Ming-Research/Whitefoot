@@ -70,6 +70,38 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     check(&mut analyzer);
 }
 
+#[test]
+fn measure_term_forms_pages_only_for_paged() {
+    for (measured, has_pages) in [
+        (MeasuredKind::RuntimeRing, false),
+        (MeasuredKind::RuntimeSlots, false),
+        (MeasuredKind::Paged, true),
+    ] {
+        with_analyzer(|analyzer| {
+            let path = ResolvedPlace::binding(BindingId(0));
+            analyzer
+                .reasoning()
+                .measure_term(CheckedMeasure::Length, path.clone(), measured, None);
+            for measure in [
+                CheckedMeasure::Length,
+                CheckedMeasure::Capacity,
+                CheckedMeasure::Head,
+                CheckedMeasure::Pages,
+            ] {
+                assert_eq!(
+                    analyzer
+                        .vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, path.clone()))
+                        .is_some(),
+                    measure != CheckedMeasure::Pages || has_pages,
+                    "{measured:?}: {measure:?}",
+                );
+            }
+        });
+    }
+}
+
 /// The oracle is the unchanged full pair enumeration, called without the
 /// memo. Compare both ordered witnesses and every exact-vector boundary
 /// query, so losing even an image that another AUTO route can recover fails.
