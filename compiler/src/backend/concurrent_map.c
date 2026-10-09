@@ -425,16 +425,27 @@ static void totals(wf_cmap *map, int64_t *used, int64_t *live) {
     *live = l;
 }
 
-/* Frees the moved tables no user is in, keeping the cells of the newest.
+/* Frees the moved tables no user is in, keeping the cells of the newest
+ * when they are the current table's size: a map whose size holds steady
+ * moves to a table of the same size, which those cells then serve, while a
+ * table that grew past them, or shrank below them, would only reach their
+ * size again by moving back, so they are freed instead of held idle.
  * A table is retired after the map's current table has changed, and a user
  * publishes its table before it checks that the table is still current, all
  * sequentially consistent: either this scan sees the user in the table, or
- * the user sees that the table is no longer current. */
+ * the user sees that the table is no longer current. The current table read
+ * here can change under the scan; a spare kept or freed on a stale size
+ * costs one allocation or one idle array, never a wrong table. */
 static void reclaim(wf_cmap *map) {
     if (atomic_load_explicit(&map->lock, memory_order_relaxed) ||
         atomic_exchange_explicit(&map->lock, 1, memory_order_acquire))
         return;
     int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
+    uint64_t size = atomic_load_explicit(&map->current, memory_order_acquire)->capacity;
+    if (map->spare != NULL && map->spare_capacity != size) {
+        free_cells(map->spare, map->spare_capacity);
+        map->spare = NULL;
+    }
     table *kept = NULL, **tail = &kept;
     int spared = 0;
     for (table *r = atomic_load_explicit(&map->retired, memory_order_relaxed), *older; r != NULL; r = older) {
@@ -445,7 +456,7 @@ static void reclaim(wf_cmap *map) {
         if (in_use) {
             *tail = r;
             tail = &r->older;
-        } else if (spared) {
+        } else if (spared || r->capacity != size) {
             free_table(r);
         } else {
             if (map->spare != NULL)

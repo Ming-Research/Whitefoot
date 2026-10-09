@@ -12,6 +12,13 @@ Nodes: compiler/waiting-contexts/concurrent-map
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
 
 Summary: `shared_map_release_reserve` frees the cells a map keeps for its next move of their size and answers their bytes. It only tries the map's own short lock and answers zero while a mover or a reclaim holds it, since its caller, a server over its memory limit, asks again on its next command; waiting would add a move to that command's latency.
+## 2026-10-09 A moved map keeps spare cells only of its current size
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, on the card asking whether the concurrent map should keep a moved table's spare cells only when they match the current table's size, recommended option A: "choose A" (translated); the same day the owner chose option A on Firn-wf's card counting the spare table in `heap_in_use`, which names this change.
+
+Summary: A map whose size holds steady still moves between two warm tables of one size (12 ms against 111 ms for 2^22 cells at four threads), but the cells a growing table leaves behind are half its size and would serve only a move back to that size, holding up to half a table of memory idle that firn's memory limit counts. `reclaim` now keeps the newest freed cells only when they match the current table's size and frees a spare of any other size. Keeping every newest freed table and freeing every host-mapped table are kept as rejected alternatives.
 ## 2026-10-09 Cross-context cancellation of host waits
 
 Nodes: compiler/completion-runtime, compiler/waiting-contexts, compiler/waiting-contexts/bounded-waits, language/system-interface/context-cancellation, language/system-interface/deadlines, language/system-interface/outcome-typing
