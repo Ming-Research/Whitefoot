@@ -6,6 +6,7 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod indexed;
 mod loops;
 mod parameters;
 mod prelude;
@@ -477,6 +478,11 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    if overlap == OverlapLowering::On {
+        builder.places = Some(std::rc::Rc::new(
+            crate::semantic::CheckedPlaceMap::for_function(function),
+        ));
+    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -758,6 +764,10 @@ struct IrBuilder<'program> {
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
     /// Indexed families, their current ranges, and source/private storage modes.
     indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
+    indexed_blocks: Vec<indexed::BlockBinding>,
+    /// The checker's resolved origins, shared by this body and its chunks.
+    places: Option<std::rc::Rc<crate::semantic::CheckedPlaceMap>>,
+    indexed_block_families: Vec<crate::semantic::IndexedReduction>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -825,6 +835,9 @@ impl<'program> IrBuilder<'program> {
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
             indexed_roots: Vec::new(),
+            indexed_blocks: Vec::new(),
+            places: None,
+            indexed_block_families: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -1168,8 +1181,9 @@ impl<'program> IrBuilder<'program> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         let condition = self.expression(conditional.scrutinee)?;
         let mut values = vec![condition];
-        for argument in arguments {
-            values.push(self.expression(argument)?);
+        for (position, argument) in arguments.iter().enumerate() {
+            let value = self.expression(argument)?;
+            values.push(self.indexed_call_argument(conditional.site, position, value)?);
         }
         let mut guard = Self::new(
             self.context(),
@@ -1897,7 +1911,11 @@ impl<'program> IrBuilder<'program> {
                 let source_arguments = arguments.iter().map(lower_source_argument).collect();
                 let arguments = arguments
                     .iter()
-                    .map(|argument| self.expression(argument))
+                    .enumerate()
+                    .map(|(position, argument)| {
+                        let value = self.expression(argument)?;
+                        self.indexed_call_argument(call, position, value)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 // The definition takes the callee's declared IR result, which
                 // carries the result mode: a borrow-returning callee delivers

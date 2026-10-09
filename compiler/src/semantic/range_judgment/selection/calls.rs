@@ -240,7 +240,9 @@ impl<'a> Terms<'a> {
                     place.element = true;
                     selected
                 }
-                GoalProjection::Range(_) | GoalProjection::Page(_) => return None,
+                GoalProjection::Range(_)
+                | GoalProjection::Page(_)
+                | GoalProjection::FormalPage { .. } => return None,
             };
         }
         Some(place)

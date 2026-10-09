@@ -1,0 +1,18 @@
+fn one(length: u64) -> result: u64 pure contract {
+  requires length == 1_u64;
+} {
+  return length;
+}
+
+fn inspect(p: &Paged<u64>) -> result: u64 reads(p) contract {
+  requires 0_u64 < p^.pages.len;
+} {
+  if p^.pages[0_u64].len == 1_u64 {
+    return one(length: p^.pages[0_u64].len);
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1686,22 +1686,61 @@ fn proof_place_below(
     place
 }
 
-/// One range reference's own root [REF-4].
+/// One bound range reference or directly selected run [REF-4, OP-4].
 ///
-/// A range reference is the pointer-and-count pair the binding itself holds:
-/// [TYPE-8] makes `&[T]` a reference kind and not a type, so no storage ever
-/// holds one and no field path reaches one, and the root is that binding
-/// alone. The element type travels beside it because [TYPE-7] makes the
+/// A bound range reference holds its pointer-and-count pair in the binding
+/// alone: [TYPE-8] makes `&[T]` a reference kind, not a stored type. A direct
+/// run carries the same formation inline and retains its source binding.
+/// The element type travels beside it because [TYPE-7] makes the
 /// referent a `^` selects the element type, so [MSR-1]'s one `len` row
 /// cannot be recovered from the selected type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedRangeRoot {
     pub(crate) binding: BindingId,
+    /// A directly selected run evaluates the same formation as `&s[i]` or
+    /// `&p.pages[k]`, without introducing a source binding or a new value kind.
+    pub(crate) formation: Option<Box<CheckedExpression>>,
     /// The complete stored element type, interned in this checked program.
     pub(crate) element: CheckedElement,
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+}
+
+impl CheckedRangeRoot {
+    /// The written storage path, shared by direct and borrowed run consumers.
+    pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
+        match self.formation.as_deref() {
+            Some(CheckedExpression::BorrowSegment { root, segment, .. }) => {
+                let (_, mut path) = root.place();
+                path.push(segment.place_step());
+                path
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        match self.formation.as_deref() {
+            Some(CheckedExpression::BorrowSegment { root, segment, .. }) => {
+                let mut place = match root {
+                    CheckedSegmentSource::Storage(root) => root.proof_place(),
+                    CheckedSegmentSource::Element(element) => element.proof_place(),
+                };
+                place.path.push(match segment {
+                    CheckedSegmentSelect::Page(index) => {
+                        // [ENT-2, MSR-1] a direct selection reads the current
+                        // extent, so its selector compares as an index. This
+                        // is not the captured path of a source `&p.pages[k]`.
+                        super::places::PlaceStep::Page(index.captured.goal_identity())
+                    }
+                    _ => segment.place_step(),
+                });
+                place
+            }
+            _ => super::places::ResolvedPlace::binding(self.binding),
+        }
+    }
 }
 
 /// The storage one range reference is formed over [REF-4].
@@ -1729,7 +1768,10 @@ impl CheckedRangeSource {
     pub(crate) fn place(&self) -> (super::places::PlaceRoot, Vec<super::places::PlaceStep>) {
         match self {
             Self::Storage(root) => (root.root, root.place_path()),
-            Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+            Self::Range(root) => (
+                super::places::PlaceRoot::Binding(root.binding),
+                root.place_path(),
+            ),
             Self::Element(place) => (
                 super::places::PlaceRoot::Binding(place.root.binding),
                 place.place_path(),
@@ -1874,25 +1916,49 @@ impl CheckedRangeElementPlace {
     /// The outer range offset followed by every nested subscript offset, in
     /// source evaluation order [SET-1, OP-4].
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
-        std::iter::once(&self.offset).chain(self.path.iter().filter_map(|step| match step {
-            CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-        }))
+        self.root
+            .formation
+            .as_deref()
+            .into_iter()
+            .chain(std::iter::once(&self.offset))
+            .chain(self.path.iter().filter_map(|step| match step {
+                CheckedPlaceStep::Subscript(index) => Some(&index.offset),
+                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            }))
     }
 
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
-        std::iter::once(&mut self.offset).chain(self.path.iter_mut().filter_map(
-            |step| match step {
+        self.root
+            .formation
+            .as_deref_mut()
+            .into_iter()
+            .chain(std::iter::once(&mut self.offset))
+            .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
                 CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-            },
-        ))
+            }))
     }
 
     pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
-        std::iter::once(super::places::PlaceStep::Index(self.captured))
+        self.root
+            .place_path()
+            .into_iter()
+            .chain(std::iter::once(super::places::PlaceStep::Index(
+                self.captured,
+            )))
             .chain(self.path.iter().map(CheckedPlaceStep::place_step))
             .collect()
+    }
+
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        let mut place = self.root.proof_place();
+        place
+            .path
+            .push(super::places::PlaceStep::Index(self.captured));
+        place
+            .path
+            .extend(self.path.iter().map(CheckedPlaceStep::place_step));
+        place
     }
 
     pub(crate) fn goal_projections(&self) -> Vec<super::goal::GoalProjection> {
@@ -3307,8 +3373,10 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         | CheckedExpression::ArrayMeasure { .. }
         | CheckedExpression::BufferMeasure { .. }
         | CheckedExpression::DerefAddressed { .. }
-        | CheckedExpression::RangeMeasure { .. }
         | CheckedExpression::Project { .. } => Vec::new(),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            root.formation.as_deref().into_iter().collect()
+        }
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.offsets().collect(),
@@ -3327,14 +3395,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::BoxTake { .. } => Vec::new(),
         CheckedExpression::ArrayIndex { offset, .. } => vec![offset.as_ref()],
         CheckedExpression::BufferIndex { offset, .. } => vec![offset.as_ref()],
-        CheckedExpression::RangeElementMeasure { place, .. } => {
-            let mut children = vec![&place.offset];
-            children.extend(place.path.iter().filter_map(|step| match step {
-                CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-            }));
-            children
-        }
+        CheckedExpression::RangeElementMeasure { place, .. } => place.offsets().collect(),
         CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => place.offsets().collect(),
         // [REF-4] both endpoints are evaluated once where the range is
