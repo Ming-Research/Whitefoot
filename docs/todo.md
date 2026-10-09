@@ -94,9 +94,16 @@ rarely insert at the same place.
   eager-join differential. Dense single-input snapshots, image formation and
   inventory scans remain deferred until their elapsed share warrants an
   experiment. Reopen with that profile, or when a real program meets the
-  series' growth. An exhausted final AUTO family can still demand
-  quadratically many vectors, each scanning the candidate list; no measured
-  input has shown it.
+  series' growth. Halo's check regressed 13% with the demanded index
+  ([Halo-wf bisect run 37880685345](https://github.com/Ming-Research/Halo-wf/actions/runs/37880685345)).
+  An exhausted final AUTO family could demand quadratically many vectors,
+  each scanning all candidates, with additional scans for absent residuals.
+  Promotion to the complete index on final-family entry or after N cold
+  demands for N candidates addresses that cubic construction. CI still needs
+  to confirm full-rebuild equivalence and whether this explains and recovers
+  Halo's regression while retaining the natural wasm interpreter's gain;
+  the new per-function affine work counters distinguish cold scans, memo
+  reuse, promotions and exhausted families.
 
 - **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
   rewriting Halo's interpreter as plain `loop { match }` raised its source
@@ -113,10 +120,9 @@ rarely insert at the same place.
   repeated checks of unchanged functions. Validate each with a same-source
   base/twin/head timing of Halo's check on the 14900K through CI, unchanged
   conformance and corpus verdicts, and the full-rebuild differentials.
-  The lazy index cut the v2h interpreter's check to 0.215 of its base;
-  Halo's check has not been timed with it. Reopen when that change reaches
-  main and Halo's check is timed with it, or sooner if Halo's check passes
-  10 s.
+  Reopen now to attribute the regression recorded above and measure the
+  promotion change against both interpreters; Halo's dominant remaining
+  checking cost is still unprofiled.
 
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot

@@ -726,7 +726,6 @@ struct AffineL0Entry {
     bound: i128,
 }
 
-#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
@@ -743,22 +742,14 @@ struct AffineL0Cache {
     index: Rc<LazyAffineL0Index>,
 }
 
-/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
-/// the ordered final AUTO family fill independent memos: querying a vector
-/// early must not move its first occurrence in the final family's order.
+/// Candidate grouping is linear in the inventory. Early DIRECT lookups are
+/// lazy; final-family entry or N cold demands promotes to the complete index.
+/// Demand order never changes the final family's first-occurrence order.
 struct LazyAffineL0Index {
     candidates: Vec<AffineL0Candidate>,
     by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
     exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
-    ordered: RefCell<AffineL0Order>,
-}
-
-#[derive(Default)]
-struct AffineL0Order {
-    left: usize,
-    right: usize,
-    terms: Vec<Box<[AffineCoefficient]>>,
-    seen: WordHashSet<Box<[AffineCoefficient]>>,
+    complete: RefCell<Option<AffineL0Index>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
