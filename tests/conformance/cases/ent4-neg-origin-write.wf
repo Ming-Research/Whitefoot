@@ -1,0 +1,19 @@
+fn need(value: Bool) -> r: unit pure contract {
+  requires value;
+} {
+  doc "Consume a proved Boolean value.";
+  return unit;
+}
+
+fn witness(x: u64) -> r: unit pure {
+  doc "A write makes the current comparison unrelated to the saved Boolean.";
+  let test = x < 9_u64;
+  set x = 0_u64;
+  need(value: test);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Reject the unproved saved Boolean at FN-8.";
+  return std::process::exit_status(code: 0_u8);
+}

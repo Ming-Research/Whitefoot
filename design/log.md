@@ -5,6 +5,29 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Offset disequalities, invariant L0 facts and origin transport
+
+Nodes: language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge/origin-transport
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve checker completion (#286)'s specification changes and the design decisions of the automatic-facts and origin-transport nodes" with "agreed" (translated). The choices it records were the owner's earlier: offset disequalities and invariant difference bounds in L0 on the status board item for Q148; accepting that three explicit certificates become PRF-1 redundancy rejects ("choose A", status board, 2026-10-08, translated); and query-local origin equivalence in the session of 2026-10-08 ("Q1, Q2, Q3 agreed", translated).
+
+Summary: L0 stores offset disequalities and tightens a bound at the excluded constant in either orientation, with the same support, snapshot and join judgments as zero-offset ones; joins keep ENT-5's finite disequality candidates rather than every common derivable exclusion, deferred until a program needs it. A proved invariant's exact difference bounds become ordinary L0 facts, so an equality-sentinel loop proves its increment; three-term and scaled conclusions stay affine premises. A goal's disposition identifies value trees whose currently valid origin expansions agree, in a finite query view built from the live definition links with ordinary kills and join intersection, publishing no flow fact. Keeping constant disequalities out of L0, a branch-entry special case, expanding only the submitted goal and retaining killed equivalences were refused.
+
+## 2026-10-09 Conditional calls join statement groups
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the status board, written in Chinese: on 2026-10-08, on the card asking whether the compiler should let an `if` statement such as a guarded recursive call join a statement group as PAR-1 allows, recommended option A, conditional calls: "choose A" (translated); then, approving the request that presented the two departures from that card, a guard handed out whether or not its condition holds and arguments limited to forms safe to evaluate unconditionally: "agree" (translated); and on 2026-10-09, on the card asking whether to merge the change although it alone does not let Snowghost's suffix translation run in parallel, recommended option A, merge it as a general improvement: "choose A" (translated).
+
+Summary: An `if` whose one acting arm is a single call statement needing no release, whose condition has no call and whose arguments are constants or total reads of places without an index step or operator, is a PAR-1 member with the footprint of its condition and the call; next to an adjacent call member in a permitted run or pair, outside atomic blocks, it lowers to an ordinary call of a synthesized guard function, so hand-out, join, call grain and recursion budget apply unchanged. The planner had refused every such statement although PAR-1 admits it; Snowghost's edit spends about 80 percent in a recursion whose left call is guarded this way, though that recursion needs the stored-data invariant and more of its statements as members before it can run in parallel ([edit parallelism](../research/investigations/edit-parallelism/DESIGN.md)). Admitting and outlining every `if` and `match` statement, and leaving conditional statements refused until the invariant exists, are kept as rejected alternatives.
+## 2026-10-09 Promote the demanded affine index before cubic demand
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design addition 'proof-query index promotes to the complete index when exhausting'" with "agreed" (translated).
+
+Summary: The demanded affine L0 index now builds the complete strongest-vector map once per cache residency when the final AUTO family is entered or when cold demands reach the candidate count, because exhausting that family otherwise scanned every candidate for each of up to N^2 vectors and made Halo's check 12-13% slower; with promotion Halo's check takes 0.835 of the demanded-index base and the wasm interpreter keeps its gain ([check-time](../research/investigations/check-time/DESIGN.md#promotion-after-halos-regression)). The map equals the eager builder's, so results are unchanged.
+
 ## 2026-10-08 Address-stable paged storage
 
 Nodes: language/data-model, language/data-model/storage-shapes, language/data-model/kernel-minimality, language/data-model/opaque-struct, language/ownership/range-reference, compiler/storage-representation, compiler/backend-facts, compiler/parallel-lowering

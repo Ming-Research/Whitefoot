@@ -16,7 +16,15 @@ Decision: A value initializer's `give d;` edge delivers the receiver's equality 
 
 Decision: Each outcome's conditional numeric facts use the existing weakest-bound control-flow join and ordinary support invalidation, with loop heads removing associations and supports changed on continuing backedges, because these finite rules retain common weaker consequences without correlating independent outcome guards or equating different iterations, instead of exact-template intersection, branch-history enumeration, or a work budget that selects acceptance.
 
+Decision: L0 stores an offset disequality between two terms and tightens a bound at its excluded constant in either orientation, using the same support, snapshot and join judgments as a zero-offset disequality, because a loop with `cursor <= 4_u64` and an equality break test otherwise loses the strict bound needed for its increment, and a bound established after the test needs the same consequence, instead of retaining that refusal or strengthening only at branch entry.
+
+Decision: Ordinary and delivery joins use ENT-5's finite disequality candidates, because this preserves existing zero-offset consequences and admits established offsets without an interval-exclusion fact for arbitrarily wide gaps, which no program has needed yet, instead of retaining every common derivable nonzero exclusion; reopen when a program needs a nonzero exclusion every input only derives, as tracked in [Q160](../../../docs/todo.md).
+
+Decision: A proved header or local invariant also establishes its exact normalized source-term difference bounds as ordinary L0 facts, both directions of an equality together, with ordinary term support, kills, joins and snapshots, because an equality-sentinel loop needs its proved header bound and the false guard's disequality in the same closure to prove its increment preserves the header, instead of a query-local composition rule or projecting general affine premises into L0; conclusions with three or more normalized terms or scaled coefficients remain affine premises only.
+
 Rejected:
+- Keeping constant disequalities outside L0: rejected because the false edge of an equality sentinel test then cannot tighten the loop's existing upper bound.
+- A branch-entry special case for a constant comparison: rejected because it misses a weak bound established after the test and splits one arithmetic closure rule by its source event.
 - One more row per demanded idiom, such as bounding a right shift by a written amount: rejected because it repairs only the idiom it names, while five further sweep idioms need an interval that no single row would state.
 - Intervals read from operand types and literals alone, without the closed state: rejected because a bounded operation feeding another loses its bound, which seven of the 21 recorded sweep idioms need, among them decoding a 16-bit value from two bytes.
 - Closed intervals without operand relations: rejected because five sweep idioms bound a result by another term, such as a clamp to a runtime length, a heap parent computed by a shift and a saturating subtraction.

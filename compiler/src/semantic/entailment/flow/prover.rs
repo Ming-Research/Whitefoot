@@ -3,6 +3,7 @@
 //! integer-domain and separation proofs, and the measure terms they read.
 
 use super::*;
+use std::cell::Ref;
 
 impl Vocabulary {
     pub(super) fn intern_measure(
@@ -267,13 +268,14 @@ impl Vocabulary {
 impl Reasoning<'_, '_, '_> {
     /// The one former of every [MSR-1] measure term.
     ///
-    /// Every measure of one place is formed together, because [MSR-2]'s
-    /// standing facts relate them to each other: the value the table fixes
-    /// for a cell, the equality of a table cell to another measure, and the
+    /// Length, capacity and head terms of one place are formed together,
+    /// because [MSR-2]'s standing facts relate them to each other: the value
+    /// the table fixes for a cell, its equality to another measure, and the
     /// orderings `P.len <= P.cap` and `P.head <= P.cap`. A site that
     /// names only one measure still needs the others to exist for those
-    /// facts to have terms to relate, and all three have empty support beyond
-    /// P's own, so forming them together costs nothing a program can observe.
+    /// facts to have terms to relate. The place's [MSR-1] table row decides
+    /// which measures exist: `pages` is formed alongside them only on the
+    /// `Paged` row, because an unrelated atom enlarges every affine search.
     pub(super) fn measure_term(
         &mut self,
         measure: CheckedMeasure,
@@ -291,8 +293,12 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Head,
             CheckedMeasure::Pages,
         ] {
+            let cell = cell_measure.cell(measured);
+            if cell_measure == CheckedMeasure::Pages && cell == MeasureCell::Absent {
+                continue;
+            }
             let term = self.vocabulary.intern_measure(cell_measure, &path);
-            let bound = match cell_measure.cell(measured) {
+            let bound = match cell {
                 MeasureCell::ExactConstant(value) => {
                     Some(MeasureBound::Constant(i128::from(value)))
                 }
@@ -358,6 +364,12 @@ impl Reasoning<'_, '_, '_> {
             ProofDisposition::Unknown => CallGoalDisposition::Unproved,
         };
         let evidence = match (result.disposition, result.route) {
+            (ProofDisposition::Proved, Some(ProofRoute::OriginTransport)) => {
+                vec![CallGoalEvidence::OriginTransportPositive]
+            }
+            (ProofDisposition::Refuted, Some(ProofRoute::OriginTransport)) => {
+                vec![CallGoalEvidence::OriginTransportNegative]
+            }
             (ProofDisposition::Proved, Some(ProofRoute::Contradiction)) => {
                 vec![CallGoalEvidence::AllDerivable]
             }
@@ -418,6 +430,53 @@ impl Reasoning<'_, '_, '_> {
     /// fixed ordinary closure before the fixed affine rule and constructs the
     /// selected derivation during that same query.
     pub(super) fn prove(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
+        let prepared = ProofContext {
+            origin_view: if context.origin_view == OriginView::Pending {
+                OriginView::Ordinary
+            } else {
+                context.origin_view
+            },
+            ..context
+        };
+        let ordinary = self.prove_prepared(prepared, goal);
+        // A proof in the entering state remains a proof in its origin view.
+        // Preserve its selected parent and diagnostic grounds; internal
+        // component queries already share their enclosing prepared view.
+        if ordinary.disposition == ProofDisposition::Proved
+            || context.origin_view != OriginView::Pending
+            || context.facts.goal_origins.is_empty()
+        {
+            return ordinary;
+        }
+        let submitted = match goal {
+            ProofGoal::Signed { expression, .. } => Some(expression.clone()),
+            ProofGoal::ConversionDomain { canonical, .. } => Some(canonical.clone()),
+            ProofGoal::IntegerDomain(domain) => domain
+                .canonical
+                .map(|id| self.vocabulary.goals.expression(id).clone()),
+            ProofGoal::BoundedRelation(bound) => bound.canonical.cloned(),
+            _ => None,
+        };
+        let view = self.origin_query_view(context, submitted.as_ref());
+        let prepared = ProofContext {
+            facts: &view,
+            affine: context.affine,
+            closed: None,
+            origin_view: OriginView::Prepared,
+        };
+        let mut result = self.prove_prepared(prepared, goal);
+        if result.disposition == ordinary.disposition {
+            return ordinary;
+        }
+        if matches!(goal, ProofGoal::Signed { .. })
+            && result.route != Some(ProofRoute::Contradiction)
+        {
+            result.route = Some(ProofRoute::OriginTransport);
+        }
+        result
+    }
+
+    fn prove_prepared(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
         match goal {
             ProofGoal::Affine { inequality, right } => {
                 self.prove_affine(context, inequality, right)
@@ -698,7 +757,7 @@ impl Reasoning<'_, '_, '_> {
                                 Box::new(Relation::Bound {
                                     left: right,
                                     right: left,
-                                    bound: -difference,
+                                    bound: difference.saturating_neg(),
                                 })
                             }),
                             premises: reverse_proof.premises.into_boxed_slice(),
@@ -758,7 +817,7 @@ impl Reasoning<'_, '_, '_> {
             expression,
             GoalSign::Positive,
             &closed,
-            &mut HashSet::new(),
+            &mut HashMap::new(),
         );
         ProofResult {
             disposition: if derivation.is_some() {
@@ -816,6 +875,8 @@ impl Reasoning<'_, '_, '_> {
     /// ordering leaves. The recursion follows the closed truth table exactly:
     /// conjunction requires every positive child, disjunction every negative
     /// child, the opposite signs require one witness, and `not` flips sign.
+    /// In an origin view a Boolean datum visits its live definition under the
+    /// demanded sign; child proofs remain local to this positive introduction.
     /// It performs no premise, coefficient, or path search.
     pub(super) fn signed_goal_affine_proof(
         &mut self,
@@ -823,20 +884,25 @@ impl Reasoning<'_, '_, '_> {
         expression: &GoalExpression,
         sign: GoalSign,
         closed: &ClosedState,
-        visiting: &mut HashSet<(GoalId, GoalSign)>,
+        memo: &mut HashMap<(GoalId, GoalSign), Option<DerivationId>>,
     ) -> Option<DerivationId> {
         let goal = self.intern_goal_expression(expression.clone());
+        if let Some(proof) = memo.get(&(goal, sign)) {
+            return *proof;
+        }
         if let Some(proof) = closed.goal_proof(
             goal,
             sign,
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         ) {
+            memo.insert((goal, sign), Some(proof));
             return Some(proof);
         }
-        if !visiting.insert((goal, sign)) {
-            return None;
-        }
+        // A live definition only refers to older values. Memoization also
+        // guards re-entry and shares repeated children without expanding the
+        // definition DAG into a tree.
+        memo.insert((goal, sign), None);
 
         let proof = match expression {
             GoalExpression::Operation {
@@ -862,7 +928,6 @@ impl Reasoning<'_, '_, '_> {
                     (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
                     (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
                     (CheckedBooleanOperation::ExclusiveOr, _) => {
-                        visiting.remove(&(goal, sign));
                         return None;
                     }
                 };
@@ -876,9 +941,9 @@ impl Reasoning<'_, '_, '_> {
                     let mut parents = Vec::with_capacity(arguments.len());
                     let mut complete = true;
                     for argument in arguments {
-                        let Some(parent) = self.signed_goal_affine_proof(
-                            context, argument, child_sign, closed, visiting,
-                        ) else {
+                        let Some(parent) = self
+                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
+                        else {
                             complete = false;
                             break;
                         };
@@ -888,9 +953,9 @@ impl Reasoning<'_, '_, '_> {
                 } else {
                     let mut best = None;
                     for argument in arguments {
-                        let Some(candidate) = self.signed_goal_affine_proof(
-                            context, argument, child_sign, closed, visiting,
-                        ) else {
+                        let Some(candidate) = self
+                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
+                        else {
                             continue;
                         };
                         // Existential Boolean introductions use the first
@@ -915,9 +980,44 @@ impl Reasoning<'_, '_, '_> {
             GoalExpression::Operation { .. } => {
                 self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
             }
+            GoalExpression::Datum(GoalDatum::Place {
+                root,
+                projections,
+                ty,
+            }) if context.origin_view == OriginView::Prepared => context
+                .facts
+                .goal_origins
+                .get(root)
+                .copied()
+                .and_then(|origin| {
+                    let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
+                    for projection in projections {
+                        let result = self
+                            .input
+                            .goal_projection_type(definition.ty(), *projection)?;
+                        definition = definition.with_projection(*projection, result)?;
+                    }
+                    if definition.ty() != *ty {
+                        return None;
+                    }
+                    let from = self.intern_goal_expression(definition.clone());
+                    let parent =
+                        self.signed_goal_affine_proof(context, &definition, sign, closed, memo)?;
+                    Some(
+                        self.vocabulary
+                            .derivations
+                            .intern(DerivationNode::OriginTransport {
+                                from,
+                                goal,
+                                sign,
+                                parent,
+                                origins: Box::new([origin.proof]),
+                            }),
+                    )
+                }),
             GoalExpression::Datum(_) => None,
         };
-        visiting.remove(&(goal, sign));
+        memo.insert((goal, sign), proof);
         proof
     }
 
@@ -1469,18 +1569,17 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<ProofResult> {
         let left_term = self.captured_index_term(left)?;
         let right_term = self.captured_index_term(right)?;
-        let relation = if left_term <= right_term {
-            Relation::Distinct {
-                left: left_term,
-                right: right_term,
-                difference: 0,
-            }
-        } else {
-            Relation::Distinct {
-                left: right_term,
-                right: left_term,
-                difference: 0,
-            }
+        let (left_base, left_constant) = self.vocabulary.terms.constant_part(left_term);
+        let (right_base, right_constant) = self.vocabulary.terms.constant_part(right_term);
+        let (left_base, right_base, difference) = super::super::state::distinct_key(
+            left_base,
+            right_base,
+            right_constant.checked_sub(left_constant)?,
+        );
+        let relation = Relation::Distinct {
+            left: left_base,
+            right: right_base,
+            difference,
         };
         let left_image = state
             .affine
@@ -2993,8 +3092,10 @@ impl Reasoning<'_, '_, '_> {
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
+        super::super::work::affine_final_family_start();
+        let l0 = query.l0;
         let mut ordinal = 0;
-        while let Some(entry) = query.l0.ordered_entry(ordinal, query.closed, check) {
+        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
             ordinal += 1;
             let Some(mut parents) =
                 self.affine_candidate_residual_proof(target, &entry.inequality, query, check)
@@ -3014,6 +3115,7 @@ impl Reasoning<'_, '_, '_> {
             parents.dedup();
             return Some(parents);
         }
+        super::super::work::affine_final_family_exhausted();
         None
     }
 
@@ -3036,8 +3138,10 @@ impl Reasoning<'_, '_, '_> {
             && Rc::ptr_eq(&cached.closed, &closed)
             && cached.index.candidates == candidates
         {
+            super::super::work::affine_query(true);
             return (closed, Rc::clone(&cached.index));
         }
+        super::super::work::affine_query(false);
         let index = Rc::new(LazyAffineL0Index::new(candidates));
         self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
             closed: Rc::clone(&closed),
@@ -3164,7 +3268,7 @@ impl LazyAffineL0Index {
             candidates,
             by_image,
             exact: RefCell::default(),
-            ordered: RefCell::default(),
+            complete: RefCell::default(),
         }
     }
 
@@ -3178,10 +3282,21 @@ impl LazyAffineL0Index {
         terms: &[AffineCoefficient],
         closed: &ClosedState,
         check: &mut AffineCheckState,
-    ) -> Option<AffineL0Entry> {
-        if let Some(entry) = self.exact.borrow().get(terms) {
-            return entry.clone();
+    ) -> Option<Ref<'_, AffineL0Entry>> {
+        if self.complete.borrow().is_some() {
+            return self.complete_entry(terms);
         }
+        if let Ok(entry) = Ref::filter_map(self.exact.borrow(), |exact| exact.get(terms)) {
+            return Ref::filter_map(entry, Option::as_ref).ok();
+        }
+        // Cached absence counts as one cold demand too. Promote before the
+        // Nth scan, bounding the total lazy left scans by N * (N - 1).
+        if self.exact.borrow().len() + 1 >= self.candidates.len() {
+            super::super::work::affine_cold_demand(0);
+            self.promote(closed, check);
+            return self.complete_entry(terms);
+        }
+        super::super::work::affine_cold_demand(self.candidates.len());
         let mut selected: Option<AffineL0Entry> = None;
         let mut right_key = Vec::new();
         for left in &self.candidates {
@@ -3216,45 +3331,82 @@ impl LazyAffineL0Index {
         }
         // None is also memoized: repeating an absent DIRECT vector should
         // not repeat the candidate search on an unchanged state.
-        self.exact
-            .borrow_mut()
-            .insert(terms.into(), selected.clone());
-        selected
+        self.exact.borrow_mut().insert(terms.into(), selected);
+        self.exact_entry(terms)
     }
 
-    /// The final AUTO family can use *any* image, including images disjoint
-    /// from the target's atoms. Discover its next vector in the full builder's
-    /// row-major first-occurrence order, then demand that vector's strongest
-    /// witness (which may occur later). Earlier DIRECT lookups do not change
-    /// this cursor or order. Stop scanning as soon as the caller has a proof.
+    fn exact_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
+        Ref::filter_map(self.exact.borrow(), |exact| {
+            exact.get(terms).and_then(Option::as_ref)
+        })
+        .ok()
+    }
+
+    fn complete_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
+        Ref::filter_map(self.complete.borrow(), |complete| {
+            let index = complete.as_ref()?;
+            index
+                .by_terms
+                .get(terms)
+                .map(|&ordinal| &index.entries[ordinal])
+        })
+        .ok()
+    }
+
+    /// Build once per residency in original pair order. Prior exact demands
+    /// cannot seed this order: a vector's strongest witness may appear after
+    /// its first occurrence, and equal bounds keep the earlier witness.
+    fn promote(&self, closed: &ClosedState, check: &mut AffineCheckState) {
+        if self.complete.borrow().is_some() {
+            return;
+        }
+        let mut index = AffineL0Index::default();
+        for left in &self.candidates {
+            for right in &self.candidates {
+                let Some(bound) = closed.tight_bound(left.term, right.term) else {
+                    continue;
+                };
+                let Ok(inequality) =
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+                else {
+                    continue;
+                };
+                let ordinal = *index
+                    .by_terms
+                    .entry(inequality.terms().into())
+                    .or_insert(index.entries.len());
+                let entry = AffineL0Entry {
+                    inequality,
+                    left: left.term,
+                    right: right.term,
+                    bound,
+                };
+                if ordinal == index.entries.len() {
+                    index.entries.push(entry);
+                } else if entry.inequality.upper() < index.entries[ordinal].inequality.upper() {
+                    index.entries[ordinal] = entry;
+                }
+            }
+        }
+        *self.complete.borrow_mut() = Some(index);
+        self.exact.borrow_mut().clear();
+        super::super::work::affine_promotion();
+    }
+
+    /// Entering the final AUTO family promotes even if its first member
+    /// succeeds. Enumeration and all residual lookups then borrow the complete
+    /// map, including negative answers, without rescanning left candidates.
     fn ordered_entry(
         &self,
         ordinal: usize,
         closed: &ClosedState,
         check: &mut AffineCheckState,
-    ) -> Option<AffineL0Entry> {
-        let mut order = self.ordered.borrow_mut();
-        while order.terms.len() <= ordinal {
-            let left = self.candidates.get(order.left)?;
-            let right = &self.candidates[order.right];
-            order.right += 1;
-            if order.right == self.candidates.len() {
-                order.left += 1;
-                order.right = 0;
-            }
-            let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                continue;
-            };
-            let Ok(inequality) =
-                AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-            else {
-                continue;
-            };
-            if order.seen.insert(inequality.terms().into()) {
-                order.terms.push(inequality.terms().into());
-            }
-        }
-        self.entry(&order.terms[ordinal], closed, check)
+    ) -> Option<Ref<'_, AffineL0Entry>> {
+        self.promote(closed, check);
+        Ref::filter_map(self.complete.borrow(), |complete| {
+            complete.as_ref()?.entries.get(ordinal)
+        })
+        .ok()
     }
 }
 
@@ -3404,14 +3556,27 @@ pub(super) fn affine_consequence_from_residual(
     AffineConsequenceProof { premises, parents }
 }
 
-pub(super) fn normalize_distinct_requests(requests: &mut [BoundsRequest]) {
+pub(super) fn normalize_distinct_requests(requests: &mut [BoundsRequest], terms: &TermTable) {
     for request in requests {
         if request.distinct
             && let Some(left) = request.left
-            && request.right < left
         {
-            request.left = Some(request.right);
-            request.right = left;
+            let (left, left_constant) = terms.constant_part(left);
+            let (right, right_constant) = terms.constant_part(request.right);
+            let Some(difference) = request
+                .bound
+                .checked_add(right_constant)
+                .and_then(|bound| bound.checked_sub(left_constant))
+            else {
+                // Match goal_projection's checked source-constant folding.
+                request.left = None;
+                continue;
+            };
+            let (left, right, difference) =
+                super::super::state::distinct_key(left, right, difference);
+            request.left = Some(left);
+            request.right = right;
+            request.bound = difference;
         }
     }
 }
@@ -3422,7 +3587,7 @@ pub(super) fn request_relation(request: &BoundsRequest) -> Option<Relation> {
         Relation::Distinct {
             left,
             right: request.right,
-            difference: 0,
+            difference: request.bound,
         }
     } else {
         Relation::Bound {

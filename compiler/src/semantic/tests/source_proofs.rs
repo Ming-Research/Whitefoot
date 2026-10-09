@@ -557,14 +557,20 @@ fn combine(flag: Bool, a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit: u
             .expect("combine function exists");
         super::entailment::validate_derivations(&combine.entailment);
         assert!(combine.entailment.joined_source_proofs.is_empty());
-        assert!(combine.entailment.derivations.nodes.iter().any(|node| {
-            matches!(
-                node,
-                DerivationNode::AffineConsequence { premises, .. }
-                    if premises.iter().any(|premise| premise.source
-                        == SourceAffineFactRef::SourceProof { source_ordinal: 0 })
-            )
-        }));
+        // [ENT-3.S16] the common difference bound is now a retained L0
+        // source. The unchanged source must survive both branch inputs.
+        let [proof] = combine.entailment.source_proofs.as_slice() else {
+            panic!("one common source proof");
+        };
+        assert!(proof.check.discharged());
+        let [call] = combine.entailment.call_goals.as_slice() else {
+            panic!("one consumer of the common bound");
+        };
+        assert!(super::entailment::root_has_invariant_source(
+            &combine.entailment,
+            call.derivation.expect("the common bound discharges the call"),
+            &proof.node_path,
+        ));
     });
 }
 
@@ -1310,7 +1316,7 @@ fn an_explicit_factor_one_is_not_canonical_source() {
 }
 
 #[test]
-fn a_composite_requirement_uses_affine_invariant_leaves() {
+fn a_composite_requirement_uses_proved_invariant_leaves() {
     let source = format!(
         r#"fn need(value: u32, limit: u32, enabled: Bool) -> result: unit pure contract {{
   define ordered = value <= limit;
@@ -1367,8 +1373,15 @@ fn caller(enabled: Bool, a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit:
         );
         assert_eq!(
             caller.entailment.call_goals[0].evidence,
-            [CallGoalEvidence::AffinePositive]
+            // S16 publishes value <= limit in L0; ordinary Boolean
+            // introduction now proves the same two required conjuncts.
+            [CallGoalEvidence::BooleanIntroductionPositive]
         );
+        assert!(super::entailment::root_has_invariant_source(
+            &caller.entailment,
+            caller.entailment.call_goals[0].derivation.unwrap(),
+            &caller.entailment.source_proofs[0].node_path,
+        ));
         assert!(caller.entailment.derivations.nodes.iter().any(|node| {
             matches!(
                 node,
@@ -1435,7 +1448,14 @@ fn retain(a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit: u8) -> result:
             panic!("retain has one requirement call");
         };
         assert_eq!(call.disposition, CallGoalDisposition::Discharged);
-        assert_eq!(call.evidence, [CallGoalEvidence::AffinePositive]);
+        // S16 gives the live predecessor an exact L0 conclusion; the
+        // contradictory input must preserve that same source at the join.
+        assert_eq!(call.evidence, [CallGoalEvidence::ExactL0Projection]);
+        assert!(super::entailment::root_has_invariant_source(
+            &retain.entailment,
+            call.derivation.unwrap(),
+            &retain.entailment.source_proofs[0].node_path,
+        ));
     });
 }
 

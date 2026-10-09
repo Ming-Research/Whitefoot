@@ -31,8 +31,8 @@ pub(crate) enum TermKind {
     /// The distinguished zero term Z, carrying constant bounds.
     Zero,
     /// The mathematical value of an integer literal or integer-typed named
-    /// const. Interning constants as terms lets disequalities and bounds share
-    /// one representation; the implicit equality to Z folds them back.
+    /// const. Value and capture identities may retain constant terms;
+    /// relation operands fold their value through Z with `constant_part`.
     Constant(i128),
     /// An in-scope const-generic parameter with its exact written integer
     /// type [MSR-6], which supplies its implicit bounds under [ENT-2].
@@ -297,15 +297,9 @@ impl TermTable {
 
     /// Interns one term, canonicalizing the written constant zero to Z.
     ///
-    /// Relations are over mathematical values [ENT-2], so a written `0_T`
-    /// and the distinguished zero term denote the same value and must be
-    /// one term. Kept apart, a disequality reaches Z only by a bound
-    /// strengthened through the constant's implicit equality, which exists
-    /// only where the fragment already bounds the operand on that side: a
-    /// a source relation `d != 0_i32` then could not discharge an obligation stated
-    /// against Z at a signed type, and [OP-2]'s own mechanical fix would be
-    /// unwritable. Z carries exactly the bounds the constant zero would
-    /// have contributed, so the merge loses no fact.
+    /// Relations use Z for constant offsets [ENT-2]. Canonicalizing zero
+    /// also gives value captures and standing constant equalities the same
+    /// zero identity, with exactly the bounds a zero constant contributes.
     pub(crate) fn intern(&mut self, kind: TermKind) -> TermId {
         let kind = Self::identity(kind);
         if let Some(id) = self.ids.get(&kind) {
@@ -323,6 +317,15 @@ impl TermTable {
             .checked_add(1)
             .expect("term revision fits usize");
         id
+    }
+
+    /// Splits an operand into its nonconstant term and mathematical offset.
+    /// Relation normalization folds a constant operand through Z [ENT-2].
+    pub(crate) fn constant_part(&self, term: TermId) -> (TermId, i128) {
+        match self.kind(term) {
+            TermKind::Constant(value) => (ZERO, *value),
+            _ => (term, 0),
+        }
     }
 
     /// The identity of one already interned term, without interning it.

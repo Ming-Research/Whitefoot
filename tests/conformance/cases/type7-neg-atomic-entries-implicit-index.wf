@@ -1,0 +1,12 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let names = array_filled::<u8, 1>(value: 97_u8);
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
+  atomic es = &store[keys] {
+    if 0_u64 < es^.len {
+      set es[0_u64] = Some<u8>(value: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
