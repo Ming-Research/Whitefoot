@@ -65,6 +65,8 @@ pub enum ContainerShape {
     /// `Segments<T>`: a run of segments of T whose boundaries are fixed at
     /// construction; it exists only as `Box` content [TYPE-9].
     Segments,
+    /// Address-stable runtime-capacity window, placed only in a Box.
+    Paged,
     /// `KeySet`: distinct byte-string keys in increasing lexicographic order,
     /// each with a payload, whose one measure is its bounded `len`
     /// [SHARE-1, MSR-1].
@@ -83,7 +85,7 @@ pub enum ContainerShape {
 /// keyed entries [SHARE-1, SHARE-2], the two measured types [MSR-1] that are
 /// not storage shapes. The cell is not one of them: it is declared by [PRE-1]
 /// and read through [`CELL_NOMINAL`].
-pub const CONTAINER_NOMINALS: [ContainerNominal; 6] = [
+pub const CONTAINER_NOMINALS: [ContainerNominal; 7] = [
     ContainerNominal {
         spelling: "Array",
         shape: ContainerShape::Array,
@@ -99,6 +101,10 @@ pub const CONTAINER_NOMINALS: [ContainerNominal; 6] = [
     ContainerNominal {
         spelling: "Segments",
         shape: ContainerShape::Segments,
+    },
+    ContainerNominal {
+        spelling: "Paged",
+        shape: ContainerShape::Paged,
     },
     ContainerNominal {
         spelling: "KeySet",
@@ -205,13 +211,13 @@ mod tests {
     #[test]
     fn storage_nominals_match_the_active_specification() {
         let body = crate::ACTIVE_KERNEL_SPEC_TEXT
-            .split_once("[TYPE-9] Four storage shapes and one cell.")
+            .split_once("[TYPE-9] Five storage shapes and one cell.")
             .expect("exact TYPE-9 opening")
             .1
             .split_once("\n\n")
             .expect("exact TYPE-9 body")
             .0;
-        let (shapes, measured) = CONTAINER_NOMINALS.split_at(4);
+        let (shapes, measured) = CONTAINER_NOMINALS.split_at(5);
         for nominal in shapes {
             assert!(
                 body.contains(&format!("`{}<", nominal.spelling)),

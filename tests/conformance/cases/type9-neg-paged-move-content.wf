@@ -1,0 +1,5 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 0_u64);
+  let content = move p.inner;
+  return std::process::exit_status(code: 0_u8);
+}

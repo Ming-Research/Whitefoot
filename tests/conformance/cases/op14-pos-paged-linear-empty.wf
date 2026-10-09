@@ -1,0 +1,18 @@
+nodrop struct Token {
+  value: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let empty = box_paged_new::<Token>(capacity: 0_u64);
+  free_empty(window: move empty);
+  let p = box_paged_new::<Token>(capacity: 2_u64);
+  let token = Token(value: 7_u64);
+  place_back(window: &p.inner, value: move token);
+  let removed = take_back(window: &p.inner);
+  let Token(value: seen) = move removed;
+  free_empty(window: move p);
+  if seen != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

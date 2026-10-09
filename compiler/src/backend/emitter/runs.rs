@@ -77,15 +77,16 @@ impl RunShape {
     /// The aggregate field index of `head`, which only a `Ring` has [WIN-1].
     const fn head_field(self) -> Option<u32> {
         match (self.shape, self.capacity) {
-            (IrWindowShape::Slots, _) => None,
+            (IrWindowShape::Slots | IrWindowShape::Paged, _) => None,
             (IrWindowShape::Ring, Some(_)) => Some(1),
             (IrWindowShape::Ring, None) => Some(2),
         }
     }
 
-    /// The aggregate field index of the slots.
+    /// The aggregate field index of the slots, or the Paged directory tail.
     const fn slots_field(self) -> u32 {
         match (self.shape, self.capacity) {
+            (IrWindowShape::Paged, _) => 3,
             (IrWindowShape::Slots, Some(_)) => 1,
             (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
             (IrWindowShape::Ring, None) => 3,
@@ -267,13 +268,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                     .map_err(|_| BackendFailure::TextEmission)
                 }
-                IrMeasure::Capacity | IrMeasure::Head => Err(BackendFailure::InvalidIr),
+                IrMeasure::Capacity | IrMeasure::Head | IrMeasure::Pages => {
+                    Err(BackendFailure::InvalidIr)
+                }
             };
         }
         let Some(shape) = RunShape::of(container_type) else {
             return Err(BackendFailure::InvalidIr);
         };
         let value = match measure {
+            IrMeasure::Pages => {
+                if shape.shape != IrWindowShape::Paged {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let length = self.run_word(container_type, container, shape.length_field())?;
+                self.paged_count(&length, shape.element_type(self.program)?)?
+            }
             IrMeasure::Length => self.run_word(container_type, container, shape.length_field())?,
             // `head` is a `Ring`'s alone [WIN-1]; a `Slots` window begins at
             // slot zero and the measure table gives it no cell at all.
@@ -314,6 +324,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ty: IrType,
         run: IrValueId,
     ) -> Result<(), BackendFailure> {
+        if let IrType::Run { element } = ty {
+            return self.emit_paged_run(result, run, element);
+        }
         let IrType::Range { element } = ty else {
             return Err(BackendFailure::InvalidIr);
         };
@@ -552,7 +565,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         base: &str,
         offset: &str,
     ) -> Result<String, BackendFailure> {
-        if shape.shape == IrWindowShape::Slots {
+        if shape.shape != IrWindowShape::Ring {
             return Ok(offset.to_owned());
         }
         let capacity = self.run_capacity(shape, run_type, run)?;
@@ -636,6 +649,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run: IrValueId,
         physical: &str,
     ) -> Result<String, BackendFailure> {
+        if shape.shape == IrWindowShape::Paged {
+            let address = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+            let directory = self.paged_directory(&address)?;
+            return self.paged_element_pointer(
+                &directory,
+                physical,
+                shape.element_type(self.program)?,
+            );
+        }
         let physical = self.element_address_index(shape.element_type(self.program)?, physical)?;
         let llvm = self.output.type_name(self.program, run_type)?;
         let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
@@ -1048,6 +1070,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
+        if shape.shape == IrWindowShape::Paged {
+            return self.emit_paged_new(result, ty, shape.element_type(self.program)?, capacity);
+        }
         let element_size = self.window_element_size(shape)?;
         let header_size = self.window_header_size(shape, block_type)?;
         let block = self.output.type_name(self.program, block_type)?;
@@ -1135,6 +1160,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let Some(shape) = RunShape::of(block_type) else {
             return Err(BackendFailure::InvalidIr);
         };
+        if shape.shape == IrWindowShape::Paged {
+            return self.emit_paged_grow(
+                result,
+                ty,
+                shape.element_type(self.program)?,
+                cell,
+                capacity,
+            );
+        }
         if shape.capacity.is_some() || shape.shape != IrWindowShape::Slots {
             return Err(BackendFailure::InvalidIr);
         }
@@ -1213,6 +1247,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         };
         let referent = *referent;
+        if matches!(
+            referent,
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                ..
+            }
+        ) {
+            let helper = cleanup::run_drop_helper(self.program, referent)?
+                .ok_or(BackendFailure::InvalidIr)?;
+            self.output.symbol(&helper);
+            writeln!(
+                self.output,
+                "  call void @{helper}(ptr {})",
+                self.value_name(value)
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+        }
         let pointer = self.value_name(value);
         let bytes = cleanup::allocation_bytes(
             self.program,

@@ -1896,6 +1896,387 @@ fn main() -> status: std::process::ExitStatus pure waits {
     );
 }
 
+#[test]
+fn paged_runs_keep_the_directory_origin_and_pages_lower_as_slices() {
+    let source = br#"fn fill(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (i in 0_u64..count) {
+    set part^[i] = i;
+  }
+  return unit;
+}
+
+fn page_count(page: &[u64]) -> result: u64 reads(page) {
+  return page^.len;
+}
+
+fn form(p: &Paged<u64>) -> result: u64 writes(p) {
+  let count = p^.len;
+  fill(part: &p^[0_u64..count]);
+  if p^.pages.len > 0_u64 {
+    return page_count(page: &p^.pages[0_u64]);
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  let n = form(p: &p.inner);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let fill = function(program, "fill");
+        assert!(matches!(fill.parameters()[0].1, IrType::Run { .. }));
+        assert!(matches!(
+            function(program, "page_count").parameters()[0].1,
+            IrType::Range { .. }
+        ));
+        let form = function(program, "form");
+        let instructions = form
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .collect::<Vec<_>>();
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            IrInstruction::Define {
+                ty: IrType::Run { .. },
+                operation: IrOperation::SliceFromRun { .. },
+                ..
+            }
+        )));
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            IrInstruction::Define {
+                ty: IrType::Range { .. },
+                operation: IrOperation::PagedPage { .. },
+                ..
+            }
+        )));
+        assert!(
+            fill.blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .any(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { .. },
+                        ..
+                    }
+                ))
+        );
+        crate::emit_llvm(program).expect("run capture and its split thunk must emit");
+    });
+}
+
+#[test]
+fn paged_cell_growth_preserves_formation_and_borrow_entry_order() {
+    for (actual, kind, reverse, wrapper) in [
+        ("&p.inner[0_u64..0_u64]", "Run<u64>", false, false),
+        ("&p.inner[0_u64]", "u64", false, false),
+        ("&p.inner", "Paged<u64>", false, false),
+        ("&p.inner", "Paged<u64>", true, false),
+        ("&p.inner", "Paged<u64>", true, true),
+    ] {
+        let resize = if wrapper {
+            r#"fn resize(cell: &Box<Paged<u64>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires capacity >= cell^.inner.cap;
+} {
+  grow_paged(cell: cell, capacity: capacity);
+  return unit;
+}
+
+"#
+        } else {
+            ""
+        };
+        let growth_name = if wrapper { "resize" } else { "grow_paged" };
+        let growth = format!("  {growth_name}(cell: &p, capacity: 1025_u64);\n");
+        let ignore = format!("  ignore(part: {actual});\n");
+        let calls = if reverse {
+            format!("{ignore}{growth}")
+        } else {
+            format!("{growth}{ignore}")
+        };
+        let source = format!(
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_paged_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permissions = checked
+                .data
+                .permission
+                .named("main")
+                .expect("main permissions");
+            let pair = permissions
+                .pairs
+                .iter()
+                .find(|pair| {
+                    let (first, second) = if reverse {
+                        ("ignore", growth_name)
+                    } else {
+                        (growth_name, "ignore")
+                    };
+                    pair.first.callee_name == first && pair.second.callee_name == second
+                })
+                .expect("growth/formation adjacency");
+            assert!(
+                pair.verdict.is_eligible(),
+                "source permission stays intact: {pair:?}"
+            );
+            assert!(
+                pair.first
+                    .storage_effects
+                    .conflicts(&pair.second.storage_effects),
+                "the checked places must order growth against its borrow: {pair:?}"
+            );
+        });
+        with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
+            let main = function(program, "main");
+            let calls = main
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| {
+                    let IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                    else {
+                        return None;
+                    };
+                    let callee = program
+                        .functions()
+                        .get(*function as usize)
+                        .expect("call target");
+                    Some((callee.name().to_owned(), *result))
+                })
+                .collect::<Vec<_>>();
+            let names = calls
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>();
+            // A generic prelude row's instance carries its instance key after
+            // `$instance$`.
+            let is_growth = |name: &str| {
+                if wrapper {
+                    name == "resize"
+                } else {
+                    name.starts_with("grow_paged$")
+                }
+            };
+            assert!(
+                names.iter().any(|name| is_growth(name)) && names.contains(&"ignore"),
+                "growth and formation calls: {names:?}"
+            );
+            let calls = calls
+                .iter()
+                .filter(|(name, _)| is_growth(name) || name == "ignore")
+                .map(|(_, result)| *result)
+                .collect::<Vec<_>>();
+            assert!(
+                !main
+                    .overlaps()
+                    .iter()
+                    .any(|group| calls.iter().all(|call| group.members.contains(call))),
+                "cell growth must preserve formation and borrowed-call entry order: {:?}",
+                main.overlaps()
+            );
+        });
+    }
+}
+
+#[test]
+fn paged_page_borrow_conflicts_with_cell_growth() {
+    let source = br#"fn ignore(part: &[u64]) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  if p.inner.pages.len > 0_u64 {
+    let page = &p.inner.pages[0_u64];
+    ignore(part: page);
+    grow_paged(cell: &p, capacity: 1025_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_checked(source, |checked| {
+        let pair = checked
+            .data
+            .permission
+            .named("main")
+            .expect("main permissions")
+            .pairs
+            .iter()
+            .find(|pair| {
+                pair.first.callee_name == "ignore" && pair.second.callee_name == "grow_paged"
+            })
+            .expect("page borrow/growth adjacency");
+        // Forwarding the page reloads no owner slot. Inspect storage effects
+        // directly so source interference cannot conceal a missing borrowed
+        // page origin in the lowering boundary.
+        assert!(
+            pair.first
+                .storage_effects
+                .conflicts(&pair.second.storage_effects),
+            "a page borrows storage below the released Paged owner: {pair:?}"
+        );
+    });
+}
+
+#[test]
+fn paged_cell_and_run_borrows_without_release_still_overlap() {
+    let source = br#"fn ignore_cell(cell: &Paged<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn ignore_run(part: &Run<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  ignore_cell(cell: &p.inner);
+  ignore_run(part: &p.inner[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        let borrows = calls_to(program, main, &["ignore_cell", "ignore_run"]);
+        assert_eq!(borrows.len(), 2, "cell and run borrowing calls");
+        assert!(
+            main.overlaps()
+                .iter()
+                .any(|group| borrows.iter().all(|call| group.members.contains(call))),
+            "Paged borrows without an overlapping release stay in one group: {:?}",
+            main.overlaps()
+        );
+    });
+}
+
+#[test]
+fn page_borrows_below_range_elements_keep_the_outer_projection() {
+    // One program per helper, so a failure names the borrow it concerns. The
+    // same borrow below a range element of `Box<Segments<T>>` does not emit
+    // yet; docs/todo.md records that defect.
+    let helpers = [
+        (
+            "pages",
+            r#"fn pages(rows: &[Box<Paged<u64>>], i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  if rows^[i].inner.pages.len > 0_u64 {
+    let page = &rows^[i].inner.pages[0_u64];
+    return page^.len;
+  }
+  return 0_u64;
+}
+"#,
+        ),
+        (
+            "run_pages",
+            r#"fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  if rows^[i].inner.pages.len > 0_u64 {
+    let page = &rows^[i].inner.pages[0_u64];
+    return page^.len;
+  }
+  return 0_u64;
+}
+"#,
+        ),
+    ];
+    for (name, helper) in helpers {
+        let source = format!(
+            "{helper}\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_ir(source.as_bytes(), |program| {
+            let operations = function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define { operation, .. } => Some(operation),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                operations.iter().any(|operation| matches!(
+                    operation,
+                    IrOperation::SliceAddress { .. }
+                ) || matches!(
+                    operation,
+                    IrOperation::RunIndex { .. }
+                )),
+                "{name}: address the enclosing range element: {operations:?}"
+            );
+            assert!(
+                operations
+                    .iter()
+                    .any(|operation| matches!(operation, IrOperation::PagedPage { .. })),
+                "{name}: borrow the selected page"
+            );
+            if let Err(failure) = crate::emit_llvm(program) {
+                panic!(
+                    "{name}: nested range-element projection must emit: {failure:?}: {operations:?}"
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() {
+    let source = include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for name in ["reduce", "different_maps"] {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("reduce");
+            let families = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { indexed, .. },
+                        ..
+                    } if !indexed.is_empty() => Some(indexed),
+                    _ => None,
+                })
+                .expect("the record field reduction splits");
+            assert_eq!(families.len(), 2);
+            assert_eq!(families[0].count, families[1].count);
+            assert_ne!(families[0].capture, families[1].capture);
+            assert_ne!(families[0].private, families[1].private);
+            assert_eq!(
+                families[0].projection.root_element,
+                families[1].projection.root_element
+            );
+            assert_eq!(families[0].projection.fields, vec![1]);
+            assert_eq!(families[1].projection.fields, vec![2]);
+            assert_eq!(
+                families[0].private_type(),
+                IrType::Integer {
+                    width: 64,
+                    signed: false
+                }
+            );
+            assert_eq!(families[1].private_type(), IrType::Bool);
+        }
+    });
+}
+
 /// [PAR-1, STOR-6] an ignored reference into a `Box<Slots<T>>` block still
 /// promises dereferenceability at its callee's entry, and forming it loads
 /// the owner slot, so a call that can relocate the block must not run before

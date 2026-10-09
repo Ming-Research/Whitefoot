@@ -1,0 +1,9 @@
+fn count(part: &[u64]) -> result: u64 reads(part.len) {
+  return part^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 0_u64);
+  let got = count(part: &p.inner[0_u64..0_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
