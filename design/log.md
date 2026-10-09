@@ -12,6 +12,13 @@ Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
 Owner-approved: On the status board on 2026-10-08, written in Chinese, after the card that presented Snowghost's count of 0 of 32 candidate loops permitted by v0.102's indexed reductions and recommended keeping the rule and admitting a len read of the indexed root, a single-assignment temporary, constant marks, integer or Bool fields of record cells and unsigned `+sat`, then recounting: "choose A" (translated), which superseded the earlier "choose A" deferring constant marks; in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: Indexed accumulators also admit a len read of the root, one single-use temporary, unsigned `+sat`, constant marks and record-field families, instead of only the spelling `set R[e] = R[e] op x`, which Snowghost's loops did not use. A split carries each family's kind (a reduction with its identity, or a mark with its constant) and its cell projection (element stride and field offset); marks reduce into private Bool masks and store the constant where any leaf marked the cell, and field families reduce into dense private slabs combined into each record's field, all slabs counted through the heap wrappers.
+## 2026-10-09 Proof queries demand the affine index
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design decision 'proof queries build the index on demand' (see the latest log)" with "agreed" (translated), after selecting direction A2 of the wide-match checking investigation (Q155).
+
+Summary: Ordinary affine queries and certificates keep one function-local memo of unchanged states; on a miss they pair only candidates whose coefficient vector a DIRECT or residual query needs and enumerate the final AUTO family lazily in its first-occurrence order, so endpoints, bounds and parents equal the full rebuild's, which the tests keep as their oracle. Reuse alone recovered about 10% of the natural wasm interpreter's check on the M5; demanding the index cuts that check to 0.215 of its base on the 14900K, while the constant-assignment series, whose cost is the join, is unchanged ([check-time](../research/investigations/check-time/DESIGN.md#14900k-timing-results)). Eager all-pair rebuilding, target-overlap pruning and cross-event winner repair were refused.
 ## 2026-10-09 Handler words for whole-program dispatch families
 
 Nodes: compiler/match-dispatch-lowering

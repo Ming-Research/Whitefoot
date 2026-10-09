@@ -77,6 +77,47 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **Wide-match checking still grows about tenfold per doubling of arms.**
+  The demanded affine L0 index cut the natural wasm interpreter's check to
+  0.215 of its base on the 14900K but left the plain constant-assignment
+  series unchanged: it grows 4.0, 5.5, 7.3 and 10.5 times per doubling from
+  40 to 640 arms
+  ([C3 results](../research/investigations/check-time/DESIGN.md#14900k-timing-results)).
+  Impact: a match with several hundred arms that each assign distinct
+  constants takes seconds to minutes to check. The source attribution puts
+  that series' cost in the join: pair enumeration, per-input lookups and
+  parent construction in `join_at_once` (`compiler/src/semantic/entailment/state.rs`),
+  cubic on the series. Change: direction A1 of the C3 investigation, reducing
+  or demanding the join locally, after a profile or counters rank those
+  phases in seconds. Validate with the same base/twin/head panel on the
+  14900K, the series' doublings at most 2.5, unchanged verdicts and the
+  eager-join differential. Dense single-input snapshots, image formation and
+  inventory scans remain deferred until their elapsed share warrants an
+  experiment. Reopen with that profile, or when a real program meets the
+  series' growth. An exhausted final AUTO family can still demand
+  quadratically many vectors, each scanning the candidate list; no measured
+  input has shown it.
+
+- **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
+  rewriting Halo's interpreter as plain `loop { match }` raised its source
+  check from about 7.7 s to 9.0 s, and the owner judged 9 s still too long.
+  Impact: every edit of an interpreter-sized program waits that long before
+  any diagnostic, and larger interpreters (full wasm, Lua) grow further. No
+  profile of Halo's check exists yet. The known sinks come from the v2h
+  wasm interpreter and the synthetic arm series: rebuilding the affine L0
+  index (64% of checking-thread samples in the stage-3 profile, addressed by
+  the lazy index above), join work at many-arm matches, dense single-input
+  snapshots, image formation and inventory scans. Possible directions after
+  the lazy index: a Halo profile to rank its own sinks, cheaper joins of
+  many arms that assign disjoint facts, and reuse of per-arm facts across
+  repeated checks of unchanged functions. Validate each with a same-source
+  base/twin/head timing of Halo's check on the 14900K through CI, unchanged
+  conformance and corpus verdicts, and the full-rebuild differentials.
+  The lazy index cut the v2h interpreter's check to 0.215 of its base;
+  Halo's check has not been timed with it. Reopen when that change reaches
+  main and Halo's check is timed with it, or sooner if Halo's check passes
+  10 s.
+
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot
   place forget every location" [RANGE-2]. Read with a binding as a
@@ -2904,12 +2945,11 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 9,574 lines, including a
-  2,136-line inline test module (the compile-speed work added its slot
-  layouts, dormant components and implicit structure), and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,238 lines and 162
-  tests. The flow itself is divided into its sub-contexts and component
-  modules (`design/compiler/engine-components.md`), none over 3,200 lines.
+  `compiler/src/semantic/entailment/state.rs`, including its inline tests,
+  and `compiler/src/semantic/tests/entailment.rs` both exceed 4,000 lines.
+  Slot layouts, dormant components, implicit structure and join construction
+  share the first module. The flow itself is divided into its sub-contexts
+  and component modules (`design/compiler/engine-components.md`).
   `state.rs` can move its test module to its own file and its dense-closure
   algorithms apart from the fact state and ledger types; the tests can group
   by the flow component they exercise. Validate that each move changes no
