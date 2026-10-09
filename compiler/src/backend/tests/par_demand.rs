@@ -8,14 +8,20 @@ const DEMAND: OverlapLowering = OverlapLowering::Demand {
 };
 const SMALL: &str = r#"fn small(seed: u64) -> result: u64 pure {
   let total = seed;
-  for (i in 0_u64..3_u64) { set total = total +wrap i; }
+  for (i in 0_u64..3_u64) {
+    set total = total +wrap i;
+  }
   return total;
 }
+
 fn dynamic(seed: u64, n: u64) -> result: u64 pure {
   let total = seed;
-  for (i in 0_u64..n) { set total = total +wrap i; }
+  for (i in 0_u64..n) {
+    set total = total +wrap i;
+  }
   return total;
-}"#;
+}
+"#;
 
 #[test]
 fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
@@ -94,10 +100,15 @@ fn demand_compilation_leaves_ordinary_parallel_emission_byte_identical() {
 fn a_pruned_only_entry_does_not_name_an_unemitted_world() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let total = 0_u64;
-  for (i in 0_u64..3_u64) { set total = total +wrap i; }
-  if total == 3_u64 { return std::process::exit_status(code: 0_u8); }
+  for (i in 0_u64..3_u64) {
+    set total = total +wrap i;
+  }
+  if total == 3_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
   return std::process::exit_status(code: 1_u8);
-}"#;
+}
+"#;
     let module = emit_lowered(source, DEMAND);
     assert!(module.contains("@wf__par_chunk_"));
     assert!(!module.contains("@wf__par_seq_main"), "{module}");
