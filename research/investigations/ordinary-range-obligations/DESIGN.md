@@ -167,7 +167,7 @@ kills a range fact by overlap with its storage.
 - Needs a second model of what the range walk already models: activation,
   routed postconditions in `match` arms, and copy provenance. The range
   judgment keeps its own place model already
-  (`docs/todo.md`, the range judgment's world against `places.rs`).
+  (status board item `coord-wfbl-07-08`, the range judgment's world against `places.rs`).
 - Precision: any element write kills the whole fact, which is exactly the
   compiler tree's rejection ground. A loop that writes some rows and reads
   others loses the fact at its first write.

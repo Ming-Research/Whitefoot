@@ -115,6 +115,21 @@ rarely insert at the same place.
   existing log. This task's option A approves only the new invariant source;
   `spec/log.md` records that approval, not approval of the earlier changes.
 
+- **A header relation about the current element of a whole-table counted
+  loop is refused.** Over `for (i in 0_u64..n, invariant fits:
+  rows^[i].len <= 4_u64)` with `n = rows^.len`, the final header's instance
+  names `rows^[n]`, which does not exist, so it is refused with OP-4
+  `(i + 1_u64) < rows^.len` [ENT-2, INV-1]. Before the target-instance
+  terms, a nonempty table was accepted by forming that slot without a
+  bounds proof; with a possibly empty table it was refused at the base.
+  Impact: a writer who states a property of the current row as a header
+  invariant is refused at the last iteration. Change, a language decision
+  (Q154): keep the refusal and point the repair at a range fact over the
+  rows [RANGE-1], or require such a relation only at headers that enter the
+  body and export none at exhaustion. Validate with the witness and a
+  relation joining a carried value to the current row. Reopen when the
+  owner rules on Q154.
+
 - **The induction inventory repeats the walker's frontier structure.**
   `induction_inputs` in `compiler/src/semantic/check/obligations.rs` forms
   each loop's incoming edges, with their sites, branch labels and the
@@ -730,16 +745,6 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
-- **Qualify projected range terms at finer call footprints.** Located writes
-  and loop headers keep disjoint sibling projections, including element
-  measures. Call rows still use their reference argument's footprint rather
-  than selecting each field of the formal effect row. An aggregate-reference
-  call writing only `row.g` can therefore lose a range fact about `row.f`.
-  Reopen when a consumer needs that fact across such a call; record projected
-  call effects and validate sibling preservation against whole-owner and
-  descriptor replacement controls. This is conservative precision work,
-  not permission to retain a possibly changed value.
-
 - **Reconcile invariant L0 publication with existing explicit certificates.**
   The v0.102 ENT-3.S16 rule publishes `P: sum - i <= 0` both as the
   existing affine premise and as an ordinary L0 bound. ENT-6 AUTO tries
@@ -763,51 +768,6 @@ rarely insert at the same place.
   conformance boundary, and run the three unchanged cases, certificate
   negative cases and the full gate in CI. The rule derivation and code path
   were inspected; no local execution was performed for this investigation.
-
-- **Track potentially aliased atomic targets in the range judgment.** TYPE-11
-  range type invariants are available inside a single-target atomic block,
-  but two same-state targets may name the same shared object [SHARE-2].
-  Giving them independent versions would retain a false entry fact: with
-  an all-zero invariant, `set a^.cells[0_u64] = 1_u64; need(z: b);` can
-  violate `need`'s implicit requirement when a and b alias, even if a is
-  restored before leaving. The range walk reports `RangeAtomicAliases`
-  as an unsupported compiler capability for such blocks. Change: carry
-  the pairwise target alias relation into version definitions and forgetting,
-  including the aliased and distinct cases, without claiming either case as
-  an unconditional fact. Validate writes, intervening calls, guards and every
-  leaving edge for both cases, including a read-only multi-target block.
-  Reopen when a range-invariant consumer needs multiple possibly aliased
-  targets; the current single-target consumer does not require this support.
-
-- **Validate two-round instantiation on the processed-prefix writer in CI.**
-  `finish_sequence_uses_one_range_invariant_over_the_processed_prefix` in
-  `compiler/src/semantic/tests/range_type_invariants.rs` appends pending
-  block IDs and updates their entry slots and owners. The previous one-round
-  derivation left its backedge unproved: the prefix instance introduces
-  `pending[j]`, whose entry inverse needs another instance. The owner selected
-  two rounds in RANGE-3 step 1; `compiler/src/semantic/range_judgment/facts.rs`
-  now snapshots reads before each round, expands their definitions between
-  rounds and deduplicates fact/tuple pairs under the unchanged ceilings.
-  `processed_prefix_through_the_store_closes_with_a_second_round` now expects
-  acceptance, alongside the unchanged full writer and direct-pending cases.
-  The added three-fact chain requires RANGE-3 refusal when a third round would
-  be needed, with a two-round acceptance control and both declaration orders;
-  the ceiling control checks the union of both rounds at 256 instances and
-  above it. These changes have not run in CI: the implementation task leaves
-  an uncommitted working tree and forbids local tests. Reopen at the next CI
-  run, validate the range tests and full gate without altering the writer's
-  invariant or expected acceptance, and remove this item once they pass.
-
-- **Reconcile the false range-use certificate's diagnostic expectation.**
-  `inv1-neg-false-target-with-range-fact` expects INV-1, but its local
-  invariant `t < 0_u64` has a written `use valid(i)` block. INV-1 explicitly
-  assigns an invariant with a proof block to PRF-1; RANGE-4 adds its written
-  instances without changing that diagnostic ownership. Keeping the block's
-  identity before filtering range uses now yields PRF-1 with a failed
-  combination, consistent with those rules. The expected verdict is left
-  unchanged pending the owner's specification/evidence decision. Reopen
-  before merging this conformance change, settle diagnostic ownership, and
-  validate both false blockless invariants and failed range-use blocks in CI.
 
 ## Containers and storage lowering
 
@@ -3164,36 +3124,6 @@ each is resolved by a discussion and a tree change.
   by a forwarding wrapper accepted unchanged and a wrapper that forwards
   the other variant still refused. Reopen when a program forwards a
   producer's result through a wrapper.
-
-- **A Bool comparison origin survives a write through a reference
-  (soundness).** ENT-3's comparison origin (b) for a bare `own Bool`
-  binding ends only at a `set` that targets the binding or an ENT-5 kill of
-  an operand term of its relation, so a write that reaches the binding
-  through a reference keeps the origin. `whitefootc` on `main` accepts
-
-  ```text
-  fn probe(table: &Array<u64, 4>, x: u64) -> result: u64 reads(table) {
-    let inside = x < 4_u64;
-    let writer = &inside;
-    set writer^ = True();
-    if inside {
-      return table^[x];
-    }
-    return 0_u64;
-  }
-  ```
-
-  and the same with `truth(flag: &inside);` for a callee that writes
-  `flag^`, so `probe(table: &table, x: 7_u64)` reads outside `table`. The
-  checker follows the rule as written: `FactState::origins` is cleared by a
-  whole-binding `set` and a loop's set bindings, never by a write event.
-  Change: end origin (b) at every ENT-5 write event that reaches the
-  binding, as goal origins already end
-  (`event_kills_goal_origin_binding` in
-  `compiler/src/semantic/entailment/flow/events.rs`), with the
-  specification amended to say so. Validate by the two programs above
-  refused with OP-4 and a direct `set inside = ...` still refused. Needs
-  the owner's specification change; reopen at once.
 
 ## Ownership redesign (candidate x1) follow-ups
 
