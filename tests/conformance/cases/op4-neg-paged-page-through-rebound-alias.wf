@@ -1,4 +1,4 @@
-fn first_page_length(p: &Paged<u64>, q: &Paged<u64>) -> result: u64 reads(p, q) {
+fn first_page_length(p: &Paged<u64>, q: &Paged<u64>) -> result: u64 reads(p), reads(q) {
   doc "Rebinding the alias loses the first window's page bound before forming a page of the second.";
   let view = &p^;
   if view^.pages.len > 0_u64 {
