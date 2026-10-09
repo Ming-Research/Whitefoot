@@ -10,9 +10,9 @@
 //! One problem judges one obligation. Its instances are fixed by the
 //! problem itself: every active fact is instantiated at each tuple whose
 //! every bound variable takes a value some element read of the problem
-//! already selects through one of the fact's own reads (its triggers), once,
-//! together with the instances a certificate writes. No instance is formed
-//! from an instance's reads.
+//! already selects through one of the fact's own reads (its triggers), then
+//! once more at the reads those first instances add. Second-round instances
+//! form none. Written certificate instances join the completed two rounds.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -423,6 +423,28 @@ pub(super) struct Query {
     pub(super) rules: Vec<Rule>,
 }
 
+impl Query {
+    fn add_instance(
+        &mut self,
+        world: &mut World,
+        fact: &Fact,
+        binders: &[Linear],
+        iterations: &[Linear],
+        atoms: &mut BTreeSet<AtomId>,
+    ) {
+        let Some(formed) = form(world, &fact.clause, &fact.frame, binders, iterations) else {
+            return;
+        };
+        for literal in formed.premises.iter().chain(&formed.conclusions) {
+            collect_literal(literal, atoms);
+        }
+        self.rules.push(Rule {
+            guards: formed.premises,
+            conclusions: formed.conclusions,
+        });
+    }
+}
+
 /// Judges one query with the given facts active and the given written
 /// instances, by the fixed procedure of [`super::solver`].
 pub(super) fn judge(
@@ -448,108 +470,113 @@ pub(super) fn judge(
         collect_literal(literal, &mut atoms);
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
-    // Triggered instances, from the reads the problem holds now.
-    let ground: Vec<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>)> = atoms
-        .iter()
-        .filter_map(|atom| match &world.atoms[*atom as usize].def {
-            AtomDef::Read {
-                version,
-                indices,
-                projection,
-            } => Some((*version, indices.clone(), projection.clone())),
-            _ => None,
-        })
-        .collect();
-    let mut instances: Vec<(FactId, Vec<Linear>, Vec<Linear>)> = written.to_vec();
-    for fact_id in active {
-        let fact = &facts[*fact_id as usize];
-        let mut triggers = Vec::new();
-        for binder in &fact.clause.binders {
-            collect_triggers(&binder.start, &mut triggers);
-            collect_triggers(&binder.end, &mut triggers);
-        }
-        for relation in fact.clause.relations() {
-            collect_triggers(&relation.left, &mut triggers);
-            collect_triggers(&relation.right, &mut triggers);
-        }
-        let mut candidates: Vec<BTreeSet<Linear>> =
-            vec![BTreeSet::new(); fact.clause.binders.len()];
-        for trigger in &triggers {
-            let Some(view) = fact.frame.places.get(&trigger.place) else {
-                continue;
-            };
-            for (version, indices, projection) in &ground {
-                let expected = match view {
-                    PlaceView::Run { prefix, .. } => {
-                        super::world::shift_projection(&trigger.projection, 0, prefix.len())
-                    }
-                    PlaceView::Element {
-                        indices: prefix,
-                        projection,
-                        ..
-                    } => {
-                        let mut path = projection.clone();
-                        let count = match trigger.shape {
-                            CheckedRangeShape::Run => 1,
-                            CheckedRangeShape::Segments => 2,
-                        };
-                        for position in 0..count {
-                            path.push(CheckedRangeProjection::Index(
-                                (prefix.len() + position) as u32,
-                            ));
-                        }
-                        path.extend(super::world::shift_projection(
-                            &trigger.projection,
-                            0,
-                            prefix.len(),
-                        ));
-                        path
-                    }
-                    _ => trigger.projection.clone(),
-                };
-                if expected == *projection {
-                    match_trigger(view, trigger, *version, indices, &mut candidates);
-                }
-            }
-        }
-        // [RANGE-3] the ceiling counts the instances the fact forms: the
-        // product over its binders, which is zero when one has no value.
-        let formed = candidates
+    // Freeze the read set before each round. All facts see the same set,
+    // regardless of their order; reads formed in round two never trigger a
+    // third round. Keep each fact/tuple once across both rounds [RANGE-3].
+    let mut seen = BTreeSet::new();
+    for _ in 0..2 {
+        let ground: Vec<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>)> = atoms
             .iter()
-            .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
-        if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
-            return Err(Capacity::Instances);
-        }
-        let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
-        for values in &candidates {
-            let mut next = Vec::new();
-            for tuple in &tuples {
-                for value in values {
-                    let mut extended = tuple.clone();
-                    extended.push(value.clone());
-                    next.push(extended);
+            .filter_map(|atom| match &world.atoms[*atom as usize].def {
+                AtomDef::Read {
+                    version,
+                    indices,
+                    projection,
+                } => Some((*version, indices.clone(), projection.clone())),
+                _ => None,
+            })
+            .collect();
+        let mut instances = Vec::new();
+        for fact_id in active {
+            let fact = &facts[*fact_id as usize];
+            let mut triggers = Vec::new();
+            for binder in &fact.clause.binders {
+                collect_triggers(&binder.start, &mut triggers);
+                collect_triggers(&binder.end, &mut triggers);
+            }
+            for relation in fact.clause.relations() {
+                collect_triggers(&relation.left, &mut triggers);
+                collect_triggers(&relation.right, &mut triggers);
+            }
+            let mut candidates: Vec<BTreeSet<Linear>> =
+                vec![BTreeSet::new(); fact.clause.binders.len()];
+            for trigger in &triggers {
+                let Some(view) = fact.frame.places.get(&trigger.place) else {
+                    continue;
+                };
+                for (version, indices, projection) in &ground {
+                    let expected = match view {
+                        PlaceView::Run { prefix, .. } => {
+                            super::world::shift_projection(&trigger.projection, 0, prefix.len())
+                        }
+                        PlaceView::Element {
+                            indices: prefix,
+                            projection,
+                            ..
+                        } => {
+                            let mut path = projection.clone();
+                            let count = match trigger.shape {
+                                CheckedRangeShape::Run => 1,
+                                CheckedRangeShape::Segments => 2,
+                            };
+                            for position in 0..count {
+                                path.push(CheckedRangeProjection::Index(
+                                    (prefix.len() + position) as u32,
+                                ));
+                            }
+                            path.extend(super::world::shift_projection(
+                                &trigger.projection,
+                                0,
+                                prefix.len(),
+                            ));
+                            path
+                        }
+                        _ => trigger.projection.clone(),
+                    };
+                    if expected == *projection {
+                        match_trigger(view, trigger, *version, indices, &mut candidates);
+                    }
                 }
             }
-            tuples = next;
-        }
-        for tuple in tuples {
-            if tuple.len() == fact.clause.binders.len() {
-                instances.push((*fact_id, tuple, Vec::new()));
+            // [RANGE-3] the ceiling counts the instances the fact forms: the
+            // product over its binders, which is zero when one has no value.
+            // Reads accumulate across rounds, so this also counts the union
+            // of both rounds, not a fresh allowance of 256 for each.
+            let formed = candidates
+                .iter()
+                .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
+            if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
+                return Err(Capacity::Instances);
+            }
+            let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
+            for values in &candidates {
+                let mut next = Vec::new();
+                for tuple in &tuples {
+                    for value in values {
+                        let mut extended = tuple.clone();
+                        extended.push(value.clone());
+                        next.push(extended);
+                    }
+                }
+                tuples = next;
+            }
+            for tuple in tuples {
+                if seen.insert((*fact_id, tuple.clone())) {
+                    instances.push((*fact_id, tuple));
+                }
             }
         }
-    }
-    for (fact_id, binders, iterations) in instances {
-        let fact = &facts[fact_id as usize];
-        let Some(formed) = form(world, &fact.clause, &fact.frame, &binders, &iterations) else {
-            continue;
-        };
-        for literal in formed.premises.iter().chain(formed.conclusions.iter()) {
-            collect_literal(literal, &mut atoms);
+        for (fact_id, binders) in instances {
+            let fact = &facts[fact_id as usize];
+            query.add_instance(world, fact, &binders, &[], &mut atoms);
         }
-        query.rules.push(Rule {
-            guards: formed.premises,
-            conclusions: formed.conclusions,
-        });
+        expand(world, &mut atoms, &mut expanded, &mut query)?;
+    }
+    // [RANGE-4] Written instances join the automatic instances; their reads
+    // do not seed additional automatic rounds.
+    for (fact_id, binders, iterations) in written {
+        let fact = &facts[*fact_id as usize];
+        query.add_instance(world, fact, binders, iterations, &mut atoms);
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
     // Each typed atom's range.

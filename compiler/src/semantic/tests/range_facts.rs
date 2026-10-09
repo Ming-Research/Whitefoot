@@ -783,6 +783,28 @@ fn the_instance_ceiling_counts_the_instances_a_fact_forms() {
     assert_eq!(undischarged(&guarded_reads(300, true)), None);
 }
 
+#[test]
+fn the_instance_ceiling_counts_both_rounds_without_recounting_duplicates() {
+    // Each first-round read cells[k] adds cells[k + 200] through relay.
+    // 127 guarded reads plus the owed read give 128 tuples in round one
+    // and 256 in their union with round two; 128 guards give 258 instead.
+    for reads in [127, 128] {
+        let source = String::from_utf8(guarded_reads(reads, false))
+            .unwrap()
+            .replace(
+                "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;",
+                "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;\n  requires forall relay(k in 0_u64..200_u64): cells^[k] == cells^[k + 200_u64];",
+            );
+        let outcome = undischarged(source.as_bytes());
+        if reads == 127 {
+            assert_eq!(outcome, None);
+        } else {
+            let missing = outcome.expect("the second round exceeds the instance ceiling");
+            assert!(missing.contains("256 instances"), "{missing}");
+        }
+    }
+}
+
 /// A producer owing `cleared` over the run it writes, which `fault` leaves
 /// before the loop clears the run: at the return when `early` is false, and
 /// through a propagated error exit before it when `early` is true.

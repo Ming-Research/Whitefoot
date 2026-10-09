@@ -1175,7 +1175,7 @@ impl Analyzer<'_, '_> {
                     } else {
                         None
                     };
-                    let delivery = Some({
+                    let delivery = Some(if judgment.reached {
                         self.value_delivery_image(
                             value,
                             state,
@@ -1187,6 +1187,8 @@ impl Analyzer<'_, '_> {
                                 loop_depth,
                             },
                         )
+                    } else {
+                        ProofFlowState::default()
                     });
                     let mut exit = state.clone();
                     if let Some(result) = result {

@@ -646,13 +646,11 @@ fn finish_sequence(order: &Slots<u64, 2>, blocks: &[Block], pending: &[u64]) -> 
 
 // The prefix names the appended target through the store, so the target
 // read pending[j] reaches the backedge problem only through the prefix
-// instance, and RANGE-3 step 1 forms no pending_inverse instance from it.
+// instance. RANGE-3 step 1 now forms the pending_inverse instance from
+// that read in its second round, closing the same obligation.
 #[test]
-fn processed_prefix_through_the_store_lacks_the_second_inverse_instance() {
-    check(
-        &processed_prefix("order^"),
-        Some((SemanticRule::Range3, "a loop back edge")),
-    );
+fn processed_prefix_through_the_store_closes_with_a_second_round() {
+    check(&processed_prefix("order^"), None);
 }
 
 // Naming the target through pending puts pending[j] in the owed problem
@@ -660,4 +658,45 @@ fn processed_prefix_through_the_store_lacks_the_second_inverse_instance() {
 #[test]
 fn processed_prefix_through_pending_closes_with_the_owed_reads() {
     check(&processed_prefix("pending^"), None);
+}
+
+// Starting at first[k] needs first_link, second_link, then last_zero.
+// Starting at middle[k] closes in two rounds. Reversing declaration order
+// must not let one round consume instances it just formed.
+#[test]
+fn second_round_instances_do_not_form_a_third_round() {
+    let links = [
+        "  requires forall first_link(k in 0_u64..first^.len): first^[k] == middle^[k];\n",
+        "  requires forall second_link(k in 0_u64..middle^.len): middle^[k] == last^[k];\n",
+        "  requires forall last_zero(k in 0_u64..last^.len): last^[k] == 0_u64;\n",
+    ];
+    for reversed in [false, true] {
+        let clauses = if reversed {
+            links.iter().rev().copied().collect::<String>()
+        } else {
+            links.concat()
+        };
+        for selected in ["first", "middle"] {
+            let source = format!(
+                "fn need_zero(cells: &[u64]) -> result: unit pure contract {{
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+}} {{
+  return unit;
+}}
+
+fn forward(first: &[u64], middle: &[u64], last: &[u64]) -> result: unit pure contract {{
+  requires first^.len == middle^.len;
+  requires middle^.len == last^.len;
+{clauses}}} {{
+  need_zero(cells: {selected});
+  return unit;
+}}
+"
+            );
+            check(
+                &source,
+                (selected == "first").then_some((SemanticRule::Range3, "a call")),
+            );
+        }
+    }
 }

@@ -273,7 +273,7 @@ struct DeliveryEdgeContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     /// The carrier term c whose relations the edge substitutes [ENT-5]: a
-    /// bare atom itself, or the given value of a literal or named const.
+    /// bare atom itself, or the given value of an admitted expression.
     carrier: TermId,
     receiver: TermId,
     event: FlowEventId,
@@ -284,9 +284,9 @@ struct DeliveryEdgeContext<'a> {
 enum DeliveryCarrier {
     /// A direct non-consuming bare atom's place term, its own carrier term.
     Atom(TermId),
-    /// A typed integer literal or integer-typed named const, delivered
-    /// through the give's evaluated value.
-    Constant,
+    /// A literal, named const or computed integer, bound through the same
+    /// ENT-3 sources as a let to the give's evaluated value.
+    Evaluated,
 }
 
 /// One bare-atom give edge's carrier equality `x = d` [ENT-5], sourced from

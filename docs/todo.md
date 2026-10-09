@@ -779,46 +779,24 @@ rarely insert at the same place.
   Reopen when a range-invariant consumer needs multiple possibly aliased
   targets; the current single-target consumer does not require this support.
 
-- **Resolve the processed-prefix writer's range derivation gap.**
+- **Validate two-round instantiation on the processed-prefix writer in CI.**
   `finish_sequence_uses_one_range_invariant_over_the_processed_prefix` in
   `compiler/src/semantic/tests/range_type_invariants.rs` appends pending
-  block IDs and updates their entry slots and owners. Gate run
-  [37890142581, Linux unit job](https://github.com/Ming-Research/Whitefoot/actions/runs/37890142581/job/113690761813)
-  at `b9b3093f8d2230cab10b4ec5937b5d6016f783a6` reaches RANGE-3:
-  fact `prefix`, site `a loop back edge`, missing
-  `c^.blocks[c^.orders[0_u64].payloads[j].Open.block].entry_slot == j`
-  (fixture line 33). This is the derivation gap below, not a fixture error;
-  the test's expected acceptance and invariant remain unchanged.
-  [The standalone witness](../research/investigations/range-field-terms/processed-prefix.wf)
-  removes the nested stores, enum, owner field and type invariant: it
-  appends to one store and sets one field per target, with one processed-prefix
-  range invariant and the entry inverse (plus the target-bounds requirement).
-  This reduction has been inspected against the rules but has not run in CI.
-  On the backedge, let P be pending, O the payloads at the arbitrary header,
-  B the blocks there, B0 the entry blocks, and O'/B' the state after appending
-  P[k] and writing that block. For an old position `0 <= j < k`, the second
-  prefix conclusion owes `B'[O'[j].Open.block].entry_slot == j`.
-  Its ground reads and their write definitions include P[k], O'[j]/O[j],
-  their tags and lengths, and the corresponding B'/B entry slots. They do
-  not include P[j]: that value first arrives from the active prefix's
-  instance. RANGE-3 step 1 can therefore instantiate the entry pending
-  inverse at k but not at j; an instance's reads cannot trigger another
-  instance. A residual branch can set `k=1`, `j=0`,
-  `O[j].Open.block=P[j]=P[k]=q`, `B[q].entry_slot=0`, and
-  `B0[q].entry_slot=1`. The prefix and the instantiated entry inverse at k
-  both hold, while the write makes `B'[q].entry_slot=1`, leaving the owed
-  equality to j false. The full entry inverse excludes duplicate pending
-  targets, but that missing j instance is precisely what this derivation
-  cannot use after the loop header forgets the written slot projection.
-  The problem builder snapshots ground reads before adding instances in
-  `compiler/src/semantic/range_judgment/facts.rs`; each conclusion has its
-  own query in `compiler/src/semantic/range_judgment/walk.rs`.
-  The original fixture's diagnostic confirms the first open conclusion;
-  the ground-read account above follows source inspection, not a solver trace.
-  Next run the standalone witness in CI and ask the owner to select a
-  language/proof design that closes it. Do not add a
-  runtime guard, strengthen the fixture, change its expected verdict, or
-  extend the specified instantiation procedure without that decision.
+  block IDs and updates their entry slots and owners. The previous one-round
+  derivation left its backedge unproved: the prefix instance introduces
+  `pending[j]`, whose entry inverse needs another instance. The owner selected
+  two rounds in RANGE-3 step 1; `compiler/src/semantic/range_judgment/facts.rs`
+  now snapshots reads before each round, expands their definitions between
+  rounds and deduplicates fact/tuple pairs under the unchanged ceilings.
+  `processed_prefix_through_the_store_closes_with_a_second_round` now expects
+  acceptance, alongside the unchanged full writer and direct-pending cases.
+  The added three-fact chain requires RANGE-3 refusal when a third round would
+  be needed, with a two-round acceptance control and both declaration orders;
+  the ceiling control checks the union of both rounds at 256 instances and
+  above it. These changes have not run in CI: the implementation task leaves
+  an uncommitted working tree and forbids local tests. Reopen at the next CI
+  run, validate the range tests and full gate without altering the writer's
+  invariant or expected acceptance, and remove this item once they pass.
 
 - **Reconcile the false range-use certificate's diagnostic expectation.**
   `inv1-neg-false-target-with-range-fact` expects INV-1, but its local
