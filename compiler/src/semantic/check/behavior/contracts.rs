@@ -612,6 +612,9 @@ fn contract_effect_place(
                 CheckedEffectStep::Index(parameter) => {
                     PlaceStep::Index(contract_index(ordinal(*parameter)?))
                 }
+                CheckedEffectStep::Page(parameter) => {
+                    PlaceStep::Page(contract_index(ordinal(*parameter)?))
+                }
                 CheckedEffectStep::Range { start, end } => PlaceStep::Range(CapturedRange {
                     start: contract_index(ordinal(*start)?),
                     end: contract_index(ordinal(*end)?),
