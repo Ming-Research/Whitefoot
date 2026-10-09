@@ -63,7 +63,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let small = shared_map_new::<u64>(capacity: 0_u64);
   let small_next = 0_u64;
   loop @small_churn {
-    if small_next == 4000_u64 {
+    if small_next == 20000_u64 {
       break @small_churn;
     }
     let key = &name[0_u64..8_u64];
