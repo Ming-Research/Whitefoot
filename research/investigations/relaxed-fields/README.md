@@ -450,9 +450,19 @@ callable kind. Clarify the enclosing scope of the shared-objects node's
 wording and EFF-3's empty-row wording so neither is read as referential
 transparency for a `pure waits` function. The explicit SHARE rules settle
 the owner's example; they do not establish a general theorem that arbitrary
-hidden, nonwaiting interior mutation is safe. A formal audit of all EFF-3
-transformations is **unverified** here; no optimizer defect or normative
-amendment is claimed by this documentation change.
+hidden, nonwaiting interior mutation is safe. This is more than wording. As written, EFF-3
+([spec/kernel-spec.md:1587][spec]) licenses deduplicating and reordering a
+`pure` call that allocates nothing with equal arguments, and no rule exempts
+waiting calls; yet `fn bump(counter: Shared<u8>) -> result: unit pure waits`
+changes shared state (conformance `share-pos-counter`), so two bumps of one
+object could literally be merged, or moved past a later read. It does not
+miscompile today only because the backend emits no function attributes from
+rows (`compiler/src/backend/tests/effect_attributes.rs`), which that test
+expects to change. The repair (exclude waiting calls from EFF-3 and the
+effects node's `pure`, or define `pure` over caller-reachable state only) is
+tracked as board item `proof-bl-eff3-pure-waits`; it is independent of this
+proposal but constrains any relaxed design that would keep operations out of
+rows.
 
 ### 2. What was rejected when handles were chosen
 
