@@ -2092,11 +2092,17 @@ fn dispatch(command: Command, n: u64) -> result: Step pure {
         let step = prepare(n: n);
         let final_step = step;
         match step {
-          Error() => { set final_step = unwind(n: n); }
-          Jump(..) => {}
-          Done(..) => {}
-          Stop() => {}
-          Budget() => {}
+          Error() => {
+            set final_step = unwind(n: n);
+          }
+          Jump(..) => {
+          }
+          Done(..) => {
+          }
+          Stop() => {
+          }
+          Budget() => {
+          }
         }
         return final_step;
       }
@@ -2106,12 +2112,18 @@ fn dispatch(command: Command, n: u64) -> result: Step pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   for (n in 0_u64..5_u64) {
-    let direct = dispatch(command: Command::Select(), n: n);
+    let select = Command::Select();
+    let direct = dispatch(command: select, n: n);
     let first = valid_step(step: direct, n: n);
-    if bnot(first) { return std::process::exit_status(code: 1_u8); }
-    let repeated = dispatch(command: Command::Again(), n: n);
+    if bnot(first) {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let again = Command::Again();
+    let repeated = dispatch(command: again, n: n);
     let second = valid_step(step: repeated, n: n);
-    if bnot(second) { return std::process::exit_status(code: 2_u8); }
+    if bnot(second) {
+      return std::process::exit_status(code: 2_u8);
+    }
   }
   return std::process::exit_status(code: 0_u8);
 }

@@ -5,13 +5,15 @@
 //! update, edge transfer or alternative return can reuse backing whose old
 //! contents are dead. A returned group containing one owned entry parameter
 //! may use the result after every other indirect input reaches private storage.
-//! Loads and ordinary projections remain snapshots. A consumed call input and
-//! its consumed struct result field may occupy the same field of the complete
-//! result allocation after a separate interference check. Exposed backing is
+//! Loads remain logical snapshots; proved immutable snapshots may read through
+//! their source address. Ordinary projections retain independent backing. A
+//! consumed call input and its consumed struct result field may occupy the
+//! same field of the complete result allocation after a separate interference
+//! check. Exposed backing is
 //! not coalesced, and schedules whose reads can outlive an IR call keep every
 //! value separate until their actual retirement lifetimes are represented.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     IrFunction, IrInstruction, IrNominalId, IrNominalKind, IrOperation, IrProgram,
@@ -19,6 +21,8 @@ use crate::{
 };
 
 use super::BackendFailure;
+
+mod snapshots;
 
 /// These values contain their payload inline. Descriptors retain their
 /// ordinary SSA representation: their payload is elsewhere. This
@@ -63,6 +67,14 @@ pub(super) struct FunctionStoragePlan {
     /// The frame plan supplies this address's static or per-iteration backing.
     destinations: Vec<Option<IrValueId>>,
     fields: Vec<Option<FieldDestination>>,
+    /// Captured Load addresses, selected before frame planning. All values in
+    /// a selected slot have the same origin; only scheduled copies write its
+    /// backing, and unchanged CFG transfers need no physical transfer.
+    read_through: Vec<Option<IrValueId>>,
+    /// Copies immediately before an instruction (or the block terminator at
+    /// instructions.len()). Only that use reads the private backing.
+    snapshot_copies: BTreeMap<(usize, usize), BTreeSet<usize>>,
+    snapshot_backing: BTreeSet<usize>,
 }
 
 /// A logical slot occupies one field of a complete local struct allocation.
@@ -98,6 +110,16 @@ impl FunctionStoragePlan {
         function: &IrFunction,
         sequential: bool,
     ) -> Result<Self, BackendFailure> {
+        let mut plan = Self::build_copies(program, function, sequential)?;
+        plan.select_read_through(program, function, sequential)?;
+        Ok(plan)
+    }
+
+    fn build_copies(
+        program: &IrProgram,
+        function: &IrFunction,
+        sequential: bool,
+    ) -> Result<Self, BackendFailure> {
         // A signature has the same parameter/result ABI as a definition but
         // no activation or control-flow graph to allocate storage for.
         if function.blocks().is_empty() {
@@ -108,6 +130,9 @@ impl FunctionStoragePlan {
                 exposed: BTreeSet::new(),
                 destinations: Vec::new(),
                 fields: Vec::new(),
+                read_through: Vec::new(),
+                snapshot_copies: BTreeMap::new(),
+                snapshot_backing: BTreeSet::new(),
             });
         }
         let graph = FlowGraph::from_function(program, function, sequential)?;
@@ -150,6 +175,23 @@ impl FunctionStoragePlan {
         self.destinations.get(slot).copied().flatten()
     }
 
+    pub(super) fn read_through(&self, slot: usize) -> Option<IrValueId> {
+        self.read_through.get(slot).copied().flatten()
+    }
+
+    pub(super) fn needs_snapshot_backing(&self, slot: usize) -> bool {
+        self.read_through(slot).is_none() || self.snapshot_backing.contains(&slot)
+    }
+
+    pub(super) fn snapshot_copies(&self, block: usize, at: usize) -> Vec<usize> {
+        self.snapshot_copies
+            .get(&(block, at))
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect()
+    }
+
     pub(super) fn is_exposed(&self, slot: usize) -> bool {
         self.exposed.contains(&slot)
     }
@@ -178,6 +220,10 @@ impl FunctionStoragePlan {
         let Some(slot) = self.slot(value) else {
             return false;
         };
+        self.holds_origin(slot, index(value))
+    }
+
+    fn holds_origin(&self, slot: usize, origin: usize) -> bool {
         self.destination(slot).is_none()
             && self.field_destination(slot).is_none()
             && !self.is_exposed(slot)
@@ -190,9 +236,7 @@ impl FunctionStoragePlan {
                 .values
                 .iter()
                 .enumerate()
-                .all(|(held, place)| {
-                    *place != Some(slot) || self.origins[held] == Some(index(value))
-                })
+                .all(|(held, place)| *place != Some(slot) || self.origins[held] == Some(origin))
     }
 
     fn select_field_destinations(
@@ -686,6 +730,7 @@ impl FlowGraph {
         }
         let destinations = vec![None; slots.len()];
         let fields = vec![None; slots.len()];
+        let read_through = vec![None; slots.len()];
         let exposed = self
             .blocks
             .iter()
@@ -700,6 +745,9 @@ impl FlowGraph {
             exposed,
             destinations,
             fields,
+            read_through,
+            snapshot_copies: BTreeMap::new(),
+            snapshot_backing: BTreeSet::new(),
         })
     }
 

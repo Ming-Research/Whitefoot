@@ -2227,11 +2227,16 @@ fn release_after_match(n: u64) -> result: u64 pure {
   let owner = Owner(cell: move cell, first: 11_u64, second: 13_u64, third: 17_u64);
   let step = prepare(n: n);
   match step {
-    Error() => {}
-    Jump(..) => {}
-    Done(..) => {}
-    Stop() => {}
-    Budget() => {}
+    Error() => {
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
   }
   return n;
 }
@@ -2239,7 +2244,9 @@ fn release_after_match(n: u64) -> result: u64 pure {
 fn main() -> status: std::process::ExitStatus pure {
   for (n in 0_u64..5_u64) {
     let result = release_after_match(n: n);
-    if result != n { return std::process::exit_status(code: 1_u8); }
+    if result != n {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
   return std::process::exit_status(code: 0_u8);
 }

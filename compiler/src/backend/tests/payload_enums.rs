@@ -1195,7 +1195,9 @@ fn main() -> status: std::process::ExitStatus pure {
   for (n in 0_u64..5_u64) {
     let step = select_step(n: n);
     let valid = valid_step(step: step, n: n);
-    if bnot(valid) { return std::process::exit_status(code: 1_u8); }
+    if bnot(valid) {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -1262,11 +1264,17 @@ fn preserve_step(n: u64) -> result: u64 pure {
   let step = prepare(n: n);
   let final_step = step;
   match step {
-    Error() => { set final_step = unwind(n: n); }
-    Jump(..) => {}
-    Done(..) => {}
-    Stop() => {}
-    Budget() => {}
+    Error() => {
+      set final_step = unwind(n: n);
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
   }
   let before = weight(step: step);
   let after = weight(step: final_step);
@@ -1291,17 +1299,31 @@ fn rotate(rounds: u64) -> result: u64 pure {
 fn main() -> status: std::process::ExitStatus pure {
   for (n in 0_u64..5_u64) {
     let expected = 400400_u64;
-    if n == 0_u64 { set expected = 7099_u64; }
-    if n == 1_u64 { set expected = 41041_u64; }
-    if n == 2_u64 { set expected = 23023_u64; }
-    if n == 3_u64 { set expected = 300300_u64; }
+    if n == 0_u64 {
+      set expected = 7099_u64;
+    }
+    if n == 1_u64 {
+      set expected = 41041_u64;
+    }
+    if n == 2_u64 {
+      set expected = 23023_u64;
+    }
+    if n == 3_u64 {
+      set expected = 300300_u64;
+    }
     let actual = preserve_step(n: n);
-    if actual != expected { return std::process::exit_status(code: 1_u8); }
+    if actual != expected {
+      return std::process::exit_status(code: 1_u8);
+    }
     let swapped = rotate(rounds: n);
     let odd = iand(n, 1_u64);
     let exchange_expected = 41023_u64;
-    if odd != 0_u64 { set exchange_expected = 23041_u64; }
-    if swapped != exchange_expected { return std::process::exit_status(code: 2_u8); }
+    if odd != 0_u64 {
+      set exchange_expected = 23041_u64;
+    }
+    if swapped != exchange_expected {
+      return std::process::exit_status(code: 2_u8);
+    }
   }
   return std::process::exit_status(code: 0_u8);
 }
