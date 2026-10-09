@@ -30,16 +30,22 @@ public opaque nodrop struct CancelSource {
 public opaque nodrop struct CancelWatch {
 }
 
+public opaque struct CancelState {
+  public fired: Bool;
+}
+
+public fn cancel_state(watch: &CancelWatch) -> result: SharedRead<CancelState> reads(watch) doc "Returns a read-only shared view retaining watch's cancellation state.";
+
 public fn cancel_source() -> result: CancelSource pure doc "Creates an unfired cancellation state and returns its source handle.";
 
 public fn cancel_share(source: &CancelSource) -> result: CancelSource reads(source) doc "Returns another source handle for the same cancellation state.";
 
 public fn cancel_watch(source: &CancelSource) -> result: CancelWatch reads(source) doc "Returns a watch retaining source's cancellation state independently of its source handles.";
 
-public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) doc "Permanently fires source's cancellation state; repeated firings have no further effect.";
+public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) waits doc "Permanently fires source's cancellation state; repeated firings have no further effect.";
 
 public fn cancel_never() -> result: CancelWatch pure doc "Returns a watch that never fires.";
 
-public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Releases this source handle without firing it; remaining source and watch handles retain the state.";
+public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Releases this source handle without firing it; remaining source handles, watches and shared views retain the state.";
 
 public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Releases this watch handle, including a never-firing watch.";

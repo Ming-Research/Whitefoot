@@ -395,7 +395,7 @@ _Static_assert(_Alignof(wf_host_operation) <= WF_CONTEXT_OPERATION_ALIGN,
 static uint64_t wf_deadline_reading(const wf_deadline *deadline) {
     uint64_t reading;
     if (deadline == NULL || deadline->tag != WF_OPTION_SOME) return 0;
-    reading = deadline->value.words[0];
+    reading = deadline->value.ticks;
     if (reading == WF_COMPLETION_DEADLINE_FIRED) return 0;
     return reading == 0 ? 1 : reading;
 }
@@ -1268,24 +1268,24 @@ void wf__body_wall_clock_share(wf_value *result, const wf_value *clock) {
     memset(result, 0, sizeof(*result));
 }
 
-void wf__body_now(wf_value *result, wf_value *clock) {
+void wf__body_now(wf_instant *result, wf_value *clock) {
     wf_transition(clock);
     memset(result, 0, sizeof(*result));
-    result->words[0] = wf__completion_monotonic_ns();
+    result->ticks = wf__completion_monotonic_ns();
 }
 
-void wf__body_instant_after(wf_value *result, const wf_value *instant, uint64_t nanoseconds) {
-    uint64_t reading = instant->words[0];
+void wf__body_instant_after(wf_instant *result, const wf_instant *instant, uint64_t nanoseconds) {
+    uint64_t reading = instant->ticks;
     memset(result, 0, sizeof(*result));
-    result->words[0] = nanoseconds > UINT64_MAX - reading ? UINT64_MAX : reading + nanoseconds;
+    result->ticks = nanoseconds > UINT64_MAX - reading ? UINT64_MAX : reading + nanoseconds;
 }
 
-uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *later) {
-    return later->words[0] > earlier->words[0] ? later->words[0] - earlier->words[0] : 0;
+uint64_t wf__body_nanoseconds_from(const wf_instant *earlier, const wf_instant *later) {
+    return later->ticks > earlier->ticks ? later->ticks - earlier->ticks : 0;
 }
 
-_Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant) {
-    return instant->words[0] >= deadline->words[0];
+_Bool wf__body_instant_reached(const wf_instant *deadline, const wf_instant *instant) {
+    return instant->ticks >= deadline->ticks;
 }
 
 int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
@@ -1307,9 +1307,9 @@ int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
 
 /* [PRE-2] no host operation: the driver ends the sleep at its deadline
  * or when its watch fires. */
-int wf__body_sleep_until_start(wf_sleep_result *result, const wf_value *deadline, const wf_value *cancel,
+int wf__body_sleep_until_start(wf_sleep_result *result, const wf_instant *deadline, const wf_value *cancel,
                                wf_host_operation *operation) {
-    uint64_t reading = deadline->words[0];
+    uint64_t reading = deadline->ticks;
     (void)result;
     if (wf_value_pointer(cancel) != 0)
         return wf__completion_sleep_watched_submit(reading == 0 ? 1 : reading,
@@ -1318,7 +1318,7 @@ int wf__body_sleep_until_start(wf_sleep_result *result, const wf_value *deadline
     return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
-void wf__body_sleep_until_finish(wf_sleep_result *result, const wf_value *deadline, const wf_value *cancel,
+void wf__body_sleep_until_finish(wf_sleep_result *result, const wf_instant *deadline, const wf_value *cancel,
                                  wf_host_operation *operation) {
     int64_t amount;
     int error;
@@ -1331,7 +1331,7 @@ void wf__body_sleep_until_finish(wf_sleep_result *result, const wf_value *deadli
     result->tag = wf__completion_cancelled(&operation->record) ? 1u : 0u;
 }
 
-void wf__body_sleep_until(wf_sleep_result *result, const wf_value *deadline, const wf_value *cancel) {
+void wf__body_sleep_until(wf_sleep_result *result, const wf_instant *deadline, const wf_value *cancel) {
     wf_host_operation operation;
     if (wf__body_sleep_until_start(result, deadline, cancel, &operation))
         wf__body_sleep_until_finish(result, deadline, cancel, &operation);
@@ -1482,8 +1482,21 @@ void wf__body_cancel_watch(wf_value *result, const wf_value *source) {
     wf__body_cancel_share(result, source);
 }
 
-void wf__body_cancel_fire(const wf_value *source) {
-    wf__cancel_fire((void *)wf_value_pointer(source));
+void *wf__body_cancel_state(const wf_value *watch) {
+    return wf__cancel_state((void *)wf_value_pointer(watch));
+}
+
+int wf__body_cancel_fire_start(uint8_t *result, const wf_value *source,
+                               wf_host_operation *operation) {
+    (void)result;
+    return wf__shared_start((void *)wf_value_pointer(source), &operation->record);
+}
+
+void wf__body_cancel_fire_finish(uint8_t *result, const wf_value *source,
+                                 wf_host_operation *operation) {
+    (void)operation;
+    wf__cancel_fire_held((void *)wf_value_pointer(source));
+    *result = 0;
 }
 
 void wf__body_cancel_never(wf_value *result) {

@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Entry {
+  flag: Bool;
+}
+
+fn inspect(rows: &[Entry]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].flag == rows^[k].flag;
+} {
+  doc "The requirement compares a Bool field, which is no integer range term.";
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

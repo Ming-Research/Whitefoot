@@ -153,11 +153,18 @@ fn complete_inventory_is_pinned() {
     // v0.90's `package_decl*` repeat opens `graph_file` [GRAM-2, MOD-11]:
     // one decision, and `package` is one new terminal; the IDENT root joins
     // the existing root alternations of `alias_decl` and `module_path`.
-    assert_eq!(DECISIONS.len(), 176);
+    // TYPE-11 adds the named-relation or range-clause choice in
+    // `type_invariant`: IDENT "(" and "(" IDENT are disjoint.
+    assert_eq!(DECISIONS.len(), 177);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
-    assert_eq!(SELECT_ROWS.len(), 7_917);
+    // The type-invariant choice adds two rows. Its new `invariant (`
+    // prefix adds one row each at struct_decl's doc optional, field repeat
+    // and type-invariant repeat. The range_clause conclusion repeat gains
+    // two exit rows with the type_invariant semicolon's provenance:
+    // `; invariant` and `; }`. Together these add seven rows to 7,917.
+    assert_eq!(SELECT_ROWS.len(), 7_924);
     assert_eq!(diagnostic_terminal_order().len(), 115);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -314,45 +321,47 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[105].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[106].production(), Production::InvariantStmt);
     assert_eq!(DECISIONS[106].kind(), DecisionKind::Repeat1);
-    assert_eq!(DECISIONS[109].production(), Production::UsePremise);
-    assert_eq!(DECISIONS[109].kind(), DecisionKind::Choice);
-    // v0.84's written instance `NAME(atom, ...)` [RANGE-4].
+    assert_eq!(DECISIONS[107].production(), Production::TypeInvariant);
+    assert_eq!(DECISIONS[107].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[110].production(), Production::UsePremise);
-    assert_eq!(DECISIONS[110].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[115].production(), Production::BreakStmt);
-    assert_eq!(DECISIONS[115].kind(), DecisionKind::Optional);
-    assert_eq!(DECISIONS[116].production(), Production::ContinueStmt);
+    assert_eq!(DECISIONS[110].kind(), DecisionKind::Choice);
+    // v0.84's written instance `NAME(atom, ...)` [RANGE-4].
+    assert_eq!(DECISIONS[111].production(), Production::UsePremise);
+    assert_eq!(DECISIONS[111].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[116].production(), Production::BreakStmt);
     assert_eq!(DECISIONS[116].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[117].production(), Production::ContinueStmt);
+    assert_eq!(DECISIONS[117].kind(), DecisionKind::Optional);
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
     // and v0.84's range decisions and v0.86's entry bindings move them
     // forward again.
-    assert_eq!(DECISIONS[134].production(), Production::Call);
-    assert_eq!(DECISIONS[134].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[135].production(), Production::Call);
+    assert_eq!(DECISIONS[135].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
-    assert_eq!(DECISIONS[154].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[154].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[155].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[155].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[155].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[156].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[156].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (156, DecisionKind::Repeat0),
-        (157, DecisionKind::Optional),
-        (158, DecisionKind::Repeat0),
+        (157, DecisionKind::Repeat0),
+        (158, DecisionKind::Optional),
         (159, DecisionKind::Repeat0),
+        (160, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[174].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[174].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[175].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[175].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[175].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[176].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[176].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -482,14 +491,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 176 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 177 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 176);
+    assert_eq!(decisions, 177);
 }
 
 #[test]
@@ -546,7 +555,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 176);
+    assert_eq!(DECISIONS.len(), 177);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -592,6 +601,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 7_917);
+    assert_eq!(total_rows, 7_924);
     assert!(saw_atom_only);
 }

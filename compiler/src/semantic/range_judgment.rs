@@ -1,9 +1,9 @@
 //! [RANGE-2, RANGE-3, RANGE-5] the range judgment.
 //!
 //! Range facts are judged over the completed checked program, after every
-//! function's ordinary entailment has succeeded, because a range proof
-//! consumes what that judgment established and no ordinary obligation
-//! consumes a range fact. One forward walk per function carries the facts
+//! function's ordinary entailment. Every deferrable record left open is judged
+//! at its source site; unrelated ordinary debt never disables the walk. The walk proves each deferred record at
+//! its own program point before assuming a local invariant's target. One forward walk per function carries the facts
 //! a function's requirements, its loops' invariants and its callees'
 //! postconditions establish, discharges every range fact owed at a call, a
 //! loop's entry, a back edge or an exit, and checks each counted loop's
@@ -11,14 +11,17 @@
 //! certificate that holds is retained for the counted permission judgment
 //! [PAR-2]; it grants nothing by itself.
 
+mod constants;
 mod facts;
+pub(crate) use constants::judge as judge_constant_invariant;
+mod selection;
 mod solver;
 mod walk;
 mod world;
 
 use crate::NodePath;
 
-use super::model::CheckedFunction;
+use super::model::{CheckedFunction, CheckedNominal};
 
 /// One range judgment failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,7 +50,8 @@ pub(crate) enum RangeIssue {
     /// rejection: the derivation left the checker's `i128` arithmetic,
     /// where the specified arithmetic is exact [RANGE-3], or a loop nest was
     /// deeper, or a header's written set took more walks to settle, than the
-    /// checker follows, where RANGE-2 forgets only what the body can write.
+    /// checker follows, where RANGE-2 forgets only what the body can write; or
+    /// atomic targets may alias and the walk cannot represent that relation.
     Unsupported {
         node: NodePath,
         feature: super::UnsupportedSemanticFeature,
@@ -85,11 +89,27 @@ pub(crate) use super::range_facts::CheckedCertifiedLoop as CertifiedLoop;
 pub(crate) struct RangeJudgment {
     pub(crate) issues: Vec<RangeIssue>,
     pub(crate) certified: Vec<CertifiedLoop>,
+    pub(crate) discharged: Vec<usize>,
+    /// Records whose unrepresentable site or structural ceiling is reported by
+    /// `issues`; they cannot supply an ordinary unproved-source diagnostic.
+    pub(crate) inconclusive: Vec<usize>,
+}
+
+/// Range clauses are formed in both scopes [RANGE-1]. Deferred ordinary
+/// obligations are judged in both; range-clause obligations wait for the
+/// concrete instance, where a noninteger substitution can omit the clause.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum JudgmentScope {
+    Symbolic,
+    Concrete,
 }
 
 /// Whether a function takes part: it states a range clause, or it calls a
-/// function whose range requirements it owes.
-fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool {
+/// function with range requirements or postconditions.
+pub(crate) fn takes_part(
+    function: &CheckedFunction,
+    boundary: impl Fn(super::model::FunctionId) -> bool,
+) -> bool {
     if !function.range_facts.is_empty() {
         return true;
     }
@@ -97,12 +117,7 @@ fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool
     for_each_call(
         function.body.as_deref().unwrap_or_default(),
         &mut |callee, _| {
-            if functions
-                .get(callee.0 as usize)
-                .is_some_and(|callee| !callee.range_facts.requirements.is_empty())
-            {
-                calls = true;
-            }
+            calls |= boundary(callee);
         },
     );
     calls
@@ -181,34 +196,148 @@ pub(crate) fn for_each_call(
 
 /// Judges every selected function of a checked program, dense by function.
 pub(crate) fn judge_program(
-    functions: &[CheckedFunction],
+    functions: &[&CheckedFunction],
+    nominals: &[CheckedNominal],
+    elements: &[super::model::CheckedType],
     selected: &[bool],
+    constants: &[super::model::CheckedConstant],
+    scope: JudgmentScope,
+    resolved: &crate::ResolvedSyntaxUnit,
 ) -> Vec<RangeJudgment> {
+    let prelude = functions
+        .iter()
+        .filter_map(|function| {
+            let declaration = resolved.declaration(function.declaration)?;
+            let file = resolved
+                .syntax()
+                .classified_bundle()
+                .source_bundle()
+                .file(declaration.origin().coordinate().source())?;
+            file.prelude().map(|_| function.declaration)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     functions
         .iter()
         .enumerate()
         .map(|(index, function)| {
             if !selected.get(index).copied().unwrap_or(false)
                 || function.body.is_none()
-                || !takes_part(functions, function)
+                || !takes_part(function, |callee| {
+                    functions
+                        .get(callee.0 as usize)
+                        .is_some_and(|callee| callee.range_facts.has_boundary())
+                })
             {
                 return RangeJudgment::default();
             }
-            let mut walker = walk::Walker::new(functions, function);
+            let mut walker = walk::Walker::new(
+                functions,
+                nominals,
+                elements,
+                function,
+                deferred_records(function, functions, nominals, elements),
+                constants,
+                scope,
+                &prelude,
+            );
             walker.run();
             // A walk that forgot more than RANGE-2 does cannot reject: what
             // it left unproved may hold.
-            let issues = match (&walker.issues[..], walker.imprecise.take()) {
-                ([], _) | (_, None) => walker.issues,
-                (_, Some(node)) => vec![RangeIssue::Unsupported {
-                    node,
-                    feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
-                }],
+            let unproved = walker
+                .deferred
+                .iter()
+                .any(|(_, answer)| *answer != walk::DeferredAnswer::Proved);
+            let issues = match walker.imprecise.take() {
+                Some(node) if !walker.issues.is_empty() || unproved => {
+                    vec![RangeIssue::Unsupported {
+                        node,
+                        feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
+                    }]
+                }
+                _ => walker.issues,
             };
             RangeJudgment {
                 issues,
                 certified: walker.certified,
+                discharged: walker
+                    .deferred
+                    .iter()
+                    .filter_map(|(index, answer)| {
+                        (*answer == walk::DeferredAnswer::Proved).then_some(*index)
+                    })
+                    .collect(),
+                inconclusive: walker
+                    .deferred
+                    .iter()
+                    .filter_map(|(index, answer)| {
+                        (*answer == walk::DeferredAnswer::Inconclusive).then_some(*index)
+                    })
+                    .collect(),
             }
         })
         .collect()
+}
+
+/// Collect every deferrable record; unrelated debt never disables the walk.
+fn deferred_records(
+    function: &CheckedFunction,
+    functions: &[&CheckedFunction],
+    nominals: &[CheckedNominal],
+    elements: &[super::model::CheckedType],
+) -> Vec<(usize, walk::DeferredAnswer)> {
+    use super::entailment::ObligationFamily;
+    use super::obligations::ObligationSubject;
+    let mut pending = Vec::new();
+    for (index, record) in function.obligations.iter().enumerate() {
+        let Some(answer) = function.entailment.answers.get(index).copied().flatten() else {
+            continue;
+        };
+        if answer.discharged(&function.entailment) {
+            continue;
+        }
+        match record.subject {
+            ObligationSubject::Source {
+                family:
+                    ObligationFamily::Bounds
+                    | ObligationFamily::IntegerDomain
+                    | ObligationFamily::ConversionDomain,
+                ..
+            }
+            | ObligationSubject::LoopInvariant { .. } => {
+                pending.push((index, walk::DeferredAnswer::Pending))
+            }
+            ObligationSubject::SourceProof => {
+                let super::obligations::RecordAnswer::SourceProof(proof) = answer else {
+                    continue;
+                };
+                let Some(proof) = function.entailment.source_proofs.get(proof) else {
+                    continue;
+                };
+                let check = &proof.check;
+                // A failed target can be deferred; an invalid ordinary certificate cannot.
+                if check.redundant
+                    || check.source_failure.is_some()
+                    || check.certificate_failure.is_some()
+                    || check.residual_failure.is_some()
+                    || check.first_unproved_premise.is_some()
+                {
+                    continue;
+                }
+                pending.push((index, walk::DeferredAnswer::Pending));
+            }
+            ObligationSubject::CallRequirement { .. }
+                if record.rule != super::SemanticRule::Type11 =>
+            {
+                // TYPE-11 is judged as a state invariant. PRE-1 requirements
+                // remain ordinary calls even when OP-14 owns their diagnostic.
+                pending.push((index, walk::DeferredAnswer::Pending));
+            }
+            _ => {}
+        }
+    }
+    if !pending.is_empty() {
+        let selected = selection::selected_sites(function, functions, nominals, elements);
+        pending.retain(|(index, _)| selected.selects(&function.obligations[*index]));
+    }
+    pending
 }

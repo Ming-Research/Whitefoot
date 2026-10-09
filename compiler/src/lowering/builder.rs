@@ -7,6 +7,7 @@ mod buffers;
 mod call_grain;
 mod contexts;
 mod loops;
+mod parameters;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
 mod probe;
@@ -21,7 +22,7 @@ mod work;
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
-use crate::semantic::permission::CallStorageEffects;
+use crate::semantic::permission::PermissionSite;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
@@ -198,6 +199,12 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
+    // Once every body and cleanup is complete, remove unobserved forwarding
+    // before work estimates and backend storage planning see the graph.
+    // This changes neither source signatures nor instruction definitions.
+    for function in &mut functions {
+        parameters::prune_block_parameters(function, 0, &[])?;
+    }
     let weights = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
@@ -482,7 +489,9 @@ fn lower_function<'program>(
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
-        if parameter.mode == CheckedMode::Reference
+        // Every reference kind, ranges and runs included, keeps the fact that
+        // its declared effects never write through it [CALL-1, REF-4].
+        if parameter.mode.is_reference()
             && !function
                 .declared_state_writes
                 .iter()
@@ -980,8 +989,9 @@ impl<'program> IrBuilder<'program> {
     ///   and the join, where the value does not exist yet; and
     /// - no member releases a place that overlaps a place another member
     ///   borrows at entry or loads through during argument formation. These
-    ///   places come from the checker; a conflict ends the group before the
-    ///   new member's argument formation, after earlier members have joined.
+    ///   places and pair-local separation answers come from the checker; a
+    ///   conflict ends the group before the new member's argument formation,
+    ///   after earlier members have joined.
     ///   The new member can start another group, and disjoint written Box
     ///   references remain eligible together.
     ///
@@ -997,7 +1007,7 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
+        let finish = |members: &mut Vec<(IrValueId, &PermissionSite)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
@@ -1044,17 +1054,29 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
-                let effects = &site.storage_effects;
-                if members
-                    .iter()
-                    .any(|(_, previous)| effects.conflicts(previous))
-                {
+                let conflict = members.iter().find_map(|(_, previous)| {
+                    let pair = permissions.storage_pairs.iter().find(|pair| {
+                        pair.first == previous.statement && pair.second == site.statement
+                    });
+                    match pair {
+                        Some(pair) if pair.conflict.is_none() => None,
+                        Some(pair) => Some(pair.ledger.clone()),
+                        // Every current permitted call pair is recorded. If a
+                        // new producer omits one, it cannot authorize overlap.
+                        None => Some(format!(
+                            "PAR actualization  {}  pair({}, {})  narrowed: unavailable pair-local storage evidence",
+                            self.function_name, previous.callee_name, site.callee_name,
+                        )),
+                    }
+                });
+                if let Some(line) = conflict {
+                    self.synthesis.borrow_mut().note_storage_conflict(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push((value, effects));
+                members.push((value, site));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);

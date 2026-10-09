@@ -1,0 +1,29 @@
+struct State {
+  ready: Bool;
+  count: u8;
+}
+
+fn count(state: &State) -> result: u8 reads(state.count) {
+  return state^.count;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let yes = True();
+  let initial = State(ready: yes, count: 1_u8);
+  let owner = shared_new::<State>(value: initial);
+  let view = shared_read::<State>(shared: &owner);
+  let second_view = shared_read_share::<State>(shared: &view);
+  atomic mutable = &owner, read = &view, again = &second_view {
+    set mutable^.count = 7_u8;
+    let borrowed = &read^;
+    let seen = count(state: borrowed);
+    let second = again^.count;
+    if seen != 7_u8 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if second != seen {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

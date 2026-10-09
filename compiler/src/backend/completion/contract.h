@@ -162,6 +162,8 @@ enum wf_file_open_outcome {
 typedef struct wf_file_request {
     enum wf_file_operation_kind kind;
     union {
+        /* WF_COMPLETION_ROUTE_SHARED stays within the context runtime. */
+        void *shared;
         struct {
             int directory;
             /* The submitting frame's own bytes, live until the join. */
@@ -301,7 +303,8 @@ enum wf_completion_route {
     /* No engine at all: the driver whose context waits on the record
      * completes it when the monotonic clock reaches its deadline. */
     WF_COMPLETION_ROUTE_TIMER = 6,
-    WF_COMPLETION_ROUTE_STOP = 7
+    WF_COMPLETION_ROUTE_STOP = 7,
+    WF_COMPLETION_ROUTE_SHARED = 8
 };
 
 /* A record's deadline once the driver has cancelled its operation for it,

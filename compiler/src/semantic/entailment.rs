@@ -130,6 +130,7 @@ impl CallTransport {
 /// write reaches [CALL-1, CALL-2, CALL-3].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntailmentCallee {
+    pub(crate) range_boundary: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Per parameter, the `epsuffix*` of every declared `writes` entry
@@ -170,6 +171,7 @@ impl EntailmentCallee {
                 .collect()
         };
         Self {
+            range_boundary: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -739,6 +741,31 @@ pub(crate) struct LoopInvariantOutcome {
     pub(crate) base_evidence: LoopRelationEvidence,
     /// Complete ordered input inventory, including contradictory edges.
     pub(crate) inputs: Vec<LoopInvariantInput>,
+    /// A counted loop's relation restated at one element, for the repair of
+    /// a subscript at the binder that fails formation.
+    pub(crate) element: Option<CountedElementRelation>,
+}
+
+/// [INV-1, RANGE-1] a counted loop's header relation with a fresh bound
+/// variable standing for the binder wherever it occurs. Over the processed
+/// prefix or over every element of the subscripted run it is the range form
+/// of the per-element fact the header relation states at the binder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CountedElementRelation {
+    pub(crate) binder: BindingId,
+    /// The binder's source spelling, the processed prefix's end.
+    pub(crate) binder_name: String,
+    /// The counted range's lower endpoint, the processed prefix's start.
+    pub(crate) lower: String,
+    /// The bound variable, a name no binding or declaration spells.
+    pub(crate) variable: String,
+    /// The requirement's fact name, distinct from the invariant's so both
+    /// forms can stand together.
+    pub(crate) requirement: String,
+    /// Every free binding of the suggested requirement is a parameter.
+    pub(crate) requirement_in_scope: bool,
+    /// The relation with the bound variable for the binder.
+    pub(crate) relation: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -758,6 +785,10 @@ pub(crate) struct LoopInductionInput {
 pub(crate) struct LoopFormationFailure {
     pub(crate) site: NodePath,
     pub(crate) required: String,
+    /// The failed subscript's offset when it is one source binding.
+    pub(crate) offset: Option<BindingId>,
+    /// The subscripted run's current length, such as `rows^.len`.
+    pub(crate) extent: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

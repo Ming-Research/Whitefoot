@@ -6,8 +6,8 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
-    // makes each of the five an opaque struct
+    // [PRE-1] writes the five storage shapes first, then the cell. [TYPE-2]
+    // makes each of the six an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -95,6 +95,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    (
+        "prelude/SharedRead.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct SharedRead<T: drop> {
+}
+"#,
+    ),
     // A keyed table [SHARE-1]: its entries are reached only through the entry
     // bindings of an atomic statement, so it declares no field; `V: drop`
     // because releasing a table drops every value its entries hold.
@@ -134,6 +141,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn array_filled<T: copy, const n: u64>(value: T) -> result: Array<T, n> pure contract {
   ensures result.len == n;
+  ensures forall filled(k in 0_u64..result.len): result[k] == value;
 };
 "#,
     ),
@@ -354,6 +362,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/shared_read.wf",
+        PreludeSource::Function,
+        r#"fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/shared_read_share.wf",
+        PreludeSource::Function,
+        r#"fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
 "#,
     ),
     (
