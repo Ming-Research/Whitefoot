@@ -27,7 +27,7 @@ use super::{CheckStop, Checker, EffectSet, LocalBinding};
 use crate::semantic::places::PlaceRoot;
 pub(super) use atomic::SHARE2_WAIT_OUTSIDE_THE_BLOCK;
 pub(super) use commit::CommitReadOut;
-use loops::{BreakState, LoopContext};
+use loops::{LoopContext, LoopTransferState};
 
 pub(super) struct BlockResult {
     pub(super) statements: Vec<CheckedStatement>,
@@ -35,7 +35,7 @@ pub(super) struct BlockResult {
     pub(super) effects: EffectSet,
     all_paths_deliver: bool,
     give_states: Vec<HashMap<DeclarationId, LocalBinding>>,
-    break_states: Vec<BreakState>,
+    loop_transfers: Vec<LoopTransferState>,
 }
 
 pub(super) struct StatementResult {
@@ -45,7 +45,7 @@ pub(super) struct StatementResult {
     all_paths_deliver: bool,
     direct_give: bool,
     give_states: Vec<HashMap<DeclarationId, LocalBinding>>,
-    break_states: Vec<BreakState>,
+    loop_transfers: Vec<LoopTransferState>,
 }
 
 pub(super) struct GiveContext {
@@ -141,7 +141,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut all_paths_deliver = false;
         let mut direct_give = false;
         let mut give_states = Vec::new();
-        let mut break_states = Vec::new();
+        let mut loop_transfers = Vec::new();
         for wrapper in statement_wrappers {
             let statement = self.types.declarations.tree.only_child(*wrapper)?;
             if !can_continue {
@@ -165,7 +165,7 @@ impl<'unit> Checker<'_, 'unit> {
             all_paths_deliver = checked.all_paths_deliver;
             direct_give = checked.direct_give;
             give_states.extend(checked.give_states);
-            break_states.extend(checked.break_states);
+            loop_transfers.extend(checked.loop_transfers);
             statements.push(checked.statement);
         }
         if can_continue {
@@ -177,7 +177,7 @@ impl<'unit> Checker<'_, 'unit> {
             effects,
             all_paths_deliver,
             give_states,
-            break_states,
+            loop_transfers,
         })
     }
 
@@ -353,7 +353,7 @@ impl<'unit> Checker<'_, 'unit> {
                     all_paths_deliver: true,
                     direct_give: false,
                     give_states: Vec::new(),
-                    break_states: Vec::new(),
+                    loop_transfers: Vec::new(),
                 })
             }
             // [GRAM-6] the Bool conditional checks into the same two-armed
@@ -373,7 +373,7 @@ impl<'unit> Checker<'_, 'unit> {
                     all_paths_deliver: matched.all_paths_deliver,
                     direct_give: false,
                     give_states: matched.give_states,
-                    break_states: matched.break_states,
+                    loop_transfers: matched.loop_transfers,
                 })
             }
             Production::MatchStmt => {
@@ -390,7 +390,7 @@ impl<'unit> Checker<'_, 'unit> {
                     all_paths_deliver: matched.all_paths_deliver,
                     direct_give: false,
                     give_states: matched.give_states,
-                    break_states: matched.break_states,
+                    loop_transfers: matched.loop_transfers,
                 })
             }
             Production::GiveStmt => {
@@ -451,7 +451,7 @@ impl<'unit> Checker<'_, 'unit> {
                     all_paths_deliver: true,
                     direct_give: true,
                     give_states: vec![bindings.clone()],
-                    break_states: Vec::new(),
+                    loop_transfers: Vec::new(),
                 })
             }
             // [GRAM-4, SET-1] every written `set` is one commit: the
@@ -462,7 +462,10 @@ impl<'unit> Checker<'_, 'unit> {
             Production::ForStmt => {
                 self.check_counted_range(context, node, bindings, counters, scope)
             }
-            Production::BreakStmt => self.types.check_break(check_context, node, bindings, scope),
+            Production::BreakStmt | Production::ContinueStmt => {
+                self.types
+                    .check_loop_transfer(check_context, node, bindings, scope)
+            }
             Production::AtomicStmt => self.check_atomic(context, node, bindings, counters, scope),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -563,8 +566,8 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidGive,
                 );
             }
-            // [GIVE-1] an empty delivery set — every arm leaves by `return`
-            // or by `break` — rejects at the `let_stmt` node: its repair is
+            // [GIVE-1] an empty delivery set rejects at the `let_stmt`
+            // node even when every branch diverges: its repair is
             // the statement form with the binding dropped, and the statements
             // after it, which no path reaches [FN-1], go with it.
             let Some((mode, expected)) = matched.delivered else {
@@ -575,7 +578,7 @@ impl<'unit> Checker<'_, 'unit> {
                     node,
                     SemanticIssueKind::EmptyDeliverySet {
                         mechanical_fix: format!(
-                            "every arm leaves by `return` or `break`, so no value reaches `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
+                            "no arm supplies a value to `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
                         ),
                         binding,
                     },
@@ -648,7 +651,7 @@ impl<'unit> Checker<'_, 'unit> {
                 all_paths_deliver: !matched.can_continue,
                 direct_give: false,
                 give_states: Vec::new(),
-                break_states: matched.break_states,
+                loop_transfers: matched.loop_transfers,
             });
         }
         if let Some(propagate) = self
@@ -749,7 +752,7 @@ impl<'unit> Checker<'_, 'unit> {
             all_paths_deliver: false,
             direct_give: false,
             give_states: Vec::new(),
-            break_states: Vec::new(),
+            loop_transfers: Vec::new(),
         }
     }
 }

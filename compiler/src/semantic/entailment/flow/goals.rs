@@ -90,13 +90,18 @@ impl Input<'_, '_> {
                 projections: fields.iter().copied().map(GoalProjection::Field).collect(),
                 ty: *ty,
             })),
-            CheckedExpression::DerefAddressed { binding, ty, .. } if self.is_copy(*ty) => {
-                Some(GoalExpression::Datum(GoalDatum::Place {
+            // [ENT-2] a holder exact here is read at its proof path, which
+            // reaches this arm only when that path starts at a named const.
+            CheckedExpression::DerefAddressed {
+                binding, ty, proof, ..
+            } if self.is_copy(*ty) => match proof {
+                Some(proof) => self.goal_place_datum(proof, *ty),
+                None => Some(GoalExpression::Datum(GoalDatum::Place {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
-                }))
-            }
+                })),
+            },
             CheckedExpression::BoxDeref {
                 referent, value, ..
             } if self.is_copy(*referent) => self
@@ -306,6 +311,7 @@ impl Input<'_, '_> {
                     root: root.root,
                     path: prefix.to_vec(),
                     ty: index.base_type,
+                    proof_base: root.proof_base.clone(),
                 };
                 let row = match base.ty {
                     CheckedType::Array { element, length } => {
@@ -332,13 +338,12 @@ impl Input<'_, '_> {
             CheckedExpression::BufferMeasure { measure, root }
                 if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
-                let argument = goal_binding_place(
-                    root.binding,
-                    root.path.iter().map(CheckedPlaceStep::goal_projection),
+                let argument = self.goal_place_datum(
+                    &root.proof_place(),
                     CheckedType::Buffer {
                         element: root.element,
                     },
-                );
+                )?;
                 build_operation(
                     GoalOperation::BufferMeasure {
                         measure: *measure,
@@ -420,11 +425,7 @@ impl Input<'_, '_> {
                 let collection_type = CheckedType::Buffer {
                     element: root.element,
                 };
-                let collection = goal_binding_place(
-                    root.binding,
-                    root.path.iter().map(CheckedPlaceStep::goal_projection),
-                    collection_type,
-                );
+                let collection = self.goal_place_datum(&root.proof_place(), collection_type)?;
                 build_operation(
                     GoalOperation::BufferIndex {
                         element: root.element,
@@ -482,18 +483,33 @@ impl Input<'_, '_> {
         }
     }
 
+    /// The Goal datum of one storage place, identified by its [ENT-2] proof
+    /// path, as an L0 term over the same place is.
     pub(super) fn goal_container_place(
         &self,
         root: &CheckedContainerRoot,
     ) -> Option<GoalExpression> {
-        Some(match root.root {
-            PlaceRoot::Binding(binding) => {
-                goal_binding_place(binding, root.goal_projections(), root.ty)
-            }
+        self.goal_place_datum(&root.proof_place(), root.ty)
+    }
+
+    /// The Goal datum one [ENT-2] proof path names, at a binding or at a
+    /// named const.
+    pub(super) fn goal_place_datum(
+        &self,
+        place: &ResolvedPlace,
+        ty: CheckedType,
+    ) -> Option<GoalExpression> {
+        let projections = place
+            .path
+            .iter()
+            .map(goal_projection_of_step)
+            .collect::<Option<Vec<_>>>()?;
+        Some(match place.root {
+            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
             PlaceRoot::Constant(id) => GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: self.context.constant_declaration(id)?,
-                projections: root.goal_projections(),
-                ty: root.ty,
+                projections,
+                ty,
             }),
         })
     }
@@ -1537,7 +1553,7 @@ impl Reasoning<'_, '_, '_> {
         let operands = arguments
             .iter()
             .map(|argument| IntegerDomainOperand {
-                term: self.read_operand(argument),
+                term: self.copy_operand(argument),
                 constant: checked_integer_constant(argument),
             })
             .collect::<Vec<_>>();
@@ -1880,8 +1896,10 @@ pub(super) fn checked_integer_constant(expression: &CheckedExpression) -> Option
     }
 }
 
-/// A let-origin expansion is valid only while the bound value has no `set`
-/// target on the path to its use. The target's projection does not narrow
+/// A let-origin expansion is valid only while the binding holds its
+/// initializer [ENT-3]; this handles the `set` of the binding itself, and
+/// writes through a reference or a callee end it at their kill events. The
+/// target's projection does not narrow
 /// this invalidation: changing one field or element invalidates the aggregate
 /// value identity even when a separately established length fact survives.
 pub(super) fn invalidate_goal_origin_for_set(state: &mut FactState, target: &CheckedSetTarget) {

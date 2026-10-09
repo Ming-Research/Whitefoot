@@ -1,0 +1,344 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias HandleFactory = std::io::HandleFactory;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+
+fn copy_name(args: &std::text::Args, position: u64, destination: &[u8]) -> next: u64 reads(args), writes(destination) contract {
+  ensures next <= destination^.len;
+} {
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: text_1) => {
+      let length = destination^.len;
+      match std::text::host_copy_bytes(value: &text_1, destination: destination, start: 0_u64, end: length) {
+        Ok(value: end_2) => {
+          return end_2;
+        }
+        Err(error: problem_3) => {
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem_4) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn make_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], byte: u8) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file_5) => {
+      let outcome = 0_u8;
+      match std::fs::truncate_file(factory: factory, file: &file_5, length: 0_u64) {
+        Ok(value: done_6) => {
+        }
+        Err(error: problem_7) => {
+          set outcome = 2_u8;
+        }
+      }
+      let bytes = array_filled::<u8, 1>(value: byte);
+      match std::fs::append_once(factory: factory, file: &file_5, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+        Ok(value: next_8) => {
+          if next_8 != 1_u64 {
+            set outcome = 3_u8;
+          }
+        }
+        Err(error: problem_9) => {
+          set outcome = 4_u8;
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file_5) {
+        Ok(value: done_10) => {
+        }
+        Err(error: problem_11) => {
+          set outcome = 5_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem_12) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn check_bytes(factory: &HandleFactory, file: &std::fs::ReadFile, byte: u8, appended: Bool) -> result: u8 writes(factory), writes(file) waits {
+  let bytes = array_filled::<u8, 3>(value: 255_u8);
+  let length = 1_u64;
+  if appended {
+    set length = 2_u64;
+  }
+  match std::fs::read_at(factory: factory, file: file, destination: &bytes[0_u64..3_u64], file_offset: 0_u64, start: 0_u64, end: 3_u64) {
+    Ok(value: next_13) => {
+      if next_13 != length {
+        return 6_u8;
+      }
+    }
+    Err(error: problem_14) => {
+      return 7_u8;
+    }
+  }
+  if bytes[0_u64] != byte {
+    return 8_u8;
+  }
+  if appended {
+    if bytes[1_u64] != 120_u8 {
+      return 9_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn check_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], byte: u8, appended: Bool) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file_15) => {
+      let outcome = check_bytes(factory: factory, file: &file_15, byte: byte, appended: appended);
+      std::fs::close_read(factory: factory, file: move file_15);
+      return outcome;
+    }
+    Err(error: problem_16) => {
+      return 10_u8;
+    }
+  }
+}
+
+fn not_found(error: &std::io::IoError) -> result: Bool reads(error) {
+  match error^ {
+    NotFound(code: c_17, origin: o_18) => {
+      return True();
+    }
+    PermissionDenied(code: c_19, origin: o_20) => {
+      return False();
+    }
+    AlreadyExists(code: c_21, origin: o_22) => {
+      return False();
+    }
+    NotDirectory(code: c_23, origin: o_24) => {
+      return False();
+    }
+    IsDirectory(code: c_25, origin: o_26) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c_27, origin: o_28) => {
+      return False();
+    }
+    ReadOnly(code: c_29, origin: o_30) => {
+      return False();
+    }
+    ResourceBusy(code: c_31, origin: o_32) => {
+      return False();
+    }
+    InvalidInput(code: c_33, origin: o_34) => {
+      return False();
+    }
+    InvalidPath(code: c_35, origin: o_36) => {
+      return False();
+    }
+    Unsupported(code: c_37, origin: o_38) => {
+      return False();
+    }
+    TimedOut(code: c_39, origin: o_40) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    BrokenPipe(code: c_41, origin: o_42) => {
+      return False();
+    }
+    WriteZero(code: c_43, origin: o_44) => {
+      return False();
+    }
+    UnexpectedEnd(code: c_45, origin: o_46) => {
+      return False();
+    }
+    ConnectionRefused(code: c_47, origin: o_48) => {
+      return False();
+    }
+    ConnectionReset(code: c_49, origin: o_50) => {
+      return False();
+    }
+    ConnectionAborted(code: c_51, origin: o_52) => {
+      return False();
+    }
+    NotConnected(code: c_53, origin: o_54) => {
+      return False();
+    }
+    AddressInUse(code: c_55, origin: o_56) => {
+      return False();
+    }
+    AddressUnavailable(code: c_57, origin: o_58) => {
+      return False();
+    }
+    ResourceExhausted(code: c_59, origin: o_60) => {
+      return False();
+    }
+    FileTooLarge(code: c_61, origin: o_62) => {
+      return False();
+    }
+    NoSpace(code: c_63, origin: o_64) => {
+      return False();
+    }
+    QuotaExceeded(code: c_65, origin: o_66) => {
+      return False();
+    }
+    CrossDevice(code: c_67, origin: o_68) => {
+      return False();
+    }
+    DeviceFailure(code: c_69, origin: o_70) => {
+      return False();
+    }
+    Other(code: c_71, origin: o_72) => {
+      return False();
+    }
+  }
+}
+
+fn check_absent(factory: &HandleFactory, reader: &DirectoryRead, name: &[u8]) -> result: u8 reads(reader), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: reader, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: unexpected_73) => {
+      std::fs::close_read(factory: factory, file: move unexpected_73);
+      return 20_u8;
+    }
+    Err(error: missing_error_74) => {
+      let missing = not_found(error: &missing_error_74);
+      if missing {
+        return 0_u8;
+      }
+      return 21_u8;
+    }
+  }
+}
+
+fn read_below(factory: &HandleFactory, reader: &DirectoryRead, folder: &[u8], name: &[u8], byte: u8, appended: Bool) -> result: u8 reads(reader), reads(folder), reads(name), writes(factory) waits {
+  match std::fs::open_directory(factory: factory, root: reader, name: folder, start: 0_u64, end: folder^.len) {
+    Ok(value: below_75) => {
+      let outcome = check_file(factory: factory, root: &below_75, name: name, byte: byte, appended: appended);
+      std::fs::close_directory(factory: factory, directory: move below_75);
+      return outcome;
+    }
+    Err(error: read_directory_error_76) => {
+      return 22_u8;
+    }
+  }
+}
+
+fn move_between(factory: &HandleFactory, writer: &DirectoryWrite, target: &DirectoryWrite, first: &[u8], second: &[u8]) -> result: u8 reads(first), reads(second), writes(factory), writes(writer), writes(target) waits {
+  match std::fs::move_file(factory: factory, from_root: writer, from: first, from_start: 0_u64, from_end: first^.len, to_root: target, to: second, to_start: 0_u64, to_end: second^.len) {
+    Ok(value: moved_77) => {
+    }
+    Err(error: move_error_78) => {
+      return 23_u8;
+    }
+  }
+  match std::fs::sync_directory(factory: factory, root: writer) {
+    Ok(value: source_synced_79) => {
+    }
+    Err(error: source_sync_error_80) => {
+      return 24_u8;
+    }
+  }
+  match std::fs::sync_directory(factory: factory, root: target) {
+    Ok(value: target_synced_81) => {
+    }
+    Err(error: target_sync_error_82) => {
+      return 25_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn keep_open(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, target: &DirectoryWrite, first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(first), reads(second), writes(factory), writes(writer), writes(target) waits {
+  match std::fs::open_append(factory: factory, root: writer, name: first, start: 0_u64, end: first^.len) {
+    Ok(value: live_writer_83) => {
+      let outcome = 0_u8;
+      match std::fs::open_file(factory: factory, root: reader, name: first, start: 0_u64, end: first^.len) {
+        Ok(value: live_reader_84) => {
+          set outcome = move_between(factory: factory, writer: writer, target: target, first: first, second: second);
+          if outcome == 0_u8 {
+            let suffix = array_filled::<u8, 1>(value: 120_u8);
+            match std::fs::append_once(factory: factory, file: &live_writer_83, source: &suffix[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+              Ok(value: appended_end_85) => {
+                if appended_end_85 != 1_u64 {
+                  set outcome = 28_u8;
+                }
+              }
+              Err(error: append_error_86) => {
+                set outcome = 29_u8;
+              }
+            }
+          }
+          if outcome == 0_u8 {
+            let appended = True();
+            set outcome = check_bytes(factory: factory, file: &live_reader_84, byte: 97_u8, appended: appended);
+          }
+          std::fs::close_read(factory: factory, file: move live_reader_84);
+        }
+        Err(error: live_read_error_87) => {
+          set outcome = 30_u8;
+        }
+      }
+      std::fs::close_write(factory: factory, file: move live_writer_83);
+      return outcome;
+    }
+    Err(error: live_write_error_88) => {
+      return 31_u8;
+    }
+  }
+}
+
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(folder), reads(first), reads(second), writes(factory), writes(writer) waits {
+  let created = make_file(factory: factory, root: writer, name: first, byte: 97_u8);
+  if created != 0_u8 {
+    return created;
+  }
+  match std::fs::open_directory_write(factory: factory, root: writer, name: folder, start: 0_u64, end: folder^.len) {
+    Ok(value: target_89) => {
+      let outcome = 0_u8;
+      if outcome == 0_u8 {
+        set outcome = keep_open(factory: factory, reader: reader, writer: writer, target: &target_89, first: first, second: second);
+      }
+      std::fs::close_directory_write(factory: factory, directory: move target_89);
+      if outcome != 0_u8 {
+        return outcome;
+      }
+    }
+    Err(error: write_directory_error_90) => {
+      return 32_u8;
+    }
+  }
+  let absent = check_absent(factory: factory, reader: reader, name: first);
+  if absent != 0_u8 {
+    return absent;
+  }
+  let appended = True();
+  return read_below(factory: factory, reader: reader, folder: folder, name: second, byte: 97_u8, appended: appended);
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let folder = array_filled::<u8, 64>(value: 0_u8);
+  let folder_end = copy_name(args: &args, position: 1_u64, destination: &folder[0_u64..64_u64]);
+  let first = array_filled::<u8, 64>(value: 0_u8);
+  let first_end = copy_name(args: &args, position: 2_u64, destination: &first[0_u64..64_u64]);
+  let second = array_filled::<u8, 64>(value: 0_u8);
+  let second_end = copy_name(args: &args, position: 3_u64, destination: &second[0_u64..64_u64]);
+  let outcome = 99_u8;
+  if folder_end > 0_u64 {
+    if folder_end <= 64_u64 {
+      if first_end > 0_u64 {
+        if first_end <= 64_u64 {
+          if second_end > 0_u64 {
+            if second_end <= 64_u64 {
+              set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, folder: &folder[0_u64..folder_end], first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+            }
+          }
+        }
+      }
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}

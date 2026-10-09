@@ -1,0 +1,9 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  loop @ended {
+    break;
+  }
+  loop {
+    continue @ended;
+  }
+}

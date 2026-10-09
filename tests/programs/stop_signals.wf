@@ -1,0 +1,228 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+alias StopListener = std::process::StopListener;
+alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
+
+fn stop_is_busy(problem: std::io::IoError) -> result: Bool pure {
+  match problem {
+    NotFound(code: code_0, origin: origin_0) => {
+      return False();
+    }
+    PermissionDenied(code: code_1, origin: origin_1) => {
+      return False();
+    }
+    AlreadyExists(code: code_2, origin: origin_2) => {
+      return False();
+    }
+    NotDirectory(code: code_3, origin: origin_3) => {
+      return False();
+    }
+    IsDirectory(code: code_4, origin: origin_4) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: code_5, origin: origin_5) => {
+      return False();
+    }
+    ReadOnly(code: code_6, origin: origin_6) => {
+      return False();
+    }
+    ResourceBusy(code: code_7, origin: origin_7) => {
+      return True();
+    }
+    InvalidInput(code: code_8, origin: origin_8) => {
+      return False();
+    }
+    InvalidPath(code: code_9, origin: origin_9) => {
+      return False();
+    }
+    Unsupported(code: code_10, origin: origin_10) => {
+      return False();
+    }
+    TimedOut(code: code_11, origin: origin_11) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    BrokenPipe(code: code_13, origin: origin_13) => {
+      return False();
+    }
+    WriteZero(code: code_14, origin: origin_14) => {
+      return False();
+    }
+    UnexpectedEnd(code: code_15, origin: origin_15) => {
+      return False();
+    }
+    ConnectionRefused(code: code_16, origin: origin_16) => {
+      return False();
+    }
+    ConnectionReset(code: code_17, origin: origin_17) => {
+      return False();
+    }
+    ConnectionAborted(code: code_18, origin: origin_18) => {
+      return False();
+    }
+    NotConnected(code: code_19, origin: origin_19) => {
+      return False();
+    }
+    AddressInUse(code: code_20, origin: origin_20) => {
+      return False();
+    }
+    AddressUnavailable(code: code_21, origin: origin_21) => {
+      return False();
+    }
+    ResourceExhausted(code: code_22, origin: origin_22) => {
+      return False();
+    }
+    FileTooLarge(code: code_23, origin: origin_23) => {
+      return False();
+    }
+    NoSpace(code: code_24, origin: origin_24) => {
+      return False();
+    }
+    QuotaExceeded(code: code_25, origin: origin_25) => {
+      return False();
+    }
+    CrossDevice(code: code_26, origin: origin_26) => {
+      return False();
+    }
+    DeviceFailure(code: code_27, origin: origin_27) => {
+      return False();
+    }
+    Other(code: code_28, origin: origin_28) => {
+      return False();
+    }
+  }
+}
+
+fn stop_byte(factory: &HandleFactory, output: &OutputStream, value: u8) -> result: Bool writes(factory), writes(output) waits {
+  let bytes = array_filled::<u8, 1>(value: value);
+  let unlimited = None<Instant>();
+  match std::io::write_once(factory: factory, output: output, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited) {
+    Ok(value: next) => {
+      return next == 1_u64;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn stop_gate(factory: &HandleFactory, input: &InputStream) -> result: u8 writes(factory), writes(input) waits {
+  let bytes = array_filled::<u8, 1>(value: 0_u8);
+  let unlimited = None<Instant>();
+  match std::io::read_next(factory: factory, input: input, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited) {
+    Ok(value: next) => {
+      if next == 1_u64 {
+        return bytes[0_u64];
+      }
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn stop_receive(factory: &HandleFactory, listener: &StopListener, clock: &Clock) -> result: u8 writes(factory), writes(listener), writes(clock) waits {
+  let start = std::time::now(clock: clock);
+  let end = std::time::instant_after(instant: start, nanoseconds: 30000000000_u64);
+  let deadline = Some<Instant>(value: end);
+  match std::process::stop_next(factory: factory, listener: listener, deadline: deadline) {
+    Ok(value: kind) => {
+      match kind {
+        Interrupt() => {
+          return 73_u8;
+        }
+        Terminate() => {
+          return 84_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn stop_context(factory: HandleFactory, listener: StopListener, input: InputStream, output: OutputStream, errors: OutputStream, clock: Clock, mode: u8) -> result: u8 pure waits {
+  let opened = stop_byte(factory: &factory, output: &errors, value: 76_u8);
+  let gate = stop_gate(factory: &factory, input: &input);
+  let code = 1_u8;
+  if opened {
+    if gate == 71_u8 {
+      let first = stop_receive(factory: &factory, listener: &listener, clock: &clock);
+      let published = stop_byte(factory: &factory, output: &output, value: first);
+      let delivered = stop_byte(factory: &factory, output: &errors, value: 68_u8);
+      if published {
+        if delivered {
+          if first != 0_u8 {
+            set code = 0_u8;
+          }
+        }
+      }
+      if mode == 50_u8 {
+        let second = stop_receive(factory: &factory, listener: &listener, clock: &clock);
+        let second_published = stop_byte(factory: &factory, output: &output, value: second);
+        if second_published {
+          if second != 73_u8 {
+            set code = 2_u8;
+          }
+        } else {
+          set code = 3_u8;
+        }
+      }
+    }
+  }
+  match std::process::close_stop_listener(factory: &factory, listener: move listener) {
+    Ok(value: done) => {
+    }
+    Err(error: close_problem) => {
+      set code = 4_u8;
+    }
+  }
+  if mode == 67_u8 {
+    let closed = stop_byte(factory: &factory, output: &errors, value: 67_u8);
+    let after_close = stop_gate(factory: &factory, input: &input);
+    return 5_u8;
+  }
+  return code;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: directory, stdout: output, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: unused_wall, stops: stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: root, write: writable) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writable);
+  std::fs::close_directory(factory: &factory, directory: move root);
+  let before = stop_byte(factory: &factory, output: &errors, value: 66_u8);
+  let mode = stop_gate(factory: &factory, input: &input);
+  if mode == 69_u8 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  match std::process::stop_listen(factory: &factory, stops: &stops) {
+    Ok(value: listener) => {
+      let busy = False();
+      match std::process::stop_listen(factory: &factory, stops: &stops) {
+        Ok(value: second_listener) => {
+          std::process::close_stop_listener(factory: &factory, listener: move second_listener);
+        }
+        Err(error: second_problem) => {
+          set busy = stop_is_busy(problem: second_problem);
+        }
+      }
+      if busy {
+        let outcome = spawn stop_context(factory: move factory, listener: move listener, input: move input, output: move output, errors: move errors, clock: move clock, mode: mode);
+        return std::process::exit_status(code: outcome);
+      }
+      std::process::close_stop_listener(factory: &factory, listener: move listener);
+      return std::process::exit_status(code: 6_u8);
+    }
+    Err(error: open_problem) => {
+      return std::process::exit_status(code: 7_u8);
+    }
+  }
+}

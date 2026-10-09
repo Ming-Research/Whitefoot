@@ -199,6 +199,20 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
     layouts
 }
 
+/// Target sizes and alignments of every emitted enum value and payload view.
+pub(super) fn enum_layout_probes(program: &IrProgram) -> BTreeMap<String, (u64, u64)> {
+    let mut probes = BTreeMap::new();
+    for layout in enum_layouts(program) {
+        probes.insert(format!("wf.t.{}", layout.link), layout.selected);
+        if layout.union {
+            for (tag, view) in layout.views {
+                probes.insert(format!("wf.t.{}.v{tag}", layout.link), view);
+            }
+        }
+    }
+    probes
+}
+
 /// The layout of the named function's result type.
 fn result_layout(program: &IrProgram, function: &str) -> ((u64, u64), bool) {
     let ty = program
@@ -305,6 +319,12 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
             assert!(!declaration.contains(" x i8], [0 x "), "{declaration}");
         }
     }
+    assert_llvm_layouts(&llvm, probes);
+}
+
+/// Run the program and observe LLVM DataLayout's size and alignment constants
+/// in the same executable. Shared with handler-word layout coverage.
+pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64)>) {
     let entries: Vec<_> = probes
         .keys()
         .flat_map(|name| {
@@ -336,8 +356,7 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         entries.len()
     );
     let output = compile_link_and_run(&module, Some(&observer), &[]);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let measured: Vec<u64> = String::from_utf8(output.stdout)
+    let measured: Vec<u64> = std::str::from_utf8(&output.stdout)
         .expect("decimal layouts")
         .lines()
         .map(|line| line.parse().expect("one decimal per line"))
@@ -346,10 +365,9 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         .values()
         .flat_map(|(size, align)| [*size, *align])
         .collect();
-    assert_eq!(
-        measured,
-        expected,
-        "{:?}",
+    assert!(
+        output.status.code() == Some(0) && measured == expected,
+        "program result and LLVM layouts: {output:?}; measured {measured:?}, expected {expected:?}; types {:?}",
         probes.keys().collect::<Vec<_>>()
     );
 }
@@ -370,12 +388,14 @@ const PROGRAM: &[u8] = include_bytes!("payload_enums.wf");
 /// lowering runs handed-out calls on the parallel runtime's worker threads,
 /// and contexts may run on several drivers, so every access to the ledger
 /// holds its lock.
-const ALLOCATION_OBSERVER: &str = r#"#include <stdatomic.h>
+const ALLOCATION_OBSERVER: &str = r#"#include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #define WF_TEST_HELD 256
 static void *held[WF_TEST_HELD];
+static size_t requested[WF_TEST_HELD];
 static unsigned count;
 static atomic_flag ledger = ATOMIC_FLAG_INIT;
 
@@ -391,15 +411,17 @@ void *wf_test_allocate(size_t size) {
     void *allocation = malloc(size);
     lock_ledger();
     if (allocation == NULL || count == WF_TEST_HELD) abort();
+    requested[count] = size;
     held[count++] = allocation;
     unlock_ledger();
     return allocation;
 }
 
-void wf_test_release(void *allocation) {
+void wf_test_release(void *allocation, uint64_t bytes) {
     lock_ledger();
     for (unsigned index = 0; index < count; ++index) {
         if (held[index] == allocation) {
+            if (bytes != requested[index]) abort();
             held[index] = NULL;
             unlock_ledger();
             free(allocation);
@@ -420,8 +442,8 @@ __attribute__((destructor)) static void wf_test_report(void) {
 
 fn observed(module: &str) -> String {
     super::owned_places::retain_calls(module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(")
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(")
 }
 
 /// Every construction, match, move, copy, call and release of the program
@@ -772,7 +794,7 @@ fn a_window_of_union_enums_requests_the_union_stride() {
             "  return std::process::exit_status(code: 0_u8);\n}\n",
             "  let components = box_slots_new::<Component>(capacity: 8000000_u64);\n  place_back(window: &components.inner, value: delim);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         );
-    let module = compile(source.as_bytes()).replace("@malloc(", "@wf_test_allocate(");
+    let module = compile(source.as_bytes()).replace("@wf__heap_take(", "@wf_test_allocate(");
     let observer = r#"#include <stdio.h>
 #include <stdlib.h>
 
@@ -789,4 +811,300 @@ void *wf_test_allocate(size_t size) {
         requests.lines().any(|line| line == "320000016"),
         "{requests}"
     );
+}
+
+/// A by-value text in firn's shape, an inline or boxed union-laid-out enum
+/// that a function wraps in an entry and stores through a reference, each
+/// store releasing the entry it replaces [WIN-3].
+const STORED_TEXT: &[u8] = br#"enum Bytes {
+  Short(length: u64, first: u64, second: u64, third: u64);
+  Long(values: Box<Slots<u8>>);
+}
+
+struct Entry {
+  text: Bytes;
+  expires: u64;
+}
+
+fn put_text(slot: &Option<Entry>, value: Bytes, expires: u64) -> result: unit writes(slot) {
+  let stored = Entry(text: move value, expires: expires);
+  set slot^ = Some<Entry>(value: move stored);
+  return unit;
+}
+
+fn measure(text: Bytes) -> result: u64 pure {
+  match move text {
+    Short(length: l, first: a, second: b, third: c) => {
+      let ab = a +wrap b;
+      let abc = ab +wrap c;
+      return abc +wrap l;
+    }
+    Long(values: v) => {
+      let count = v.inner.len;
+      return count +wrap 1000_u64;
+    }
+  }
+}
+
+fn long_text(first: u8, second: u8) -> result: Bytes pure {
+  let values = box_slots_new::<u8>(capacity: 2_u64);
+  place_back(window: &values.inner, value: first);
+  place_back(window: &values.inner, value: second);
+  return Bytes::Long(values: move values);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slot = None<Entry>();
+  let first = long_text(first: 1_u8, second: 2_u8);
+  let stored_first = put_text(slot: &slot, value: move first, expires: 5_u64);
+  let short = Bytes::Short(length: 3_u64, first: 10_u64, second: 20_u64, third: 30_u64);
+  let stored_short = put_text(slot: &slot, value: move short, expires: 7_u64);
+  let last = long_text(first: 3_u8, second: 4_u8);
+  let stored_last = put_text(slot: &slot, value: move last, expires: 9_u64);
+  match move slot {
+    Some(value: e) => {
+      let expires = e.expires;
+      let weight = measure(text: move e.text);
+      if weight != 1002_u64 {
+        return std::process::exit_status(code: 2_u8);
+      }
+      if expires != 9_u64 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      return std::process::exit_status(code: 0_u8);
+    }
+    None() => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
+}
+"#;
+
+/// `measure` returns no destination, does not wait, hands nothing out and
+/// writes its text's slot nowhere, so it reads the text's tag and payload
+/// through the pointer its caller passed, where it used to copy the whole
+/// text into a slot of its own at entry (compiler/storage-placement). The
+/// program also stores, replaces and releases inline and boxed texts
+/// through `put_text`, whose text is read in place the same way, with
+/// every owner released once, inlined and with its call boundaries kept.
+#[test]
+fn a_by_value_parameter_nothing_writes_is_read_in_place() {
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(STORED_TEXT, overlap);
+        let body = super::emitted_function(&module, "measure");
+        let header = body.lines().next().expect("a definition header");
+        let at = header
+            .find("%wf.arg.v")
+            .unwrap_or_else(|| panic!("the text arrives by pointer: {header}"));
+        let incoming: String = header[at..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '%')
+            .collect();
+        assert!(
+            !body.contains("@llvm.memmove"),
+            "{overlap:?}: no copy of {incoming}: {body}"
+        );
+        assert!(
+            body.lines().skip(1).any(|line| line.contains(&incoming)),
+            "{overlap:?}: the body reads {incoming} in place: {body}"
+        );
+        let ordinary = module
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
+        for (form, llvm) in [("ordinary", ordinary), ("retained", observed(&module))] {
+            let output = compile_link_and_run(&llvm, Some(ALLOCATION_OBSERVER), &[]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{overlap:?} {form}: {output:?}"
+            );
+            let report = String::from_utf8(output.stdout).expect("report");
+            assert!(
+                report.ends_with(" live=0\n"),
+                "{overlap:?} {form}: {report}"
+            );
+            assert!(
+                !report.starts_with("allocated=0 "),
+                "{overlap:?} {form}: {report}"
+            );
+        }
+    }
+}
+
+const IN_PLACE_BRANCHES: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Rec {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+  e: u64;
+  f: u64;
+  g: u64;
+  h: u64;
+  i: u64;
+  j: u64;
+}
+
+fn rec_first(r: Rec) -> s: u64 pure {
+  return r.a;
+}
+
+fn rec_forward(r: Rec) -> s: u64 pure {
+  return rec_first(r: r);
+}
+
+fn rec_push(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  if v^.inner.len < v^.inner.cap {
+    place_back(window: &v^.inner, value: r);
+    return True();
+  }
+  return False();
+}
+
+fn rec_push_via(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  return rec_push(v: v, r: r);
+}
+
+fn rec_set(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  if 0_u64 < v^.inner.len {
+    set v^.inner[0_u64] = r;
+    return True();
+  }
+  return False();
+}
+
+fn rec_pick(r: Rec, c: Bool) -> s: u64 pure {
+  if c {
+    return r.a;
+  }
+  return r.b;
+}
+
+fn main() -> status: ExitStatus pure {
+  let v = box_slots_new::<Rec>(capacity: 4_u64);
+  let r = Rec(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64, i: 9_u64, j: 10_u64);
+  let first = rec_first(r: r);
+  let forwarded = rec_forward(r: r);
+  let pushed = rec_push(v: &v, r: r);
+  let via = rec_push_via(v: &v, r: r);
+  let stored = rec_set(v: &v, r: r);
+  let picked = rec_pick(r: r, c: via);
+  if pushed {
+    if stored {
+      if first == forwarded {
+        if picked == 1_u64 {
+          return exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+
+/// Both straight-line and branched readers use the incoming record's place.
+/// `rec_set` still copies the record into the container element it assigns.
+#[test]
+fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
+    with_ir(IN_PLACE_BRANCHES, |program| {
+        for (name, position) in [("rec_pick", 0), ("rec_push", 1), ("rec_set", 1)] {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("branched reader");
+            let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+                .expect("storage plan");
+            let (parameter, ty) = function.parameters()[position];
+            let carries: Vec<_> = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.parameters())
+                .filter(|(_, parameter_ty)| *parameter_ty == ty)
+                .map(|(value, _)| *value)
+                .collect();
+            assert_eq!(carries.len(), 1, "{name}: one continuation record");
+            assert_eq!(storage.slot(parameter), storage.slot(carries[0]), "{name}");
+            assert!(storage.holds_only(parameter), "{name}: unchanged contents");
+        }
+    });
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(IN_PLACE_BRANCHES, overlap);
+        for (name, copies) in [
+            ("rec_first", 0),
+            ("rec_forward", 0),
+            ("rec_push_via", 0),
+            ("rec_pick", 0),
+            ("rec_push", 0),
+            ("rec_set", 1),
+        ] {
+            let body = super::emitted_function(&module, name);
+            assert_eq!(
+                body.matches("@llvm.memmove").count() + body.matches("@llvm.memcpy").count(),
+                copies,
+                "{overlap:?} {name}: {body}"
+            );
+        }
+        let retained = super::owned_places::retain_calls(&module);
+        let output = compile_link_and_run(&retained, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+    }
+}
+
+/// A join that merges the incoming record with a new record shares storage,
+/// but its contents differ, so the original argument needs a private copy.
+#[test]
+fn a_different_value_on_one_branch_keeps_the_parameter_entry_copy() {
+    let mut source = IN_PLACE_BRANCHES.to_vec();
+    source.extend_from_slice(
+        br#"
+fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
+  if c {
+    set r = Rec(a: 11_u64, b: 12_u64, c: 13_u64, d: 14_u64, e: 15_u64, f: 16_u64, g: 17_u64, h: 18_u64, i: 19_u64, j: 20_u64);
+  }
+  return r.a;
+}
+"#,
+    );
+    with_ir(&source, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "rec_rebind")
+            .expect("branched replacement");
+        let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+            .expect("storage plan");
+        let (parameter, ty) = function.parameters()[0];
+        let slot = storage.slot(parameter).expect("record slot");
+        let replacement = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                crate::IrInstruction::Define {
+                    result,
+                    ty: result_ty,
+                    ..
+                } if *result_ty == ty => Some(*result),
+                _ => None,
+            })
+            .expect("replacement record");
+        assert_eq!(storage.slot(replacement), Some(slot));
+        assert!(storage.destination(slot).is_none());
+        assert!(storage.field_destination(slot).is_none());
+        assert!(!storage.is_exposed(slot));
+        assert!(!storage.holds_only(parameter));
+    });
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(&source, overlap);
+        let body = super::emitted_function(&module, "rec_rebind");
+        let copies: Vec<_> = body
+            .lines()
+            .filter(|line| line.contains("@llvm.memmove") || line.contains("@llvm.memcpy"))
+            .collect();
+        assert_eq!(copies.len(), 1, "{overlap:?}: {body}");
+        assert!(copies[0].contains(", ptr %wf.arg.v0,"), "{overlap:?}: {body}");
+    }
 }

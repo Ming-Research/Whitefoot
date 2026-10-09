@@ -10,7 +10,6 @@ fn return_only_loops_do_not_emit_unreachable_continuation_parameters() {
     }
     set remaining = remaining - 1_u64;
   }
-  return remaining;
 }
 
 fn leave(value: u64) -> result: u64 pure {

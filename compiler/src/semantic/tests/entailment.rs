@@ -18,7 +18,7 @@ use super::super::entailment::{
     GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound, ObligationFamily,
     ObligationOutcome, PlaceRoot, PostconditionCallDetail, PostconditionDeliveryJoinDetail,
     PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
-    TermKind, ZERO, type_range,
+    TermKind, TransportedHeaderRelation, ZERO, type_range,
 };
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{
@@ -179,7 +179,9 @@ fn collect_direct_calls<'checked>(
                 }
                 collect_direct_calls(body, callee, calls);
             }
-            CheckedStatement::Break { .. } | CheckedStatement::Proof(_) => {}
+            CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. }
+            | CheckedStatement::Proof(_) => {}
         }
     }
 }
@@ -222,6 +224,7 @@ enum DerivationConclusion {
     ContractCall,
     Contradiction,
     PostconditionAggregate,
+    TransportedHeaderRelation,
 }
 
 fn retained_term(summary: &FunctionEntailment, id: TermId) -> &TermKind {
@@ -474,9 +477,10 @@ fn assert_join_parents(
 fn term_integer_range(kind: &TermKind) -> Option<(i128, i128)> {
     match kind {
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => Some(type_range(*ty)),
-        TermKind::Measure(..) | TermKind::CountedCapture { .. } | TermKind::IndexCapture { .. } => {
-            Some(type_range(IntegerType::U64))
-        }
+        TermKind::Measure(..)
+        | TermKind::TargetMeasure { .. }
+        | TermKind::CountedCapture { .. }
+        | TermKind::IndexCapture { .. } => Some(type_range(IntegerType::U64)),
         TermKind::ResultPayload { ty, .. }
         | TermKind::EntryDatum { ty, .. }
         | TermKind::MeasureDatum { ty, .. }
@@ -1266,6 +1270,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                             | DerivationConclusion::Contradiction
                             | DerivationConclusion::UnsignedDivisionProduct
                             | DerivationConclusion::RequirementAffineImage
+                            | DerivationConclusion::TransportedHeaderRelation
                     ));
                 }
                 for premise in premises {
@@ -1885,6 +1890,59 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 assert_eq!(retained.node_path.as_ref(), Some(statement));
                 DerivationConclusion::Relation(relation.clone())
             }
+            DerivationNode::TransportedHeaderRelation { detail } => {
+                let TransportedHeaderRelation {
+                    inputs,
+                    output,
+                    component,
+                    ..
+                } = detail.as_ref();
+                // [ENT-5] every contributing input proves the complete written
+                // relation over its own values, or is contradictory; the node
+                // publishes one component over the joined values.
+                assert!(!inputs.is_empty(), "a transported relation has inputs");
+                assert_eq!(output.components.len(), output.sides.len());
+                assert!((*component as usize) < output.components.len());
+                let mut prior_site: Option<&NodePath> = None;
+                let mut contributors = 0usize;
+                for input in inputs {
+                    if let Some(prior) = prior_site {
+                        assert!(
+                            prior.components().cmp(input.site.components()).is_le(),
+                            "transport inputs stay in source edge order"
+                        );
+                    }
+                    prior_site = Some(&input.site);
+                    if let Some(contradiction) = input.contradiction {
+                        assert_eq!(
+                            retained_conclusion(&conclusions, contradiction),
+                            &DerivationConclusion::Contradiction
+                        );
+                        assert!(input.components.is_empty());
+                        continue;
+                    }
+                    contributors += 1;
+                    let instance = input
+                        .instance
+                        .as_ref()
+                        .expect("a consistent input carries its formed instance");
+                    assert_eq!(
+                        instance.components.len(),
+                        output.components.len(),
+                        "every input instance has the output's components"
+                    );
+                    assert_eq!(
+                        input.components.len(),
+                        instance.components.len(),
+                        "every component is proved on every consistent input"
+                    );
+                }
+                assert!(
+                    contributors > 0,
+                    "an all-contradictory join transports nothing"
+                );
+                DerivationConclusion::TransportedHeaderRelation
+            }
             DerivationNode::PostconditionDeliveryJoin { detail } => {
                 let PostconditionDeliveryJoinDetail {
                     statement,
@@ -1946,7 +2004,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::ContractCall
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
-                        | DerivationConclusion::PostconditionAggregate => {
+                        | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("delivery join parent must be a relation or contradiction")
                         }
                     }
@@ -2016,6 +2075,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
     let mut seen_s12_nodes = vec![false; summary.derivations.nodes.len()];
     let mut seen_delivery_gives = 0u32;
     let mut seen_delivery_joins = 0u32;
+    let mut seen_header_relations = 0u32;
+    let mut seen_loop_inductions = 0u32;
     let mut seen_delivery_nodes = vec![false; summary.derivations.nodes.len()];
     let mut counted_root_order = Vec::new();
     let mut class_counts = [0u32; 4];
@@ -2111,7 +2172,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::ContractCall
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
-                        | DerivationConclusion::PostconditionAggregate => {
+                        | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("an affine-only bounds root must conclude its exact goal")
                         }
                     }
@@ -2163,7 +2225,8 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::ContractCall
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
-                        | DerivationConclusion::PostconditionAggregate => {
+                        | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("this obligation root cannot conclude that goal")
                         }
                     }
@@ -2264,6 +2327,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     | DerivationConclusion::UnsignedDivisionProduct
                     | DerivationConclusion::RequirementAffineImage
                     | DerivationConclusion::PostconditionAggregate
+                    | DerivationConclusion::TransportedHeaderRelation
                     | DerivationConclusion::RangeSeparation { .. }
                     | DerivationConclusion::IndexSeparation { .. }
                     | DerivationConclusion::ContractCall => {
@@ -2481,6 +2545,15 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     summary.derivations.nodes[root.node.0 as usize],
                     DerivationNode::PostconditionGive { .. }
                 ));
+            }
+            DerivationRootKind::HeaderRelation { occurrence } => {
+                assert_eq!(occurrence, seen_header_relations);
+                seen_header_relations += 1;
+                assert_eq!(conclusion, &DerivationConclusion::TransportedHeaderRelation);
+            }
+            DerivationRootKind::LoopInduction { occurrence } => {
+                assert_eq!(occurrence, seen_loop_inductions);
+                seen_loop_inductions += 1;
             }
             DerivationRootKind::PostconditionDeliveryJoin { occurrence, .. } => {
                 assert_eq!(occurrence, seen_delivery_joins);
@@ -3049,6 +3122,101 @@ fn main() -> status: std::process::ExitStatus pure {
         vec![false],
         "the origin's operand fact was killed by the assignment"
     );
+}
+
+/// Every write event that reaches the binding's own storage ends origin (b):
+/// a direct `set`, a `set` through a reference whose resolved place is the
+/// binding, a callee's projected `writes` on such a reference, and the same
+/// write inside a loop body. A write that reaches only another Bool keeps it.
+#[test]
+fn a_write_reaching_the_bool_binding_ends_its_comparison_origin() {
+    let source = br#"const count: u64 = 4_u64;
+
+const values: Array<i32, count> =[0_i32, 0_i32, 0_i32, 0_i32];
+
+fn truth(target: &Bool) -> result: unit writes(target) {
+  set target^ = True();
+  return unit;
+}
+
+fn direct(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  set flag = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_holder(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let holder = &flag;
+  set holder^ = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_call(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  truth(target: &flag);
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_loop(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let holder = &flag;
+  loop {
+    if flag {
+      return values[i];
+    }
+    set holder^ = True();
+  }
+}
+
+fn other_holder(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let other = False();
+  let holder = &other;
+  set holder^ = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn other_call(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let other = False();
+  truth(target: &other);
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for function in ["direct", "through_holder", "through_call", "through_loop"] {
+        assert_eq!(
+            discharge_flags(source, function),
+            vec![false],
+            "{function}: the write to the binding ends its comparison origin"
+        );
+    }
+    for function in ["other_holder", "other_call"] {
+        assert_eq!(
+            discharge_flags(source, function),
+            vec![true],
+            "{function}: a write to another Bool keeps the comparison origin"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -3664,15 +3832,16 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(outcomes[2].evidence.is_empty());
     let mut counts = DistinctGroundCounts::default();
     collect_distinct_grounds(&summary, projected_call_parent(&summary, 0), &mut counts);
-    // Each strict-derived disequality first becomes independently live at
-    // its one-edge join; the merging join retains both of those boundaries.
+    // [ENT-5] joins the whole branch set once at its canonical frontier: the
+    // inner merges publish no state of their own, so both strict parents
+    // reach the one join directly.
     assert_eq!(
         counts,
         DistinctGroundCounts {
             strict: 2,
-            joins: 3,
-            join_edges: 4,
-            join_parent_counts: vec![2, 1, 1],
+            joins: 1,
+            join_edges: 2,
+            join_parent_counts: vec![2],
             ..DistinctGroundCounts::default()
         },
         "the normalized joined disequality names both opposite strict parents"
@@ -3738,10 +3907,9 @@ fn main() -> status: std::process::ExitStatus pure {
     let mut counts = DistinctGroundCounts::default();
     collect_distinct_grounds(&summary, distinct, &mut counts);
     assert_eq!(counts.strict, 2);
-    // Keep the two strict-derived facts' independence boundaries as well as
-    // the join that combines their paths.
-    assert_eq!(counts.joins, 3);
-    assert_eq!(counts.join_edges, 4);
+    // One canonical join combines both paths [ENT-5].
+    assert_eq!(counts.joins, 1);
+    assert_eq!(counts.join_edges, 2);
 }
 
 #[test]
@@ -3798,8 +3966,8 @@ fn main() -> status: std::process::ExitStatus pure {
         &mut kept_counts,
     );
     assert_eq!(kept_counts.strict, 2);
-    // The derived facts retain their one-edge independence boundaries.
-    assert_eq!(kept_counts.join_edges, 4);
+    // One canonical join receives both derived facts [ENT-5].
+    assert_eq!(kept_counts.join_edges, 2);
 
     let killed_summary = entailment(source, "killed");
     validate_derivations(&killed_summary);
@@ -3886,14 +4054,14 @@ fn main() -> status: std::process::ExitStatus pure {
             collect_distinct_grounds(&summary, projected_call_parent(&summary, 0), &mut counts);
             assert_eq!(
                 counts,
-                // The source fact is already live; only the strict-derived
-                // fact needs its one-edge independence boundary.
+                // One canonical join names the explicit source and the
+                // strict-derived fact as its two predecessors [ENT-5].
                 DistinctGroundCounts {
                     source: 1,
                     strict: 1,
-                    joins: 2,
-                    join_edges: 3,
-                    join_parent_counts: vec![2, 1],
+                    joins: 1,
+                    join_edges: 2,
+                    join_parent_counts: vec![2],
                     ..DistinctGroundCounts::default()
                 },
                 "the mixed join names its explicit and strict-derived predecessor roots"
@@ -3952,14 +4120,13 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(counts.source, 1);
     assert_eq!(counts.strict, 2);
     assert_eq!(counts.contradiction, 1);
-    // The two strict-derived inputs need independence boundaries; the
-    // explicit source input can be reused directly.
-    assert_eq!(counts.joins, 5);
-    counts.join_parent_counts.sort_unstable();
-    assert_eq!(counts.join_parent_counts, vec![1, 1, 2, 2, 2]);
+    // The four guarded inputs form one canonical frontier [ENT-5]; the
+    // contradictory input is neutral and still recorded.
+    assert_eq!(counts.joins, 1);
+    assert_eq!(counts.join_parent_counts, vec![4]);
     assert_eq!(
-        counts.join_edges, 8,
-        "the guarded inputs retain all four reaching grounds through the nested joins"
+        counts.join_edges, 4,
+        "the one join retains all four reaching grounds"
     );
 }
 
@@ -9802,7 +9969,12 @@ fn main() -> status: std::process::ExitStatus pure {
         let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
             panic!("expected FN-8 detail, got {:?}", issue.kind());
         };
-        assert_eq!(detail.disposition, CallRequirementDisposition::Unproved);
+        // [ENT-2] `holder` names `limit` exactly, so the commit to
+        // `holder^.upper` and the actual read through it are one term: the
+        // requirement `i < 0` is refuted, not merely left unproved. Had the
+        // write not killed the captured endpoint, `i < upper` would be
+        // discharged and no issue raised.
+        assert_eq!(detail.disposition, CallRequirementDisposition::Refuted);
     });
 }
 

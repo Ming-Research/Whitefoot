@@ -1,0 +1,29 @@
+fn touch(stack: &Box<Array<u64>>) -> result: unit writes(stack.inner) {
+  doc "Exercises the declared descriptor write while preserving its length.";
+  if 0_u64 < stack^.inner.len {
+    set stack^.inner[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn walk(stack: &Box<Array<u64>>, fp0: u64) -> result: u64 writes(stack.inner) contract {
+  requires fp0 + 4_u64 <= stack^.inner.len;
+} {
+  doc "The declared write kills the current length and the callee supplies no postcondition connecting its new image to the header theorem.";
+  let fp = fp0;
+  loop (
+    invariant frame_bound: fp + 4_u64 <= stack^.inner.len
+  ) {
+    touch(stack: stack);
+    let remaining = stack^.inner.len - 4_u64;
+    set stack^.inner[0_u64] = remaining;
+    if remaining == 7_u64 {
+      return remaining;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The function body is the conformance obligation.";
+  return std::process::exit_status(code: 0_u8);
+}

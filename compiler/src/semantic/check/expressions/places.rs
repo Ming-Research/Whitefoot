@@ -143,7 +143,7 @@ impl<'unit> Checker<'_, 'unit> {
                     effects.add_read(path);
                 }
             }
-            let (binding, path) = self
+            let (binding, path, proof_base) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -186,6 +186,7 @@ impl<'unit> Checker<'_, 'unit> {
                         root: PlaceRoot::Binding(binding),
                         path,
                         ty: place.ty,
+                        proof_base,
                     },
                 },
                 mode: CheckedMode::Own,
@@ -304,7 +305,7 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         let expression = if read_out {
-            let (binding, path) = self
+            let (binding, path, proof_base) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -314,6 +315,7 @@ impl<'unit> Checker<'_, 'unit> {
                     root: PlaceRoot::Binding(binding),
                     path,
                     ty: place.ty,
+                    proof_base,
                 },
             }
         } else {
@@ -653,6 +655,7 @@ impl<'unit> Checker<'_, 'unit> {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
             binding,
             ty: inner.ty,
+            proof: self.body.exact_description(local),
         };
         inner.range_referent = inner.mode == CheckedMode::Range;
         inner.mode = CheckedMode::Own;

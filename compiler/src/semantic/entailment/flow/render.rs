@@ -60,6 +60,9 @@ impl Input<'_, '_> {
     ) -> String {
         let left = self.render_checked_affine_expression(&relation.left, counted_next_binder);
         let right = self.render_checked_affine_expression(&relation.right, counted_next_binder);
+        if relation.equality {
+            return format!("{left} == {right}");
+        }
         match relation.bound {
             0 => format!("{left} <= {right}"),
             -1 => format!("{left} < {right}"),
@@ -82,17 +85,12 @@ impl Input<'_, '_> {
                     format!("{value}_{}", integer_type_name(*ty))
                 }
                 CheckedAffineExpressionKind::Local { binding, .. } => {
-                    let name = self.binding_name(*binding);
-                    if counted_next_binder == Some(*binding) {
-                        format!("({name} + 1_u64)")
-                    } else {
-                        name
-                    }
+                    self.render_header_binding(*binding, counted_next_binder)
                 }
                 // [INV-1] a measure factor renders as the writer wrote it: the
                 // former over the place, never an internal term identity.
                 CheckedAffineExpressionKind::Measure(measure) => self
-                    .render_affine_measure(measure)
+                    .render_affine_measure(measure, counted_next_binder)
                     .unwrap_or_else(|| "?".to_owned()),
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
@@ -122,7 +120,11 @@ impl Input<'_, '_> {
     }
 
     /// The writer's own spelling of one [INV-1] affine measure factor.
-    pub(super) fn render_affine_measure(&self, expression: &CheckedExpression) -> Option<String> {
+    fn render_affine_measure(
+        &self,
+        expression: &CheckedExpression,
+        counted_next_binder: Option<BindingId>,
+    ) -> Option<String> {
         let (measure, binding, fields) = match expression {
             CheckedExpression::ArrayMeasure {
                 measure,
@@ -130,8 +132,10 @@ impl Input<'_, '_> {
                 ..
             } => (*measure, *binding, fields.clone()),
             CheckedExpression::BufferMeasure { measure, root } => {
-                let place =
-                    self.render_place(&ResolvedPlace::from_path(root.binding, root.place_path()));
+                let place = self.render_header_place(
+                    &ResolvedPlace::from_path(root.binding, root.place_path()),
+                    counted_next_binder,
+                );
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             CheckedExpression::RangeMeasure { measure, root } => {
@@ -146,7 +150,7 @@ impl Input<'_, '_> {
                 resolved.path.extend(place.place_path());
                 return Some(format!(
                     "{}.{}",
-                    self.render_place(&resolved),
+                    self.render_header_place(&resolved, counted_next_binder),
                     measure.spelling()
                 ));
             }
@@ -154,16 +158,16 @@ impl Input<'_, '_> {
             // rendered from the same source-order path every other consumer
             // reads rather than from a field list.
             CheckedExpression::ContainerMeasure { measure, root } => {
-                let place = self.render_place(&container_root_path(root));
+                let place =
+                    self.render_header_place(&container_root_path(root), counted_next_binder);
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             _ => return None,
         };
-        let place = self.render_place(&ResolvedPlace::spelled(
-            PlaceRoot::Binding(binding),
-            false,
-            fields,
-        ));
+        let place = self.render_header_place(
+            &ResolvedPlace::spelled(PlaceRoot::Binding(binding), false, fields),
+            counted_next_binder,
+        );
         Some(format!("{place}.{}", measure.spelling()))
     }
 
@@ -185,9 +189,19 @@ impl Input<'_, '_> {
 
     /// One [OP-4] subscript offset, in the spelling the source wrote it in.
     pub(super) fn render_offset(&self, offset: CapturedValue) -> String {
+        self.render_header_offset(offset, None)
+    }
+
+    fn render_header_offset(
+        &self,
+        offset: CapturedValue,
+        counted_next_binder: Option<BindingId>,
+    ) -> String {
         match offset.term {
             CapturedTerm::Literal(value) => value.to_string(),
-            CapturedTerm::Binding(binding) => self.binding_name(binding),
+            CapturedTerm::Binding(binding) => {
+                self.render_header_binding(binding, counted_next_binder)
+            }
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
@@ -196,6 +210,28 @@ impl Input<'_, '_> {
     }
 
     pub(super) fn render_place(&self, place: &ResolvedPlace) -> String {
+        self.render_header_place(place, None)
+    }
+
+    /// Substitute the next counted value at binding leaves, never field names.
+    pub(super) fn render_header_binding(
+        &self,
+        binding: BindingId,
+        counted_next_binder: Option<BindingId>,
+    ) -> String {
+        let name = self.binding_name(binding);
+        if counted_next_binder == Some(binding) {
+            format!("({name} + 1_u64)")
+        } else {
+            name
+        }
+    }
+
+    pub(super) fn render_header_place(
+        &self,
+        place: &ResolvedPlace,
+        counted_next_binder: Option<BindingId>,
+    ) -> String {
         let reference_root = matches!(place.root, PlaceRoot::Binding(binding)
             if self.places.is_reference(binding));
         let (rendered, ty) = match place.root {
@@ -227,7 +263,7 @@ impl Input<'_, '_> {
                     .map(|constant| constant.ty),
             ),
         };
-        self.render_place_projections(rendered, ty, &place.path)
+        self.render_place_projections(rendered, ty, &place.path, counted_next_binder)
     }
 
     /// Render body and entry paths through the same typed storage selectors.
@@ -236,6 +272,7 @@ impl Input<'_, '_> {
         mut rendered: String,
         mut ty: Option<CheckedType>,
         projections: &[PlaceStep],
+        counted_next_binder: Option<BindingId>,
     ) -> String {
         for projection in projections {
             match projection {
@@ -250,8 +287,8 @@ impl Input<'_, '_> {
                 PlaceStep::Range(range) => {
                     rendered.push_str(&format!(
                         "[{}..{}]",
-                        self.render_offset(range.start),
-                        self.render_offset(range.end)
+                        self.render_header_offset(range.start, counted_next_binder),
+                        self.render_header_offset(range.end, counted_next_binder)
                     ));
                 }
                 PlaceStep::Part(part) => {
@@ -281,7 +318,10 @@ impl Input<'_, '_> {
                     }
                 }
                 PlaceStep::Index(offset) => {
-                    rendered.push_str(&format!("[{}]", self.render_offset(*offset)));
+                    rendered.push_str(&format!(
+                        "[{}]",
+                        self.render_header_offset(*offset, counted_next_binder)
+                    ));
                     // A range reference's root type is already its element
                     // type [REF-4], so a subscript of a type that selects no
                     // element keeps it.
@@ -816,6 +856,9 @@ impl Reasoning<'_, '_, '_> {
 
     pub(super) fn render_term(&self, term: TermId) -> String {
         match self.vocabulary.terms.kind(term) {
+            TermKind::TargetMeasure { source, .. } => {
+                format!("next-header {}", self.render_term(*source))
+            }
             TermKind::Zero => "0".to_owned(),
             TermKind::Constant(value) => value.to_string(),
             TermKind::ConstParameter(..) => "<const parameter>".to_owned(),
@@ -838,6 +881,7 @@ impl Reasoning<'_, '_, '_> {
                     "<success payload>".to_owned(),
                     Some(*payload),
                     path,
+                    None,
                 );
                 measure.map_or(place.clone(), |measure| {
                     format!("{place}.{}", measure.spelling())
@@ -881,7 +925,9 @@ impl Reasoning<'_, '_, '_> {
                         }
                     },
                 );
-                let place = self.input.render_place_projections(base, ty, projections);
+                let place = self
+                    .input
+                    .render_place_projections(base, ty, projections, None);
                 measure.map_or(place.clone(), |measure| {
                     format!("{place}.{}", measure.spelling())
                 })

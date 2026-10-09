@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "One write half passed as both roots of move_file: writes(from_root) and writes(to_root) substitute to the same place, so the call is refused; a rename within one directory is rename_file.";
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let from = array_filled::<u8, 3>(value: 97_u8);
+  let to = array_filled::<u8, 3>(value: 98_u8);
+  let outcome = 0_u8;
+  match std::fs::move_file(factory: &factory, from_root: &writer, from: &from[0_u64..3_u64], from_start: 0_u64, from_end: 3_u64, to_root: &writer, to: &to[0_u64..3_u64], to_start: 0_u64, to_end: 3_u64) {
+    Ok(value: moved) => {
+    }
+    Err(error: problem) => {
+      set outcome = 1_u8;
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}

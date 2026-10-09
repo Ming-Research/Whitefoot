@@ -445,7 +445,7 @@ fn folded(salt: u64, rounds: u64, stride: u64) -> result: u64 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -511,7 +511,7 @@ fn mapped() -> result: Box<Array<u8>> pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1260,7 +1260,7 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
         chunk.lines().any(|line| line.contains("load i64, ptr ")),
         "the reconstructed empty owner must still support its len read:\n{chunk}"
     );
-    assert!(!chunk.contains("call void @free("), "{chunk}");
+    assert!(!chunk.contains("call void @wf__heap_give("), "{chunk}");
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
@@ -1473,11 +1473,11 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     // release the captured descriptor, while each selectable outer main owns
     // and frees exactly the buffer returned after the joined loop.
     //
-    // KEPT AS WRITTEN for the lowering port: the `@free` counts are the
+    // KEPT AS WRITTEN for the lowering port: the `@wf__heap_give` counts are the
     // emitted release shape of one `Box<Array<u8>>` per return path [STOR-3].
     // If the release lowering of a boxed run changes, re-derive the counts.
-    assert!(!chunk.contains("call void @free("), "{chunk}");
-    assert!(!splitter.contains("call void @free("), "{splitter}");
+    assert!(!chunk.contains("call void @wf__heap_give("), "{chunk}");
+    assert!(!splitter.contains("call void @wf__heap_give("), "{splitter}");
     for outer in ["@wf_main", "@wf__par_seq_main"] {
         let body = function_body(&split, outer);
         // The entry waits, so each source return leaves by a branch to the
@@ -1491,7 +1491,7 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
                 releases_in_block = 0;
                 block = label;
             }
-            releases_in_block += usize::from(line.contains("call void @free("));
+            releases_in_block += usize::from(line.contains("call void @wf__heap_give("));
             let instruction = line.trim_start();
             if instruction == "br label %wf.coro.final"
                 || (instruction.starts_with("ret ") && block != "wf.coro.suspended")
@@ -2111,7 +2111,7 @@ fn admitted_combine_source() -> Vec<u8> {
     let width = 8 * ADMITTED_COMBINES.len();
     source.push_str(&format!(
         "\nfn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &factory, directory: move cwd_write);\n  \
          std::fs::close_directory(factory: &factory, directory: move cwd);\n  \

@@ -1326,7 +1326,10 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         rule: "INV-1",
-        sentences: &["\n  required_relation: cell^.inner.len <= 1_u64\n"],
+        sentences: &[
+            "\n  incoming_edge: preheader\n",
+            "\n  required_relation: cell^.inner.len == 1_u64\n",
+        ],
     },
     // Retired with the rules whose sentences they pinned. Each probe below
     // cited a rule v0.60 does not have, so the sentence it compared no longer

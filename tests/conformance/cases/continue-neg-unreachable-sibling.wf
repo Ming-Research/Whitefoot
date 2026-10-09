@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  loop {
+    continue;
+    let missed = 0_u64;
+  }
+}

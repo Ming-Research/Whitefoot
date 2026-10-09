@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn truth(flag: &Bool) -> result: unit writes(flag) {
+  doc "Writes True through its reference parameter.";
+  set flag^ = True();
+  return unit;
+}
+
+fn probe(table: &Array<u64, 4>, x: u64) -> result: u64 reads(table) {
+  doc "A set through a reference to another Bool and a call writing that other Bool reach neither the guard binding nor its operands, so the binding still holds its initializer comparison and the branch establishes x < 4 for the subscript [ENT-3, ENT-5, OP-4].";
+  let inside = x < 4_u64;
+  let other = False();
+  let writer = &other;
+  set writer^ = True();
+  truth(flag: &other);
+  if inside {
+    return table^[x];
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Calls the guarded probe with an index outside the table.";
+  let table = array_filled::<u64, 4>(value: 0_u64);
+  let got = probe(table: &table, x: 7_u64);
+  return exit_status(code: 0_u8);
+}

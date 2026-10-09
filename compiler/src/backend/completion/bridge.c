@@ -46,10 +46,17 @@
 #elif defined(_WIN32)
 #include "windows_iocp.h"
 #include "../windows_runtime.h"
+#define PSAPI_VERSION 2
+#include <psapi.h>
 #endif
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <unistd.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
 #endif
 
 #include <errno.h>
@@ -1006,6 +1013,7 @@ static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
 static unsigned char *wf_pool_cursor;
 static size_t wf_pool_remaining;
 static atomic_flag wf_pool_lock = ATOMIC_FLAG_INIT;
+static int64_t wf_pool_live_bytes;
 
 static void wf_spin_lock(atomic_flag *flag) {
     while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {
@@ -1081,6 +1089,7 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
     void *block;
     wf_spin_lock(&wf_pool_lock);
     block = wf_pool_take_locked(bytes, granted);
+    wf_pool_live_bytes += (int64_t)*granted;
     wf_spin_unlock(&wf_pool_lock);
     return block;
 }
@@ -1139,13 +1148,15 @@ static void wf_pool_give(void *block, size_t granted) {
     if (block == NULL) {
         return;
     }
+    wf_spin_lock(&wf_pool_lock);
+    wf_pool_live_bytes -= (int64_t)granted;
     if (granted > WF_POOL_LARGEST) {
+        wf_spin_unlock(&wf_pool_lock);
         wf_pool_host_release(block, granted);
         return;
     }
     index = wf_pool_class_of(granted);
     released = (wf_pool_block *)block;
-    wf_spin_lock(&wf_pool_lock);
     released->next = wf_pool_released[index];
     wf_pool_released[index] = released;
     wf_spin_unlock(&wf_pool_lock);
@@ -1276,6 +1287,117 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 #define WF_CONTEXT_RECORD_BUCKETS 4096u
 /* The most drivers a program runs, whatever WF_DRIVERS asks for. */
 #define WF_DRIVER_LIMIT 64u
+
+/* One cache line per allocation-producing thread: the entry, context
+ * drivers and compute workers. Each registers once; these runtime pools
+ * start at most their declared ceilings of threads during an execution.
+ * Slots outlive threads, since a block may be freed on another driver.
+ * A slot is single-writer. Relaxed atomic loads/stores permit concurrent
+ * observation without an atomic read-modify-write on the allocation path.
+ * Slots and the sum are modulo 2^64: a block taken on one driver and given
+ * on another moves two slots in opposite directions without bound, but the
+ * sum stays exact because the live total is below 2^63. A concurrent change
+ * can make an unsynchronized sum read as a negative total, which is clamped
+ * to zero. This is not a snapshot. */
+#define WF_HEAP_COUNTERS (1u + WF_DRIVER_LIMIT + WF_SCHED_MAX_THREADS)
+typedef struct {
+    _Alignas(64) _Atomic uint64_t bytes;
+} wf_heap_counter;
+static wf_heap_counter wf_heap_counters[WF_HEAP_COUNTERS];
+static _Atomic unsigned wf_heap_counter_count;
+static _Thread_local wf_heap_counter *wf_heap_self;
+static _Thread_local uint64_t wf_heap_local_bytes;
+
+void wf__heap_change(int64_t change) {
+    if (wf_heap_self == NULL) {
+        unsigned index = atomic_fetch_add_explicit(
+            &wf_heap_counter_count, 1u, memory_order_relaxed);
+        if (index >= WF_HEAP_COUNTERS) {
+            wf_bridge_fail("allocation thread exceeds the runtime thread inventory");
+        }
+        wf_heap_self = &wf_heap_counters[index];
+    }
+    wf_heap_local_bytes += (uint64_t)change;
+    atomic_store_explicit(&wf_heap_self->bytes, wf_heap_local_bytes, memory_order_relaxed);
+}
+
+uint64_t wf__heap_in_use(void) {
+    uint64_t bytes;
+    wf_spin_lock(&wf_pool_lock);
+    bytes = (uint64_t)wf_pool_live_bytes;
+    wf_spin_unlock(&wf_pool_lock);
+    /* Fixed storage also covers a slot still being registered, and retains
+     * deltas from drivers that have stopped. */
+    unsigned count = atomic_load_explicit(&wf_heap_counter_count, memory_order_relaxed);
+    for (unsigned index = 0; index < count && index < WF_HEAP_COUNTERS; ++index) {
+        bytes += atomic_load_explicit(&wf_heap_counters[index].bytes, memory_order_relaxed);
+    }
+#if defined(_WIN32)
+    bytes += (uint64_t)wf__windows_registry_bytes();
+#endif
+    return bytes > (uint64_t)INT64_MAX ? 0 : bytes;
+}
+
+int wf__resident_bytes(uint64_t *bytes) {
+#if defined(__linux__)
+    /* statm reports current resident pages; ru_maxrss is a high-water mark.
+     * Use a stack buffer and descriptor I/O, not stdio's allocated buffer. */
+    char buffer[128];
+    int descriptor = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    ssize_t count;
+    if (descriptor < 0) {
+        return 0;
+    }
+    do {
+        count = read(descriptor, buffer, sizeof(buffer) - 1u);
+    } while (count < 0 && errno == EINTR);
+    (void)close(descriptor);
+    if (count <= 0) {
+        return 0;
+    }
+    buffer[count] = 0;
+    char *end;
+    errno = 0;
+    (void)strtoull(buffer, &end, 10);
+    if (end == buffer || errno == ERANGE) {
+        return 0;
+    }
+    char *resident = end;
+    while (*resident == ' ' || *resident == '\t') {
+        ++resident;
+    }
+    if (*resident < '0' || *resident > '9') {
+        return 0;
+    }
+    unsigned long long pages = strtoull(resident, &end, 10);
+    long page_bytes = sysconf(_SC_PAGESIZE);
+    if (errno == ERANGE || (*end != ' ' && *end != '\t' && *end != '\n') ||
+            page_bytes <= 0 || pages > UINT64_MAX / (uint64_t)page_bytes) {
+        return 0;
+    }
+    *bytes = (uint64_t)pages * (uint64_t)page_bytes;
+    return 1;
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t information;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+            (task_info_t)&information, &count) != KERN_SUCCESS) {
+        return 0;
+    }
+    *bytes = (uint64_t)information.resident_size;
+    return 1;
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS information;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &information, sizeof(information))) {
+        return 0;
+    }
+    *bytes = (uint64_t)information.WorkingSetSize;
+    return 1;
+#else
+    (void)bytes;
+    return 0;
+#endif
+}
 
 /* One driver: a thread that runs ready contexts, each on the ring of the
  * driver that runs it (`research/investigations/io-model/WAITS.md`,
@@ -2223,11 +2345,12 @@ static void wf_context_finish(wf_context *context) {
     wf__coro_destroy(context->root);
     wf_context_current = previous;
     wf_context_release_arena(context);
-    /* Counted out before the group, so a starter the group wakes never sees
-     * this context live. */
+    /* Return all context storage before publishing the join: a starter
+     * reading memory after that join must not count a finished context.
+     * The group is in the starter's frame, not in the released context. */
+    wf_pool_give(context, context->pool_bytes);
     atomic_fetch_sub_explicit(&wf_context_live, 1u, memory_order_release);
     wf_group_finish(group);
-    wf_pool_give(context, context->pool_bytes);
 }
 
 /* ------------------------------------------------------ guard watches */
@@ -3395,7 +3518,22 @@ static void wf_bridge_join(wf_completion_record *record) {
         uint64_t epoch = wf_completion_wake_epoch(&wf_bridge_runtime);
         if (wf_bridge_record_state(record) != WF_COMPLETION_DONE
             && !wf_bridge_spin_for_completion(record)) {
-            wf_bridge_park(epoch, UINT32_MAX);
+            uint32_t timeout = UINT32_MAX;
+            if (record->route == WF_COMPLETION_ROUTE_STOP) {
+                uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_acquire);
+                if (deadline != 0) {
+                    uint64_t now = wf_file_monotonic_ns();
+                    if (deadline == WF_COMPLETION_DEADLINE_FIRED || now >= deadline) {
+                        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                                              memory_order_release);
+                        wf__stop_cancel(record);
+                        continue;
+                    }
+                    uint64_t left = (deadline - now) / 1000000u + 1u;
+                    timeout = left < UINT32_MAX ? (uint32_t)left : UINT32_MAX - 1u;
+                }
+            }
+            wf_bridge_park(epoch, timeout);
         }
     }
 }
@@ -3446,7 +3584,8 @@ void wf__completion_file_open_join(
         );
     }
     wf_bridge_join(held);
-    if (held->result.kind != WF_FILE_OPEN_AT) {
+    if (held->result.kind != WF_FILE_OPEN_AT
+        && held->result.kind != WF_FILE_OPEN_DIRECTORY_WRITE) {
         wf_bridge_fail(
             "an open join was given a record that is not an open"
         );
@@ -3906,12 +4045,33 @@ void wf__completion_file_sync_submit(
     wf_bridge_dispatch(held);
 }
 
+void wf__completion_directory_write_open_submit(int directory, const void *path, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_OPEN_DIRECTORY_WRITE;
+    held->request.operation.open_at.directory = directory;
+    held->request.operation.open_at.path = path;
+    wf_bridge_dispatch(held);
+}
+
 void wf__completion_file_rename_submit(
     int directory, const void *from, const void *to, void *record
 ) {
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_RENAME;
     held->request.operation.rename.directory = directory;
+    held->request.operation.rename.to_directory = directory;
+    held->request.operation.rename.from = from;
+    held->request.operation.rename.to = to;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_file_move_submit(
+    int from_directory, const void *from, int to_directory, const void *to, void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_MOVE;
+    held->request.operation.rename.directory = from_directory;
+    held->request.operation.rename.to_directory = to_directory;
     held->request.operation.rename.from = from;
     held->request.operation.rename.to = to;
     wf_bridge_dispatch(held);
@@ -3958,6 +4118,24 @@ void wf__completion_sleep_submit(
         return;
     }
     held->route = WF_COMPLETION_ROUTE_TIMER;
+}
+
+void wf__completion_stop_next_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_NEXT;
+    held->route = WF_COMPLETION_ROUTE_STOP;
+    wf__stop_next(held);
+}
+
+void wf__completion_stop_close_submit(void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_CLOSE;
+    held->route = WF_COMPLETION_ROUTE_INLINE;
+    int error = wf__stop_close();
+    held->result.kind = held->request.kind;
+    held->result.value = error == 0 ? 0 : -1;
+    held->result.error_code = error;
+    wf_completion_record_complete(held);
 }
 
 /* The six TCP submits.
@@ -4246,6 +4424,9 @@ static int wf_bridge_cancel(wf_completion_record *record) {
             wf_windows_iocp_cancel(record);
             return 0;
 #endif
+        case WF_COMPLETION_ROUTE_STOP:
+            wf__stop_cancel(record);
+            return 0;
         case WF_COMPLETION_ROUTE_FILE_ADAPTER:
             return wf_file_adapter_cancel(&wf_bridge_adapter, record);
         default:

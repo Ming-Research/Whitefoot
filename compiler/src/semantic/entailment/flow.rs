@@ -30,6 +30,7 @@ mod certificates;
 mod conversions;
 mod domain;
 mod events;
+mod frontier;
 mod goals;
 mod invariants;
 mod judge;
@@ -37,6 +38,7 @@ mod loop_summary;
 mod operation_facts;
 mod postconditions;
 mod prover;
+mod relations;
 mod render;
 mod results;
 mod sources;
@@ -45,12 +47,14 @@ mod walk;
 use certificates::*;
 use domain::*;
 use events::*;
+use frontier::*;
 use goals::*;
 use invariants::*;
 use judge::*;
 use loop_summary::*;
 use postconditions::*;
 use prover::*;
+use relations::*;
 use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
@@ -99,7 +103,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
@@ -202,6 +206,9 @@ struct EntryImageRecord {
 struct LoopFrame {
     id: CheckedLoopId,
     invariant_declarations: Box<[crate::DeclarationId]>,
+    /// Templates are active after the entire base batch succeeds. Their
+    /// lifetime is independent of the immutable, named header theorems.
+    templates: Vec<CheckedLoopInvariant>,
     scope_depth: usize,
     /// The compiler-owned counted binder while this is a `for` frame. An
     /// ordinary `loop` has no binder and contributes no affine index image.
@@ -214,6 +221,16 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    continues: Vec<FlowEdge>,
+}
+
+/// An incoming structural edge, after its ordered lexical cleanup. Pending
+/// edges exist only between consecutive merges; a source consumer seals them.
+struct FlowEdge {
+    site: crate::NodePath,
+    branch: String,
+    route: super::LoopInductionRoute,
+    state: ProofFlowState,
 }
 
 /// The [ENT-3] facts one `match` scrutinee admits at its arms' entries: the
@@ -488,10 +505,6 @@ struct ProofClosure {
     term_revision: usize,
     goal_revision: usize,
     state: Rc<ClosedState>,
-    /// The ordered L0-to-affine index of this same entering value map. The
-    /// premise loop borrows that map immutably for the view's entire life.
-    /// Registering a term or changing goal metadata invalidates both views.
-    affine_index: std::cell::RefCell<Option<Rc<AffineL0Index>>>,
 }
 
 impl ProofClosure {
@@ -505,18 +518,11 @@ impl ProofClosure {
             term_revision: terms.revision(),
             goal_revision: goals.revision(),
             state: close(facts, terms, goals, ledger),
-            affine_index: std::cell::RefCell::new(None),
         }
     }
 
     fn matches(&self, terms: &TermTable, goals: &GoalTable) -> bool {
         self.term_revision == terms.revision() && self.goal_revision == goals.revision()
-    }
-
-    fn affine_index(&self, terms: &TermTable, goals: &GoalTable) -> Option<Rc<AffineL0Index>> {
-        self.matches(terms, goals)
-            .then(|| self.affine_index.borrow().as_ref().map(Rc::clone))
-            .flatten()
     }
 }
 
@@ -706,11 +712,13 @@ struct AffineConsequenceProof {
     parents: Vec<DerivationId>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AffineL0Candidate {
     term: TermId,
     value: AffineForm,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AffineL0Entry {
     inequality: AffineInequality,
     left: TermId,
@@ -718,16 +726,39 @@ struct AffineL0Entry {
     bound: i128,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
 }
 
-impl AffineL0Index {
-    fn entry(&self, terms: &[AffineCoefficient]) -> Option<&AffineL0Entry> {
-        self.by_terms.get(terms).map(|index| &self.entries[*index])
-    }
+/// One function-local query memo, including the full ordered value images.
+/// Keeping the closed Rc alive makes its allocation identity unambiguous;
+/// FactState::close changes that identity after facts or inventories change.
+/// The index stores no derivation IDs: selected parents still come from this
+/// view and the vocabulary's one ledger at the point of the query.
+struct AffineL0Cache {
+    closed: Rc<ClosedState>,
+    index: Rc<LazyAffineL0Index>,
+}
+
+/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
+/// the ordered final AUTO family fill independent memos: querying a vector
+/// early must not move its first occurrence in the final family's order.
+struct LazyAffineL0Index {
+    candidates: Vec<AffineL0Candidate>,
+    by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
+    exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
+    ordered: RefCell<AffineL0Order>,
+}
+
+#[derive(Default)]
+struct AffineL0Order {
+    left: usize,
+    right: usize,
+    terms: Vec<Box<[AffineCoefficient]>>,
+    seen: WordHashSet<Box<[AffineCoefficient]>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
@@ -743,7 +774,7 @@ struct AffineAtomInterval {
 /// program points. Only requested atom endpoints are memoized; every residual
 /// still executes the same checked arithmetic and ordered proof rules.
 struct AffineDirectQuery<'a> {
-    l0: &'a AffineL0Index,
+    l0: &'a LazyAffineL0Index,
     values: &'a AffineFlowState,
     closed: &'a ClosedState,
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
@@ -751,7 +782,11 @@ struct AffineDirectQuery<'a> {
 }
 
 impl<'a> AffineDirectQuery<'a> {
-    fn new(l0: &'a AffineL0Index, values: &'a AffineFlowState, closed: &'a ClosedState) -> Self {
+    fn new(
+        l0: &'a LazyAffineL0Index,
+        values: &'a AffineFlowState,
+        closed: &'a ClosedState,
+    ) -> Self {
         Self {
             l0,
             values,
@@ -989,9 +1024,10 @@ struct LoopKills {
     /// never the argument-consume/callee-write events inside a group.
     entry_image_groups: Vec<LoopKillEventGroup>,
     /// Every binding named as a `set` target. An ordinary-let origin is valid
-    /// only while its bound value has no intervening whole, field, or element
-    /// mutation; the narrower comparison/outcome origins can only inhabit
-    /// nonprojectable Bool/outcome bindings, so this same set is exact there.
+    /// only while its binding holds its initializer [ENT-3]; a write reaching
+    /// the binding through a reference or a callee ends it through the loop's
+    /// kill events, which this set does not record, so it is a subset of the
+    /// writes that end an origin, not an exact account of them.
     set_bindings: HashSet<BindingId>,
 }
 
@@ -1032,10 +1068,26 @@ impl LoopKills {
 #[derive(Default)]
 struct LoopReachability {
     breaks: Vec<(CheckedLoopId, bool)>,
+    continues: Vec<(CheckedLoopId, bool)>,
     gives: Vec<bool>,
 }
 
 impl LoopReachability {
+    fn for_loop(id: CheckedLoopId) -> Self {
+        Self {
+            continues: vec![(id, true)],
+            ..Self::default()
+        }
+    }
+
+    fn continue_reaches(&self, target: CheckedLoopId) -> bool {
+        self.continues
+            .iter()
+            .rev()
+            .find_map(|(id, reaches)| (*id == target).then_some(*reaches))
+            .unwrap_or(false)
+    }
+
     fn break_reaches(&self, target: CheckedLoopId) -> bool {
         self.breaks
             .iter()
@@ -1075,6 +1127,7 @@ pub(super) fn contract_implies(
     context: &EntailmentContext<'_>,
     goal: &GoalExpression,
 ) -> FunctionEntailment {
+    let _work = super::work::function(&function.name);
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     let mut state = ProofFlowState::default();
@@ -1165,6 +1218,7 @@ struct AnalysisRun {
 }
 
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+    let _work = super::work::function(&function.name);
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
@@ -1226,7 +1280,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         analyzer.judging().initialize_postcondition_proofs();
     }
     if let Some(body) = &function.body {
-        analyzer.walk_block(body, &mut state);
+        analyzer.walk_block(body, &mut state, &mut Vec::new());
     }
     analyzer.judging().reject_unjudged_separations();
     analyzer.frames.scopes.pop();
@@ -1272,6 +1326,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 terms: TermTable::new(),
                 goals: GoalTable::default(),
                 derivations: DerivationLedger::default(),
+                affine_l0_cache: None,
                 affine_atoms: Vec::new(),
                 measure_terms_seen: Vec::new(),
                 measure_terms_scanned: 0,
@@ -1285,6 +1340,8 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 contract_call_roots: 0,
                 delivery_give_roots: HashSet::new(),
                 delivery_join_roots: 0,
+                header_relation_roots: 0,
+                loop_induction_roots: 0,
             },
             output: Output {
                 obligations: Vec::new(),
@@ -1309,6 +1366,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 judged_separations: HashSet::new(),
             },
             frames: Frames {
+                branches: Vec::new(),
                 scopes: Vec::new(),
                 loops: Vec::new(),
                 gives: Vec::new(),
@@ -1356,6 +1414,31 @@ pub(super) fn finish(entailment: &mut FunctionEntailment) {
                     .copied()
                     .flatten()
                     .expect("required range partition proof retained by finish");
+            }
+        }
+    }
+    for outcome in &mut entailment.loop_invariants {
+        let remap_evidence = |evidence: &mut super::LoopRelationEvidence| {
+            for proof in evidence
+                .components
+                .iter_mut()
+                .chain(evidence.contradiction.iter_mut())
+                .chain(
+                    evidence
+                        .instance
+                        .iter_mut()
+                        .flat_map(|instance| instance.formation.iter_mut()),
+                )
+            {
+                *proof =
+                    remap.nodes[proof.0 as usize].expect("induction evidence retained by root");
+            }
+        };
+        remap_evidence(&mut outcome.base_evidence);
+        for input in &mut outcome.inputs {
+            remap_evidence(&mut input.evidence);
+            if let Some(proof) = &mut input.hidden_update {
+                *proof = remap.nodes[proof.0 as usize].expect("hidden update retained by root");
             }
         }
     }
@@ -1637,6 +1720,9 @@ struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,
     derivations: DerivationLedger,
+    /// Only the most recent view is held, rather than one quadratic index
+    /// per program point. Ordinary queries and certificates share this memo.
+    affine_l0_cache: Option<AffineL0Cache>,
     /// Function-local mathematical atoms allocated in structural execution
     /// order. They are ordinary checker state and are discarded with the
     /// analysis.
@@ -1675,6 +1761,8 @@ struct Vocabulary {
     contract_call_roots: u32,
     delivery_give_roots: HashSet<DerivationId>,
     delivery_join_roots: u32,
+    header_relation_roots: u32,
+    loop_induction_roots: u32,
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
@@ -1701,6 +1789,7 @@ struct Output {
 /// The walk's own frames: open scopes, loops and value initializers, and the
 /// measurements one judgment hands to the binding the walk reaches next.
 struct Frames {
+    branches: Vec<String>,
     /// Lexical scope stack: the bindings declared in each open block.
     scopes: Vec<Vec<BindingId>>,
     loops: Vec<LoopFrame>,
@@ -1790,8 +1879,6 @@ mod proof_closure_tests {
         let goals = GoalTable::default();
         let mut ledger = DerivationLedger::default();
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        let index = Rc::new(AffineL0Index::default());
-        closed.affine_index.replace(Some(Rc::clone(&index)));
         let context = ProofContext {
             facts: &facts,
             affine: &affine,
@@ -1801,10 +1888,6 @@ mod proof_closure_tests {
             let view = context.close(&terms, &goals, &mut ledger);
             assert!(Rc::ptr_eq(&view, &closed.state));
             assert!(view.derives_bound(ZERO, ZERO, 0));
-            assert!(Rc::ptr_eq(
-                &closed.affine_index(&terms, &goals).unwrap(),
-                &index
-            ));
         }
     }
 
@@ -1816,7 +1899,6 @@ mod proof_closure_tests {
         let goals = GoalTable::default();
         let mut ledger = DerivationLedger::default();
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let term = terms.intern(TermKind::Measure(
             CheckedMeasure::Length,
             ResolvedPlace::spelled(PlaceRoot::Binding(BindingId(0)), false, Vec::new()),
@@ -1826,18 +1908,15 @@ mod proof_closure_tests {
             affine: &affine,
             closed: Some(&closed),
         };
-        assert!(closed.affine_index(&terms, &goals).is_none());
         assert!(!Rc::ptr_eq(
             &context.close(&terms, &goals, &mut ledger),
             &closed.state
         ));
 
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let count = terms.ids().count();
         terms.set_measure_bound(term, MeasureBound::Constant(7));
         assert_eq!(count, terms.ids().count());
-        assert!(closed.affine_index(&terms, &goals).is_none());
         let context = ProofContext {
             facts: &facts,
             affine: &affine,
@@ -1859,7 +1938,6 @@ mod proof_closure_tests {
         let expression = GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(true)));
         let goal = goals.intern(expression.clone(), None, None, Vec::new());
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let count = goals.ids().count();
         let same = goals.intern(
             expression,
@@ -1873,7 +1951,6 @@ mod proof_closure_tests {
         );
         assert_eq!(goal, same);
         assert_eq!(count, goals.ids().count());
-        assert!(closed.affine_index(&terms, &goals).is_none());
         let context = ProofContext {
             facts: &facts,
             affine: &affine,
@@ -2105,6 +2182,7 @@ mod range_argument_kill_tests {
             root: PlaceRoot::Binding(ORIGIN),
             path: Vec::new(),
             ty: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 

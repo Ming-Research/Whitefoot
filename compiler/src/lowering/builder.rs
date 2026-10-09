@@ -20,6 +20,7 @@ mod work;
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
+use crate::semantic::permission::CallStorageEffects;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
@@ -200,7 +201,15 @@ pub(crate) fn lower_checked_from(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    let nominal_ceilings = nominals
+        .iter()
+        .map(|nominal| {
+            prelude::layout_ceiling(&nominals, &elements, IrType::Nominal(nominal.id()))
+                .ok_or(LoweringFailure::InvalidCheckedProgram)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        nominal_ceilings,
         nominals,
         elements,
         constants,
@@ -415,6 +424,7 @@ fn lower_nominals(
                     u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
                 ),
                 kind,
+                handler_words: 0,
             })
         })
         .collect()
@@ -721,6 +731,8 @@ struct IrBuilder<'program> {
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
+    /// Root prefixes redirected into this leaf's private range.
+    indexed_roots: Vec<(crate::semantic::CheckedContainerRoot, IrValueId)>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -787,6 +799,7 @@ impl<'program> IrBuilder<'program> {
             atomics: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
+            indexed_roots: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -948,7 +961,13 @@ impl<'program> IrBuilder<'program> {
     ///   and its join sit on one straight-line edge; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
-    ///   and the join, where the value does not exist yet.
+    ///   and the join, where the value does not exist yet; and
+    /// - no member releases a place that overlaps a place another member
+    ///   borrows at entry or loads through during argument formation. These
+    ///   places come from the checker; a conflict ends the group before the
+    ///   new member's argument formation, after earlier members have joined.
+    ///   The new member can start another group, and disjoint written Box
+    ///   references remain eligible together.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -962,11 +981,12 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<IrValueId>,
+        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
             if members.len() >= 2 {
+                let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
                 overlaps.push(IrOverlap { members });
             }
@@ -1008,10 +1028,17 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
+                let effects = &site.storage_effects;
+                if members
+                    .iter()
+                    .any(|(_, previous)| effects.conflicts(previous))
+                {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push(value);
+                members.push((value, effects));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
@@ -1023,13 +1050,13 @@ impl<'program> IrBuilder<'program> {
         overlaps
     }
 
-    /// Records where a named-function call in call position landed, whatever
-    /// written position it was in.
+    /// Records where a named-function call in call position landed,
+    /// whatever written position it was in.
     ///
     /// The permission judgment reaches a call as a `let` right-hand side, as an
     /// expression statement, and as a `match` scrutinee alike, and all are
     /// named by their call occurrence, so one recording serves them all. Which
-    /// of them a group can actually keep is decided later and by the IR alone:
+    /// of them a group can keep also depends on the emitted storage shape:
     /// every member of a group must be defined in one block, and a scrutinee's
     /// own dispatch terminates its block, so a scrutinee call is only ever a
     /// group's last member.
@@ -1273,8 +1300,9 @@ impl<'program> IrBuilder<'program> {
                     id,
                     body,
                     backedge_drops,
+                    continues,
                     ..
-                } => self.lower_loop(*id, body, backedge_drops, give_target.clone())?,
+                } => self.lower_loop(*id, body, backedge_drops, *continues, give_target.clone())?,
                 CheckedStatement::CountedRange {
                     id,
                     node_path,
@@ -1297,6 +1325,32 @@ impl<'program> IrBuilder<'program> {
                     backedge_drops,
                     give_target.clone(),
                 )?,
+                CheckedStatement::Continue { target, drops, .. } => {
+                    let position = self
+                        .loops
+                        .iter()
+                        .rposition(|candidate| candidate.id == *target)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                    let target = self.loops[position].clone();
+                    let block = match target.backedge {
+                        Some((block, _)) => block,
+                        None => {
+                            let update = self.new_block(&target.backedge_types)?;
+                            let block = update.0;
+                            self.loops[position].backedge = Some(update);
+                            block
+                        }
+                    };
+                    let mut arguments = self.binding_values(&target.carried_bindings)?;
+                    arguments.extend(target.captures);
+                    let drops = self.lower_drops(drops)?;
+                    self.leave_atomics(target.atomic_depth)?;
+                    self.terminate(IrTerminator::Jump {
+                        target: block,
+                        arguments,
+                        drops,
+                    })?;
+                }
                 CheckedStatement::Break { target, drops, .. } => {
                     let target = self
                         .loops
@@ -1844,6 +1898,26 @@ impl<'program> IrBuilder<'program> {
                 target_domain,
                 ..
             } => {
+                if let CheckedArrayRoot::Binding { binding, fields } = root {
+                    let path = fields
+                        .iter()
+                        .copied()
+                        .map(crate::semantic::CheckedPlaceStep::Field)
+                        .collect::<Vec<_>>();
+                    if let Some(slice) = self
+                        .indexed_slice(crate::semantic::CheckedPlaceRoot::Binding(*binding), &path)
+                    {
+                        let offset = self.expression(offset)?;
+                        return self.define(
+                            lower_type(self.erasure, *element_type)?,
+                            IrOperation::SliceIndex {
+                                slice,
+                                offset,
+                                target_domain: (*target_domain).into(),
+                            },
+                        );
+                    }
+                }
                 let (root, ty) = self.array_root(root)?;
                 let IrType::Array {
                     element,
@@ -2073,6 +2147,7 @@ impl<'program> IrBuilder<'program> {
                         root: crate::semantic::CheckedPlaceRoot::Binding(*binding),
                         path,
                         ty: *ty,
+                        proof_base: None,
                     };
                     let address = self.lower_place_address(&root)?;
                     return self.load_storage_value(address);

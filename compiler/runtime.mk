@@ -4,7 +4,8 @@
 # provides a reusable linked-library artifact for these callers.
 NATIVE_ROOT := $(ROOT)/compiler/src/backend
 NATIVE_C := ordinary_values.c sched/core.c sched/entry.c \
-            completion/runtime.c completion/file_adapter.c completion/bridge.c
+            completion/runtime.c completion/file_adapter.c completion/bridge.c \
+            completion/stop_signals.c
 ifeq ($(OS),Windows_NT)
 NATIVE_C += wf_floor_windows.c windows_runtime.c sched/prim_windows.c \
             completion/wait_windows.c completion/file_windows.c completion/windows_iocp.c
@@ -20,7 +21,9 @@ endif
 # runtime unit compiles with; keep the two equal.
 NATIVE_OPTIMIZATION_FLAGS := -O2 -falign-functions=64
 NATIVE_HEADERS := $(wildcard $(NATIVE_ROOT)/*.h $(NATIVE_ROOT)/sched/*.h $(NATIVE_ROOT)/completion/*.h)
-NATIVE_OBJECTS := $(addprefix $(BUILD)/native/,$(NATIVE_C:.c=.o)) $(BUILD)/native/ordinary_values_ir.o
+# The allocator member is extracted only for callers with emitted heap code.
+# Listing it as a plain object would impose malloc/free on heap-free callers.
+NATIVE_OBJECTS := $(addprefix $(BUILD)/native/,$(NATIVE_C:.c=.o)) $(BUILD)/native/ordinary_values_ir.o $(BUILD)/native/heap.a
 .SECONDARY: $(NATIVE_OBJECTS)
 NATIVE_BUILD_RULES := $(lastword $(MAKEFILE_LIST))
 NATIVE_CONFIG := $(BUILD)/native/configuration.txt
@@ -44,6 +47,9 @@ $(BUILD)/native/%.o: $(NATIVE_ROOT)/%.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) $(NAT
 $(BUILD)/native/%_ir.o: $(NATIVE_ROOT)/%.ll $(NATIVE_CONFIG) $(NATIVE_BUILD_RULES)
 	mkdir -p $(dir $@)
 	$(CLANG) $(NATIVE_OPTIMIZATION_FLAGS) -Wno-override-module -x ir -c $< -o $@
+
+$(BUILD)/native/heap.a: $(BUILD)/native/heap.o
+	$(AR) rcs $@ $<
 
 # This include supplies construction rules, not its caller's default command.
 .DEFAULT_GOAL := $(NATIVE_CALLER_DEFAULT)

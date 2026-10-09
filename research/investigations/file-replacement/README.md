@@ -50,9 +50,13 @@ with a failure at any point leaving one of the two files whole.
   - io_uring has `IORING_OP_RENAMEAT` and `IORING_OP_UNLINKAT`, and fsync on
     a directory descriptor.
 - **Windows.**
-  - `SetFileInformationByHandle` with `FileRenameInfoEx` and
+  - A rename with `FileRenameInfoEx` and
     `FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS`
-    replaces atomically.
+    replaces atomically. It is issued through ntdll's
+    `NtSetInformationFile` (`FileRenameInformationEx`), because kernel32's
+    `SetFileInformationByHandle` resolves a bare target name against the
+    process's current directory
+    ([writable-subdirectories](../writable-subdirectories/README.md#windows-renames-resolve-against-the-files-directory)).
   - `FileDispositionInfoEx` with `FILE_DISPOSITION_FLAG_DELETE |
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS` removes a name when the deleting
     handle closes; other open handles keep access to the file's data

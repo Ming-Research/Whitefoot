@@ -287,7 +287,11 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let mut command = Command::new("/usr/bin/clang");
     command.arg("-x").arg("ir").arg(&assembly);
     command.arg("-pthread");
-    let (_sources, objects) = append_runtime_objects(&mut command, directory, None, None);
+    let needs_heap = module.contains("@wf__heap_take(")
+        || module.contains("@wf__heap_give(")
+        || module.contains("@wf__heap_retake(");
+    let (_sources, objects) =
+        append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let linked = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         // One link recipe: a case that reaches a libm entry point links here

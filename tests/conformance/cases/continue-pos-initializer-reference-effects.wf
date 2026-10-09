@@ -1,0 +1,14 @@
+fn probe(first: &u64, second: &u64, flag: Bool) -> result: unit reads(first), reads(second) {
+  doc "The explicit outer edge carries a reference independently of the inner continuation.";
+  let selected = first;
+  loop @outer {
+    let observed = selected^;
+    let chosen = if flag {
+      set selected = &second^;
+      continue @outer;
+    } else {
+      give 0_u64;
+    }
+    return unit;
+  }
+}

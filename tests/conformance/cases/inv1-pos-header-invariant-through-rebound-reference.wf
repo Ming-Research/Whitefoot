@@ -1,0 +1,50 @@
+fn walk(rows: &Slots<Slots<u64, 4>, 4>, steps: u64) -> result: u64 reads(rows) contract {
+  requires 2_u64 < rows^.len;
+} {
+  doc "cur is rebound inside the loop, so cur^ keeps its spelling at every point: the guard before the loop, the header invariant and the reads in the body all name cur's current row by one term.";
+  let cur = &rows^[0_u64];
+  if cur^.len <= 2_u64 {
+    return 0_u64;
+  }
+  let total = 0_u64;
+  let taken = 0_u64;
+  loop (
+    invariant wide: 2_u64 < cur^.len
+  ) {
+    let third = cur^[2_u64];
+    set total = total +wrap third;
+    let pending = taken < steps;
+    if pending {
+      set taken = taken + 1_u64;
+      set cur = &rows^[1_u64];
+      if cur^.len <= 2_u64 {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The walk reads the third element of row 0 once and of row 1 twice: 3 + 6 + 6.";
+  let rows = slots_new::<Slots<u64, 4>, 4>();
+  let a = slots_new::<u64, 4>();
+  let b = slots_new::<u64, 4>();
+  let c = slots_new::<u64, 4>();
+  place_back(window: &a, value: 1_u64);
+  place_back(window: &a, value: 2_u64);
+  place_back(window: &a, value: 3_u64);
+  place_back(window: &b, value: 4_u64);
+  place_back(window: &b, value: 5_u64);
+  place_back(window: &b, value: 6_u64);
+  place_back(window: &rows, value: move a);
+  place_back(window: &rows, value: move b);
+  place_back(window: &rows, value: move c);
+  let total = walk(rows: &rows, steps: 2_u64);
+  if total == 15_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

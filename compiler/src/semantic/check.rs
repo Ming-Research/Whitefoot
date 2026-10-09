@@ -630,6 +630,13 @@ struct BodyChecker {
     /// [RANGE-1, RANGE-4] the range facts that state nothing at this
     /// concrete instance, which a certificate's `use` of them skips.
     unformed_range_facts: HashSet<DeclarationId>,
+    /// [ENT-2, REF-1] the declarations some `set` of the function being
+    /// checked names as its bare target; such a reference variable is never
+    /// exact.
+    rebound_declarations: HashSet<DeclarationId>,
+    /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
+    /// own binding roots the path they name; no exact path starts at one.
+    rebound_anchors: HashSet<BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1188,22 +1195,31 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .signatures
             .iter()
-            .map(|signature| PermissionSignature {
-                name: signature.name.clone(),
-                parameter_declarations: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.declaration)
-                    .collect(),
-                parameter_modes: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.mode)
-                    .collect(),
-                reads: signature.declared_effects.reads.clone(),
-                writes: signature.declared_effects.writes.clone(),
+            .map(|signature| {
+                Ok(PermissionSignature {
+                    name: signature.name.clone(),
+                    parameter_declarations: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.declaration)
+                        .collect(),
+                    parameter_modes: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.mode)
+                        .collect(),
+                    parameter_releases: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            self.types.may_release_storage(parameter.ty, parameter.mode)
+                        })
+                        .collect::<Result<Vec<_>, CheckStop>>()?,
+                    reads: signature.declared_effects.reads.clone(),
+                    writes: signature.declared_effects.writes.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         for checked in &mut function_inventory {
             if !ordinary[checked.function.id.0 as usize] {
                 continue;
@@ -1705,6 +1721,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             });
         }
 
+        self.body.rebound_declarations = self
+            .types
+            .declarations
+            .rebound_declarations(check_context, signature.node)?;
+        for local in bindings.values() {
+            if local.reference.is_some() {
+                self.body.note_anchor(local.binding, local.declaration);
+            }
+        }
         let mut counters = ControlCounters {
             next_binding: &mut next_binding,
             next_loop: &mut next_loop,
@@ -2001,7 +2026,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedStatement::Proof(_)
             | CheckedStatement::Return { .. }
             | CheckedStatement::Give { .. }
-            | CheckedStatement::Break { .. } => false,
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => false,
         })
     }
 
@@ -2249,7 +2275,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
                 CheckedStatement::Proof(_) => {}
-                CheckedStatement::Break { .. } => {}
+                CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => {}
             }
         }
         Ok(())

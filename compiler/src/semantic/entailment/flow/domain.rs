@@ -54,13 +54,18 @@ impl Input<'_, '_> {
                 root: PlaceRoot::Binding(*binding),
                 path: fields.iter().copied().map(PlaceStep::Field).collect(),
             }),
-            CheckedExpression::DerefAddressed { binding, .. } => Some(ResolvedPlace {
-                atomic_aliases: Vec::new(),
-                root: PlaceRoot::Binding(*binding),
-                // A reference binding is the body-local name of its referent
-                // path [REF-1]. The written `^` marks that reference boundary;
-                // concrete Box content steps are appended below.
-                path: Vec::new(),
+            // A reference binding is the body-local name of its referent
+            // path [REF-1]. The written `^` marks that reference boundary;
+            // concrete Box content steps are appended below. [ENT-2] where
+            // the holder's description is exact here, that description is
+            // the referent's proof path.
+            CheckedExpression::DerefAddressed { binding, proof, .. } => Some(match proof {
+                Some(proof) => proof.clone(),
+                None => ResolvedPlace {
+                    atomic_aliases: Vec::new(),
+                    root: PlaceRoot::Binding(*binding),
+                    path: Vec::new(),
+                },
             }),
             CheckedExpression::BoxDeref { value, .. } => {
                 let mut path = self.read_place_path(value)?;
@@ -276,6 +281,7 @@ impl Vocabulary {
             // const parameter throughout the generic body.
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
+            | TermKind::TargetMeasure { .. }
             | TermKind::EntryDatum {
                 measure: Some(_), ..
             }

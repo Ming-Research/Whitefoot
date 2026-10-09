@@ -2004,6 +2004,7 @@ impl<'unit> TypeContext<'unit> {
                 carrier,
                 binding,
                 ty,
+                ..
             } => {
                 let Some(info) = binding_info.get(binding) else {
                     return Ok(None);

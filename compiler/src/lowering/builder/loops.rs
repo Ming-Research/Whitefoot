@@ -15,6 +15,11 @@ pub(super) const U64: IrType = IrType::Integer {
 pub(super) struct LoopTarget {
     pub(super) id: CheckedLoopId,
     pub(super) block: IrBlockId,
+    /// Ordinary header or lazily allocated counted update, shared by all
+    /// explicit and implicit backedges.
+    pub(super) backedge: Option<(IrBlockId, Vec<IrValueId>)>,
+    pub(super) backedge_types: Vec<IrType>,
+    pub(super) captures: Vec<IrValueId>,
     pub(super) carried_bindings: Vec<BindingId>,
     /// How many atomic statements enclose the loop; a `break` leaves every
     /// one deeper [SHARE-2].
@@ -27,6 +32,7 @@ impl IrBuilder<'_> {
         id: CheckedLoopId,
         body: &[CheckedStatement],
         backedge_drops: &[CheckedDrop],
+        continues: bool,
         give_target: Option<GiveTarget>,
     ) -> Result<(), LoweringFailure> {
         let base_bindings = self.bindings.clone();
@@ -57,6 +63,9 @@ impl IrBuilder<'_> {
         self.loops.push(LoopTarget {
             id,
             block: exit,
+            backedge: Some((header, Vec::new())),
+            backedge_types: Vec::new(),
+            captures: Vec::new(),
             carried_bindings: carried_bindings.clone(),
             atomic_depth: self.atomic_depth(),
         });
@@ -82,7 +91,11 @@ impl IrBuilder<'_> {
 
         self.current = Some(exit);
         self.bindings = base_bindings;
-        self.bind_parameters(&carried_bindings, &exit_parameters)
+        self.bind_parameters(&carried_bindings, &exit_parameters)?;
+        if !continues {
+            self.terminate(IrTerminator::Unreachable)?;
+        }
+        Ok(())
     }
 
     /// Lowers one counted `for`, either as the block graph below or — when
@@ -268,12 +281,24 @@ impl IrBuilder<'_> {
         self.loops.push(LoopTarget {
             id,
             block: exit,
+            backedge: None,
+            backedge_types: base_parameter_types.clone(),
+            captures: vec![header_lower, header_upper, header_binder],
             carried_bindings: carried_bindings.clone(),
             atomic_depth: self.atomic_depth(),
         });
         self.lower_statements(body, give_target)?;
+        let explicit_update = self
+            .loops
+            .last()
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .backedge
+            .clone();
         let update = if self.current.is_some() {
-            let (update, parameters) = self.new_block(&base_parameter_types)?;
+            let (update, parameters) = match explicit_update {
+                Some(update) => update,
+                None => self.new_block(&base_parameter_types)?,
+            };
             let mut arguments = self.binding_values(&carried_bindings)?;
             arguments.extend([header_lower, header_upper, header_binder]);
             let drops = self.lower_drops(backedge_drops)?;
@@ -284,7 +309,7 @@ impl IrBuilder<'_> {
             })?;
             Some((update, parameters))
         } else {
-            None
+            explicit_update
         };
         let Some(target) = self.loops.pop() else {
             return Err(LoweringFailure::InvalidCheckedProgram);
@@ -297,7 +322,7 @@ impl IrBuilder<'_> {
             // Cleanup has completed on the edge into this block. The hidden
             // update is exact because the true guard established binder <
             // upper; AddWrap is the target-independent, total modular
-            // operation. An all-terminating body creates no update block at all.
+            // operation. A body with no fallthrough or continue creates no update block.
             let update_base = update_parameters
                 .get(..base_count)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;

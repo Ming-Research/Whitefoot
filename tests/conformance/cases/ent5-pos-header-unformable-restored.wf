@@ -1,0 +1,18 @@
+fn probe(table: &Array<Slots<u8, 2>, 2>, flag: Bool) -> result: unit pure {
+  doc "An internal optional instance can be unformable while a restored induction instance is valid.";
+  let at = 0_u64;
+  loop (
+    invariant ordered: table^[at].len <= table^[at].cap
+  ) {
+    if flag {
+      set at = 2_u64;
+    }
+    let marker = 0_u8;
+    set at = 0_u64;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the source relation without executing the probe.";
+  return std::process::exit_status(code: 0_u8);
+}

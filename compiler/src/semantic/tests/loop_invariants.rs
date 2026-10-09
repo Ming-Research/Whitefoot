@@ -266,7 +266,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn ordinary_loop_without_a_break_has_a_contradictory_continuation() {
+fn ordinary_loop_without_a_break_rejects_its_dead_operation() {
     let source = br#"fn repeat_forever() -> result: unit pure {
   let value = 0_u64;
   loop (
@@ -282,29 +282,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("a break-free loop must retain its unreachable continuation: {outcome:?}");
-        };
-        let function = checked
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "repeat_forever")
-            .expect("repeat_forever exists");
-        let [invariant] = function.entailment.loop_invariants.as_slice() else {
-            panic!("the loop retains one header invariant");
-        };
-        assert!(invariant.proof.base);
-        assert_eq!(invariant.proof.step, Some(true));
-        let division = function
-            .entailment
-            .obligations
-            .iter()
-            .find(|obligation| obligation.family == ObligationFamily::IntegerDomain)
-            .expect("the structurally retained continuation checks its division");
-        assert!(division.discharged);
-    });
+    super::assert_rule(
+        source,
+        SemanticRule::Fn1,
+        SemanticIssueKind::UnreachableStatement,
+    );
 }
 
 #[test]
@@ -411,6 +393,95 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         "sum <= (255_u64 * (i + 1_u64))",
     );
+}
+
+#[test]
+fn loop_measure_formation_uses_the_exact_reference_proof_path() {
+    for root in ["rows", "q"] {
+        let source = format!(
+            r#"fn probe(rows: &Slots<Slots<u8, 2>, 2>) -> result: unit pure contract {{
+  requires 0_u64 < rows^.len;
+}} {{
+  let q = &rows^;
+  loop (
+    invariant row: {root}^[0_u64].len <= {root}^[0_u64].cap
+  ) {{
+    break;
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("the measure through {root} must form at the loop header: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "probe")
+                .expect("probe exists");
+            let [invariant] = function.entailment.loop_invariants.as_slice() else {
+                panic!("probe retains one header invariant");
+            };
+            assert!(invariant.proof.base);
+        });
+    }
+}
+
+// The field and counted binder share a spelling but have distinct identities.
+fn counted_field_collision_source(upper: u64, relation: &str) -> String {
+    format!(
+        r#"struct Rows {{
+  i: Slots<Slots<u8, 2>, 2>;
+}}
+
+fn probe(s: &Rows) -> result: unit reads(s) contract {{
+  requires 2_u64 <= s^.i.len;
+}} {{
+  for (
+    i in 0_u64..{upper}_u64,
+    invariant row: {relation}
+  ) {{
+    if 1_u64 <= s^.i[i].len {{
+    }} else {{
+      return unit;
+    }}
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+#[test]
+fn counted_measure_diagnostic_preserves_a_field_named_like_the_binder() {
+    let source = counted_field_collision_source(1, "i <= s^.i[i].len");
+    assert_invariant_required_relation(source.as_bytes(), "(i + 1_u64) <= s^.i[(i + 1_u64)].len");
+}
+
+#[test]
+fn counted_formation_diagnostic_preserves_a_field_named_like_the_binder() {
+    let source = counted_field_collision_source(2, "s^.i[i].len <= s^.i[i].cap");
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a next-header subscript rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op4);
+        let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } = issue.kind() else {
+            panic!("expected an undischarged subscript, got {:?}", issue.kind());
+        };
+        assert_eq!(residual, "(i + 1_u64) < s^.i.len");
+    });
 }
 
 /// Since v0.79 a proved header conclusion leaves its loop on the `break`
@@ -2580,17 +2651,12 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
-/// entering context at that join still proves the relation the header carries.
-/// Here it does not, and the header's own backedge fails for exactly the same
-/// reason. DIAG-1 admits one rejection, and the probe is decided at the join
-/// while the backedge is decided only after the whole body has been walked, so
-/// the probe is the reported failure.
-///
-/// Reporting the header instead makes a failing probe look like a passing one,
-/// which is how a writer concludes that the join does establish the relation.
+/// [ENT-5, INV-1] A body-end local invariant reads the state the join hands
+/// it. After a guarded replacement, both inputs of the join prove the header
+/// relation `hi <= spare` over their own values, so the join carries it and
+/// the probe holds; so does the backedge.
 #[test]
-fn a_failing_body_probe_is_reported_before_the_header_backedge() {
+fn a_body_probe_after_a_guarded_replacement_reads_the_transported_header_relation() {
     let source = br#"fn narrow(spare: u64, cand: u64, flag: Bool) -> out: u64 pure {
   let hi = spare;
   loop (
@@ -2605,12 +2671,53 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
     }
     invariant reprove: hi <= spare;
   }
-  return hi;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let t = True();
   let v = narrow(spare: 8_u64, cand: 3_u64, flag: t);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the transported header relation proves the probe: {outcome:?}"
+        );
+    });
+}
+
+/// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
+/// entering context at that join still proves the relation the header carries.
+/// Here it does not, because the replacing input's value may exceed the
+/// bound, and the header's own backedge fails for exactly the same reason.
+/// DIAG-1 admits one rejection, and the probe is decided at the join while
+/// the backedge is decided only after the whole body has been walked, so the
+/// probe is the reported failure.
+///
+/// Reporting the header instead makes a failing probe look like a passing one,
+/// which is how a writer concludes that the join does establish the relation.
+#[test]
+fn a_failing_body_probe_is_reported_before_the_header_backedge() {
+    let source = br#"fn narrow(spare: u64, cand: u64, flag: Bool) -> out: u64 pure {
+  let hi = spare;
+  loop (
+    invariant bounds: hi <= spare
+  ) {
+    if spare <= cand {
+    } else {
+      return 0_u64;
+    }
+    if flag {
+      set hi = cand;
+    }
+    invariant reprove: hi <= spare;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let t = True();
+  let v = narrow(spare: 8_u64, cand: 9_u64, flag: t);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -2667,4 +2774,100 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
         };
         assert_eq!(issue.rule(), SemanticRule::Op4);
     });
+}
+
+#[test]
+fn break_free_inner_return_has_matching_empty_induction_inputs() {
+    use super::super::obligations::ObligationSubject;
+
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/inv1-pos-ordinary-break-free-inner-return.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the vacuous header inventory must match its proof: {outcome:?}");
+        };
+        let main = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main was checked");
+        let [invariant] = main.entailment.loop_invariants.as_slice() else {
+            panic!("main has one header invariant");
+        };
+        let records = main
+            .obligations
+            .iter()
+            .filter(|record| matches!(record.subject, ObligationSubject::LoopInvariant { .. }))
+            .collect::<Vec<_>>();
+        let [record] = records.as_slice() else {
+            panic!("main has one header inventory record");
+        };
+        let ObligationSubject::LoopInvariant { inputs } = &record.subject else {
+            unreachable!("selected the loop invariant record");
+        };
+        let proof_inputs = invariant
+            .inputs
+            .iter()
+            .map(|input| input.input.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(record.site, invariant.node_path);
+        assert_eq!(inputs, &proof_inputs);
+        assert!(inputs.is_empty(), "the returning inner loop has no backedge");
+        assert!(invariant.proof.base);
+        assert_eq!(invariant.proof.step, None);
+    });
+}
+
+#[test]
+fn arm_releases_preserve_each_nested_induction_input() {
+    for (header, after) in [
+        ("loop (\n    invariant limit: x <= 1_u64\n  )", ""),
+        (
+            "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+            "\n  return unit;",
+        ),
+    ] {
+        for tail in ["", "\n    continue;"] {
+            let source = format!(
+                r#"fn probe(outer: Bool, inner: Bool) -> result: unit pure {{
+  let x = 0_u64;
+  {header} {{
+    if outer {{
+      let scratch = box_slots_new::<u8>(capacity: 1_u64);
+      if inner {{
+        set x = 0_u64;
+      }} else {{
+        set x = 1_u64;
+      }}
+    }} else {{
+      set x = 0_u64;
+    }}{tail}
+  }}{after}
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+            );
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("release frontiers must agree with the inventory: {outcome:?}");
+                };
+                let probe = checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "probe")
+                    .expect("probe was checked");
+                let [invariant] = probe.entailment.loop_invariants.as_slice() else {
+                    panic!("probe has one header invariant");
+                };
+                assert_eq!(invariant.inputs.len(), 3, "{header}, tail {tail:?}");
+                assert!(invariant.inputs.iter().all(|input| input.discharged));
+            });
+        }
+    }
 }

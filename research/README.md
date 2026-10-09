@@ -59,9 +59,18 @@ the work-branch and merge boundary.
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77
   with its proposed rule change and the URL parser's clamp census.
+- [Loop relations at joins](investigations/join-relations/DESIGN.md): the
+  Q137 design for transporting written header relations over current input
+  images, canonical merge boundaries, per-input induction, the independent
+  scheduling model, counted next-slot identities and the proposed
+  specification and checker changes.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.
+- [Indexed reductions](investigations/indexed-reductions/DESIGN.md): PAR-2
+  permission for histogram-like loops whose iterations combine into shared
+  indexed cells, the lowering choices and the criterion recorded before
+  implementation.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.
@@ -120,6 +129,10 @@ the work-branch and merge boundary.
   concurrent module verdicts, closure seeds and implicit-only snapshots that
   removed most of it with unchanged verdicts and LLVM, and the costs that
   remain.
+- [Wide-match checking cost](investigations/check-time/DESIGN.md): the Q140
+  attribution, Q155 comparison of join reduction, affine-index reuse and
+  backward proof queries, the lazy-index differentials, historical M5 reuse results, and the
+  manual base/twin/head timing panel on the CI 14900K runner.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).

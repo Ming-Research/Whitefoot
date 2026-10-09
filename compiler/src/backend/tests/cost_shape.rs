@@ -99,6 +99,22 @@ fn getelementptr_base(definition: &str) -> Option<&str> {
     comma_item(operands, 1)?.split_whitespace().next_back()
 }
 
+/// Whether any index of a `getelementptr` is a register rather than a
+/// constant, so that the offset it computes is a run-time value.
+fn getelementptr_has_runtime_index(definition: &str) -> bool {
+    let Some(operands) = definition.strip_prefix("getelementptr ") else {
+        return false;
+    };
+    (2..)
+        .map_while(|ordinal| comma_item(operands, ordinal))
+        .any(|index| {
+            index
+                .split_whitespace()
+                .next_back()
+                .is_some_and(|value| value.starts_with('%'))
+        })
+}
+
 fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'module str) -> bool {
     let mut seen = Vec::new();
     loop {
@@ -152,10 +168,15 @@ fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'modu
 }
 
 /// Recognize a single initialization of a freshly allocated payload, including
-/// a malloc whose null check puts the fill in a successor block. Following a
+/// a counted take whose null check puts the fill in a successor block. Following a
 /// unique predecessor chain back to the allocation excludes a refill loop:
 /// every execution of this fill must first execute that allocation again.
-/// Unknown provenance or a control-flow join fails this narrow test oracle.
+/// A `wf__heap_retake` root additionally requires the fill's destination to add a
+/// run-time index to the block, because the slots it preserves are a prefix of
+/// run-time length. This structural test does not prove that an arbitrary
+/// runtime index is past that prefix; the remaining provenance limitation is
+/// recorded in docs/todo.md. Unknown provenance or a control-flow join fails
+/// this narrow test oracle.
 fn fresh_allocation_for_fill<'module>(
     function: &'module str,
     mut pointer: &'module str,
@@ -163,6 +184,7 @@ fn fresh_allocation_for_fill<'module>(
 ) -> Option<&'module str> {
     let lines: Vec<_> = function.lines().collect();
     let mut seen = Vec::new();
+    let mut runtime_offset = false;
     let allocation = loop {
         if seen.contains(&pointer) {
             return None;
@@ -173,9 +195,18 @@ fn fresh_allocation_for_fill<'module>(
             line.strip_prefix(&prefix)
                 .map(|definition| (index, definition))
         })?;
-        if call_target(lines[index]) == Some("malloc") {
-            break index;
+        match call_target(lines[index]) {
+            Some("wf__heap_take") => break index,
+            // A `grow` [OP-10] reallocates the cell and keeps the header and the
+            // filled slots, so its result is fresh only past that preserved
+            // prefix. The prefix length is the block's run-time length, which no
+            // constant offset can be shown to reach, so only a destination that
+            // adds a run-time index to the block qualifies.
+            Some("wf__heap_retake") if runtime_offset => break index,
+            Some("wf__heap_retake") => return None,
+            _ => {}
         }
+        runtime_offset |= getelementptr_has_runtime_index(definition);
         pointer = getelementptr_base(definition)?;
     };
     let fill = lines.iter().position(|line| *line == fill)?;
@@ -238,7 +269,7 @@ fn bulk_initializations_use_fresh_storage(function: &str) -> Result<(), String> 
 fn heap_initialization_oracle_refuses_repeated_and_reused_fills() {
     let fresh = r#"define void @fresh() {
 entry:
-  %run = tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)
+  %run = tail call dereferenceable_or_null(4112) ptr @wf__heap_take(i64 4112)
   %is_null = icmp eq ptr %run, null
   br i1 %is_null, label %failed, label %initialize
 failed:
@@ -263,8 +294,36 @@ initialize:
   ret void
 }"#;
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
-    let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
+    let calloc = fresh.replace("@wf__heap_take(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
+    // A `grow` remake keeps the old prefix and fills only the slots it added,
+    // at a run-time offset past that prefix, once, after its realloc.
+    let remade = r#"define void @remade(ptr %old, i64 %length, i64 %added_bytes) {
+entry:
+  %run = call ptr @wf__heap_retake(ptr %old, i64 48, i64 4112)
+  %is_null = icmp eq ptr %run, null
+  br i1 %is_null, label %failed, label %initialize
+failed:
+  ret void
+initialize:
+  %payload = getelementptr i8, ptr %run, i64 16
+  %added = getelementptr i8, ptr %payload, i64 %length
+  call void @llvm.memset.p0.i64(ptr %added, i8 0, i64 %added_bytes, i1 false)
+  ret void
+}"#;
+    assert!(bulk_initializations_use_fresh_storage(remade).is_ok());
+    let remade_twice = remade.replace(
+        "  ret void\n}",
+        "  call void @llvm.memset.p0.i64(ptr %added, i8 0, i64 %added_bytes, i1 false)\n  ret void\n}",
+    );
+    assert!(bulk_initializations_use_fresh_storage(&remade_twice).is_err());
+    let refilled_prefix = remade.replace("ptr %added, i8 0", "ptr %payload, i8 0");
+    assert!(bulk_initializations_use_fresh_storage(&refilled_prefix).is_err());
+    let refilled_block = remade.replace("ptr %added, i8 0", "ptr %run, i8 0");
+    assert!(bulk_initializations_use_fresh_storage(&refilled_block).is_err());
+    let constant_offset = remade.replace("i64 %length\n", "i64 8\n");
+    assert_ne!(constant_offset, remade);
+    assert!(bulk_initializations_use_fresh_storage(&constant_offset).is_err());
 }
 
 /// A compact pointer-provenance trace for optimizer-version failures in the
@@ -320,7 +379,7 @@ fn aggregate_destination_provenance_ignores_commas_inside_gep_types() {
     assert!(is_aggregate_destination(stack, "%wf.inner"));
 
     let heap = r#"define void @heap() {
-  %wf.cell = call ptr @malloc(i64 24)
+  %wf.cell = call ptr @wf__heap_take(i64 24)
   %wf.slot = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.cell, i64 0, i32 1
   %wf.inner = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.slot, i64 0, i32 2
   ret void
@@ -372,54 +431,27 @@ fn call_target(line: &str) -> Option<&str> {
     rest[end..].starts_with('(').then(|| &rest[..end])
 }
 
-/// Follows a pointer through its local `getelementptr` definitions to the
-/// value it was derived from.
-fn pointer_root<'module>(function: &'module str, mut pointer: &'module str) -> &'module str {
-    let mut seen = Vec::new();
-    while !seen.contains(&pointer) {
-        seen.push(pointer);
-        let prefix = format!("  {pointer} = ");
-        let Some(base) = function
-            .lines()
-            .find_map(|line| line.strip_prefix(&prefix))
-            .and_then(getelementptr_base)
-        else {
-            break;
-        };
-        pointer = base;
-    }
-    pointer
+/// A counted retake remakes the existing cell; a fresh take or a null input
+/// cannot stand in for growth. The copy-source/release oracle belonged to
+/// the former allocate-copy-free lowering.
+fn remakes_a_run(allocation: &str) -> bool {
+    call_target(allocation) == Some("wf__heap_retake")
+        && call_argument(allocation, "wf__heap_retake", 0)
+            .and_then(|argument| argument.split_whitespace().next_back())
+            .is_some_and(|old| old != "null")
 }
 
-/// Recognize an allocation that remakes an existing run instead of taking a
-/// new one. `grow` [OP-10] allocates the larger block, copies the old window
-/// into it, and frees the old block, so the allocation is the destination of a
-/// bulk copy whose source block the same function frees. A take may also be a
-/// copy destination, as `walk`'s child path is for the prefix it copies in,
-/// but its source is never a block the function releases.
-fn remakes_a_run(function: &str, allocation: &str) -> bool {
-    let Some(register) = allocation.trim_start().split(" = ").next() else {
-        return false;
-    };
-    let freed: Vec<_> = function
-        .lines()
-        .filter(|line| call_target(line) == Some("free"))
-        .filter_map(|line| call_argument(line, "free", 0))
-        .filter_map(|argument| argument.split_whitespace().next_back())
-        .collect();
-    function.lines().any(|line| {
-        let Some(callee) = call_target(line)
-            .filter(|name| name.starts_with("llvm.memmove") || name.starts_with("llvm.memcpy"))
-        else {
-            return false;
-        };
-        let operand = |ordinal| {
-            call_argument(line, callee, ordinal)
-                .and_then(|argument| argument.split_whitespace().next_back())
-                .map(|pointer| pointer_root(function, pointer))
-        };
-        operand(0) == Some(register) && operand(1).is_some_and(|source| freed.contains(&source))
-    })
+#[test]
+fn run_remake_oracle_requires_a_retake_of_an_existing_block() {
+    let remake = "  %fresh = call ptr @wf__heap_retake(ptr %old, i64 48, i64 %bytes)";
+    assert!(remakes_a_run(remake));
+    assert!(!remakes_a_run(&remake.replace("ptr %old", "ptr null")));
+    assert!(!remakes_a_run(
+        "  %fresh = call ptr @wf__heap_take(i64 %bytes)"
+    ));
+    assert!(!remakes_a_run(
+        "  %fresh = call ptr @realloc(ptr %old, i64 %bytes)"
+    ));
 }
 
 #[test]
@@ -444,11 +476,12 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // flagship re-attribution has to explain. Growth is extra and is not a
     // take: `widen_window` remakes the read input for a line longer than it,
     // and `push_byte` and `push_word` remake a store for a directory whose
-    // names pass 4096 bytes or whose entries pass 512. Each remake allocates
-    // the larger block, copies the old run into it and frees the old block.
+    // names pass 4096 bytes or whose entries pass 512. Each remake is one
+    // `realloc` of the old block to the larger size [OP-10].
     //
     // The source still owns initialization. With exclusive run rows LLVM can
-    // fold malloc plus the zero-fill loop into calloc. Count either optimized
+    // fold an allocator plus a zero-fill loop into calloc. The counted
+    // wrapper retains its accounting side effect. Count either optimized
     // spelling, including both calloc factors, while retaining the exact
     // source-site and per-size counts, and one allocation per retained helper.
     let mut expanded = 0;
@@ -464,7 +497,16 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
         let helper = signature.contains(" @wf_zeroed_bytes(");
         helper_defined |= helper;
         for line in function.lines() {
-            if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
+            if call_target(line) == Some("wf__heap_retake") {
+                // `grow` [OP-10] remakes a run with one `realloc`, which keeps
+                // the filled slots; a remake is never a take.
+                remakes += 1;
+                assert!(
+                    remakes_a_run(line),
+                    "a retake remakes an existing run and never takes a new one: {line}"
+                );
+            }
+            if let Some(callee @ ("wf__heap_take" | "calloc")) = call_target(line) {
                 if helper {
                     helper_takes += 1;
                     continue;
@@ -484,7 +526,6 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
                         expanded += 1;
                         *sizes.entry(bytes).or_insert(0) += 1;
                     }
-                    None if remakes_a_run(function, line) => remakes += 1,
                     None => {
                         expanded += 1;
                         prefix_sized += 1;
@@ -534,16 +575,17 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     );
     assert!(
         remakes >= 3,
-        "widen_window, push_byte and push_word each remake a run by copying it: {remakes}"
+        "widen_window, push_byte and push_word each remake a run by reallocating it: {remakes}"
     );
-    // Nothing reallocates in place, and nothing re-initializes. That the fill
+    // Only `grow` reallocates, and nothing re-initializes. That the fill
     // runs once per take is a source fact under this surface rather than an
     // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
     // take and the hand-back, so a caller cannot reach a filled run without
     // having taken it and cannot re-reach the fill without taking another. A
-    // remake fills only the slots it added, and only once, after its copy.
-    // LLVM may retain that first fill as a memset after malloc and
-    // its null check, instead of a calloc. The provenance/control-flow oracle
+    // remake fills only the slots it added, at a run-time offset past the
+    // prefix its realloc preserved, and only once.
+    // LLVM may retain that first fill as a memset after the counted allocation
+    // and its null check. The provenance/control-flow oracle
     // permits one such fill per allocation and refuses repeated fills, fills
     // reached again without allocation, and fills through incoming pointers.
     // Aggregate or frame initialization may also become a memset, without
@@ -551,6 +593,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // which aggregate stores this optimizer combines.
     // Keep the no-refill claim on pointer provenance, rather than forbidding
     // the unrelated aggregate initialization instruction by name.
+    // `grow` uses the counted retake, so bare reallocation would bypass
+    // accounting; other reallocating or clearing spellings stay forbidden.
     for forbidden in ["@realloc(", "@reallocf(", "bzero"] {
         assert!(
             !optimized().contains(forbidden),
@@ -576,7 +620,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // read input necessarily follows a read, since only a read shows a line
     // longer than the window, so the check constrains the first allocation.
     for function in program_functions() {
-        let Some(first_allocation) = ["@malloc(", "@calloc(", "@wf_zeroed_bytes("]
+        let Some(first_allocation) = ["@wf__heap_take(", "@calloc(", "@wf_zeroed_bytes("]
             .iter()
             .filter_map(|site| function.find(site))
             .min()

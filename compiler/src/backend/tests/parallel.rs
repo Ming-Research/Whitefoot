@@ -223,7 +223,7 @@ fn last_byte(v: u64) -> result: u8 pure {
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "A pure call handed out while a pure call written as an if condition runs.";
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1868,8 +1868,8 @@ fn run_owned_lane_cases(
         .replace("call void @wf__par_release(", "call void @wf_test_release_lane(")
         .replace("call void @wf__par_publish(", "call void @wf_test_publish_lane(")
         .replace("call void @wf__par_join(", "call void @wf_test_join_lane(")
-        .replace("@malloc(", "@wf_test_source_allocate(")
-        .replace("@free(", "@wf_test_source_release(");
+        .replace("@wf__heap_take(", "@wf_test_source_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_source_release(");
     let executable = build_linked_executable(&observed, Some(OWNED_LANE_OBSERVER), &[], &directory);
     let mut outcomes = Vec::new();
     for (mode, workers) in [("1", "1"), ("0", "4"), ("2", "4")] {
@@ -2024,11 +2024,12 @@ void *wf_test_source_allocate(size_t size) {
     return value;
 }
 
-void wf_test_source_release(void *value) {
+void wf_test_source_release(void *value, uint64_t bytes) {
     if (value == NULL) abort();
     for (unsigned id = 1; id < 10; ++id) {
         void *expected = value;
         if (atomic_compare_exchange_strong(&held[id], &expected, NULL)) {
+            if (bytes != sizes[id]) abort();
             if (sizes[id] == 3) atomic_fetch_add(&spares, 1);
             atomic_fetch_add(&frees, 1);
             free(value);
@@ -2083,7 +2084,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_waiting_helper_is_never_handed_out() {
     let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);
@@ -2239,8 +2240,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
 
 /// Omitting offers below the call grain must preserve the last join site and
 /// the ordinary evaluation of every removed member, including members inside
-/// a mixed run. `counted` recurses, so its offers stay; `increment` is a few
-/// instructions and loses its offers; `e`, the join site, is never published.
+/// a mixed run. `counted` is a recursion that offers its own calls, so its
+/// offers stay; `increment` is a few instructions and loses its offers; `e`,
+/// the join site, is never published.
 #[test]
 fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
@@ -2252,15 +2254,16 @@ fn counted(x: u64, steps: u64) -> result: u64 pure {
     return x;
   }
   let fewer = steps -wrap 1_u64;
-  let below = counted(x: x, steps: fewer);
-  return below +wrap steps;
+  let left = counted(x: x, steps: fewer);
+  let right = counted(x: x, steps: fewer);
+  return left +wrap right;
 }
 
 fn mixed(x: u64) -> result: u64 pure {
   let a = increment(x: x);
-  let b = counted(x: x, steps: 16_u64);
+  let b = counted(x: x, steps: 4_u64);
   let c = increment(x: x);
-  let d = counted(x: x, steps: 16_u64);
+  let d = counted(x: x, steps: 4_u64);
   let e = increment(x: x);
   let first = a +wrap b;
   let second = c +wrap d;
@@ -2270,7 +2273,7 @@ fn mixed(x: u64) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let result = mixed(x: 3_u64);
-  if result == 290_u64 {
+  if result == 108_u64 {
     return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
@@ -2440,6 +2443,116 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let retained = super::emit_lowered(source, crate::OverlapLowering::On);
     assert!(module_requires_parallel_runtime(&retained));
+}
+
+/// A recursion that offers none of its own calls spends no budget level at any
+/// depth, so it is no ground to keep an offer: a few instructions that reach
+/// only such a descent lose their offer like any other small callee, while a
+/// callee reaching a recursion that offers its own calls keeps it. Under the
+/// former rule `lookup`'s pair was handed out at every call because `descend`
+/// recurses, which is how a suffix walk calling a tree lookup at each node
+/// handed out ten thousand microsecond tasks per edit in Snowghost's layout.
+#[test]
+fn call_grain_prices_callees_reaching_only_unoffered_recursion() {
+    let linear = br#"fn descend(n: u64) -> result: u64 pure {
+  if n == 0_u64 {
+    return 1_u64;
+  }
+  let m = n -wrap 1_u64;
+  let below = descend(n: m);
+  return below +wrap 1_u64;
+}
+
+fn lookup(n: u64) -> result: u64 pure {
+  let found = descend(n: n);
+  return found;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = lookup(n: 3_u64);
+  let b = lookup(n: 4_u64);
+  let value = a +wrap b;
+  if value == 9_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let every = super::emit_lowered(linear, crate::OverlapLowering::On);
+    assert!(
+        function_body(&every, "@wf_main").contains("call void @wf__par_publish("),
+        "the pair is permitted and handed out when every offer is kept"
+    );
+    let filtered = super::emit_lowered(linear, crate::OverlapLowering::OnWithCallGrain);
+    let sequential = super::emit_lowered(linear, crate::OverlapLowering::Off);
+    assert_eq!(
+        filtered, sequential,
+        "a lookup reaching only a recursion that offers nothing loses its offer"
+    );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", linear)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the linear recursion compiles");
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  main  call grain: omitted offer of lookup (static work "
+        ) && line
+            .ends_with(", reaches only recursion that offers none of its own calls)")),
+        "the omitted offer names the recursion it reaches: {ledger:?}"
+    );
+    let forking = String::from_utf8(linear.to_vec()).unwrap().replace(
+        "  let below = descend(n: m);\n  return below +wrap 1_u64;",
+        "  let left = descend(n: m);\n  let right = descend(n: m);\n  return left +wrap right;",
+    );
+    let forking = forking.replace("value == 9_u64", "value == 24_u64");
+    let kept = super::emit_lowered(forking.as_bytes(), crate::OverlapLowering::OnWithCallGrain);
+    assert!(
+        function_body(&kept, "@wf_main").contains("call void @wf__par_publish("),
+        "a lookup reaching a recursion that offers its own calls keeps its offer"
+    );
+    // A recursion whose only group pairs its own call with a small read
+    // offers nothing once the read loses its offer, so its callers' offers go
+    // too: the classification follows the groups that remain.
+    let dissolved = String::from_utf8(linear.to_vec())
+        .unwrap()
+        .replace(
+            "fn descend(n: u64)",
+            "fn field(n: u64) -> result: u64 pure {\n  return n +wrap 1_u64;\n}\n\nfn descend(n: u64)",
+        )
+        .replace(
+            "  let below = descend(n: m);\n  return below +wrap 1_u64;",
+            "  let k = field(n: n);\n  let below = descend(n: m);\n  return below +wrap k;",
+        )
+        .replace("value == 9_u64", "value == 25_u64");
+    let every_dissolved = super::emit_lowered(dissolved.as_bytes(), crate::OverlapLowering::On);
+    assert!(
+        function_body(&every_dissolved, "@wf_main").contains("call void @wf__par_publish("),
+        "the lookup pair is permitted and handed out when every offer is kept"
+    );
+    let descend_symbol = if every_dissolved.contains("@wf__par_budget_descend(") {
+        "@wf__par_budget_descend"
+    } else {
+        "@wf_descend"
+    };
+    assert!(
+        function_body(&every_dissolved, descend_symbol).contains("call void @wf__par_publish("),
+        "the recursion's own group, the read beside its call, exists before the grain"
+    );
+    let pruned = super::emit_lowered(
+        dissolved.as_bytes(),
+        crate::OverlapLowering::OnWithCallGrain,
+    );
+    assert_eq!(
+        pruned,
+        super::emit_lowered(dissolved.as_bytes(), crate::OverlapLowering::Off),
+        "dissolving the recursion's only group removes the lookup's offer too"
+    );
+    for module in [&filtered, &kept, &pruned] {
+        let output = compile_and_run(module);
+        assert!(output.status.success(), "{output:?}");
+    }
 }
 
 /// The recursion budget bounds how deep offers nest, so only a call in a group

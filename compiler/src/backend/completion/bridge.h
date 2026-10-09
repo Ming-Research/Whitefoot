@@ -7,6 +7,30 @@
 extern "C" {
 #endif
 
+/* Invocation stop source; initialization alone is safe for native callers. */
+struct wf_completion_record;
+int wf__stop_initialize(void);
+#if !defined(_WIN32)
+/* One launcher invocation: prepare on the floor-attached original thread
+ * before creating the entry or any other thread, then receive on that same
+ * thread. The entry calls entry_returned after its body, before being joined.
+ * Without this loop, opening a listener returns ENOTSUP. */
+int wf__stop_prepare(void);
+void wf__stop_receive(void);
+void wf__stop_entry_returned(void);
+#endif
+/* begin holds the lifecycle lock on success; finish releases it, starting
+ * interception only if the ordinary library acquired a factory credit. */
+int wf__stop_listen_begin(void);
+int wf__stop_listen_finish(int has_credit);
+int wf__stop_close(void);
+/* Host observers publish in this lock's acquisition order; 0 interrupt, 1 termination. */
+void wf__stop_observe(unsigned kind);
+void wf__stop_next(struct wf_completion_record *record);
+void wf__stop_cancel(struct wf_completion_record *record);
+void wf__completion_stop_next_submit(void *record);
+void wf__completion_stop_close_submit(void *record);
+
 /* Every submit fills the record the caller supplies and answers nothing: the
  * runtime either accepted the operation or executed it itself and published
  * its completion into the record, and either way the operation is the
@@ -80,8 +104,11 @@ void wf__completion_file_sync_submit(
 /* Namespace changes use component bytes owned by the pending call. */
 void wf__completion_file_rename_submit(int directory, const void *from,
                                        const void *to, void *record);
+void wf__completion_file_move_submit(int from_directory, const void *from,
+                                     int to_directory, const void *to, void *record);
 void wf__completion_file_remove_submit(int directory, const void *path, void *record);
 void wf__completion_directory_sync_submit(int directory, void *record);
+void wf__completion_directory_write_open_submit(int directory, const void *path, void *record);
 
 /* Sets the file's byte length [PRE-2], leaving appends at its new end. */
 void wf__completion_file_truncate_submit(
@@ -460,6 +487,16 @@ void wf__watch_unit(void *watch, wf_watch_list *list);
 void wf__watch_written(wf_watch_list *list);
 enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
 void wf__watch_seen(unsigned moment);
+
+/* Emitted heap storage uses the optional heap.c unit; accounting and reads
+ * are always available without allocator references. Resident observation
+ * returns 1 with bytes written, or 0 when the host cannot report it. */
+void *wf__heap_take(uint64_t bytes);
+void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes);
+void wf__heap_give(void *block, uint64_t bytes);
+void wf__heap_change(int64_t change);
+uint64_t wf__heap_in_use(void);
+int wf__resident_bytes(uint64_t *bytes);
 
 /* What the runtime's concurrent maps take from this runtime: the number of
  * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a

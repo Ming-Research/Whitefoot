@@ -1,0 +1,62 @@
+enum Choice {
+  First();
+  Second();
+  Third();
+}
+
+fn probe(choice: Choice, outer: Bool, inner: Bool, a0: i32, b0: i32, c0: i32, d0: i32, e0: i32, f0: i32) -> result: unit pure contract {
+  requires a0 + b0 <= 0_i32;
+  requires c0 + d0 <= 0_i32;
+  requires e0 + f0 <= 0_i32;
+} {
+  doc "P and Q prove H; P, Q and R cannot publish sibling T in one frozen batch.";
+  let a = 0_i32;
+  let b = 0_i32;
+  let c = 0_i32;
+  let d = 0_i32;
+  let e = 0_i32;
+  let f = 0_i32;
+  loop (
+    invariant h: a + b + c + d <= 0_i32,
+    invariant t: a + b + c + d + e + f <= 0_i32
+  ) {
+    match choice {
+      First() => {
+        set a = a0;
+        set b = b0;
+        set c = c0;
+        set d = d0;
+        set e = e0;
+        set f = f0;
+      }
+      Second() => {
+        set a = a0;
+        set b = b0;
+        set c = c0;
+        set d = d0;
+        set e = e0;
+        set f = f0;
+      }
+      Third() => {
+        set a = a0;
+        set b = b0;
+        set c = c0;
+        set d = d0;
+        set e = e0;
+        set f = f0;
+        invariant third: a + b + c + d + e + f <= 0_i32 {
+          use (a + b <= 0_i32);
+          use (c + d <= 0_i32);
+          use (e + f <= 0_i32);
+        }
+      }
+    }
+    invariant consumer: 2_i32 * a + 2_i32 * b + c + d + e + f <= 0_i32;
+    return unit;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the source relation without executing the probe.";
+  return std::process::exit_status(code: 0_u8);
+}
