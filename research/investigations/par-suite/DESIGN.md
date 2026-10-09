@@ -94,3 +94,57 @@ also now states allowance provenance so its exploratory zero-startup result
 cannot lose that qualification when copied into CI's job summary.
 The reviewer inspected those fixes separately and reported no remaining
 findings in the changed regions; the new CI controls remain unexecuted.
+
+## Baseline, 2026-10-09
+
+Two runs of the `par-suite` job of `compute-bench.yml`, each building the
+compiler and runtime of its own revision, 3 interleaved rounds per cell and
+worker count, `d=0` (uncalibrated, so every cell's formal verdict is
+inconclusive and the ratios below are exploratory):
+
+- hosted, [37917975092](https://github.com/Ming-Research/Whitefoot/actions/runs/37917975092),
+  4-vCPU AMD EPYC 7763, branch at d392af91c's main plus this suite, worker
+  counts 1, 2, 4, 8, 16 and default (4);
+- i9-14900K, [37990650681](https://github.com/Ming-Research/Whitefoot/actions/runs/37990650681),
+  32 logical CPUs, branch at fc594f767 (main 184a4c3ef plus this suite),
+  worker counts 1, 2, 4, 8, 16, 32 and default (32).
+
+The ratio is the median `--par` wall time over the sequential image's. Cells
+by ratio on the 14900K, visible and held-out split counted apart:
+
+| workers | split | cells | > 2 | 1.1 to 2 | 0.9 to 1.1 | < 0.9 |
+|---|---|---|---|---|---|---|
+| 4 | visible | 118 | 5 | 32 | 65 | 16 |
+| 4 | held-out | 110 | 5 | 33 | 56 | 16 |
+| 8 | visible | 118 | 6 | 35 | 62 | 15 |
+| 8 | held-out | 110 | 10 | 28 | 56 | 16 |
+| 32 (default) | visible | 118 | 40 | 4 | 64 | 10 |
+| 32 (default) | held-out | 110 | 41 | 10 | 50 | 9 |
+
+Visible cells at the default 32 workers, by family (minimum, median,
+maximum ratio):
+
+| family | cells | min | median | max |
+|---|---|---|---|---|
+| work | 79 | 0.34 | 1.01 | 9.45 |
+| bound | 13 | 0.77 | 1.11 | 8.64 |
+| size | 10 | 0.98 | 1.04 | 15.54 |
+| hot, 10 calls | 3 | 0.97 | 8.09 | 8.98 |
+| hot, 10,000 calls | 1 | 39.14 | 39.14 | 39.14 |
+| hot, 10,000,000 calls | 2 | 1.00 | 248 | 248 |
+| real programs | 10 | 0.93 | 1.01 | 9.05 |
+
+The visible real programs most slowed: `merge_sort` 9.05, `range_split` 7.16,
+`radix_scatter` 4.86, `sha256_abc` 1.35; the other six within 0.93 to 1.01.
+
+The hot family is a four-leaf recursive split called from a dependent
+sequential loop; every call hands its leaves out, so its cost grows with the
+call count and with the worker count (the hosted 4-vCPU run measured a
+median of 40 at 10,000,000 calls, the 14900K 248 at 32 workers). On both hosts
+today's `--par` is slower than one thread in far more cells than it is
+faster, which fails H1 as stated above at every worker count measured.
+
+Held-out discipline: the held-out cells are reported only in the counts
+above. One working listing of the 14900K real programs printed all twelve,
+so the ratios of the two held-out ones were seen (both between 0.95 and
+1.01); no constant or design choice has been taken from them.
