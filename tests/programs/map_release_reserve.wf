@@ -121,5 +121,37 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if medium_count != 2000_u64 {
     return exit_status(code: 25_u8);
   }
+  let large = shared_map_new::<u64>(capacity: 0_u64);
+  let large_next = 0_u64;
+  loop @large_churn {
+    if large_next == 400000_u64 {
+      break @large_churn;
+    }
+    let key = &name[0_u64..8_u64];
+    spell(destination: key, value: large_next);
+    atomic t = &large {
+      set t^[key] = Some<u64>(value: large_next);
+    }
+    if large_next >= 40000_u64 {
+      let old = large_next -wrap 40000_u64;
+      spell(destination: key, value: old);
+      atomic t = &large {
+        set t^[key] = None<u64>();
+      }
+    }
+    set large_next = large_next +wrap 1_u64;
+  }
+  let large_code = released(store: &large, meter: &meter);
+  if large_code != 0_u8 {
+    let large_exit = large_code +wrap 30_u8;
+    return exit_status(code: large_exit);
+  }
+  let large_count = 0_u64;
+  atomic t = &large {
+    set large_count = map_count::<u64>(map: t);
+  }
+  if large_count != 40000_u64 {
+    return exit_status(code: 35_u8);
+  }
   return exit_status(code: 0_u8);
 }
