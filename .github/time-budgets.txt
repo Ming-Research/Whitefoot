@@ -52,8 +52,8 @@ linux-deque-tsan                10     -      -
 linux-runtime-tsan              10     -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
-map-asan                        60     60     -
-map-tsan                        120    120    -
+map-asan                        30     20     -
+map-tsan                        35     45     -
 
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown and placement
