@@ -201,7 +201,15 @@ pub(crate) fn lower_checked_from(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    let nominal_ceilings = nominals
+        .iter()
+        .map(|nominal| {
+            prelude::layout_ceiling(&nominals, &elements, IrType::Nominal(nominal.id()))
+                .ok_or(LoweringFailure::InvalidCheckedProgram)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        nominal_ceilings,
         nominals,
         elements,
         constants,
@@ -416,6 +424,7 @@ fn lower_nominals(
                     u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
                 ),
                 kind,
+                handler_words: 0,
             })
         })
         .collect()

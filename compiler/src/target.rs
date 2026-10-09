@@ -419,6 +419,7 @@ pub(super) fn element_has_zero_stride(
 struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
+    handler_offset: Option<u64>,
 }
 
 /// What the emitter prints for one union-laid-out enum: the value's size,
@@ -428,7 +429,9 @@ struct UnionLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct UnionEnumLayout {
     size: u64,
+    align: u64,
     aligning_variant: u32,
+    handler_offset: Option<u64>,
 }
 
 impl UnionEnumLayout {
@@ -438,6 +441,15 @@ impl UnionEnumLayout {
 
     pub(crate) const fn aligning_variant(self) -> u32 {
         self.aligning_variant
+    }
+
+    pub(crate) const fn handler_offset(self) -> Option<u64> {
+        self.handler_offset
+    }
+
+    pub(crate) fn handler_alignment(self) -> Option<u64> {
+        self.handler_offset
+            .map(|_| self.align.min(POINTER_LAYOUT.align))
     }
 }
 
@@ -460,19 +472,50 @@ pub(crate) fn union_enum_layout(
         return Err(TargetLayoutFailure::InvalidIr);
     };
     let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
-    let union = layouts.union_layout(variants)?;
+    let words = program
+        .nominal(id)
+        .ok_or(TargetLayoutFailure::InvalidIr)?
+        .handler_words;
+    let union = layouts.union_layout(variants, words)?;
+    let view_align = union.views.iter().map(|(_, view)| view.align).max();
     let aligning_variant = variants
         .iter()
         .zip(&union.views)
-        .find(|(variant, (_, view))| {
-            !variant.fields().is_empty() && view.align == union.value.align
-        })
+        .find(|(variant, (_, view))| !variant.fields().is_empty() && Some(view.align) == view_align)
         .map(|(variant, _)| variant.tag())
         .ok_or(TargetLayoutFailure::InvalidIr)?;
     Ok(UnionEnumLayout {
         size: union.value.size,
+        align: union.value.align,
         aligning_variant,
+        handler_offset: union.handler_offset,
     })
+}
+
+/// All family words must fit OP-9's retained language ceiling. A product of
+/// selected child layouts is not that ceiling: nested unions may already be
+/// smaller, and their unused allowance is available to the containing enum.
+pub(crate) fn threaded_enum_fits(
+    target: TargetLayout,
+    program: &IrProgram,
+    id: IrNominalId,
+) -> Result<bool, TargetLayoutFailure> {
+    let nominal = program.nominal(id).ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = nominal.kind() else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    if nominal.is_tag_only_enum() {
+        return Ok(false);
+    }
+    let ceiling = program
+        .nominal_ceilings
+        .get(id.index())
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let threaded = layouts.union_layout(variants, nominal.handler_words)?.value;
+    Ok(ceiling.size.permits(threaded.size)
+        && threaded.align <= ceiling.align
+        && ceiling.stride.permits(threaded.size))
 }
 
 /// Whether `id` is laid out as a union of variant views
@@ -484,9 +527,10 @@ pub(crate) fn union_enum_layout(
 /// variant the product, which already is that variant's view, and one whose
 /// product returns in registers that product and its register return.
 ///
-/// The rule reads only the concrete nominal and the register budget shared
-/// by every admitted target, so it is target-independent, and target layout,
-/// the emitter and the call ABI all ask this one predicate.
+/// A dispatch layout plan may also select a union plus handler words for
+/// a previously register-returned product when all words fit its ceiling.
+/// Target layout, the emitter and the call ABI all ask this one predicate;
+/// the ordinary rule reads only the nominal and shared register budget.
 pub(crate) fn is_union_enum(
     nominals: &[IrNominal],
     elements: &[IrType],
@@ -498,6 +542,9 @@ pub(crate) fn is_union_enum(
     let IrNominalKind::Enum { variants } = nominal.kind() else {
         return Ok(false);
     };
+    if nominal.handler_words != 0 {
+        return Ok(true);
+    }
     if variants
         .iter()
         .filter(|variant| !variant.fields().is_empty())
@@ -1522,7 +1569,8 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            self.union_layout(variants)?.value
+            self.union_layout(variants, nominal.handler_words)?
+                .value
         } else {
             let mut fields = Vec::new();
             match nominal.kind() {
@@ -1564,6 +1612,7 @@ impl<'types> LayoutComputer<'types> {
     fn union_layout(
         &mut self,
         variants: &[crate::IrVariant],
+        words: u32,
     ) -> Result<UnionLayout, TargetLayoutFailure> {
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
@@ -1579,10 +1628,29 @@ impl<'types> LayoutComputer<'types> {
             align = align.max(view.align);
             views.push((variant.tag(), view));
         }
+        let handler_offset = if words != 0 {
+            // The maximum view alignment equals the product alignment: both
+            // take the maximum over the tag and the same selected field
+            // layouts. Cap the word alignment there, including when it is
+            // below pointer alignment, so the word cannot raise the ceiling.
+            let word_align = POINTER_LAYOUT.align.min(align);
+            let offset = align_up(self.target, size, word_align, TargetObject::Representation)?;
+            size = checked_add(
+                offset,
+                u64::from(words) * POINTER_LAYOUT.size,
+                self.target,
+                TargetObject::Representation,
+            )?;
+            align = align.max(word_align);
+            Some(offset)
+        } else {
+            None
+        };
         let size = align_up(self.target, size, align, TargetObject::Representation)?;
         Ok(UnionLayout {
             value: Layout { size, align },
             views,
+            handler_offset,
         })
     }
 

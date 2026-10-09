@@ -16,6 +16,7 @@ mod floating;
 mod floor;
 mod frames;
 mod frontier;
+mod handler_words;
 mod indexed;
 mod integer;
 mod operations;
@@ -81,6 +82,8 @@ impl From<std::fmt::Error> for BackendFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LlvmModule {
     pub(crate) model: Module,
+    /// Whole-program enum layout cannot be partitioned after emission.
+    pub(crate) threaded_layout: bool,
     text: String,
     ledger: Vec<String>,
 }
@@ -102,13 +105,22 @@ impl LlvmModule {
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
-        self.model.encode()
+        let mut bytes = vec![u8::from(self.threaded_layout)];
+        bytes.extend(self.model.encode());
+        bytes
     }
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        let (&threaded_layout, bytes) = bytes.split_first()?;
+        let threaded_layout = match threaded_layout {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let model = Module::decode(bytes)?;
         Some(Self {
             text: model.render(),
             model,
+            threaded_layout,
             ledger: Vec::new(),
         })
     }
@@ -193,11 +205,27 @@ pub(crate) fn sequential_entry_symbol(
 }
 
 /// Emits the same ordinary callable ABI with a selected physical target layout.
+#[cfg(test)]
 pub(crate) fn emit_llvm_with_layout(
     program: &IrProgram,
     target: TargetLayout,
 ) -> Result<LlvmModule, BackendFailure> {
     emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
+}
+
+pub(crate) use handler_words::prepare_dispatch_layout;
+
+/// Emits using the same explicit layout plan that selected nominal storage.
+pub(crate) fn emit_prepared_llvm(
+    prepared: &handler_words::PreparedDispatch<'_>,
+    target: TargetLayout,
+) -> Result<LlvmModule, BackendFailure> {
+    emit_module(
+        &prepared.program,
+        target,
+        WindowAddressFacts::Emit,
+        &prepared.plan,
+    )
 }
 
 /// Controls only the optional fact about a window's normalized address
@@ -210,10 +238,26 @@ pub(super) enum WindowAddressFacts {
     Withhold,
 }
 
+#[cfg(test)]
 pub(super) fn emit_llvm_with_window_address_facts(
     program: &IrProgram,
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
+) -> Result<LlvmModule, BackendFailure> {
+    let selected = prepare_dispatch_layout(program, target, false)?;
+    emit_module(
+        &selected.program,
+        target,
+        window_address_facts,
+        &selected.plan,
+    )
+}
+
+fn emit_module(
+    program: &IrProgram,
+    target: TargetLayout,
+    window_address_facts: WindowAddressFacts,
+    dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
@@ -258,6 +302,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                 frontiers: &frontiers,
                 grain: None,
                 window_address_facts,
+                dispatch_layout,
             },
         )?;
         functions.append(emitter.emit()?);
@@ -283,6 +328,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                     frontiers: &frontiers,
                     grain: Some(grain),
                     window_address_facts,
+                    dispatch_layout,
                 },
             )?
             .emit()?,
@@ -317,6 +363,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
                         frontiers: &frontiers,
                         grain: None,
                         window_address_facts,
+                        dispatch_layout,
                     },
                 )?
                 .emit()?,
@@ -576,6 +623,10 @@ pub(super) fn emit_llvm_with_window_address_facts(
     Ok(LlvmModule {
         text: text.render(),
         model: text,
+        threaded_layout: program
+            .nominals()
+            .iter()
+            .any(|nominal| nominal.handler_words != 0),
         ledger,
     })
 }
@@ -1472,6 +1523,8 @@ struct FunctionEmitter<'program, 'state> {
     /// What the dispatch lowering did with this function's loops around a
     /// `match`, for the developer ledger (compiler/match-dispatch-lowering).
     dispatch_ledger: Vec<String>,
+    /// Composition-wide word ownership and constructor addresses.
+    dispatch_layout: &'state handler_words::DispatchLayoutPlan,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1493,6 +1546,7 @@ struct ModuleState<'state> {
     frontiers: &'state RecursiveFrontiers,
     grain: Option<Grain>,
     window_address_facts: WindowAddressFacts,
+    dispatch_layout: &'state handler_words::DispatchLayoutPlan,
 }
 
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
@@ -1510,6 +1564,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frontiers,
             grain,
             window_address_facts,
+            dispatch_layout,
         } = module;
         let mut overlaps = Vec::new();
         let mut ordinary_lane_frames = HashMap::new();
@@ -1585,6 +1640,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             dispatch: None,
             slot_uses: std::cell::RefCell::new(HashSet::new()),
             dispatch_ledger: Vec::new(),
+            dispatch_layout,
         })
     }
 
@@ -1794,13 +1850,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(())
     }
 
-    fn emit(mut self) -> Result<Module, BackendFailure> {
+    /// Shared by dispatch preplanning and emission, so constructor addresses
+    /// use the exact same destination-form symbol as the emitted arms.
+    fn body_abi(&self) -> Result<(String, String, FunctionAbi, FunctionAbi, bool), BackendFailure> {
         let declaration = self.function.blocks().is_empty();
-        let reachable = if declaration {
-            Vec::new()
-        } else {
-            self.reachable_blocks()?
-        };
         // A declaration names a linked definition by its public ABI. A
         // definition whose result returns in registers is emitted as its
         // destination-form body under an internal symbol, followed by the
@@ -1833,6 +1886,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             symbol.clone()
         };
+        Ok((symbol, body_symbol, public, abi, entry))
+    }
+
+    fn emit(mut self) -> Result<Module, BackendFailure> {
+        let declaration = self.function.blocks().is_empty();
+        let reachable = self.reachable_blocks()?;
+        let waiting = self.function.waits();
+        let (symbol, body_symbol, public, abi, entry) = self.body_abi()?;
         let (mut parameters, mut references) = self.signature_parameters(&abi)?;
         let result = if abi.result().uses_destination() {
             "void".to_owned()
@@ -2085,23 +2146,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// Emit only the entry-reachable graph: a predecessor-free phi is not
     /// LLVM, and a dead cycle must not supply an incoming value to a live phi.
     fn reachable_blocks(&self) -> Result<Vec<bool>, BackendFailure> {
-        let mut reachable = vec![false; self.function.blocks().len()];
-        let mut pending = vec![0_usize];
-        while let Some(index) = pending.pop() {
-            let visited = reachable.get_mut(index).ok_or(BackendFailure::InvalidIr)?;
-            if *visited {
-                continue;
-            }
-            *visited = true;
-            match self.function.blocks()[index].terminator() {
-                IrTerminator::Jump { target, .. } => pending.push(target.index()),
-                IrTerminator::Match { targets, .. } => {
-                    pending.extend(targets.iter().map(|target| target.block().index()));
-                }
-                IrTerminator::Return { .. } | IrTerminator::Unreachable => {}
-            }
-        }
-        Ok(reachable)
+        dispatch::reachable(self.function)
     }
 
     fn collect_incoming(&self, reachable: &[bool]) -> Result<Vec<Vec<Incoming>>, BackendFailure> {
