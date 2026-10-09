@@ -9,6 +9,12 @@
 # i9-14900K. Remove that job with the investigation's harness when the
 # alignment decision no longer needs re-measuring.
 #
+# Temporarily, with `experiment: loop-split-grain` it serves
+# research/investigations/loop-split-grain: a small split loop's arms timed at
+# one and four workers on a hosted runner or the i9-14900K, with
+# `placement_runner` choosing the host and `placement_rounds` the rounds.
+# Removed before that investigation's branch is ready.
+#
 # research-boundary: manual-only
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
@@ -36,7 +42,7 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        options: [scoreboard, placement, loop-split-grain]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +113,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +362,34 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  loop-split-grain:
+    name: loop-split-grain (${{ inputs.placement_runner }})
+    if: inputs.experiment == 'loop-split-grain'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the host's tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          /usr/bin/clang --version
+          nproc
+          lscpu
+      - name: Build the compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+      - name: Build the arms
+        run: |
+          rm -rf "$RUNNER_TEMP/lsg"
+          make -j4 -C research/experiments/loop-split-grain BUILD="$RUNNER_TEMP/lsg"
+      - name: Time the arms
+        env:
+          ROUNDS: ${{ inputs.placement_rounds }}
+        run: |
+          sh research/experiments/loop-split-grain/measure.sh "$RUNNER_TEMP/lsg" "$ROUNDS" > "$RUNNER_TEMP/lsg-runs.tsv"
+          cat "$RUNNER_TEMP/lsg-runs.tsv"
+          python3 -I research/experiments/loop-split-grain/summarize.py "$RUNNER_TEMP/lsg-runs.tsv"
