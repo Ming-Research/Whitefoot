@@ -1,4 +1,4 @@
-# Kernel Specification v0.113
+# Kernel Specification v0.112
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1586,8 +1586,8 @@ A SET-1 commit contributes a write. SET-1's reinitialization of a complete bindi
 A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
 A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
 
-[EFF-3] A call whose row is `pure`, which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
-The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8], and that a waiting call's changes to shared objects and the host take effect in the execution's order [WAIT-2, SHARE-3] and appear in no row [SHARE-1].
+[EFF-3] A call whose row is `pure` and which allocates nothing licenses deduplication and reordering with equal arguments.
+The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8].
 Elimination of an unused licensed call additionally requires a termination proof; v0 provides no termination checker, so unused calls are not eliminated.
 The source spelling `pure` excludes state reads and state writes; it does not promise termination.
 A call that exhibits `writes(path)` may remain observable even when its result is unused. A call on fresh local state retains that instantiated effect even though it frames out of the enclosing signature. No optimization may erase, duplicate, speculate, or reorder either call unless ordinary effect-path overlap, closed-state, escape, ownership, control, result, release, and surviving-observer proofs establish the exact transformation.

@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.113: no merging or reordering of waiting calls
+
+Rules: changed EFF-3
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated): EFF-3's licence applies only to calls that do not wait.
+
+Summary: EFF-3 licensed deduplicating and reordering any `pure`, non-allocating call with equal arguments, while a `pure waits` function may change shared objects whose changes take effect in the execution's order (WAIT-2, SHARE-3) and appear in no row (SHARE-1); the two rules conflicted with no stated priority. The licence now excludes waiting calls. No compiler behaviour changes today, since the backend derives no function attributes from rows; the rule closes the hazard before it does. Selection ground: found while answering the owner's question about Shared and effect rows on the relaxed-fields research (#301).
+
 ## 2026-10-09 v0.112: range facts below elements, ordinary obligations owed to the range judgment, range type invariants
 
 Rules: changed GRAM-4, GIVE-1, TYPE-11, PRE-1, ENT-1, ENT-5, RANGE-1, RANGE-2, RANGE-3, RANGE-4, RANGE-5

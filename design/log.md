@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 No merging or reordering of waiting calls
+
+Nodes: language/effects
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated).
+
+Summary: The merge-and-reorder licence of a `pure` row covers only calls that do not wait, because a waiting function's shared-object changes take effect in the execution's order and appear in no row; redefining `pure` and a backend-only exclusion were refused.
+
 ## 2026-10-09 Range facts below elements, route A and range type invariants
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
