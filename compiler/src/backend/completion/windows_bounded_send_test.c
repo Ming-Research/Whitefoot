@@ -2,13 +2,15 @@
  * bound (a real watch firing, or a passed deadline) while a send is running
  * on the helper, before the driver harvests it.
  *
- * The first phase builds the state a blocking send cannot leave: the path is
- * filled with raw nonblocking sends until WSAEWOULDBLOCK, the bounded send is
- * submitted and claimed by its helper, and only then does the peer read the
- * prefill, so the helper's poll reports writability while the peer is about
- * to go silent for good. A blocking whole-range send then waits for a reader
- * that never comes and hits the watchdog after the bound ends; a bounded send
- * ends with a prefix it transferred or with the bound's error.
+ * The first phase aims at the state Winsock's contract lets a blocking send
+ * stay in: the path is filled with raw nonblocking sends until
+ * WSAEWOULDBLOCK, the bounded send is submitted and claimed by its helper,
+ * and only then does the peer read the prefill, so the helper's poll reports
+ * writability while the peer is about to go silent for good. A bounded send
+ * ends with a prefix it transferred or with the bound's error. On
+ * windows-latest loopback the pre-fix blocking send also completed here (it
+ * was accepted whole), so this phase covers the bounded path's outcome and
+ * does not discriminate the old one.
  *
  * The second phase submits a bounded send to a full path that never drains;
  * nothing can go, so only the bound's error is correct.
@@ -150,8 +152,8 @@ static void bounded_send(int cancelled) {
     await_helper_claim();
     drain_prefix(peer, prefill);
     /* Give the helper's 50 ms poll time to see the space and send. A bounded
-     * send that took the space is done by now; a blocking one is still
-     * waiting for the peer, which reads nothing more until the call ends. */
+     * send that took the space is done by now; the peer reads nothing more
+     * until the call ends. */
     uint64_t settle = wf_file_monotonic_ns() + UINT64_C(300000000);
     while (wf_bridge_record_state(&operation()->record) != WF_COMPLETION_DONE
            && wf_file_monotonic_ns() < settle)

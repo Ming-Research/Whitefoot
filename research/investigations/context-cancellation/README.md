@@ -225,9 +225,18 @@ against unbounded receives in every cell.
 ## Windows helper sends
 
 Review of [cross-context cancellation PR #296](https://github.com/Ming-Research/Whitefoot/pull/296)
-found that polling for writability before a blocking `send` did not make
-the helper interruptible: a large send could remain inside Winsock after
-the watch fired or the deadline passed. The fix makes only bounded helper
+found that polling for writability before a blocking `send` does not make
+the helper interruptible by its contract: Winsock documents that a blocking
+send may wait for buffer space, so a large send could remain inside Winsock
+after the watch fired or the deadline passed. The hang was not reproduced:
+on windows-latest loopback with `SO_SNDBUF` 4096, the pre-fix blocking path
+accepted a whole 8 MiB send issued once the poll reported writability, and
+ended both a full never-drained path's cancellation and its deadline with
+nothing sent (io-hosts run 37898948304, a temporary probe of the pre-fix
+`file_windows.c`; the fixed head's run 37899118918 logged the same counts).
+The fix rests on the documented contract, not on an observed hang, and
+`windows_bounded_send_test.c` covers bounded sends ending at their bound
+without discriminating the old path. The fix makes only bounded helper
 sends nonblocking, retries `WSAEWOULDBLOCK` through the existing 50 ms bound
 checks, and returns the first successful byte count, including a short
 prefix. The runtime does not try to finish the suffix, so a later bound
@@ -254,15 +263,19 @@ do not use the socket's blocking mode. After successful restoration, unbounded s
 retain their blocking call.
 
 The runtime regression `windows_bounded_send_test.c` runs in the Windows
-`io-hosts` job with the native ring disabled. It sends an 8 MiB buffer into
-a small-window loopback peer, observes that bytes have reached the peer
-without reading them, then fires the watch or separately waits for the
-deadline. The call must return a positive short count, and the peer checks
-that prefix only after completion. A second call on full buffers must end
-with `Cancelled` or `DeadlinePassed`; draining the independently counted
-fixture bytes through EOF detects any unreported transfer. The old blocking
-send stalls the first observation until the external watchdog fails; the
-watchdog does not close or read the peer to release it.
+`io-hosts` job with the native ring disabled. Its first phase fills a
+small-window loopback path with raw nonblocking sends until
+`WSAEWOULDBLOCK`, submits the bounded 8 MiB send, waits until a helper has
+claimed it, then lets the peer read exactly the prefill and stay silent; the
+bound then ends, by a fired watch or separately by a passed deadline, and the
+call must return a byte count from one through the whole range or the
+bound's own error. Its second phase submits a bounded send to a full path
+that never drains and must end with `Cancelled` or `DeadlinePassed`.
+Draining the independently counted fixture bytes through EOF detects any
+transfer an error hid, and a hang reaches the external watchdog, which does
+not read or close the peer. The test does not discriminate the pre-fix
+path: on windows-latest loopback that path completed the first phase with
+the whole range accepted, as described above.
 
 The review also identified an unverified, pre-existing question about a
 Windows helper's blocking `connect`: unlike accept/receive/send, it has no
