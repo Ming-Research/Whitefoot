@@ -1308,7 +1308,11 @@ return `(1,0)` by read/read coherence. Overlapping them as ordinary reads can
 put the second before the first and produce that pair. Initially deny implicit
 overlap for any statement/iteration whose footprint can reach a relaxed leaf,
 including reads covered by an ancestor path; narrower permission would need
-its own argument. At minimum same-cell load/load must conflict. Explicit
+its own argument. At minimum same-cell load/load must conflict. "Conflict"
+here means only that the compiler may not merge two relaxed loads of the same
+cell, reorder them, or overlap them implicitly; it is not a claim that two
+`reads` row entries conflict in general, and ordinary reads keep their
+read/read overlap. Explicit
 spawned contexts may share holds; this supplies no reduction permission.
 
 S1-A additionally contradicts CAP-1's complete authority/interference
@@ -2195,7 +2199,8 @@ for a shape. These are open research decisions, not approvals or spec edits.
 
    **A (recommended): S1-W.** Preserve `reads` for load and `writes` for
    store/RMW on a Relaxed-typed path; select holds by declared type/path.
-   Retain conservative PAR conflicts including loads, qualify both OWN-9
+   Keep two relaxed loads of one cell from being merged, reordered or
+   implicitly overlapped (ordinary reads unaffected), qualify both OWN-9
    consequences, suppress unsound inline `noalias`/aggregate-copy facts, and
    keep mutable contents out of stable proof terms. The row continues to show
    the changed leaf even though that type permits concurrent scalar access.
