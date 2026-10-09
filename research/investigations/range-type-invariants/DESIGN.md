@@ -117,6 +117,21 @@ invariant on its loop over the processed prefix, the same shape as
 `range3-pos-*` cases on main. Whether every one of these closes under
 [RANGE-3]'s fixed derivation is the open risk the card named.
 
+### Appending writers need placed window calls
+
+RANGE-2 forgot every location a call writes, and `place_back`'s row
+promises only the length change, so a writer that appends could not show the
+appended element satisfies the invariant: in
+`requires xs^.len == 0_u64; ensures forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;`
+around `place_back(window: xs, value: 0_u64)`, the new element is unknown
+(found by the implementing agent from the derivation, not a compiler run).
+`place_back` is therefore a write the walk places: the placed value at the
+old length, every other element unchanged, the length one more; `take_back`
+keeps the elements below the new length. The other window operations, which
+move elements (`insert_at`, `remove_at`, `append`, `split_off`,
+`place_front`, `take_front`) or reallocate (`grow`), still forget the window;
+a writer that needs one of them reopens this.
+
 ## Criterion before implementation
 
 The direction is supported if, with an experiment compiler:
