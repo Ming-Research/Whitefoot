@@ -413,6 +413,65 @@ fn empty_call_fields() -> result: Bool pure {
   return True();
 }
 
+struct Cell {
+  sum: u64;
+  product: u64;
+}
+
+struct Holder {
+  cells: Array<Cell, 1>;
+}
+
+fn add_field(p: &Holder) -> result: unit writes(p.cells) {
+  doc "Update a field through the enclosing owner of an aliased array.";
+  set p^.cells[0_u64].sum = p^.cells[0_u64].sum +wrap 1_u64;
+  return unit;
+}
+
+fn nested_alias_blocks() -> result: Bool pure {
+  doc "The inner array alias inherits the enclosing helper's private Holder block.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    add_field(p: first);
+    for (j in 0_u64..16_u64) {
+      set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
+    }
+  }
+  if owner.cells[0_u64].sum != 273_u64 {
+    return False();
+  }
+  if owner.cells[0_u64].product != 1_u64 {
+    return False();
+  }
+  return True();
+}
+
+fn nested_alias_dense() -> result: Bool pure {
+  doc "Direct nested aliases with different owner depths share the enclosing dense family.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    set first^.cells[0_u64].sum = first^.cells[0_u64].sum +wrap 1_u64;
+    for (j in 0_u64..16_u64) {
+      set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
+    }
+  }
+  if owner.cells[0_u64].sum != 273_u64 {
+    return False();
+  }
+  if owner.cells[0_u64].product != 1_u64 {
+    return False();
+  }
+  return True();
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   doc "Independent literal oracles are checked in sequential and split builds.";
   let array_ok = call_histogram();
@@ -449,6 +508,16 @@ fn main() -> status: std::process::ExitStatus pure {
   let empty_bad = bnot(empty_ok);
   if empty_bad {
     return std::process::exit_status(code: 7_u8);
+  }
+  let blocks_ok = nested_alias_blocks();
+  let blocks_bad = bnot(blocks_ok);
+  if blocks_bad {
+    return std::process::exit_status(code: 8_u8);
+  }
+  let dense_ok = nested_alias_dense();
+  let dense_bad = bnot(dense_ok);
+  if dense_bad {
+    return std::process::exit_status(code: 9_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }

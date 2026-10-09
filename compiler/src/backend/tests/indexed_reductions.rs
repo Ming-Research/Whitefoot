@@ -30,6 +30,7 @@ fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() 
             "nested_helper_fields",
             "measure_guarded_calls",
             "empty_call_fields",
+            "nested_alias",
         ],
     );
     let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
@@ -54,17 +55,28 @@ fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() 
             .expect("numeric allocation count");
         if zero {
             assert_eq!(allocations, 0, "{report}");
+            // The first seven tags total 13 leaves; each alias shape adds 1 outer + 16 inner: 13 + 2 * 17 = 47.
             assert!(
-                report.contains("indexed loops=1,1,1,1,5,2,2,0\n"),
+                report.contains("indexed allocations=0 leaves=47\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=1,1,1,1,5,2,2,34\n"),
                 "{report}"
             );
         } else {
             // Ten nonnested roots cost five allocations each (directory
             // plus four blocks). The nested root costs five plus four inner
             // splits of five. Sibling families must share each allocation.
-            assert_eq!(allocations, 75, "{report}");
+            // Alias shapes add 17 * 5 block allocations and 17 dense slabs: 75 + 85 + 17 = 177.
+            assert_eq!(allocations, 177, "{report}");
+            // Budget 2 gives four leaves per 16-iteration alias loop: 52 + 2 * (4 + 16 * 4) = 188.
             assert!(
-                report.contains("indexed loops=4,4,4,4,20,8,8,0\n"),
+                report.contains("indexed allocations=177 leaves=188\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=4,4,4,4,20,8,8,136\n"),
                 "{report}"
             );
         }
@@ -1060,21 +1072,23 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
         &directory,
     );
     let report = run_observed(&executable, false);
+    // Budget 2 gives 2^2 leaves per 262144-iteration loop: 4 * 4 = 16; only three use indexed slabs.
     assert!(
         report.contains("indexed allocations=3 leaves=16\n"),
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=4,4,4,4,4,0,0,0\n"),
+        report.contains("indexed loops=4,4,4,4,0,0,0,0\n"),
         "{report}"
     );
     let report = run_observed(&executable, true);
+    // Budget 0 gives 4 * 1 = 4 leaves and no slabs; the 8-iteration verification loop has returns and never splits.
     assert!(
-        report.contains("indexed allocations=0 leaves=5\n"),
+        report.contains("indexed allocations=0 leaves=4\n"),
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=1,1,1,1,1,0,0,0\n"),
+        report.contains("indexed loops=1,1,1,1,0,0,0,0\n"),
         "{report}"
     );
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");

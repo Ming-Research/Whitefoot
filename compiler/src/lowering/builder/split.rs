@@ -396,6 +396,16 @@ impl<'program> IrBuilder<'program> {
             if let Some(family) = indexed_roots.iter_mut().find(|family| {
                 self.same_indexed_root(&family.root, &root.root) && family.fields == root.fields
             }) {
+                // Aliases can start below the enclosing leaf's block. Keep
+                // its owner represented when merging both block and dense
+                // families, so nested captures can still select that storage.
+                let current = self.indexed_owner(family)?;
+                let inherited = self.indexed_owner(root)?;
+                if inherited.place.path.len() < current.place.path.len()
+                    && inherited.place.contains(&current.place)
+                {
+                    family.root.clone_from(&root.root);
+                }
                 for call in &root.calls {
                     if !family.calls.contains(call) {
                         family.calls.push(call.clone());
