@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Range facts below elements, route A and range type invariants
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated), covering the choices the owner made on the status board on 2026-10-08 and 2026-10-09 that the specification log entry for v0.112 lists.
+
+Summary: Range facts read integer values below an element, a range type invariant replaces the decision that live storage carries no range fact across passes, ordinary obligations whose goals are range-term comparisons are proved by the range judgment while every other undischarged obligation keeps its ordinary verdict, `place_back`/`take_back` are placed writes, a computed give delivers its relations, instantiation runs two rounds, possibly aliased atomic targets that would establish a range type invariant are an unsupported capability for now, and a counted-element repair offers its range alternatives per row; grounds and measurements are in the range-field-terms, ordinary-range-obligations and range-type-invariants investigations.
 ## 2026-10-09 Selected call results produced in place and read-through snapshots
 
 Nodes: compiler/storage-placement

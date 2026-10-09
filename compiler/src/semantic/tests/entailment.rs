@@ -3182,7 +3182,11 @@ fn invariant_l0_equality_retains_both_source_bounds() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(bounds.len(), 2, "the contradiction needs both equality bounds");
+    assert_eq!(
+        bounds.len(),
+        2,
+        "the contradiction needs both equality bounds"
+    );
     let (left, right, bound, event) = bounds[0];
     assert_eq!(bounds[1], (right, left, -bound, event));
 }
@@ -3817,7 +3821,11 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
             "fn retain_bound(value: {ty}) -> result: unit pure contract {{\n  requires value < {limit};\n}} {{\n  return unit;\n}}\n\n"
         );
         assert_eq!(source.matches(target).count(), 1);
-        consumer + &source.replace(target, &format!("retain_bound(value: cursor);\n    {target}"))
+        consumer
+            + &source.replace(
+                target,
+                &format!("retain_bound(value: cursor);\n    {target}"),
+            )
     }
     let source = with_retained_bound(
         include_str!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf"),
@@ -3874,7 +3882,10 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         "4_u64",
         "invariant tightened: cursor <= 3_u64;",
     );
-    validate_derivations(&accepted_entailment(delivery_source.as_bytes(), "avoid_four"));
+    validate_derivations(&accepted_entailment(
+        delivery_source.as_bytes(),
+        "avoid_four",
+    ));
     let delivery = accepted_entailment(delivery_source.as_bytes(), "probe");
     validate_derivations(&delivery);
     for join in [false, true] {
@@ -5696,23 +5707,207 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A computed give forms no delivery image. A bare outer atom given under
+fn computed_grid_delivery(expression: &str) -> String {
+    format!(
+        "fn pick_line(lines: &Box<Slots<u64, 8>>, flag: Bool) -> result: u64 reads(lines) {{
+  let count = lines^.inner.len;
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  let line = lines^.inner[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+/// The nonzero edge tightens the unsigned count to at least one. S7's
+/// subtraction offset reaches the new receiver before the two gives join.
+#[test]
+fn computed_give_delivers_the_grid_index_bound() {
+    let source = computed_grid_delivery("count - 1_u64");
+    let summary = accepted_entailment(source.as_bytes(), "pick_line");
+    validate_derivations(&summary);
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: -1, .. })
+    )));
+}
+
+/// S7 need not establish an operation image in a contradictory state. Its
+/// give edge must nevertheless stay neutral when the delivery images join,
+/// exactly as spelling the computation with an ordinary let does.
+#[test]
+fn a_computed_give_on_a_contradictory_edge_is_neutral_at_the_join() {
+    for delivery in [
+        "    give value + 0_i32;",
+        "    let copied = value + 0_i32;\n    give copied;",
+    ] {
+        let source = format!(
+            "fn pick(value: i32) -> result: i32 pure contract {{
+  requires value < 8_i32;
+  ensures result < 8_i32;
+}} {{
+  let picked = if value >= 8_i32 {{
+{delivery}
+  }} else {{
+    give value;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+#[test]
+fn a_give_at_the_length_does_not_deliver_a_strict_index_bound() {
+    let source = computed_grid_delivery("count");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+            if residual == "line_at < lines^.inner.len")
+    });
+}
+
+/// Each expression uses the same S5/S7 image as an ordinary let. The wrap
+/// spelling here is exact over the guarded interval, so S7 relates it too.
+#[test]
+fn computed_give_reuses_let_sources_before_leaving_its_operand_scope() {
+    for expression in [
+        "local + 1_u64",
+        "local - 1_u64",
+        "local * 2_u64",
+        "cvt::<u32, u64>(narrow_value)",
+        "local +wrap 0_u64",
+    ] {
+        let source = format!(
+            "fn pick(value: u64, flag: Bool) -> result: u64 pure contract {{
+  requires value >= 1_u64;
+  requires value <= 3_u64;
+  ensures result < 7_u64;
+}} {{
+  let picked = if flag {{
+    let local = value;
+    let narrow_value = cvt::<u64, u32>(local);
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+/// Only the relation to the live count can bound an index into the range
+/// formed afterwards. Writing that operand must kill the relation; the
+/// receiver still denotes its old computed value.
+#[test]
+fn writing_a_computed_carriers_operand_kills_its_index_relation() {
+    for write in ["", "  set count = 0_u64;\n"] {
+        let source = format!(
+            "fn pick_line(lines: &[u64], count: u64, flag: Bool) -> result: u64 reads(lines) contract {{
+  requires count <= lines^.len;
+}} {{
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give count - 1_u64;
+  }} else {{
+    give 0_u64;
+  }}
+{write}  let prefix = &lines^[0_u64..count];
+  let line = prefix^[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        if write.is_empty() {
+            validate_derivations(&accepted_entailment(source.as_bytes(), "pick_line"));
+        } else {
+            assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+                    if residual == "line_at < prefix^.len")
+            });
+        }
+    }
+}
+
+/// A wrapping conversion has no S5 equality. Wrapping addition whose
+/// mathematical interval leaves the type has no S7 bounds or offsets.
+#[test]
+fn computed_gives_without_a_let_image_form_no_delivery_image() {
+    for expression in ["cvt.wrap::<i64, i32>(wide)", "value +wrap 1_i32"] {
+        let source = format!(
+            "fn pick(value: i32, wide: i64, flag: Bool) -> result: i32 pure {{
+  let picked = if flag {{
+    give {expression};
+  }} else {{
+    give {expression};
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "pick");
+        validate_derivations(&summary);
+        assert!(summary.derivations.nodes.iter().all(|node| !matches!(
+            node,
+            DerivationNode::PostconditionGive { .. }
+                | DerivationNode::PostconditionDeliveryJoin { .. }
+        )));
+    }
+}
+
+/// A call result forms no delivery image. A bare outer atom given under
 /// branch-local support delivers only its carrier equality: since v0.79 each
 /// `give value;` edge delivers `picked = value` [ENT-5], which both edges
 /// hold, while `picked != limit` names a `limit` whose scope the edge leaves.
-/// Before v0.79 the carrier equality did not exist and `scoped` delivered
-/// nothing, which this test asserted together with `computed`.
 #[test]
-fn nonbare_carriers_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
-    let source = br#"fn computed(value: i32, narrow: Bool) -> result: i32 pure {
+fn calls_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
+    let source = br#"fn identity(value: i32) -> result: i32 pure {
+  return value;
+}
+
+fn computed(value: i32, narrow: Bool) -> result: i32 pure {
   let picked = if narrow {
     if value < 8_i32 {
-      give value +wrap 0_i32;
+      give identity(value: value);
     } else {
       return value;
     }
   } else if value < 128_i32 {
-    give value +wrap 0_i32;
+    give identity(value: value);
   } else {
     return value;
   }
