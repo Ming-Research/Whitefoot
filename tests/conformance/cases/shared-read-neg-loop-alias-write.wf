@@ -13,10 +13,10 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let owner = shared_new::<State>(value: initial);
   let view = shared_read::<State>(shared: &owner);
   atomic held = &view {
-    let alias = &held^;
+    let state_ref = &held^;
     loop @visit {
-      set alias = &held^;
-      change(state: alias);
+      set state_ref = &held^;
+      change(state: state_ref);
       break @visit;
     }
   }

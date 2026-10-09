@@ -1,7 +1,7 @@
 const names: Array<u8, 1> =[97_u8];
 
-fn replace(entry: &Option<u8>) -> result: unit writes(entry) {
-  set entry^ = Some<u8>(value: 9_u8);
+fn replace(slot: &Option<u8>) -> result: unit writes(slot) {
+  set slot^ = Some<u8>(value: 9_u8);
   return unit;
 }
 
@@ -10,7 +10,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let view = shared_read::<ConcurrentHashMap<u8>>(shared: &owner);
   let key = &names[0_u64..1_u64];
   atomic held = &view[key] {
-    replace(entry: held);
+    replace(slot: held);
   }
   return std::process::exit_status(code: 0_u8);
 }

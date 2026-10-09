@@ -6,8 +6,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let key = &names[0_u64..1_u64];
   let keys = key_set_new(capacity: 1_u64);
   key_set_insert(keys: &keys, key: key);
-  atomic entry = &owner[key] {
-    set entry^ = Some<u8>(value: 9_u8);
+  atomic slot = &owner[key] {
+    set slot^ = Some<u8>(value: 9_u8);
   }
   let seen = 0_u8;
   atomic whole = &owner, selected = &view[key], selected_set = &view[keys] {

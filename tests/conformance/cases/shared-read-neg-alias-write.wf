@@ -8,8 +8,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let owner = shared_new::<State>(value: initial);
   let view = shared_read::<State>(shared: &owner);
   atomic held = &view {
-    let alias = &held^.ready;
-    set alias^ = True();
+    let field_ref = &held^.ready;
+    set field_ref^ = True();
   }
   return std::process::exit_status(code: 0_u8);
 }
