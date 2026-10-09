@@ -1,4 +1,4 @@
-fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>) -> result: unit reads(order), writes(out) contract {
+fn scatter(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
   requires pos^.len == out^.len;
   requires forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
 } {
@@ -17,10 +17,10 @@ fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>) -> result: unit rea
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "Integer elements of Paged runs are RANGE-1 terms and the left inverse certifies the scatter for PAR-2.";
-  let order = box_paged_new::<u64>(capacity: 5_u64);
-  let pos = box_paged_new::<u64>(capacity: 5_u64);
-  let out = box_paged_new::<u64>(capacity: 5_u64);
+  doc "Integer elements of ranges over Slots windows carry a left inverse through a call, and the apart certificate admits the output scatter.";
+  let order = box_slots_new::<u64>(capacity: 5_u64);
+  let pos = box_slots_new::<u64>(capacity: 5_u64);
+  let out = box_slots_new::<u64>(capacity: 5_u64);
   for (
     k in 0_u64..5_u64,
     invariant order_length: order.inner.len == k,
