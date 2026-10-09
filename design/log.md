@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Guards observe cancellation through read-only shared handles
+
+Nodes: language/waiting/shared-objects, language/system-interface/context-cancellation, compiler/waiting-contexts, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text and the changes to the two design nodes (language/waiting/shared-objects and language/system-interface/context-cancellation) with "agree", and then the item request that asked to approve PR #304's changes to the two compiler design nodes (compiler/waiting-contexts: a host wait may also suspend for a shared-unit acquisition; state-locks: the cancellation state is protected by one ordinary shared unit, with an atomic mirror bit for host waits) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: A general read-only handle, `SharedRead<T>`, joins `Shared<T>` as an atomic target with the same selections, identity and lifetime, and its read-only authority follows the resolved state root through aliases, descendants and call effects, because a guard must read state that no helper or alias can turn back into a write; a cancellation-specific target and cancellation interrupting a pending statement were rejected. `cancel_state` gives that view of a watch's cancellation state, and `cancel_fire` is a waiting held transition that wakes guard watches while host waits keep find-at-fire notification. The compiler keeps the cancellation state in one ordinary shared unit, publishing an atomic mirror for host waits during the held transition, and its waiting lowering suspends for that unit's acquisition as atomic statements do.
 ## 2026-10-09 Range facts below elements, route A and range type invariants
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs

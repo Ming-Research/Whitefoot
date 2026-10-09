@@ -353,9 +353,10 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
     }
 }
 
-/// The [PRE-1] records whose bodies the compiler itself emits: the ten
+/// The [PRE-1] records whose bodies the compiler itself emits: the
 /// construction functions [OP-13], the nine window operations [OP-10],
-/// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`,
+/// `swap` [OP-11], `free_empty` [OP-14], the mutable/read-only shared-handle rows
+/// `shared_new`, `shared_share`, `shared_read` and `shared_read_share`,
 /// the map's five functions `shared_map_new`, `map_count`, `map_scan`,
 /// `map_clear` and `shared_map_release_reserve`, and the key set's three
 /// [SHARE-1].
@@ -366,8 +367,8 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
-    // [OP-13] the ten construction functions.
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 36] = [
+    // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
     "slots_new",
@@ -394,10 +395,12 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
-    // [SHARE-1] the shared-object handle's two functions, the map's five
+    // [SHARE-1] mutable and read-only handle construction/sharing, the map's five
     // and the key set's three.
     "shared_new",
     "shared_share",
+    "shared_read",
+    "shared_read_share",
     "shared_map_new",
     "map_count",
     "map_scan",
@@ -413,9 +416,9 @@ mod builder;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use builder::layout_ceiling;
 #[cfg(test)]
 pub(crate) use builder::lower_checked;
-pub(crate) use builder::layout_ceiling;
 pub(crate) use builder::lower_checked_from;
 #[cfg(test)]
 pub(crate) use builder::lower_checked_with_layout;

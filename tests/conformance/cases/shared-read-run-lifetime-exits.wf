@@ -1,0 +1,62 @@
+fn make_view(value: u8) -> result: SharedRead<u8> pure {
+  let owner = shared_new::<u8>(value: value);
+  return shared_read::<u8>(shared: &owner);
+}
+
+fn early(view: &SharedRead<u8>) -> result: u8 reads(view) waits {
+  atomic held = &view^ {
+    return held^;
+  }
+}
+
+fn given(view: &SharedRead<u8>, flag: Bool) -> result: u8 reads(view) waits {
+  let answer = if flag {
+    atomic held = &view^ {
+      give held^;
+    }
+  } else {
+    give 0_u8;
+  }
+  return answer;
+}
+
+fn tried(view: &SharedRead<u8>, outcome: Result<u8, unit>) -> result: Result<u8, unit> reads(view) waits {
+  atomic held = &view^ {
+    let item = propagate outcome;
+    let value = held^;
+    return Ok<u8, unit>(value: value);
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let view = make_view(value: 7_u8);
+  let first = early(view: &view);
+  let yes = True();
+  let second = given(view: &view, flag: yes);
+  let failure = Err<u8, unit>(error: unit);
+  let propagated = tried(view: &view, outcome: failure);
+  let count = 0_u8;
+  loop @again {
+    atomic held = &view {
+      if count == 0_u8 {
+        set count = 1_u8;
+        continue @again;
+      }
+      if held^ == first {
+        break @again;
+      }
+    }
+  }
+  atomic captured = &view {
+    set view = make_view(value: 0_u8);
+    if captured^ != second {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  atomic replacement = &view {
+    if replacement^ != 0_u8 {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
