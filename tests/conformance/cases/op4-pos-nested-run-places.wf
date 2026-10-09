@@ -32,17 +32,9 @@ fn main() -> status: std::process::ExitStatus pure {
   if selected^ != 13_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if 0_u64 < pages.inner.pages[0_u64][0_u64].inner.len {
-    if 1_u64 < pages.inner.pages[0_u64][0_u64].inner[0_u64].len {
-      let passed = read_selected(s: &pages.inner.pages[0_u64][0_u64].inner, i: 0_u64, j: 1_u64);
-      if passed != 13_u64 {
-        return std::process::exit_status(code: 6_u8);
-      }
-    } else {
-      return std::process::exit_status(code: 8_u8);
-    }
-  } else {
-    return std::process::exit_status(code: 7_u8);
+  let passed = read_selected(s: &pages.inner.pages[0_u64][0_u64].inner, i: 0_u64, j: 1_u64);
+  if passed != 13_u64 {
+    return std::process::exit_status(code: 6_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }

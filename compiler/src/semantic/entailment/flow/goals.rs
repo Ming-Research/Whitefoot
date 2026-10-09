@@ -47,9 +47,8 @@ impl Input<'_, '_> {
             return Some(GoalExpression::Datum(GoalDatum::Place {
                 root,
                 projections: path
-                    .path
-                    .iter()
-                    .map(goal_projection_of_step)
+                    .proof_steps()
+                    .map(|step| goal_projection_of_step(&step))
                     .collect::<Option<Vec<_>>>()?,
                 ty: expression.ty(),
             }));
@@ -493,9 +492,8 @@ impl Input<'_, '_> {
         ty: CheckedType,
     ) -> Option<GoalExpression> {
         let projections = place
-            .path
-            .iter()
-            .map(goal_projection_of_step)
+            .proof_steps()
+            .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
             PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),

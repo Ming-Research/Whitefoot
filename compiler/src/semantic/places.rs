@@ -345,6 +345,17 @@ pub(crate) enum PlaceStep {
 }
 
 impl PlaceStep {
+    /// [ENT-2] only a terminal page step can name a page-reference
+    /// formation's captured extent. Below it the path selects storage, so
+    /// the page selector compares by the same rule as an ordinary index.
+    fn proof_identity(self, terminal: bool) -> Self {
+        match self {
+            Self::Index(offset) => Self::Index(offset.goal_identity()),
+            Self::Page(offset) if !terminal => Self::Page(offset.goal_identity()),
+            other => other,
+        }
+    }
+
     /// Offset support of a current measure place [MSR-2]. A bound page's
     /// captured length does not depend on later values of its selector.
     pub(crate) fn measure_offset_support(&self) -> Option<BindingId> {
@@ -593,6 +604,15 @@ impl ResolvedPlace {
         })
     }
 
+    /// The [ENT-2] steps shared by term and Goal formation. Resolved storage
+    /// paths retain their evaluation captures for effects and overlap.
+    pub(crate) fn proof_steps(&self) -> impl Iterator<Item = PlaceStep> + '_ {
+        self.path
+            .iter()
+            .enumerate()
+            .map(|(position, step)| step.proof_identity(position + 1 == self.path.len()))
+    }
+
     /// The identity this place carries as an [ENT-2] term.
     ///
     /// A term is interned by its path, so `rows[0_u64].len` written twice is
@@ -602,23 +622,14 @@ impl ResolvedPlace {
     /// [`CapturedValue::goal_identity`] drops it for an index. A range keeps
     /// its formation captures: retained affine endpoint images are keyed by
     /// that occurrence, so canonicalizing its binding endpoints would erase
-    /// the key and could collide across formations.
+    /// the key and could collide across formations. A terminal page borrow
+    /// likewise keeps its formation capture; a page step inside a longer
+    /// path compares as an index. Direct terminal page selections arrive
+    /// canonicalized by `CheckedRangeRoot::proof_place`.
     pub(crate) fn term_identity(mut self) -> Self {
-        for step in &mut self.path {
-            match step {
-                PlaceStep::Index(offset) => *offset = offset.goal_identity(),
-                // [ENT-2, REF-4] a borrowed page keeps its formation capture
-                // because its extent survives append. Direct page selectors
-                // arrive canonicalized by CheckedRangeRoot::proof_place;
-                // preserving that identity keeps the two cases distinct.
-                PlaceStep::Range(_) | PlaceStep::Page(_) => {}
-                PlaceStep::Field(_)
-                | PlaceStep::Descendant(_)
-                | PlaceStep::Deref
-                | PlaceStep::Payload { .. }
-                | PlaceStep::Part(_)
-                | PlaceStep::Measure(_) => {}
-            }
+        let length = self.path.len();
+        for (position, step) in self.path.iter_mut().enumerate() {
+            *step = step.proof_identity(position + 1 == length);
         }
         self
     }
@@ -2209,6 +2220,80 @@ mod tests {
             [(CaptureId::source(1), BindingId(2))]
         );
     }
+    /// [ENT-2] only the final page suffix keeps formation identity; every
+    /// enclosing page compares as an index, including above another borrow.
+    #[test]
+    fn page_proof_identity_distinguishes_terminal_borrows_from_descendants() {
+        use crate::semantic::goal::{GoalDatum, GoalExpression, GoalProjection};
+        use crate::semantic::model::IntegerType;
+
+        let first = place(0, &[PlaceStep::Page(literal(0, 0))]);
+        let second = place(0, &[PlaceStep::Page(literal(1, 0))]);
+        assert_ne!(
+            first.clone().term_identity(),
+            second.clone().term_identity()
+        );
+        assert_eq!(first.clone().term_identity(), first);
+
+        // Call substitution appends the callee's projections after forming
+        // the actual's referent image, so it must apply the same rule then.
+        let ty = CheckedType::Integer(IntegerType::U64);
+        let goal = |offset| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: vec![GoalProjection::Page(offset)],
+                ty,
+            })
+        };
+        assert_ne!(goal(literal(0, 0)), goal(literal(1, 0)));
+        let project = |image: GoalExpression| {
+            image
+                .with_projection(GoalProjection::Subscript(literal(2, 0).goal_identity()), ty)
+                .expect("a datum accepts a projection")
+        };
+        assert_eq!(project(goal(literal(0, 0))), project(goal(literal(1, 0))));
+
+        let below = |page: &ResolvedPlace, last| {
+            let mut path = page.clone();
+            path.path
+                .extend([PlaceStep::Index(literal(2, 0)), PlaceStep::Deref, last]);
+            path
+        };
+        let direct = below(&first, PlaceStep::Field(0));
+        let borrowed = below(&second, PlaceStep::Field(0));
+        assert_eq!(
+            direct.clone().term_identity(),
+            borrowed.clone().term_identity()
+        );
+        assert_eq!(
+            direct.proof_steps().collect::<Vec<_>>(),
+            borrowed.term_identity().path
+        );
+        assert_eq!(
+            direct.path[0], first.path[0],
+            "resolved captures are unchanged"
+        );
+
+        let nested = below(&first, PlaceStep::Page(literal(3, 0)));
+        let same_nested = below(&second, PlaceStep::Page(literal(3, 0)));
+        let fresh_nested = below(&second, PlaceStep::Page(literal(4, 0)));
+        assert_eq!(nested.clone().term_identity(), same_nested.term_identity());
+        assert_ne!(nested.term_identity(), fresh_nested.term_identity());
+
+        // A superseded binding and an opaque offset still name only their
+        // own evaluations, even in a nonterminal page step.
+        for offset in [
+            CapturedValue::new(CaptureId::source(5), CapturedTerm::Superseded(BindingId(1))),
+            opaque(6),
+        ] {
+            let path = place(
+                0,
+                &[PlaceStep::Page(offset), PlaceStep::Index(literal(7, 0))],
+            );
+            assert_eq!(path.term_identity().path[0], PlaceStep::Page(offset));
+        }
+    }
+
     #[test]
     fn pages_separate_by_page_offset_and_overlap_logical_views() {
         let map = PlaceMap::default();

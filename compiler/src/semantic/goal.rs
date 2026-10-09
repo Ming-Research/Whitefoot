@@ -96,7 +96,13 @@ impl GoalExpression {
         let Self::Datum(datum) = &mut self else {
             return None;
         };
-        datum.projections_mut().push(projection);
+        let projections = datum.projections_mut();
+        // [ENT-2] extending a page referent selects storage below it; its
+        // page step no longer identifies the borrow's captured extent.
+        if let Some(GoalProjection::Page(offset)) = projections.last_mut() {
+            *offset = offset.goal_identity();
+        }
+        projections.push(projection);
         datum.set_ty(ty);
         Some(self)
     }

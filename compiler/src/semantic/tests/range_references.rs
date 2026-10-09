@@ -1194,6 +1194,75 @@ fn run_borrow_length_keeps_page_formation_evidence_and_segment_identity() {
     );
 }
 
+/// [ENT-2, FN-8] the direct guard on the Segments descriptor below a page
+/// supplies the same length term as a callee's borrowed referent. The element
+/// write between guard and call preserves that descriptor fact [MSR-2].
+#[test]
+fn a_borrow_below_a_direct_page_selector_reuses_the_guarded_length() {
+    use crate::semantic::entailment::TermKind;
+    use crate::semantic::model::CheckedMeasure;
+    use crate::semantic::places::PlaceStep;
+
+    with_semantics(
+        include_bytes!("../../../../tests/conformance/cases/op4-pos-nested-run-places.wf"),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("the earlier direct guards must discharge the borrowed call: {outcome:?}");
+            };
+            let selected = program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "read_selected")
+                .expect("borrowed Segments helper");
+            let main = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .expect("caller")
+                .entailment;
+            let requirements = main
+                .call_goals
+                .iter()
+                .filter(|goal| goal.callee == selected.id)
+                .collect::<Vec<_>>();
+            assert_eq!(requirements.len(), 2);
+            assert!(requirements.iter().all(|goal| goal.derivation.is_some()));
+            let lengths = main
+                .inventory
+                .terms
+                .iter()
+                .filter_map(|term| match term {
+                    TermKind::Measure(CheckedMeasure::Length, place)
+                        if matches!(
+                            place.path.as_slice(),
+                            [
+                                PlaceStep::Deref,
+                                PlaceStep::Page(_),
+                                PlaceStep::Index(_),
+                                PlaceStep::Deref
+                            ]
+                        ) =>
+                    {
+                        Some(place)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lengths.len(),
+                1,
+                "direct and borrowed inner.len must share one term"
+            );
+            let PlaceStep::Page(offset) = lengths[0].path[1] else {
+                unreachable!("filtered page step");
+            };
+            assert_eq!(offset, offset.goal_identity());
+        },
+    );
+}
+
 /// [MSR-2] canonical identity does not make a direct page length immutable:
 /// place_back writes the owner's length and kills the earlier equality.
 #[test]
