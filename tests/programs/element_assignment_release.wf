@@ -29,6 +29,27 @@ struct Calls {
   count: u64;
 }
 
+enum OwnedBuffer {
+  Empty();
+  Present(buffer: Box<Slots<u32>>);
+}
+
+struct EnumCell {
+  selected: OwnedBuffer;
+  optional: Option<Box<Slots<u32>>>;
+  tag: u64;
+}
+
+struct Holder<T> {
+  item: T;
+  tag: u64;
+}
+
+struct FilledCell {
+  items: Box<Slots<Payload>>;
+  tag: u64;
+}
+
 interface Host<E> {
   fn call(env: &E) -> result: unit writes(env);
 }
@@ -214,6 +235,177 @@ fn other_places(capacity: u64) -> result: Bool pure {
   return buffer.inner.cap == capacity;
 }
 
+fn make_enum_cell(capacity: u64, tag: u64) -> result: EnumCell pure {
+  doc "Owns two buffers through an active source enum payload and Option.Some.";
+  let buffer = box_slots_new::<u32>(capacity: capacity);
+  let selected = OwnedBuffer::Present(buffer: move buffer);
+  let other = box_slots_new::<u32>(capacity: capacity);
+  let optional = Some<Box<Slots<u32>>>(value: move other);
+  return EnumCell(selected: move selected, optional: move optional, tag: tag);
+}
+
+fn replace_enum_reference(values: &Box<Slots<EnumCell>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a struct with releasing enum fields through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_enum_cell(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn enum_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement releases both active enum payloads.";
+  let slots = box_slots_new::<EnumCell>(capacity: 1_u64);
+  let initial = make_enum_cell(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 12_u64 {
+      let replacement = make_enum_cell(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_enum_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn make_holder(capacity: u64, tag: u64) -> result: Holder<Payload> pure {
+  doc "Instantiates a generic field with a struct that owns a Box.";
+  let contents = make_payload(capacity: capacity);
+  return Holder<Payload>(item: move contents, tag: tag);
+}
+
+fn replace_holder_reference(values: &Box<Slots<Holder<Payload>>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a concrete generic struct element through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_holder(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn holder_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement expands a concrete generic struct's fields.";
+  let slots = box_slots_new::<Holder<Payload>>(capacity: 1_u64);
+  let initial = make_holder(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 14_u64 {
+      let replacement = make_holder(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_holder_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+    if slots.inner[0_u64].item.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn make_filled_cell(capacity: u64, tag: u64) -> result: FilledCell pure {
+  doc "Keeps three releasing payloads in a sixteen-slot backing, with payload reserves zero or sixteen.";
+  let items = box_slots_new::<Payload>(capacity: 16_u64);
+  let first = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move first);
+  let second = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move second);
+  let third = make_payload(capacity: capacity);
+  place_back(window: &items.inner, value: move third);
+  return FilledCell(items: move items, tag: tag);
+}
+
+fn replace_filled_reference(values: &Box<Slots<FilledCell>>, capacity: u64, tag: u64) -> result: Bool writes(values) {
+  doc "Replaces a struct owning a nonempty releasing container through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let replacement = make_filled_cell(capacity: capacity, tag: tag);
+  set values^.inner[0_u64] = move replacement;
+  return True();
+}
+
+fn filled_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks each direct or reference replacement releases the container's elements and backing.";
+  let slots = box_slots_new::<FilledCell>(capacity: 1_u64);
+  let initial = make_filled_cell(capacity: capacity, tag: 4_u64);
+  place_back(window: &slots.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner.len != 3_u64 {
+      return False();
+    }
+    if mode == 16_u64 {
+      let replacement = make_filled_cell(capacity: capacity, tag: iteration);
+      set slots.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_filled_reference(values: &slots, capacity: capacity, tag: iteration);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if slots.inner.len != 1_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].tag != iteration {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner.len != 3_u64 {
+      return False();
+    }
+    if slots.inner[0_u64].items.inner[0_u64].upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Selects one regression per process and checks both commit balance and complete scope release at capacities zero and sixteen.";
   let Inputs(args: arguments, cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
@@ -221,7 +413,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   let mode = std::text::args_count(args: &arguments);
-  if mode > 11_u64 {
+  if mode > 17_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   let baseline = std::process::heap_in_use(meter: &meter);
@@ -237,8 +429,14 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set balanced = indirect_slots(meter: &meter, capacity: capacity, mode: mode);
     } else if mode == 10_u64 {
       set balanced = other_windows(capacity: capacity);
-    } else {
+    } else if mode == 11_u64 {
       set balanced = other_places(capacity: capacity);
+    } else if mode <= 13_u64 {
+      set balanced = enum_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else if mode <= 15_u64 {
+      set balanced = holder_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else {
+      set balanced = filled_slots(meter: &meter, capacity: capacity, mode: mode);
     }
     let failed = bnot(balanced);
     if failed {
