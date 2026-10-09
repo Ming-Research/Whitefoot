@@ -1025,8 +1025,12 @@ fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
                 .filter(|(_, parameter_ty)| *parameter_ty == ty)
                 .map(|(value, _)| *value)
                 .collect();
-            assert_eq!(carries.len(), 1, "{name}: one continuation record");
-            assert_eq!(storage.slot(parameter), storage.slot(carries[0]), "{name}");
+            // rec_pick reads r after its branch. rec_push and rec_set return
+            // False on their continuation, so their old r carry is dead.
+            assert_eq!(carries.len(), usize::from(name == "rec_pick"), "{name}");
+            for carry in carries {
+                assert_eq!(storage.slot(parameter), storage.slot(carry), "{name}");
+            }
             assert!(storage.holds_only(parameter), "{name}: unchanged contents");
         }
     });
@@ -1106,5 +1110,212 @@ fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
             .collect();
         assert_eq!(copies.len(), 1, "{overlap:?}: {body}");
         assert!(copies[0].contains(", ptr %wf.arg.v0,"), "{overlap:?}: {body}");
+    }
+}
+
+/// Shared source for ordinary and split-dispatch selection. Two payload
+/// variants force union layout; Jump's tag and three words occupy 32 bytes.
+pub(super) const SELECT_STEP: &str = include_str!("select_step.wf");
+
+/// Keep producer calls visible through host optimization, without changing the
+/// split dispatcher's alwaysinline contract or any source semantics.
+pub(super) fn retain_step_producers(module: &str) -> String {
+    module
+        .lines()
+        .map(|line| {
+            if line.starts_with("define ")
+                && ["prepare", "unwind"]
+                    .iter()
+                    .any(|name| line.contains(&format!(" @wf_{name}(")))
+            {
+                format!("{} noinline {{\n", line.strip_suffix(" {").expect("header"))
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect()
+}
+
+/// Both the raw and optimized definition must pass its actual result pointer
+/// to each producer. The fixture has no other copy, so forbidding all memory
+/// copies is stronger than matching a target-dependent spelling of size 32.
+pub(super) fn assert_step_destination(body: &str) {
+    // LLVM may infer pointer attributes containing commas inside parentheses.
+    // Only the first comma outside those attributes ends the argument.
+    let first_argument = |arguments: &str| {
+        let mut depth = 0;
+        let end = arguments
+            .char_indices()
+            .find_map(|(index, character)| match character {
+                '(' => {
+                    depth += 1;
+                    None
+                }
+                ')' if depth > 0 => {
+                    depth -= 1;
+                    None
+                }
+                ',' | ')' if depth == 0 => Some(index),
+                _ => None,
+            })
+            .expect("first argument ends");
+        arguments[..end]
+            .split_whitespace()
+            .last()
+            .expect("pointer operand")
+            .to_owned()
+    };
+    let result = first_argument(
+        body.lines()
+            .next()
+            .and_then(|header| header.split_once('('))
+            .expect("result destination parameter")
+            .1,
+    );
+    assert!(result.starts_with('%'), "{body}");
+    for producer in ["prepare", "unwind"] {
+        let calls = body
+            .lines()
+            .filter_map(|line| line.split_once(&format!("@wf_{producer}(")))
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 1, "one retained {producer} call: {body}");
+        let destination = first_argument(calls[0].1);
+        assert_eq!(destination, result, "{body}");
+    }
+    assert!(!body.contains("@llvm.memmove."), "{body}");
+    assert!(!body.contains("@llvm.memcpy."), "{body}");
+}
+
+#[test]
+fn unused_selection_carry_writes_both_producers_into_the_result() {
+    let source = format!(
+        "{SELECT_STEP}{}",
+        r#"
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let step = select_step(n: n);
+    let valid = valid_step(step: step, n: n);
+    if bnot(valid) { return std::process::exit_status(code: 1_u8); }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    with_ir(source.as_bytes(), |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "select_step")
+            .expect("selection function");
+        assert_eq!(selected(program, function.result()), (32, 8));
+        let prepare = program
+            .functions()
+            .iter()
+            .position(|function| function.name() == "prepare")
+            .expect("producer function");
+        let produced = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                crate::IrInstruction::Define {
+                    result,
+                    operation: crate::IrOperation::Call { function, .. },
+                    ..
+                } if *function as usize == prepare => Some(*result),
+                _ => None,
+            })
+            .expect("producer call");
+        let returned = function
+            .blocks()
+            .iter()
+            .find_map(|block| match block.terminator() {
+                crate::IrTerminator::Return { value, .. } => Some(*value),
+                _ => None,
+            })
+            .expect("returned selection");
+        let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+            .expect("storage plan");
+        assert!(storage.slot(produced).is_some());
+        assert_eq!(storage.slot(produced), storage.slot(returned));
+    });
+    // On the base, step and final_step both survive as join destinations;
+    // their interference blocks this storage equality and the direct call.
+    let module = super::owned_places::retain_calls(&super::emit(source.as_bytes()));
+    assert_step_destination(super::emitted_function(&module, "select_step"));
+    let optimized = super::host_optimized_module(&module);
+    assert_step_destination(super::emitted_function(&optimized, "select_step"));
+    let output = compile_link_and_run(&module, None, &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn observed_provisional_values_and_simultaneous_aggregate_carries_survive() {
+    let source = format!(
+        "{SELECT_STEP}{}",
+        r#"
+fn preserve_step(n: u64) -> result: u64 pure {
+  let step = prepare(n: n);
+  let final_step = step;
+  match step {
+    Error() => { set final_step = unwind(n: n); }
+    Jump(..) => {}
+    Done(..) => {}
+    Stop() => {}
+    Budget() => {}
+  }
+  let before = weight(step: step);
+  let after = weight(step: final_step);
+  let high = before *wrap 1000_u64;
+  return high +wrap after;
+}
+
+fn rotate(rounds: u64) -> result: u64 pure {
+  let first = Step::Jump(pc: 11_u64, base: 13_u64, kbase: 17_u64);
+  let second = Step::Done(count: 23_u64);
+  for (round in 0_u64..rounds) {
+    let saved = first;
+    set first = second;
+    set second = saved;
+  }
+  let left = weight(step: first);
+  let right = weight(step: second);
+  let high = left *wrap 1000_u64;
+  return high +wrap right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let expected = 400400_u64;
+    if n == 0_u64 { set expected = 7099_u64; }
+    if n == 1_u64 { set expected = 41041_u64; }
+    if n == 2_u64 { set expected = 23023_u64; }
+    if n == 3_u64 { set expected = 300300_u64; }
+    let actual = preserve_step(n: n);
+    if actual != expected { return std::process::exit_status(code: 1_u8); }
+    let swapped = rotate(rounds: n);
+    let odd = iand(n, 1_u64);
+    let exchange_expected = 41023_u64;
+    if odd != 0_u64 { set exchange_expected = 23041_u64; }
+    if swapped != exchange_expected { return std::process::exit_status(code: 2_u8); }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    // Removing the still-observed carry changes 7 to 99 on recovery;
+    // sequentializing the swap gives two equal weights after one iteration.
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = super::owned_places::retain_calls(&emit_lowered(source.as_bytes(), overlap));
+        let output = compile_link_and_run(&module, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
     }
 }

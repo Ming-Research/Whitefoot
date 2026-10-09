@@ -549,3 +549,41 @@ through a reference reaching it. The binding must never be written or have
 its address exposed, and the source place's storage must outlive all uses.
 The before-use witness is excluded. This is a candidate condition for later
 work only; phase 1 proposes no lowering, analysis or storage-plan change.
+
+
+### Unobserved join forwarding
+
+Source inspection of main `d392af91c` identifies a separate cause for the
+provisional-result selection copy: `lower_match_from_value` carries every
+binding into a continuing join. In `let step = prepare(...); let final_step =
+step; match step { ... } return final_step;`, the unused post-match `step`
+parameter remains a distinct destination. Storage interference protects both
+join destinations, preventing coalescing; a union-enum edge transfer then
+emits a whole-value `memmove`.
+
+The change generalizes the outlined-chunk capture dependency walk to all
+finished lowered functions, before work estimation and storage planning.
+Instruction operands, terminator observations and every value or place used by
+a release are roots. A needed parameter retains every incoming argument;
+a forwarding cycle with no route to a root disappears. Ordinary instructions,
+cleanup order, source signatures and value IDs remain. Reconstruction and
+capture-ABI removal remain confined to the existing chunk caller.
+
+Without the unused duplicate, existing CFG transfer candidates can coalesce
+`prepare`, `unwind` and `final_step`. The returned-slot selector maps their
+common complete allocation to the result destination, which `emit_call` already
+passes. No interference, aliasing, exposed-address, swap snapshot, waiting or
+overlap restriction is relaxed; split parts retain their enclosing-frame
+lifetime rules. This is a code-inspection conclusion, pending CI evidence.
+
+The maintained 32-byte `Step` fixture asserts direct producer destinations and
+no whole-value copies in raw and optimized ordinary/split-arm definitions.
+The base retains the duplicate join destination and fails the raw assertions.
+Native cases observe the provisional value after recovery, simultaneous
+aggregate-carry swaps and exactly-once release of a cleanup-only owner. The
+shared walk's unit case distinguishes dead forwarding cycles from cycles
+reaching instruction, branch, return or cleanup uses. The earlier record-entry
+test now expects only genuinely read continuation carries; its copy and native
+assertions remain. Execution, including baseline failure, awaits CI.
+
+**Halo timing pending**. No specification, verdict or diagnostic change.

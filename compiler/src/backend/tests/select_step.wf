@@ -1,0 +1,65 @@
+enum Step {
+  Error();
+  Jump(pc: u64, base: u64, kbase: u64);
+  Done(count: u64);
+  Stop();
+  Budget();
+}
+
+fn prepare(n: u64) -> result: Step pure {
+  if n == 0_u64 { return Step::Error(); }
+  if n == 1_u64 { return Step::Jump(pc: 11_u64, base: 13_u64, kbase: 17_u64); }
+  if n == 2_u64 { return Step::Done(count: 23_u64); }
+  if n == 3_u64 { return Step::Stop(); }
+  return Step::Budget();
+}
+
+fn unwind(n: u64) -> result: Step pure {
+  let count = n +wrap 99_u64;
+  return Step::Done(count: count);
+}
+
+fn select_step(n: u64) -> result: Step pure {
+  let step = prepare(n: n);
+  let final_step = step;
+  match step {
+    Error() => { set final_step = unwind(n: n); }
+    Jump(..) => {}
+    Done(..) => {}
+    Stop() => {}
+    Budget() => {}
+  }
+  return final_step;
+}
+
+fn valid_step(step: Step, n: u64) -> result: Bool pure {
+  match step {
+    Error() => { return False(); }
+    Jump(pc: pc, base: base, kbase: kbase) => {
+      if n != 1_u64 { return False(); }
+      if pc != 11_u64 { return False(); }
+      if base != 13_u64 { return False(); }
+      return kbase == 17_u64;
+    }
+    Done(count: count) => {
+      if n == 0_u64 { return count == 99_u64; }
+      if n == 2_u64 { return count == 23_u64; }
+      return False();
+    }
+    Stop() => { return n == 3_u64; }
+    Budget() => { return n == 4_u64; }
+  }
+}
+
+fn weight(step: Step) -> result: u64 pure {
+  match step {
+    Error() => { return 7_u64; }
+    Jump(pc: pc, base: base, kbase: kbase) => {
+      let sum = pc +wrap base;
+      return sum +wrap kbase;
+    }
+    Done(count: count) => { return count; }
+    Stop() => { return 300_u64; }
+    Budget() => { return 400_u64; }
+  }
+}
