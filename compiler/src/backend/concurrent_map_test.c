@@ -3318,6 +3318,47 @@ static void release_cleared(void *table) {
     wf__keyed_table_free(table);
 }
 
+/* A move keeps the freed cells only when they are the current table's size:
+ * a map that grew keeps no spare of its old size, and one whose size holds
+ * steady while keys come and go keeps a spare of its own size for the next
+ * move, which it gives up when it grows again. */
+static void spares_match_the_current_size(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *user = wf_cmap_enter(map);
+    uint64_t got = 0;
+    for (uint64_t k = 0; k < 20000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    wf_cmap_get(user, key_of(0), &got);
+    table *now = atomic_load(&map->current);
+    if (map->spare != NULL && map->spare_capacity != now->capacity)
+        fail("a grown map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+    uint64_t next = 20000;
+    for (; next < 220000 || (map->spare == NULL && next < 420000); next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+        now = atomic_load(&map->current);
+        if (map->spare != NULL && map->spare_capacity != now->capacity)
+            fail("a steady map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+    }
+    if (map->spare == NULL)
+        fail("a steady map never kept a spare for its next move", now->capacity, 0);
+    if (wf_cmap_count(map) != 20000)
+        fail("churn lost or gained keys (count)", wf_cmap_count(map), 20000);
+    uint64_t steady = map->spare_capacity;
+    for (uint64_t k = next; k < next + 60000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    wf_cmap_get(user, key_of(next), &got);
+    now = atomic_load(&map->current);
+    if (now->capacity == steady)
+        fail("the map did not grow past its spare's size (capacity)", now->capacity, steady);
+    if (map->spare != NULL && map->spare_capacity != now->capacity)
+        fail("a regrown map kept its old spare (spare, current)", map->spare_capacity, now->capacity);
+    if (wf_cmap_count(map) != 80000)
+        fail("growth lost or gained keys (count)", wf_cmap_count(map), 80000);
+    wf_cmap_leave(user);
+    wf_cmap_destroy(map);
+}
+
 /* A clear under a whole hold empties the map at once, its own entries
  * included, keeps what the statement writes after it, and hands the old
  * entries to their release only once the hold is given up, leaking no
@@ -3460,8 +3501,9 @@ static void holds_keep_their_bytes(void) {
 
 /* PRE-2's requests outside the host pool: the exact mapping threshold,
  * live nodes rather than chunk capacity, reuse, and drain after the value
- * is released. Script moves to isolate retained, replaced and reused spare
- * arrays without a second large insertion workload. */
+ * is released. Script moves to isolate a freed other-size table and
+ * replaced and reused spare arrays without a second large insertion
+ * workload. */
 static void heap_accounting(void) {
     const int64_t mib = 1024 * 1024;
     int64_t before = atomic_load(&mapped_bytes_out);
@@ -3501,9 +3543,11 @@ static void heap_accounting(void) {
     reclaim(map);
     if (atomic_load(&mapped_bytes_out) != before + 6 * mib + 32 || map->spare != NULL)
         fail("a pinned retired table lost its accounting", atomic_load(&mapped_bytes_out) - before, 6 * mib + 32);
+    /* The released 2 MiB table is not the current size, so it is freed
+     * rather than kept as a spare; the same-size moves below keep one. */
     use_current(u);
-    if (atomic_load(&mapped_bytes_out) != before + 6 * mib + 32 || map->spare == NULL)
-        fail("retaining a spare changed the live request", atomic_load(&mapped_bytes_out) - before, 6 * mib + 32);
+    if (atomic_load(&mapped_bytes_out) != before + 4 * mib + 32 || map->spare != NULL)
+        fail("a grown map's other-size table stayed counted (bytes, expected)", atomic_load(&mapped_bytes_out) - before, 4 * mib + 32);
     for (unsigned round = 0; round < 2; round++) {
         old = use_current(u);
         start_move_for(map, old, 65536);
@@ -3615,6 +3659,7 @@ int main(int argc, char **argv) {
         concurrent(1);
         histories(20);
     }
+    spares_match_the_current_size();
     if (atomic_load(&mapped_bytes_out) != 0)
         fail("map checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
     printf("concurrent-map-test: all checks passed\n");
