@@ -41,7 +41,8 @@
 //! # Element and range families
 //!
 //! A **proved single-binder affine element** is one subscript of an `Array`,
-//! a `Slots`, the run a range names or a `Segments`, rooted in an own binding
+//! a `Slots`, a `Paged`, the run either range kind names, a `Segments`, or
+//! the pages of a `Paged`, rooted in an own binding
 //! declared outside L, or reached through `^` of a reference parameter
 //! whose row declares the write, and whose discharged [OP-4] bounds
 //! obligation retains the offset's exact value `a*i + b` for L's binder with
@@ -134,7 +135,7 @@ use super::entailment::{
 };
 use super::model::{
     BindingId, CheckedArrayRoot, CheckedBooleanOperation, CheckedContainerRoot, CheckedExpression,
-    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedPlaceStep,
+    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedMeasure, CheckedPlaceStep,
     CheckedRangeElementPlace, CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType,
     CheckedValue, WindowShape, expression_children,
 };
@@ -487,6 +488,7 @@ struct ProvenElementWrite {
     root: ResolvedPlace,
     statement: NodePath,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One already-proved element read whose exact offset is the same affine map.
@@ -495,6 +497,7 @@ struct ProvenElementWrite {
 struct ProvenElementRead {
     root: ResolvedPlace,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One borrowed argument at or below one mapped element [PAR-2]: the callee's
@@ -506,6 +509,7 @@ struct ProvenElementReference {
     /// The element itself: the root extended by that index step.
     element: ResolvedPlace,
     map: ProvedAffineIndexMap,
+    page: bool,
 }
 
 /// One range reference `&r[s*i+b..s*i+b+s]` whose endpoint images the [REF-4]
@@ -545,6 +549,8 @@ struct ReadOccurrence {
     /// A measure expression without a certificate element-read carrier.
     /// Affine and range coverage also check its exact measured root [MSR-2].
     measure: bool,
+    /// REF-4's page formation reads its owner's length, separate from a page map.
+    page_descriptor: bool,
     /// A measure selected through a range element retains its carrier for
     /// the certified family, but can measure an affine map's own nested root.
     element_measure: bool,
@@ -1270,9 +1276,10 @@ impl<'check> Survey<'check, '_> {
                 continue;
             }
             if let Some((after, map)) = affine_map
-                && let Some((root, _)) = element_prefix(&write.place, after)
+                && let Some((root, element)) = element_prefix(&write.place, after)
             {
-                self.record_element_write(root, node.clone(), map);
+                let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                self.record_element_write(root, node.clone(), map, page);
                 continue;
             }
             self.enclosing_write(target, &write.place, node, combine);
@@ -1512,7 +1519,7 @@ impl<'check> Survey<'check, '_> {
         if !matches!(place.path[first], PlaceStep::Index(_))
             && !place.path[first..]
                 .iter()
-                .any(|step| matches!(step, PlaceStep::Index(_)))
+                .any(|step| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
         {
             return false;
         }
@@ -1610,6 +1617,7 @@ impl<'check> Survey<'check, '_> {
                 places: Vec::new(),
                 carrier: None,
                 measure: false,
+                page_descriptor: false,
                 element_measure: false,
             });
         }
@@ -1618,14 +1626,39 @@ impl<'check> Survey<'check, '_> {
             // accumulator outside its one combine operand still violates
             // PAR-2's occurrence restriction. Keep the occurrence without
             // inventing an element-read footprint for address formation.
-            CheckedExpression::BorrowAddressed { root, .. }
-            | CheckedExpression::BorrowSegment { root, .. } => {
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                if matches!(segment, super::CheckedSegmentSelect::Page(_)) {
+                    let (spelling, mut path) = root.place();
+                    path.push(PlaceStep::Measure(CheckedMeasure::Length));
+                    let places = self.places.resolve(spelling, &path);
+                    let subscripts = match root {
+                        super::CheckedSegmentSource::Storage(root) => path_subscripts(&root.path),
+                        super::CheckedSegmentSource::Element(place) => range_element_subscripts(place),
+                    };
+                    self.record_element_reads(subscripts, &places);
+                    root.binding().map(|binding| (binding, places))
+                } else {
+                    if let Some(binding) = root.binding() {
+                        self.reads.push(ReadOccurrence {
+                            binding,
+                            places: Vec::new(),
+                            carrier: None,
+                            measure: false,
+                            page_descriptor: false,
+                            element_measure: false,
+                        });
+                    }
+                    None
+                }
+            }
+            CheckedExpression::BorrowAddressed { root, .. } => {
                 if let Some(binding) = root.binding() {
                     self.reads.push(ReadOccurrence {
                         binding,
                         places: Vec::new(),
                         carrier: None,
                         measure: false,
+                        page_descriptor: false,
                         element_measure: false,
                     });
                 }
@@ -1637,6 +1670,7 @@ impl<'check> Survey<'check, '_> {
                     places: Vec::new(),
                     carrier: None,
                     measure: false,
+                    page_descriptor: false,
                     element_measure: false,
                 });
                 None
@@ -1706,7 +1740,7 @@ impl<'check> Survey<'check, '_> {
                     .resolve(PlaceRoot::Binding(*binding), &field_steps(fields));
                 if let Some(map) = self.proven_affine_map_at(obligation) {
                     for root in places.iter().cloned() {
-                        self.element_reads.push(ProvenElementRead { root, map });
+                        self.element_reads.push(ProvenElementRead { root, map, page: false });
                     }
                 }
                 Some((*binding, places))
@@ -1723,7 +1757,7 @@ impl<'check> Survey<'check, '_> {
                     .resolve(PlaceRoot::Binding(root.binding), &root.place_path());
                 if let Some(map) = self.proven_affine_map_at(obligation) {
                     for root in places.iter().cloned() {
-                        self.element_reads.push(ProvenElementRead { root, map });
+                        self.element_reads.push(ProvenElementRead { root, map, page: false });
                     }
                 }
                 Some((root.binding, places))
@@ -1780,6 +1814,10 @@ impl<'check> Survey<'check, '_> {
             CheckedExpression::ContainerMeasure { .. }
             | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::ArrayMeasure { .. } => (None, true),
+            CheckedExpression::BorrowSegment {
+                segment: super::CheckedSegmentSelect::Page(_),
+                ..
+            } => (None, true),
             _ => (None, false),
         };
         if let Some((binding, places)) = occurrence {
@@ -1791,6 +1829,13 @@ impl<'check> Survey<'check, '_> {
                     places,
                     carrier,
                     measure,
+                    page_descriptor: matches!(
+                        expression,
+                        CheckedExpression::BorrowSegment {
+                            segment: super::CheckedSegmentSelect::Page(_),
+                            ..
+                        }
+                    ),
                     element_measure: matches!(
                         expression,
                         CheckedExpression::RangeElementMeasure { .. }
@@ -1812,8 +1857,10 @@ impl<'check> Survey<'check, '_> {
     ) {
         if let Some((after, map)) = self.outermost_map(subscripts) {
             for place in places {
-                if let Some((root, _)) = element_prefix(place, after) {
-                    self.element_reads.push(ProvenElementRead { root, map });
+                if let Some((root, element)) = element_prefix(place, after) {
+                    let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                    self.element_reads
+                        .push(ProvenElementRead { root, map, page });
                 }
             }
         }
@@ -1834,8 +1881,15 @@ impl<'check> Survey<'check, '_> {
                 // [TYPE-9] distinct segments are distinct storage, so a
                 // segment borrow is an element of its `Segments` place.
                 CheckedExpression::BorrowSegment { root, segment, .. } => {
-                    let mut subscripts = path_subscripts(&root.path);
-                    if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                    let mut subscripts = match root {
+                        super::CheckedSegmentSource::Storage(root) => path_subscripts(&root.path),
+                        super::CheckedSegmentSource::Element(place) => {
+                            range_element_subscripts(place)
+                        }
+                    };
+                    if let crate::semantic::CheckedSegmentSelect::One(index)
+                    | crate::semantic::CheckedSegmentSelect::Page(index) = segment
+                    {
                         subscripts.push((&index.obligation, false));
                     }
                     subscripts
@@ -1858,7 +1912,13 @@ impl<'check> Survey<'check, '_> {
             // locates it in every resolved place.
             for place in &resolved {
                 if let Some((root, element)) = element_prefix(place, after) {
-                    references.push(ProvenElementReference { root, element, map });
+                    let page = matches!(element.path.last(), Some(PlaceStep::Page(_)));
+                    references.push(ProvenElementReference {
+                        root,
+                        element,
+                        map,
+                        page,
+                    });
                 }
             }
         }
@@ -1926,6 +1986,7 @@ impl<'check> Survey<'check, '_> {
                 self.element_reads.push(ProvenElementRead {
                     root: element.root.clone(),
                     map: element.map,
+                    page: element.page,
                 });
             }
             self.reads.push(ReadOccurrence {
@@ -1938,6 +1999,7 @@ impl<'check> Survey<'check, '_> {
                 places: vec![read.place.clone()],
                 carrier: call.cloned(),
                 measure: false,
+                page_descriptor: false,
                 element_measure: false,
             });
         }
@@ -1974,6 +2036,7 @@ impl<'check> Survey<'check, '_> {
                     element.root.clone(),
                     write.argument.clone(),
                     element.map,
+                    element.page,
                 );
                 continue;
             }
@@ -1995,6 +2058,7 @@ impl<'check> Survey<'check, '_> {
         root: ResolvedPlace,
         statement: NodePath,
         map: ProvedAffineIndexMap,
+        page: bool,
     ) {
         // [PAR-2] "Every write by B to one mapped root must be to a place in
         // a proved single-binder affine element of it carrying exactly the
@@ -2007,7 +2071,9 @@ impl<'check> Survey<'check, '_> {
         let oracle = UnprovedSeparations;
         if self.element_writes.iter().any(|written| {
             self.places.overlaps(&oracle, &written.root, &root)
-                && !(same_element_root(&written.root, &root) && written.map == map)
+                && !(same_element_root(&written.root, &root)
+                    && written.map == map
+                    && written.page == page)
         }) {
             self.shared.get_or_insert(statement.clone());
         }
@@ -2015,6 +2081,7 @@ impl<'check> Survey<'check, '_> {
             root,
             statement,
             map,
+            page,
         });
     }
 
@@ -2190,21 +2257,29 @@ impl<'check> Survey<'check, '_> {
         self.element_writes
             .iter()
             .find(|written| {
+                let mut descriptor = written.root.clone();
+                descriptor
+                    .path
+                    .push(PlaceStep::Measure(CheckedMeasure::Length));
                 let reads = self
                     .reads
                     .iter()
-                    .flat_map(|read| {
-                        read.places
-                            .iter()
-                            .filter(move |place| !read.is_root_measure(place, &written.root))
+                    .flat_map(|read| read.places.iter().map(move |place| (read, place)))
+                    .filter(|(read, place)| {
+                        !read.is_root_measure(place, &written.root)
+                            && self.places.overlaps(&oracle, place, &written.root)
+                            && !(written.page
+                                && read.page_descriptor
+                                && same_element_root(place, &descriptor))
                     })
-                    .filter(|place| self.places.overlaps(&oracle, place, &written.root))
                     .count();
                 let matching = self
                     .element_reads
                     .iter()
                     .filter(|read| {
-                        same_element_root(&read.root, &written.root) && read.map == written.map
+                        same_element_root(&read.root, &written.root)
+                            && read.map == written.map
+                            && read.page == written.page
                     })
                     .count();
                 reads != matching
@@ -2326,7 +2401,7 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
         .iter()
         .enumerate()
         .rev()
-        .filter(|(_, step)| matches!(step, PlaceStep::Index(_)))
+        .filter(|(_, step)| matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_)))
         .find_map(|(position, _)| {
             if remaining == 0 {
                 Some(position)

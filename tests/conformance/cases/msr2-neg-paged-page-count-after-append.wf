@@ -1,0 +1,16 @@
+fn one_page(p: &Paged<u64>) -> result: unit pure contract {
+  requires p^.pages.len == 1_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 3_u64);
+  if p.inner.pages.len == 1_u64 {
+    one_page(p: &p.inner);
+    place_back(window: &p.inner, value: 7_u64);
+    one_page(p: &p.inner);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

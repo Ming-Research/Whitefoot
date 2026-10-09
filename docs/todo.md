@@ -801,6 +801,41 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **Range facts cannot read a field below an element.** RANGE-1 admits
+  integer elements but refuses a field such as items[k].position, so a proof
+  about records needs a separate integer array. Snowghost's c4 probe is the
+  minimal witness in the [paged-storage investigation](../research/investigations/paged-storage/DESIGN.md#evidence-from-snowghosts-probes).
+  Specify field projections and their versioned support in the range
+  judgment; validate field-based inverses and scatter, sibling writes,
+  replacement of the containing element and stale facts. Reopen when a
+  downstream proof needs a record field rather than an integer side array.
+
+- **Structural uniqueness does not cross a callable boundary as a fact.**
+  A builder's locally known unique layout cannot yet publish that structural
+  property for a consumer's certified scatter. The precise required fact is
+  still to be isolated from Snowghost's probes
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+  Reduce it to a builder and consumer with a minimal uniqueness contract,
+  then compare expressing it through existing range postconditions with a
+  new exported relation. Validate a duplicate witness that fails and a
+  distinct witness that passes, including mutation between builder and
+  consumer. Reopen when the port needs to hand structural uniqueness on.
+
+- **Requalify Paged affine-element loops with in-body measure reads.**
+  Main now admits reads of an unchanged mapped root's measures in PAR-2,
+  including helper-row reads; the Paged integration retains page-formation
+  descriptor reads for page maps. The earlier Snowghost Paged port reported
+  that hoisting the measure read changed five minimal controls from denied
+  to permitted, while none of its 415 corresponding renderer loops became
+  newly permitted (Snowghost-wf `research/m2-paged`,
+  `research/investigations/storage-layout/probes/c2-paged-permission.wf`,
+  ledger `research/investigations/structure-edits/runs/paged-layout-ledger.md`).
+  Reopen after the merged compiler passes CI: rerun those controls and the
+  port's permission ledger to establish whether this former blocker is gone.
+  Keep a loop that appends, an element read outside the map and a mixed
+  page/element map denied; no new performance conclusion follows from the
+  rule change alone.
+
 - **A const generic argument refuses a type-suffixed literal.** The call
   fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
   the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
@@ -1226,6 +1261,124 @@ rarely insert at the same place.
   short-lived windows. Not checked on a later revision. Reopen with the
   next change to `Slots` lowering or when a profile shows the clearing
   again.
+
+- **Paged page adoption for splices is deferred (R7).** Private paged output
+  cannot yet transfer complete pages into retained storage, so a splice must
+  keep separate owners or move its elements. The [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
+  records Snowghost's P9 requirement. Specify an ownership transfer with
+  explicit length, capacity, partial-page and reference-invalidating effects
+  before adding an adoption operation. Validate empty, aligned and partial
+  splices, linear element consumption and absence of payload copies. Reopen
+  when Snowghost's retained-layout experiment needs P9.
+
+- **A Paged owner with few elements still takes a full first page.** The fixed
+  page size can leave most of its first allocation unused. Snowghost's html5
+  layout has about 117,000 entry-sequence owners, most holding one to five
+  entries, so a 4 KB first page per owner would cost hundreds of megabytes and
+  as many allocations; Snowghost currently plans one context-wide Paged pool
+  of entry nodes instead, which avoids the waste if its experiment confirms
+  it. Its per-owner like-for-like variant measured the cost on html5
+  (Snowghost-wf `research/m2-paged-nodes` at 0ac400e, census run
+  37645318944): 82,907 Paged stores (41,451 SequenceNode stores with B = 8
+  and 2,432-byte pages, 41,451 Flow stores with B = 128 and 1,024-byte
+  pages) hold 143,273,088 bytes of first pages against 63,300,960 in the
+  hand-written base, whose first page is 4 to 64 slots: 2.26 times before
+  descriptors, directories and allocator overhead, and the 38,664 smallest
+  owners alone account for 133,622,784 against 48,252,672 bytes. One candidate is `box_paged_new(capacity: c)` with `c` below the page
+  size allocating its first page at `c` elements and later pages at full size.
+  Compare a smaller first page with the
+  fixed-size representation, including the extra address branch and growth
+  transition, before selecting a change. Validate contents, stable earlier
+  payloads, page ranges and allocation sizes, and measure memory and access
+  cost on the same owner population. Reopen when the Paged port measures
+  material waste in small owners
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **An `apart` certificate cannot use range facts over a window reached
+  through a reference parameter.** The left-inverse scatter of
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  certifies with `&[u64]` parameters, but the same function written over
+  `&Slots<u64>` parameters (`requires forall inverse(k in 0_u64..order^.len)
+  when order^[k] < out^.len: pos^[order^[k]] == k`, body
+  `set out^[order^[k]] = k`) is refused with RANGE-5 `UndischargedApart` in
+  the gate run of the paged-storage branch, and so is the `&Paged<u64>` form;
+  the `&Run<u64>` form is the conformance case. The range walker seeds a
+  container for range and run parameters and a place view for reference
+  parameters, so a fact or measure over `order^` likely lands on a different
+  container identity or generation than the body's reads. Find the
+  mismatch, then accept the reference-parameter forms without changing the
+  range-parameter one. Reopen when a certified scatter must take its
+  storage by reference rather than as a range.
+
+- **Range facts over a window filled by place_back do not reach a call's
+  range requirement.** A caller that fills `Box<Slots<u64>>` (or
+  `Box<Paged<u64>>`) windows with `place_back`, proves
+  `invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q`
+  in a later counted loop, and then calls a function requiring
+  `forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k`
+  over `&order.inner[0_u64..5_u64]` and `&pos.inner[0_u64..5_u64]` is refused
+  with RANGE-3 `UndischargedRangeFact` at the call, for Slots and Paged alike
+  (gate run of the paged-storage branch); the same program over
+  `box_array_filled` arrays,
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`, is
+  accepted. Every existing range-fact case uses arrays, so window storage has
+  no positive witness. Find where the facts over the window die or fail to
+  map onto the range actual (container generation after a boundary
+  operation, or the range formation's length read), fix it, and restore the
+  calling `main` of `tests/conformance/cases/range5-pos-paged-certified-scatter.wf`.
+  Reopen when Snowghost's certified scatter runs over Paged payload pools.
+
+- **The window test module's introduction describes implemented support as
+  missing.** `compiler/src/semantic/tests/windows.rs` says OP-10's window
+  type parameter is not inferred from the operand and that runtime-capacity
+  `Slots<T>` and `Ring<T>` stop as unimplemented, but window operations are
+  called without type arguments and runtime-capacity windows check and run
+  throughout the conformance corpus. Rewrite the paragraph to state what the
+  module's assertions pin today; no test changes. Reopen with the next edit of
+  that module.
+
+- **A segment borrowed below a range element does not emit.** In
+  `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
+  `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
+  projection, `SegmentSlice`), but LLVM emission returns `InvalidIr`; the same
+  borrow through a `Box<Paged<u64>>` element emits. The lowering test
+  `page_borrows_below_range_elements_keep_the_outer_projection` in
+  `compiler/src/lowering/tests.rs` covers the Paged form only; the Segments
+  form failed in the gate run of the paged-storage branch. Find which
+  operand type `emit_segment_slice` or the surrounding measure emission
+  refuses and give that projection the address type the emitter expects;
+  validate with the Segments helper restored to that test. Reopen when a
+  program stores segmented runs in a range of cells.
+
+- **Growth kills facts about Paged elements it does not change.**
+  grow_paged writes the whole cell, so every fact about a filled element dies
+  although no element moves or changes. Snowghost's splice publication would
+  then re-establish its back-link range facts after each growth instead of
+  once. Give growth a row that invalidates references and address formation
+  but preserves element-content support, or a postcondition carrying element
+  facts across it. Validate that a fact over a filled element's field
+  survives growth while a reference formed before growth is still refused.
+  Reopen when a Snowghost proof must be re-established after growth.
+
+- **Paged references do not survive growth.** Stable element storage does
+  not keep the cell stable; grow_paged may replace the cell that holds the
+  directory and requires callers to form their references again. A
+  surviving-reference design needs an effect part read by every address
+  formation and written by cell replacement, including Run references.
+  Compare that refinement with a cell that never moves before changing REF-2. Validate every reference
+  kind, fact invalidation and overlapping growth/address formation. Reopen
+  when re-forming references blocks a concrete downstream operation
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **A page cannot be proved separate from an element outside it.** OWN-7
+  conservatively overlaps a Paged page step with every element or range at
+  that origin: there is no source fact relating their coordinates. Add only
+  a target-independent, finite relation that has a demonstrated caller,
+  rather than inferring page arithmetic from lowering. Validate calls and
+  parallel loops with inside, outside, empty and boundary ranges and retain
+  overlap for unknown coordinates. Reopen when a consumer needs mixed page
+  and element access in one call
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
 - **Audit nonempty release classification for shared handles and key sets.**
   `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
@@ -2258,6 +2411,27 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Qualify ignored-reference entry ordering under granted and refused
+  offers.** A pure `ignore(part: &Slots<u64>)` followed by
+  `grow(cell: &p, ...)`, with `ignore(part: &p.inner)` formed first, needs
+  the referenced block to remain live until the borrowing call enters.
+  The row of `ignore` has no content read, while a refused offer executes
+  at the final join. Ordinary reference parameters carry `dereferenceable`,
+  whose
+  [LLVM contract](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  applies at callee entry. The checker now retains released and borrowed
+  places on each call, and `IrBuilder::overlaps` separates overlapping
+  release/borrow pairs in both orders before argument formation; Paged uses
+  this same boundary. The lowering tests cover cell growth, forwarding
+  wrappers and by-value consumption. Native execution with granted and
+  refused offers and reference attributes with facts on and off remain
+  unverified for the combined Paged and relocating-owner cases. Qualify
+  those paths against sequential output while retaining the source
+  permission verdicts and ordinary reference attributes; inspect
+  `box_keeping_reference_parameters` and its emitter consumer when checking
+  the reference attributes.
+  Reopen at the next parallel-lowering correctness qualification.
+
 - **Measure heap counting under an allocation-heavy program.** The cost of
   counting each allocation (memory statistics) was measured only for firn's
   `set` and `mset`, whose hot path makes no counted allocation of emitted
@@ -2269,12 +2443,13 @@ rarely insert at the same place.
   workload, interleaved with twins on the i9-14900K; reopen when firn's
   script path is next measured or when a program reports the counting.
 
-- **Paged indexed storage is absent in this checkout (Q2).** The active
-  specification and checked type model define Array, Slots and Ring, with no
-  Paged type or storage path. Impact: the selected indexed reduction rule can
-  cover Array and Slots here, but cannot yet name or lower Paged cells.
-  Change: apply the same cell rule to Paged once its owning definition and
-  checked storage representation arrive. Reopen when PR #263 lands on main;
+- **Paged indexed accumulators remain deferred (Q2).** Paged storage, page
+  references and run references are defined, but PAR-2's indexed-accumulator
+  roots remain Array and Slots. Paged element, page and
+  run maps retain their independent-map and certified-element families.
+  Change: extend the indexed cell rule and private-copy lowering to Paged
+  after [PR #263 (built-in paged storage)](https://github.com/mbbill/Whitefoot/pull/263)
+  lands on main;
   validate cross-page cell updates, unchanged length and private-copy
   recombination against sequential execution in CI.
 
