@@ -691,6 +691,68 @@ fn symbolic_generic_body_defers() {
 }
 
 #[test]
+fn generic_integer_domains_keep_their_ordinary_verdict() {
+    for (operation, expected) in [
+        ("let y = x + x;", SemanticRule::Op2),
+        ("let y = cvt::<T, u8>(x);", SemanticRule::Op6),
+        ("let y = cvt::<u64, T>(wide);", SemanticRule::Op6),
+    ] {
+        check(
+            &format!(
+                "fn probe<T: Int>(xs: &[T], x: T, one: T, wide: u64) -> result: unit pure contract {{
+  requires forall same(k in 0_u64..xs^.len): xs^[k] == one;
+}} {{
+  {operation}
+  return unit;
+}}"
+            ),
+            Some(expected),
+        );
+    }
+}
+
+#[test]
+fn free_empty_requirement_is_discharged_only_by_a_range_fact() {
+    for (window, length) in [
+        ("Slots<u64, 4>", "w.len"),
+        ("Box<Slots<u64>>", "w.inner.len"),
+    ] {
+        for (observed, expected) in [(0, None), (1, Some(SemanticRule::Op14))] {
+            // An element read in the guard triggers the instance relating
+            // the observed value to the consumed window's length. Ordinary
+            // entailment knows the guard, but has no relation to that length.
+            check(
+                &format!(
+                    "fn probe(xs: &Array<u64, 1>, w: {window}) -> result: unit reads(xs) contract {{
+  requires forall length(k in 0_u64..1_u64): xs^[k] == {length};
+}} {{
+  if xs^[0_u64] == {observed}_u64 {{
+    free_empty(window: move w);
+  }}
+  return unit;
+}}"
+                ),
+                expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn owned_box_take_is_walked_in_a_participating_function() {
+    check(
+        "fn probe(xs: &Array<u64, 1>, table: &Array<u64, 4>, cell: Box<u64>) -> result: u64 reads(xs), reads(table) contract {
+  requires forall bounded(k in 0_u64..1_u64): xs^[k] < 4_u64;
+} {
+  let taken = move cell.inner;
+  let value = table^[xs^[0_u64]];
+  return taken;
+}",
+        None,
+    );
+}
+
+#[test]
 fn written_enclosing_loop_fact() {
     check("fn probe(targets: &[u64], table: &Array<u64, 4>) -> result: unit reads(targets), reads(table) contract {
   requires forall all(j in 0_u64..targets^.len): targets^[j] < 4_u64;
@@ -1092,5 +1154,68 @@ fn written_premise_measure_subscripts_receive_their_own_range_verdict() {
             ),
             expected,
         );
+    }
+}
+
+#[test]
+fn invariant_measure_subscripts_are_walked_after_an_unrepresented_term() {
+    for relation in [
+        "N + rows^[index].len == N + rows^[index].len",
+        "N - rows^[index].len == N - rows^[index].len",
+        "N == N + rows^[index].len - rows^[index].len",
+    ] {
+        for body in [
+            format!("invariant same: {relation};"),
+            format!("loop (invariant same: {relation}) {{\n    break;\n  }}"),
+        ] {
+            for (index, expected) in [(0, None), (4, Some(SemanticRule::Op4))] {
+                // Ordinary entailment proves the identity. The symbolic N
+                // has no range-walk value, but every measure still owes OP-4.
+                check(
+                    &format!(
+                        "fn probe<const N: u64>(indices: &Array<u64, 1>, rows: &Array<Slots<u8, 8>, 4>) -> result: unit reads(indices) contract {{
+  requires forall at(k in 0_u64..1_u64): indices^[k] == {index}_u64;
+}} {{
+  let index = indices^[0_u64];
+  {body}
+  return unit;
+}}"
+                    ),
+                    expected,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn invariant_measure_subscripts_are_walked_after_affine_overflow() {
+    let relation = "large + large + rows^[index].len == large + large + rows^[index].len";
+    for body in [
+        format!("invariant same: {relation};"),
+        format!("loop (invariant same: {relation}) {{\n    break;\n  }}"),
+    ] {
+        for (index, expected) in [(0, None), (4, Some(SemanticRule::Op4))] {
+            // The target is an ordinary identity. Its expansion in the walk
+            // overflows i128 before the measure, whose OP-4 record must still
+            // be answered. The preceding runtime operations all evaluate to 0.
+            check(
+                &format!(
+                    "fn probe(xs: &Array<i64, 1>, indices: &Array<u64, 1>, rows: &Array<Slots<u8, 8>, 4>) -> result: unit reads(xs), reads(indices) contract {{
+  requires forall zero(k in 0_u64..1_u64): xs^[k] == 0_i64;
+  requires forall at(k in 0_u64..1_u64): indices^[k] == {index}_u64;
+}} {{
+  let x = xs^[0_u64];
+  let first = x * 9223372036854775807_i64;
+  let second = first * 9223372036854775807_i64;
+  let large = second + second;
+  let index = indices^[0_u64];
+  {body}
+  return unit;
+}}"
+                ),
+                expected,
+            );
+        }
     }
 }

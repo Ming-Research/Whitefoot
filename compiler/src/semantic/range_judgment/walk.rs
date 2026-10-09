@@ -1907,9 +1907,8 @@ impl<'program> Walker<'program> {
             } => {
                 let converted = self.eval(state, value);
                 if *mode == CheckedConversionMode::Exact {
-                    // Selection has excluded noninteger domains. A selected
-                    // symbolic integer domain whose type bounds this walk
-                    // cannot form remains an explicit capability gap.
+                    // Selection admits only concrete integer domains:
+                    // symbolic MIN(T)/MAX(T) are not RANGE-1 atoms.
                     let domain_value = if matches!(
                         (source, destination),
                         (
@@ -3444,14 +3443,16 @@ impl<'program> Walker<'program> {
                 Some(Value::Int(value)) => Ok(value.clone()),
                 _ => Err(GoalFailure::Unrepresentable),
             },
-            CheckedAffineExpressionKind::Add(left, right) => self
-                .affine(state, left)?
-                .plus(&self.affine(state, right)?)
-                .ok_or(GoalFailure::Arithmetic),
-            CheckedAffineExpressionKind::Subtract(left, right) => self
-                .affine(state, left)?
-                .minus(&self.affine(state, right)?)
-                .ok_or(GoalFailure::Arithmetic),
+            CheckedAffineExpressionKind::Add(left, right) => {
+                let left = self.affine(state, left);
+                let right = self.affine(state, right);
+                left?.plus(&right?).ok_or(GoalFailure::Arithmetic)
+            }
+            CheckedAffineExpressionKind::Subtract(left, right) => {
+                let left = self.affine(state, left);
+                let right = self.affine(state, right);
+                left?.minus(&right?).ok_or(GoalFailure::Arithmetic)
+            }
             CheckedAffineExpressionKind::MultiplyByConstant {
                 constant, value, ..
             } => self
@@ -3475,8 +3476,11 @@ impl<'program> Walker<'program> {
         state: &mut State,
         relation: &CheckedAffineRelation,
     ) -> Result<Vec<Literal>, GoalFailure> {
-        let left = self.affine(state, &relation.left)?;
-        let right = self.affine(state, &relation.right)?;
+        // Every measure place owes its own bounds record, even when an
+        // earlier term cannot be formed or exceeds the arithmetic limit.
+        let left = self.affine(state, &relation.left);
+        let right = self.affine(state, &relation.right);
+        let (left, right) = (left?, right?);
         let bounded = right
             .plus_constant(relation.bound)
             .ok_or(GoalFailure::Arithmetic)?;

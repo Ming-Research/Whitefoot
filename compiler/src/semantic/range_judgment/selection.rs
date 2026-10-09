@@ -163,7 +163,8 @@ impl Selection<'_> {
                 self.goal(
                     carrier,
                     GoalKind::IntegerDomain,
-                    domain(*operation, *operand_type, arguments),
+                    matches!(operand_type, CheckedType::Integer(_))
+                        && domain(*operation, *operand_type, arguments),
                 );
             }
             CheckedExpression::NumericConversion {
@@ -180,8 +181,8 @@ impl Selection<'_> {
                     matches!(
                         (source, destination),
                         (
-                            CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_),
-                            CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
+                            CheckedNumericType::Integer(_),
+                            CheckedNumericType::Integer(_)
                         )
                     ) && term(value),
                 );
