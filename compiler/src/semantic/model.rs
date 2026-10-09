@@ -1040,6 +1040,8 @@ pub(crate) struct CheckedTarget {
     pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,
     pub(crate) reads: bool,
+    /// Conservative permission to replace a map entry variant.
+    pub(crate) inserts: bool,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
 }
 

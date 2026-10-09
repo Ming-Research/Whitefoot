@@ -440,11 +440,15 @@ impl TypedExpression {
 #[derive(Clone, Debug)]
 struct EffectPath {
     path: super::model::CheckedStatePath,
+    inside_payload: bool,
 }
 
 impl From<super::model::CheckedStatePath> for EffectPath {
     fn from(path: super::model::CheckedStatePath) -> Self {
-        Self { path }
+        Self {
+            path,
+            inside_payload: false,
+        }
     }
 }
 
@@ -452,6 +456,8 @@ impl From<super::model::CheckedStatePath> for EffectPath {
 struct EffectSet {
     reads: Vec<super::model::CheckedStatePath>,
     writes: Vec<super::model::CheckedStatePath>,
+    /// Roots written without a resolved enum payload step (before row truncation).
+    variant_writes: Vec<DeclarationId>,
     /// [EFF-3] whether the boundary this set describes allocates. It is not
     /// a row category [EFF-1, STOR-8]; it is the checked-program metadata
     /// [EFF-3]'s deduplication and reordering licence reads.
@@ -462,6 +468,7 @@ impl EffectSet {
     const NONE: Self = Self {
         reads: Vec::new(),
         writes: Vec::new(),
+        variant_writes: Vec::new(),
         allocates: false,
     };
     fn union(mut self, other: Self) -> Self {
@@ -469,8 +476,14 @@ impl EffectSet {
             self.add_read(path);
         }
         for path in other.writes {
-            self.add_write(path);
+            Self::add_path(&mut self.writes, path.into());
         }
+        for root in other.variant_writes {
+            if !self.variant_writes.contains(&root) {
+                self.variant_writes.push(root);
+            }
+        }
+        self.variant_writes.sort_unstable();
         self.allocates |= other.allocates;
         self
     }
@@ -480,7 +493,12 @@ impl EffectSet {
     }
 
     fn add_write(&mut self, path: impl Into<EffectPath>) {
-        Self::add_path(&mut self.writes, path.into());
+        let path = path.into();
+        if !path.inside_payload && !self.variant_writes.contains(&path.path.root) {
+            self.variant_writes.push(path.path.root);
+            self.variant_writes.sort_unstable();
+        }
+        Self::add_path(&mut self.writes, path);
     }
 
     fn add_path(paths: &mut Vec<super::model::CheckedStatePath>, contribution: EffectPath) {

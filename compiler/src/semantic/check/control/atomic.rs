@@ -241,6 +241,7 @@ impl Checker<'_, '_> {
                 kind,
                 referent,
                 reads: false,
+                inserts: true,
                 invariants,
             });
             handles.push(paths);
@@ -271,11 +272,18 @@ impl Checker<'_, '_> {
             self.body
                 .record_reference_origins(target.binding, &reference.paths);
         }
+        // Each target's aliases as the header relates them: a body that
+        // rebinds a target's reference leaves the writes it made through the
+        // target's root that target's writes.
+        let header_aliases = targets
+            .iter()
+            .map(|target| targets_alias_declarations(&declarations, &block_bindings, target.binding))
+            .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
         let (mut guard, mut checked) = checked?;
-        for (target, place) in targets.iter_mut().zip(&places) {
+        for ((target, place), aliases) in targets.iter_mut().zip(&places).zip(&header_aliases) {
             if !guard
                 .as_ref()
                 .is_some_and(|g| expression_mentions(&g.0, target.binding))
@@ -293,19 +301,29 @@ impl Checker<'_, '_> {
                     },
                 );
             }
-            let aliases =
-                targets_alias_declarations(&declarations, &block_bindings, target.binding);
             target.reads = !checked
                 .effects
                 .writes
                 .iter()
                 .chain(guard.iter().flat_map(|g| g.1.writes.iter()))
                 .any(|p| aliases.contains(&p.root));
+            // Resolved writes retain payload containment before effect rows
+            // truncate dynamic selectors. Unknown/whole writes are variant writes.
+            if matches!(target.kind, CheckedTargetKind::MapEntry(_)) {
+                target.inserts = checked
+                    .effects
+                    .variant_writes
+                    .iter()
+                    .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
+                    .any(|root| aliases.contains(root));
+            }
         }
         let held = |path: &CheckedStatePath| statement_roots.contains(&path.root);
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
+            set.variant_writes
+                .retain(|root| !statement_roots.contains(root));
         }
         if let Some(g) = &guard {
             effects = effects.union(g.1.clone());
