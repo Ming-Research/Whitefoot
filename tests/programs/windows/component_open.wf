@@ -57,6 +57,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -247,7 +250,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
                           set pair[1_u64] = data_b[0_u64];
                           let published_window = &pair[0_u64..2_u64];
                           let no_deadline = None<std::time::Instant>();
-                          match write_once(factory: files, output: out, source: published_window, start: 0_u64, end: 2_u64, deadline: no_deadline) {
+                          let wait_cancel_1 = std::time::cancel_never();
+                          let wait_outcome_1 = write_once(factory: files, output: out, source: published_window, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+                          std::time::close_cancel_watch(watch: move wait_cancel_1);
+                          match wait_outcome_1 {
                             Ok(value: published) => {
                               if published == 2_u64 {
                                 close_read(factory: files, file: move file_b);

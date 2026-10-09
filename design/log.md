@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Cross-context cancellation of host waits
+
+Nodes: compiler/completion-runtime, compiler/waiting-contexts, compiler/waiting-contexts/bounded-waits, language/system-interface/context-cancellation, language/system-interface/deadlines, language/system-interface/outcome-typing
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot cross-context cancellation" that asked to approve PR #296's specification text and design nodes (PRE-2's cancellation sources and watches, the `cancel` parameter on the eight waiting host functions, `IoError::Cancelled` and its outcome rules, and design/language/system-interface/context-cancellation.md) with "agree" (translated), after choosing shape S1 on the board card firn-cancel-shape and direction A on cross-context cancellation, and agreeing that guard observation of cancellation moves to the stacked PR #304.
+
+Summary: A waiting host call names an explicit cancellation watch, shape S1, instead of an until-value, a context-scoped watch or a handle-bound watch, and the runtime finds the waits a firing ends at fire time on each driver's own list instead of registering every wait with the cancellation state, because the firing is rare and the wait common. On Windows without a completion port, bounded socket sends run non-blocking so a send ends at its bound as Winsock's blocking contract does not guarantee. Evidence and the rejected shapes are in research/investigations/context-cancellation/README.md.
+
 ## 2026-10-09 Separate allocations for every ordinary frame root
 
 Nodes: compiler/storage-placement, compiler/waiting-contexts/state-locks

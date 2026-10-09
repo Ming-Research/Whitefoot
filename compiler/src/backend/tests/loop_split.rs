@@ -454,7 +454,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let window = &report.inner[0_u64..8_u64];
   let stored = spell(destination: window, at: 0_u64, value: value);
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -519,7 +522,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let size = report.inner.len;
   let source = &report.inner[0_u64..size];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -2129,8 +2135,11 @@ fn admitted_combine_source() -> Vec<u8> {
     }
     source.push_str(&format!(
         "  let no_deadline = None<std::time::Instant>();\n  \
-         match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
-         end: {width}_u64, deadline: no_deadline) {{\n    Ok(value: accepted) => {{\n      \
+         let wait_cancel_1 = std::time::cancel_never();\n  \
+         let wait_outcome_1 = std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
+         end: {width}_u64, deadline: no_deadline, cancel: &wait_cancel_1);\n  \
+         std::time::close_cancel_watch(watch: move wait_cancel_1);\n  \
+         match wait_outcome_1 {{\n    Ok(value: accepted) => {{\n      \
          return std::process::exit_status(code: 0_u8);\n    }}\n    Err(error: problem) => {{\n      \
          return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n}}\n"
     ));
