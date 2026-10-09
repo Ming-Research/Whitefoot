@@ -2612,6 +2612,24 @@ void wf_cmap_release_cleared(wf_cmap *cleared) {
     }
 }
 
+/* The reserve is map->spare, which a mover takes and reclaim replaces only
+ * under the map's lock, so taking it under that lock leaves it to this call
+ * alone. The lock is only tried: a holder is a mover or a reclaim, and the
+ * caller asks again later rather than waiting. */
+uint64_t wf_cmap_release_reserve(wf_cmap *map) {
+    if (atomic_load_explicit(&map->lock, memory_order_relaxed) ||
+        atomic_exchange_explicit(&map->lock, 1, memory_order_acquire))
+        return 0;
+    cell *cells = map->spare;
+    uint64_t capacity = map->spare_capacity;
+    map->spare = NULL;
+    unlock_map(map);
+    if (cells == NULL)
+        return 0;
+    free_cells(cells, capacity);
+    return capacity * sizeof(cell);
+}
+
 uint64_t wf_cmap_count(wf_cmap *map) {
     int64_t used, live;
     totals(map, &used, &live);

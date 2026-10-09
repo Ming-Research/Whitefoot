@@ -141,6 +141,8 @@ void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width,
     wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
 }
 
+uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_reserve((wf_cmap *)table); }
+
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */
 void wf__keyed_table_free(void *table) {

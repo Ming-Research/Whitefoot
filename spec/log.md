@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.110: releasing a map's reserve
+
+Rules: changed PRE-1, SHARE-1, WAIT-2
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
+
+Summary: PRE-1 adds `fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 reads(map)`, last in the declaration preorder so no earlier ordinal moves. SHARE-1 says it changes no entry of the map that is the object's state, may release storage the map holds beyond what its entries need so that a later `heap_in_use` reading counts fewer bytes, and returns how many bytes it released; WAIT-2 lists that count among the execution's inputs. Selection ground: firn's maxmemory, which counts a map's reserve in `heap_in_use`, needs to give the reserve back before it evicts keys, and the operation takes the handle so that it needs no hold of the object and blocks no command.
+
 ## 2026-10-09 v0.109: offset disequalities, invariant L0 facts and origin transport
 
 Rules: added ENT-3.S16, ENT-4.OT; changed ENT-2, ENT-3, ENT-4, ENT-5, ENT-6, MSR-4, FN-8, INV-1, CALL-6

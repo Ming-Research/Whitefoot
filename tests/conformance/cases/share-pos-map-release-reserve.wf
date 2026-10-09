@@ -1,0 +1,53 @@
+const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+fn release(store: &Shared<ConcurrentHashMap<Box<u64>>>) -> freed: u64 reads(store) {
+  let freed = shared_map_release_reserve::<Box<u64>>(map: store);
+  return freed;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Box<u64>>(capacity: 1_u64);
+  let code = 42_u8;
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  let c = &names[2_u64..3_u64];
+  atomic t = &store {
+    let first = box_new::<u64>(value: 1_u64);
+    set t^[a] = Some<Box<u64>>(value: move first);
+    let second = box_new::<u64>(value: 2_u64);
+    set t^[b] = Some<Box<u64>>(value: move second);
+  }
+  let freed = shared_map_release_reserve::<Box<u64>>(map: &store);
+  let again = release(store: &store);
+  let other = shared_share::<ConcurrentHashMap<Box<u64>>>(shared: &store);
+  let through = shared_map_release_reserve::<Box<u64>>(map: &other);
+  let count = 9_u64;
+  let seen = 0_u64;
+  atomic t = &store {
+    set count = map_count::<Box<u64>>(map: t);
+    let entry_b = &t^[b];
+    match entry_b^ {
+      Some(value: held) => {
+        set seen = held^.inner;
+      }
+      None() => {
+      }
+    }
+    let third = box_new::<u64>(value: 3_u64);
+    set t^[c] = Some<Box<u64>>(value: move third);
+  }
+  let after = 9_u64;
+  atomic t = &store {
+    set after = map_count::<Box<u64>>(map: t);
+  }
+  if count != 2_u64 {
+    set code = 1_u8;
+  }
+  if seen != 2_u64 {
+    set code = 2_u8;
+  }
+  if after != 3_u64 {
+    set code = 3_u8;
+  }
+  return std::process::exit_status(code: code);
+}
