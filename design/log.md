@@ -12,6 +12,13 @@ Nodes: compiler/proof-query-context
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design decision 'proof queries build the index on demand' (see the latest log)" with "agreed" (translated), after selecting direction A2 of the wide-match checking investigation (Q155).
 
 Summary: Ordinary affine queries and certificates keep one function-local memo of unchanged states; on a miss they pair only candidates whose coefficient vector a DIRECT or residual query needs and enumerate the final AUTO family lazily in its first-occurrence order, so endpoints, bounds and parents equal the full rebuild's, which the tests keep as their oracle. Reuse alone recovered about 10% of the natural wasm interpreter's check on the M5; demanding the index cuts that check to 0.215 of its base on the 14900K, while the constant-assignment series, whose cost is the join, is unchanged ([check-time](../research/investigations/check-time/DESIGN.md#14900k-timing-results)). Eager all-pair rebuilding, target-overlap pruning and cross-event winner repair were refused.
+## 2026-10-09 Handler words for whole-program dispatch families
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the handler word's design decision (see the latest log)" with "agreed" (translated), after the completion report that stated the decision, including the exclusion of nominals whose values the runtime creates or zero-fills; the direction itself was the owner's choice of an address in each value (Q135 A).
+
+Summary: A whole-program split dispatch family stores one compiler-private word per family in every value of its matched enum, holding the variant's arm address, when the complete family set fits the layout ceiling and every value of the nominal is built by emitted code; constructors and checked primitives write it, copies carry it, replacement rewrites it, and the dispatch loads the next handler from the next element. Nominals reachable through native signatures or whose values the runtime creates or zero-fills (concurrent-map slots and absent entries, I/O, completion and scheduler transfers), families that do not fit, and fragment builds keep tag-and-table dispatch. On the 14900K the natural `loop { match }` form of the wasm interpreter runs CoreMark 1.099 times as fast as without the word, and Halo's `fib` and `loop` stay within 2% ([match-dispatch](../research/investigations/match-dispatch/DESIGN.md#outcome-of-the-handler-word-on-the-natural-form)). A tag-indexed table on those edges and source-visible handler addresses were refused.
 
 ## 2026-10-08 grow reallocates its cell
 

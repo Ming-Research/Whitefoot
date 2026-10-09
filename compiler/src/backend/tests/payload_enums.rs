@@ -199,6 +199,20 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
     layouts
 }
 
+/// Target sizes and alignments of every emitted enum value and payload view.
+pub(super) fn enum_layout_probes(program: &IrProgram) -> BTreeMap<String, (u64, u64)> {
+    let mut probes = BTreeMap::new();
+    for layout in enum_layouts(program) {
+        probes.insert(format!("wf.t.{}", layout.link), layout.selected);
+        if layout.union {
+            for (tag, view) in layout.views {
+                probes.insert(format!("wf.t.{}.v{tag}", layout.link), view);
+            }
+        }
+    }
+    probes
+}
+
 /// The layout of the named function's result type.
 fn result_layout(program: &IrProgram, function: &str) -> ((u64, u64), bool) {
     let ty = program
@@ -305,6 +319,12 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
             assert!(!declaration.contains(" x i8], [0 x "), "{declaration}");
         }
     }
+    assert_llvm_layouts(&llvm, probes);
+}
+
+/// Run the program and observe LLVM DataLayout's size and alignment constants
+/// in the same executable. Shared with handler-word layout coverage.
+pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64)>) {
     let entries: Vec<_> = probes
         .keys()
         .flat_map(|name| {
@@ -336,8 +356,7 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         entries.len()
     );
     let output = compile_link_and_run(&module, Some(&observer), &[]);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let measured: Vec<u64> = String::from_utf8(output.stdout)
+    let measured: Vec<u64> = std::str::from_utf8(&output.stdout)
         .expect("decimal layouts")
         .lines()
         .map(|line| line.parse().expect("one decimal per line"))
@@ -346,10 +365,9 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         .values()
         .flat_map(|(size, align)| [*size, *align])
         .collect();
-    assert_eq!(
-        measured,
-        expected,
-        "{:?}",
+    assert!(
+        output.status.code() == Some(0) && measured == expected,
+        "program result and LLVM layouts: {output:?}; measured {measured:?}, expected {expected:?}; types {:?}",
         probes.keys().collect::<Vec<_>>()
     );
 }

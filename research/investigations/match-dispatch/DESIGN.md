@@ -17,9 +17,12 @@ fn run(vm: &mut Vm, code: &Array<Cell>, frame: &mut Array<u64>) -> u64 {
 }
 ```
 
-The writer may equally make each arm end in `return musttail run(vm, ...)`;
-the guaranteed self-tail transfer [FN-10] already lowers to a jump back to the
-function entry, so both spellings reach the compiler as the same loop.
+The writer writes this loop and no tail calls; the compiler produces the
+tail calls. Stages 2 and 3 below measured interpreters whose arms each end
+in a `musttail` self call instead. That spelling was taken to reach the
+compiler as the same loop without a check, and the work no longer uses it:
+[Stage 4](#stage-4-loop--match-) makes `loop { match }` itself compile to
+tail calls.
 
 The question is how the compiler lowers such a loop, and whether a Whitefoot
 interpreter compiled that way can match or exceed Silverfir-nano's
@@ -690,3 +693,1006 @@ also carries the register-pressure candidate. Alone, that candidate gave
 It is kept as a correction rather than adopted as a gain: the recorded
 spill order spills the values the fewest arms read first, and the
 implementation had missed reads through projections and pins.
+
+## Stage 3: the gap to Silverfir-nano
+
+The stage-3 wasm interpreter is the yardstick for this lowering because its
+ceiling is known. Silverfir-nano's interpreter is close to the best this
+dispatch shape reaches, and wasmi, a Rust interpreter dispatching by tail
+calls, is reported at about 80% of it. A Whitefoot interpreter compiled
+from the same design should reach that too. Halo's Lua interpreter remains
+the check that a change does not cost another interpreter. Where Halo
+cannot reach the wasm interpreter's shape, the gap points at Halo's
+implementation, as its next index taken from helpers does.
+
+**Question.** On the 14900K with the pinned LLVM, how far is v2h, compiled
+by main, from Silverfir-nano on CoreMark, and from wasmi where it runs the
+same module? Where do the remaining instructions per dispatch go?
+
+**First step: the ratio, no compiler change.** Run v2h compiled by main,
+a twin of it, Silverfir-nano `5f248e44` (`sf-nano-cli --interp`) and
+wasmi's command-line runner where it installs. Use CoreMark 2K with 7
+interleaved launches and medians. Then compare the hot arms' machine code
+with Silverfir-nano's handlers, role by role, as the code cursor's
+attribution did.
+
+**Use of the result.** The ratio sets how much room is left. The
+attribution orders the next lowering candidates by the instructions they
+would remove from the hot arms. Each candidate keeps its own rule, written
+before it is measured: the wasm interpreter on the 14900K decides, and
+Halo must not regress.
+
+**Outcome of the measurement**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-gap-to-silverfir-nano)).
+On the 14900K, v2h scores 0.692 of Silverfir-nano and wasmi 0.848. v2h
+makes the fewest dispatches of the three. The whole gap is in each
+dispatch: v2h's `I32Add` runs 17 instructions on x86-64 where wasmi's
+corresponding handler runs 6. At wasmi's cost per dispatch, v2h would
+score about 0.97 of Silverfir-nano. So the room left is about 1.4 times,
+all of it in the code each dispatch runs.
+
+## Stage 3: binding what wasmi and Silverfir-nano bind
+
+The owner set closing this gap as the evidence that the lowering is at
+its best. Even a straight copy of wasmi's design should score about like
+wasmi. The means are to bind values to registers across handlers as
+wasmi and Silverfir-nano do. Their contracts, against v2h's parts:
+
+| value | wasmi | Silverfir-nano, x86-64 | v2h on x86-64 |
+|---|---|---|---|
+| next operation | cell pointer, the cell holding its handler's address | cell pointer, handler address in the cell, next handler word preloaded | element address and index; tag, then a handler table |
+| frame | stack pointer (an address) | frame base register | frame index plus the stack's element address |
+| linear memory | base and length in registers | base and length in registers | element address in a register, length read from memory at each access |
+| accumulators | integer and two float registers | integer and float accumulators, two locals of each kind | the integer `acc` |
+| bound of the next operation | none (validated code) | none | `pc + 1 < n` at every dispatch |
+
+Each row v2h lacks is a lowering mechanism, since the language has no
+pointers or code addresses. The order follows the instructions each would
+remove from the hot arms. Each one is a candidate with its own rule:
+- **1. The handler's address in the element.** A split dispatch loop's
+  matched element carries its arm's address, so the dispatch loads the
+  next handler from the element it moves to, instead of a tag and then a
+  table entry. This saves about two instructions and a dependent load per
+  dispatch. Its first step measures the upper bound with a prototype, not
+  the final representation. The representation (where the address lives,
+  who writes it, and an enum matched by several loops) is designed only if
+  the bound clears the rule.
+- **2. The frame as an address.** The frame index used as the base of
+  slot accesses travels as the address of its first slot, as the code
+  cursor carries the matched element. This saves a base computation per
+  slot-reading arm, and one register.
+- **3. The memory's length in a register.** A run's length that the loop
+  reads on every access, and changes only in some arms, travels in a
+  register those arms update.
+- **4. The index, once registers allow.** Revisited after 1 to 3.
+
+The bound of the next operation is a language question, whether the
+proof can show the code cannot fall off its end. It is outside these
+lowering steps.
+
+**Criterion for each candidate, fixed before it is measured.** CoreMark 2K
+on the 14900K with the pinned LLVM, against its base with a twin, 7
+interleaved launches. Adopted if the median rises at least 2%, and neither
+of Halo's `fib` and `loop` kernels is more than 2% slower. The goal is
+wasmi's 0.848 of Silverfir-nano, then Silverfir-nano itself.
+
+**Outcome of candidate 1**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-handlers-address-in-the-element)).
+The prototype scores 1.101 of its base on the 14900K, ahead in all 7
+launch pairs, and its `I32Add` runs 15 instructions instead of 17. The
+bound clears the rule, so the representation is designed next.
+
+Halo's `fib` and `loop` stay within 0.5% of the base. Halo's interpreter
+did not receive the word, though, so that result checks nothing about the
+mechanism itself. The language's layout ceilings
+([OP-9](../../../spec/kernel-spec.md)) bound each stored enum by its
+product layout, alignment included. Halo's `Cell` has only `u8` and `u32`
+fields, so its alignment ceiling is 4, and an 8-byte-aligned word cannot
+enter it.
+
+**The representation's open choices.**
+- **Where the word lives:**
+  - in every value of the enum, as in the prototype;
+  - or only in the enum's run storage, where the stride grows and values
+    elsewhere keep their size.
+- **Who writes it:** every construction in the first case, every store
+  into a run in the second.
+- **Its width and alignment:**
+  - an address at pointer alignment, which only an enum whose ceiling is
+    8-byte aligned admits;
+  - an address at the ceiling's alignment, which Halo's `Cell` admits at
+    20 bytes instead of 12;
+  - a 32-bit offset from a base, 16 bytes for `Cell`, at the cost of
+    adding the base at each dispatch.
+- **An enum matched by several split loops:** which loop's arms the word
+  names.
+- **Fragment builds:** a construction in one fragment names an arm in
+  another, so arms cannot stay internal to their module.
+
+**Next experiment: the word in a 4-byte-aligned `Cell`.** The question is
+whether the word helps an interpreter like Halo's, whose cells are small
+and 4-byte aligned. The prototype places the 8-byte address at the enum's
+ceiling alignment where that is below 8, loading and storing it with that
+alignment. Base, prototype, twin, and Halo's `fib` and `loop` on the
+14900K, 7 interleaved launches.
+- **For the representation:** if either kernel gains at least 2% and
+  neither loses more than 2%, the representation must cover such enums,
+  and the address and offset forms are compared next.
+- **Otherwise:** this form gives a Lua-like interpreter nothing, and the
+  card says so.
+- **CoreMark:** must stay within its twin's spread, since `Op` is already
+  8-byte aligned.
+
+**Outcome of the word in a 4-byte-aligned `Cell`**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-handlers-address-in-the-element)).
+Against candidates 1 and 2 alone, Halo's `fib` takes 2.3% less time and
+`loop` 1.8%, while the twin stays within 0.2%. That clears the criterion,
+so the representation must cover enums whose ceiling is below pointer
+alignment. Comparing the address with a 32-bit offset remains open.
+
+CoreMark is unchanged, as `Op` is already 8-byte aligned. With this
+commit (`8a93bbb90`) it scores 5970.1, 1.099 of main, the same as
+candidates 1 and 2 alone
+([run 37579981158](https://github.com/Ming-Research/Whitefoot/actions/runs/37579981158)).
+
+**Outcome of candidate 2**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-frame-as-an-address)).
+- **The mechanism works:** the frame base leaves every slot access.
+- **The time does not move:** CoreMark scores 0.994 of candidate 1 alone on
+  the 14900K, below the rule.
+- **Halo is not covered:** its interpreter reaches frame slots only inside
+  helpers, so it does not receive the mechanism.
+
+The candidate is not adopted.
+
+## Stage 3: where the time goes
+
+Candidate 1 removed one dependent load from the dispatch chain and gained
+10%. Candidate 2 removed a cheap instruction from every slot access and
+gained nothing. So counting instructions does not rank the remaining
+candidates. The owner asked for an attribution of the whole gap before more
+candidates. wasmi is the reference, because it is compiled by LLVM from
+Rust: whatever wasmi's code achieves, a Whitefoot interpreter's code should
+reach.
+
+**Question.** Of the cycles v2h spends beyond wasmi, which part is due to
+each of the following?
+- the lowering of `match` to tail calls;
+- the language's proof obligations, such as the test of the next index
+  against the code's length;
+- the interpreter's own design: which values live in frame slots and which
+  in registers, and how calls build frames.
+
+**Method.**
+- **Counterfactual time, not instruction counts.** Remove one cost and
+  measure cycles or score: the bounds tests by rewriting them to true in
+  the emitted LLVM, separate dispatch per branch outcome, and each
+  candidate.
+- **Cycles per comparable handler.** For v2h and wasmi, from sampled time
+  shares, per-handler counts and total cycles on the M5.
+- **Machines.** The M5 has hardware counters; the 14900K remains the
+  yardstick.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-where-v2hs-time-goes-against-wasmi)).
+- **The measured dispatch counterfactuals leave most of the gap.**
+  - On the M5, candidates 1 and 2 with the bounds tests removed save 2.4%
+    of cycles. v2h still spends 3.61 cycles per dispatch, against wasmi's
+    2.32.
+  - Separate dispatch per branch outcome saves nothing.
+- **The bounds tests no longer cost time.**
+  - On the 14900K they cost 3.7% on main but nothing once candidate 1
+    shortens the dispatch chain.
+  - On the M5 they never cost anything.
+  - A language mechanism that removes them would not be justified by
+    performance on this interpreter.
+- **On the M5, the per-execution costs of `I32AddD` and of calls differ
+  most from wasmi's, and their extra instructions reflect the interpreter's
+  frame and accumulator design.** These are per-execution costs, not a
+  weighted share of the total gap.
+  - A value read from a frame slot that the operation before it has just
+    written: `I32AddD` takes 4.7 cycles where `I32AddAD`, reading the
+    accumulator, takes 1.85.
+  - Calls take 28 cycles against wasmi's 15.6.
+  - wasmi's translator keeps more values in its integer register (`ireg`).
+    v2h's accumulator holds a value only when the next operation is its
+    one consumer.
+
+**Next step, awaiting the owner.** Adopt wasmi's choices in v2h's
+translator: keep the values wasmi keeps in registers in loop parameters,
+and build call frames as wasmi does. Then compare with wasmi again. That
+changes the interpreter, not the compiler.
+- **If v2h then comes within a few percent of wasmi:** the lowering is at
+  its best for this interpreter shape.
+- **If it does not:** the remaining difference is again attributed by
+  counterfactuals.
+
+Two constraints carry into the design:
+- on x86-64, v2h's split loop already takes all 11 integer argument
+  registers of `preserve_none`;
+- on x86-64, wasmi's handlers take 7 integer arguments under `sysv64`, of
+  which only 6 can travel in registers.
+
+## Stage 4: `loop { match }`
+
+An interpreter is written as a loop around a `match`, with no tail calls in
+its source. The compiler's back end turns that loop into one function per
+arm with guaranteed tail calls between them. Every measurement so far used
+interpreters written with a `musttail` self call ending each arm, so
+whether `loop { match }` reaches the split lowering at all is untested.
+
+**Known obstacles, each to be fixed rather than avoided:**
+- **[INV-1] at a join.** An invariant over loop variables that different
+  arms update is lost where their paths join before the back edge
+  (`docs/todo.md`, "A loop invariant is lost where a guarded update joins
+  an untouched path").
+- **Check time.** Checking one large function grows faster than its size
+  (`docs/todo.md`, "Checking one function grows faster than its size").
+  This applies to any interpreter written as one function.
+- **One back edge.** A `match` inside a loop reaches the back edge through
+  one join after the `match`. Each arm needs its own transfer, so the
+  lowering must give each arm the dispatch that follows that join.
+
+**First step: what the compiler does today.** Rewrite two interpreters as
+`loop { match }`: the four-instruction interpreter of the dispatch tests,
+and v2h, with `gen.py` writing the loop form. Record, for each:
+- the checker's verdict, and every refusal's rule and witness;
+- the dispatch ledger's verdict for the loop, and its reason if it is not
+  split;
+- for a split loop, the emitted parts against the `musttail` spelling's.
+
+This changes no compiler. Each obstacle found then gets its own design,
+and a change to a language rule goes to the owner first. After that,
+v2h's gap to Silverfir-nano and wasmi is measured again in the loop form.
+
+**Outcome of the first step.** The compiler was built from `8a93bbb90` on
+the owner's M5. Two interpreters were written as `loop { match }`:
+- the four-instruction test interpreter, by hand;
+- v2h, by a one-off rewrite of `gen.py`'s output. It turns each arm's
+  `return musttail run(..., pc: X, fp: F, acc: A)` into assignments, and
+  moves the statements that followed a failed guard into its `else`.
+
+The findings, in the order they block:
+
+1. **The back end already splits `loop { match }`.** The test interpreter
+   checks, splits into 4 arm functions and runs correctly. The arms fall
+   off the `match` to one back edge, and each still ends in its own
+   guaranteed tail call.
+2. **In a loop, a call that writes a box blocks a bound derived from the
+   box's length.** After such a call, even one whose `ensures` preserves
+   the length, `fp + 4 <= stack^.inner.len` still holds. It re-proves the
+   invariant at the back edge and admits `stack^.inner[fp]`. But
+   `4 <= stack^.inner.len`, which drops the non-negative `fp`, is no longer
+   derived. In v2h the frame contract is the loop invariant
+   `fp + 65536 <= stack^.inner.len`, so after a helper writes a frame slot
+   `stack^.inner.len - 65536` is refused [OP-2]. Minimal witness, compiler
+   `8a93bbb90`:
+
+   ```wf
+   fn touch(stack: &Box<Array<u64>>) -> r: unit writes(stack.inner) contract {
+     ensures stack^.inner.len == entry(stack)^.inner.len;
+   } {
+     if 0_u64 < stack^.inner.len {
+       set stack^.inner[0_u64] = 1_u64;
+     }
+     return unit;
+   }
+
+   fn walk(stack: &Box<Array<u64>>, fp0: u64, k: u64) -> r: u64 writes(stack.inner) contract {
+     requires fp0 + 4_u64 <= stack^.inner.len;
+   } {
+     let fp = fp0;
+     loop (
+       invariant fb: fp + 4_u64 <= stack^.inner.len
+     ) {
+       touch(stack: stack);
+       let room = stack^.inner.len - 4_u64;
+       set stack^.inner[fp] = room;
+       if room == 7_u64 {
+         return room;
+       }
+     }
+     return 0_u64;
+   }
+   ```
+
+   | variant | verdict |
+   |---|---|
+   | the witness, with the call | refused [OP-2] on `room` |
+   | the call under `if k != 0_u64` | refused [OP-2] on `room` |
+   | no call | accepted |
+   | the same fact as a `requires` of a loop-free function, then the call | accepted |
+   | the fact `4 <= stack^.inner.len` from an `if` guard, then the call | accepted |
+   | the fact `fp + 4 <= stack^.inner.len` from an `if` guard without a loop, then the call | accepted |
+   | the invariant `4 <= stack^.inner.len`, then the call | accepted |
+   | the call, then only the back edge and `stack^.inner[fp]`, no `room` | accepted |
+   | `fp` an immutable parameter instead of a loop variable | refused [OP-2] on `room` |
+
+   The refusal needs a loop, a call writing the box, and a bound that drops
+   a term of the invariant. Every arm of v2h that writes a frame slot
+   through a helper meets it.
+
+   **Cause: the checker falls short of the specification.** After the
+   call, closed L0 holds `L = D`, where `D` is the call's datum for the
+   length. The loop header's affine theorem gives `fp - D <= -4` through
+   `D`'s image. [MSR-4]'s step 6, the affine-left / L0-right bridge,
+   combines the two into `4 <= L`.
+
+   The checker never takes that step for this bound. It builds the lower
+   target of a subtraction's integer domain without its right-hand term
+   (`right: None`, `compiler/src/semantic/entailment/flow/prover.rs`, in
+   the subtraction's normalization), and `numeric_affine_proof` returns
+   before the bridge when that term is absent.
+
+   The fix is in the checker: submit each finite component with its
+   right-hand term through the complete numeric disposition. No rule
+   changes.
+3. **[INV-1] at a join.** An arm that updates a loop variable under a guard
+   (`set fp = nf` after `nf + 4 <= len`), beside arms that leave it alone,
+   fails the invariant `fp + 4 <= len` at the back edge, even when the other
+   arms do nothing else. Without the update it is accepted. This is the
+   join of `docs/todo.md`'s INV-1 entry, and every interpreter whose calls
+   and returns change a frame base meets it.
+4. **Check time grows with the cube of a join's width.**
+
+   | arms | `loop { match }` | `musttail` spelling | no loop, one join after the `match` | the same, one `set` per arm |
+   |---:|---:|---:|---:|---:|
+   | 40 | 0.11 s | 0.04 s | 0.05 s | — |
+   | 80 | 0.51 s | 0.07 s | 0.26 s | 0.03 s |
+   | 160 | 3.59 s | 0.14 s | 1.84 s | 0.20 s |
+   | 320 | 35.0 s | 0.33 s | 18.7 s | 1.53 s |
+   | 640 | — | — | — | 15.3 s |
+
+   - **The source:** the join of the `match`'s arms, in loops or not. A
+     `match` whose every arm returns has no such join.
+   - **Even the barest arms grow so:** an arm that only sets one variable
+     to a constant still grows about tenfold per doubling.
+   - **Where the time goes in v2h's loop spelling:** the entailment state's
+     `DerivationLedger::intern` and `join_at_once`.
+5. **No `continue`.** An arm that leaves early for the next operation must
+   nest everything after that point in an `else`. The `musttail` spelling
+   used `return musttail` as a `continue` carrying new values.
+6. **The cursor's step through the join after the `match`.** Each arm's new
+   `pc` reaches the back edge through one join after the `match`. The step
+   analysis sees that join's value, not the arm's own `pc + 1`, so each arm
+   forms the cursor from the run (`madd` on AArch64) instead of stepping
+   it. The fix is in the back end: read each arm's own incoming value at
+   that join.
+
+A floating loop variable travels in a floating register of the split: the
+four-instruction interpreter with an `f64` accumulator reports "9 integer
+and 1 floating" registers and runs correctly.
+
+Findings 2 to 5 concern the checker and the language; finding 6 is a
+lowering fix. Each one's design and the plan follow from the analyses of
+the checker, the language and the back end.
+
+## Stage 4: the gaps and the plan
+
+The goal is that an interpreter written as `loop { match }` compiles to the
+shape wasmi's and Silverfir-nano's handlers have and runs about as fast,
+with every gap closed in the language or the compiler and none routed
+around.
+
+The inventory comes from three analyses run on the owner's instruction,
+of the checker, the language and the back end. They used the compiler
+built from `8a93bbb90`, wasmi 2.0.0's source and AArch64 code, and
+Silverfir-nano's generated AArch64 handlers (`5f248e44`). Each witness in
+[`witnesses/`](witnesses/) was rechecked with that compiler and has the
+verdict listed below. Each is promoted into a compiler or conformance test
+by the change that fixes it.
+
+### The checker
+
+**C1. A bound the specification derives, after a box-writing call in a
+loop.** A checker defect: [MSR-4]'s step 6 is skipped for a subtraction's
+lower bound, as finding 2 above details. The fix routes every finite
+integer-domain component, with its right-hand term, through the complete
+numeric disposition, across all operations rather than a subtraction
+special case. No rule changes.
+- `bound-after-call.wf`: refused [OP-2].
+- `bound-no-call.wf`, `bound-requires.wf`: accepted.
+
+**C2. A join loses a relation the writer stated as a loop invariant.**
+Every input of the join proves the relation, but the joined state does
+not hold it. Under [ENT-5]'s join, which takes the arms' exits, and
+[ENT-6], which gives differing values a fresh image, this is what the
+specification prescribes. It takes four forms:
+
+| form | refused | accepted control |
+|---|---|---|
+| a scalar updated under a guard in one arm, untouched in another | `join-min.wf`, [INV-1] | `join-only-set.wf`, `join-only-keep.wf` |
+| a box length after a call made in only one arm | `helper-min.wf`, [INV-1] | `helper-all.wf` |
+| the relation needed after the join, before the back edge | `helper-post-use.wf`, [OP-4] | — |
+| two variables updated together | `correlated-cache.wf`, [INV-1] | `correlated-one.wf` |
+
+A ten-operation interpreter with calls, returns, memory and a frame
+contract meets it (`rich.wf`; `rich-no-helper.wf` passes). So does v2h.
+
+Proving the invariant on each edge into the back edge's join covers only
+the first and second forms. The proposed rule (Q137) keeps the ordinary
+join and transports the loop header's written relations across it:
+- for each active header relation whose operands are live there, check it
+  on every input with the existing disposition;
+- where every input proves it, publish it over the joined values;
+- at the back edge, prove the next header batch on each incoming edge.
+
+This adds automatic facts, so [ENT-5], [ENT-6] and [INV-1] change. Its
+cost is a fixed number of existing queries per relation and per input, not
+an enumeration of paths.
+
+**C3. Check time grows with the cube of a join's width** (finding 4).
+- **Cause:** the checker joins every continuing exit at once, and the join
+  builds every pair of the union of the inputs' rows, with a parent list
+  over all inputs (`entailment/state.rs`): O(arms × rows²).
+- **The specification:** it fixes the join's result, not this
+  construction.
+- **Fix, investigated first (Q140):** after C2's per-edge back-edge proof,
+  build a join only where something reads it, and make the join exact but
+  demanded, memoizing pairs.
+- **Target, fixed before measuring:** linear growth in arms at fixed arm
+  size, no more than 2.5 times per doubling. The 320-arm synthetic loop
+  takes 35 s today.
+
+### The language
+
+**L1. No `continue`** (`continue.wf`, [FORM-1]; [GRAM-6] excludes it).
+The proposal (Q138) is `continue;` and `continue @label;` with the current
+values of the loop variables:
+- it adds a back edge carrying [INV-1]'s and [RANGE-3]'s obligations;
+- releases follow [STOR-3]'s edge rule;
+- a counted loop takes its increment;
+- [GIVE-1] counts it only as an escape from an enclosing initializer.
+
+A value-carrying transfer is refused: plain assignment already lowers to
+the edge's values.
+
+**L2. Code validated once cannot be used.**
+- **What exists:** a translator can prove `forall j: targets[j] < n`
+  (`validate-targets.wf` accepted).
+- **What is missing:** the executor cannot instantiate that fact where it
+  reads a target ([RANGE-4], `range-use.wf`), and a range fact cannot name
+  an enum payload's field ([RANGE-1], `range-payload.wf`).
+- **The proposal (Q139):**
+  - an explicit `use R(i)` of an active range clause inside a local
+    invariant;
+  - read provenance tying the value read to the version of the run it was
+    read from;
+  - range facts over a guarded variant's integer fields;
+  - a source-order proof-event model, so that range and affine proofs
+    compose without cycles.
+- **Prior decision:** `design/language/checks-and-proofs/range-facts.md`
+  refused exactly these, preferring guards. The proposal reopens it on a
+  new consumer, immutable translated code.
+- **Measured value:** none in time (the bounds counterfactual). The value
+  is that a validated program needs no per-dispatch test and that a
+  translator error is caught.
+
+**L3. A validator returning `unit` cannot state its guarantee.**
+`validate-targets-unit.wf` is refused [FN-9], while the same validator
+returning a count is accepted. The proposal, part of Q139: a success route
+selects a range postcondition whatever the payload's type, the payload
+supplying only the terms it has.
+
+**L4. Operations a complete wasm interpreter needs.** These go on demand,
+not in this plan: a saturating float-to-integer conversion, and a 128-bit
+vector type.
+
+**What needs no language change:**
+- The interpreter's state in registers is its loop variables, `f32` and
+  `f64` included.
+- Register, slot and immediate operand forms and superinstructions are
+  ordinary variants.
+- Dispatch through handler addresses stays a lowering.
+
+### The back end
+
+**B1. The cursor's step through the join after the `match`** (finding 6).
+While emitting each arm, read the header's argument through the
+predecessors that arm reaches:
+- an equal step through a join keeps the step;
+- mixed steps take a pointer phi of each predecessor's cursor;
+- arbitrary targets form the cursor from the run.
+
+**B2. Parameters that only travel.** `natural-loop.wf` passes its
+`count0` and the enclosing frame through every arm unread. The fix is
+liveness over real observations, applied to the dispatcher, the arms and
+the entering call before the registers are counted.
+
+**B3. The handler word's representation (Q135).**
+- **Placement:** a compiler-private pointer word in every value of a
+  selected enum, aligned at most to the enum's ceiling.
+- **Several loops:** one word per dispatch family that fits the ceiling;
+  an enum with more families than fit keeps the tag and the table.
+- **Fragments:** a composition-wide layout plan, with hidden cross-fragment
+  symbols.
+- **Writers:** constructors write it, copies keep it, and replacing a whole
+  value rewrites it.
+- **Measured alternatives:** a 32-bit offset.
+
+**B4. Interpreter state and register pressure (Q141).**
+- **What fails today:** a loop whose changing values exceed the registers
+  is not split at all (`loop-pressure.wf`: 37 integer registers needed,
+  24 available). The spill order counts reading arms, not frequency, and
+  only unchanging values spill.
+- **The plan:** B2's liveness first. Then memory base and length carried
+  as values that effects refresh. Then cold changing values kept in the
+  enclosing frame, with spill choice weighted by frequency.
+
+**B5. Frame-relative addressing has to rewrite uses.** On AArch64 the
+frame-cursor prototype's `Copy` rebuilds the stack base
+(`sub x8, x1, x23, lsl #3`) and adds the index back. Candidate 2 is not
+adopted; reopen it only with a changed mechanism.
+
+**B6. Load the next handler early**, within each arm, where its address
+is valid and the code cannot change before the transfer.
+
+**B7. Calls and returns.** Separate the interpreter's choices (copying
+constants into every frame, the metadata's width) from lowering:
+- carry the callee frame's address from the caller's;
+- keep dead state out of helper calls;
+- weigh an inline zero fill against the call to the C library.
+
+Matching wasmi's call cost is worth about 2% of cycles.
+
+**B8. Tag width and payload packing (Q142).**
+- **Tag:** sized by the variant count, with fields packed under the
+  ceilings.
+- **Gain:** Halo's `Cell` shrinks from 12 bytes to 8.
+- **Measurement:** alone, then with B3.
+
+**B9. Bounds tests.** Guest memory tests stay. Code-validity tests go
+only with L2's proof.
+
+**B10. Split eligibility.**
+- **Current scope:** only a function's first dispatch loop splits, and
+  waiting functions, overlap groups and synthesized functions are emitted
+  whole.
+- **Plan:** widen this as natural witnesses require.
+
+### The interpreter's own design (Q143)
+
+wasmi's handlers keep values in registers and use immediates where v2h
+reads frame slots, and its calls copy no constants. On the M5 those are
+where v2h's remaining cycles go. They are expressible in WF today, so the
+parity program changes v2h's translator to make the same choices. Any
+form WF then refuses or compiles poorly becomes a gap above. Compiler and
+interpreter changes are measured separately.
+
+### Decided so far
+
+The owner decided on 2026-10-07 and 2026-10-08:
+- **Approved:** Q135 (A: a handler word only in enums a split loop
+  matches, the layout plan a lowering input), Q137 (option B), Q138 (A),
+  Q139 (A, all three parts), Q140, Q141 (A, with the register classes
+  below), Q142 (A), Q143 (A) and Q145 (A with A2: a read instantiates range
+  facts).
+- **Moved earlier:** range facts used per element in ordinary proofs (Q139's
+  first part and Q145 A2) leave phase 5 and follow the checker-completion
+  change, owned by the checker-facts line.
+- **Open:** Q144, the fork grain.
+
+**R1. A run-time test the checker can decide is a redundant source form
+(Q145).** An `if` whose condition the automatic derivation proves, or
+refutes, at that point is rejected with a repair, as a redundant proof
+block already is. It sweeps from programs the tests their proofs make dead,
+and its yield grows with C2's and L2's facts. `docs/todo.md` holds the
+entry.
+
+**Closure evaluation.** Beyond C3's join, the owner proposed computing the
+closure backward from each obligation within the closure space, instead
+of closing every program point forward:
+- a bound is a shortest path in a point's difference-bound graph;
+- at a join it is the weakest of the predecessors' answers, memoized.
+
+The results stay those [ENT-4] and [ENT-5] fix, with no SMT. Q140's
+counters decide between demanded joins and this broader evaluation;
+`docs/todo.md`'s check-time entry holds the criteria.
+
+### Plan
+
+| phase | work | decisions | exit |
+|---|---|---|---|
+| 1. The natural form checks | C1; C2's rule and per-edge back-edge proof; C3's demanded joins and the closure evaluation below; L1; R1 | Q137, Q138, Q140, Q145 | v2h written by `gen.py` as `loop { match }` checks in seconds, splits and runs CoreMark correctly. The `musttail` spelling leaves `gen.py` and the dispatch tests. |
+| 2. Lowering on the natural form | B1, B2, B3, B4 | Q135, Q141 | The natural form reproduces the handler word's 1.10 on the 14900K, and Halo is not slower. |
+| 3. The interpreter's design | v2h takes wasmi's register, immediate and call choices | Q143 | Each refusal it meets is a gap above. |
+| 4. Layout and scheduling | B8, B6, B7 | Q142 | Each step under the measurement rule. |
+| 5. Validated code | L2, L3, and R1's reading of range facts at a read if chosen | Q139, Q145 A2 | The executor carries no per-dispatch code test. |
+| 6. The residual | attribute what remains against wasmi, then nano, per handler | — | Parity or an explained limit. |
+
+The measurement rule throughout: CoreMark on the 14900K gains at least
+2% per step, and Halo's `fib` and `loop` are not more than 2% slower.
+Halo's interpreter, in Halo-wf, also uses the `musttail` spelling; its
+move to `loop { match }` follows phase 1.
+
+### Phase 1 outcome
+
+Observed on [PR #270](https://github.com/Ming-Research/Whitefoot/pull/270)
+at 8e33ca298, on an Apple M5:
+
+- **The exit is reached.** v2h generated by `gen.py` as `loop { match }`
+  checks in 7.6 s, splits into 318 arm functions, and runs CoreMark to the
+  final CRC wasmi and Silverfir-nano produce (0x4983). Before C2 it was
+  refused after 12.0 s at `let room = stack^.inner.len - 65536_u64;`.
+- **Done:** C1 (two defects: the finite components used L0 only, and a
+  measure operand had no term), L1, C2 with Q146 option A pending the
+  owner, the dispatch tests written as `loop { match }`.
+- **Part of B2 fell out of the tests' move.** Lowering hands every binding
+  in scope to each join, so values the loop never reads counted as read and
+  were carried. With joins read only through read parameters, the test
+  interpreter takes 8 integer registers as its `musttail` spelling did, not
+  11, and v2h takes 16 instead of 19.
+- **R1 is not in #270.** Deciding by any one origin can reject a test whose
+  deletion breaks a later proof
+  ([witness](https://github.com/Ming-Research/Whitefoot/blob/claude/natural-loop-r1/research/investigations/redundant-tests/origin-publication.wf)),
+  so the rule now decides only when every fact the branch would establish
+  is derivable. It still rejects a decided test in 133 conformance cases
+  and 15 programs. The migration waits for Q147, Q150, Q151 and Q152 on
+  branch `claude/natural-loop-r1`.
+- **C3 is not done.** One `set` per arm checks in 0.24 s, 1.55 s and 15.1 s
+  at 160, 320 and 640 arms, as before: C2 removed only the joins that served
+  induction.
+- **Found:** a disequality with a constant does not tighten a bound (Q148);
+  the old checker accepted a false counted next-slot invariant, which
+  ENT-2(j) now refuses.
+
+## Phase 2: lowering on the natural form
+
+### Baseline
+
+Observed on the 14900K with the gate's pinned LLVM, at main `1a6a96c5b`
+plus only the temporary run on `claude/natural-lowering`
+([run 37769271380](https://github.com/Ming-Research/Whitefoot/actions/runs/37769271380)):
+CoreMark 2000 iterations, 7 interleaved launches per engine, every final
+CRC 0x4983.
+
+| engine | median score | of nano | spread |
+|---|---:|---:|---:|
+| v2h, `loop { match }` | 5449.6 | 0.698 | 0.8% |
+| its twin | 5449.6 | 0.698 | 1.6% |
+| v2h, the earlier `musttail` spelling (`gen.py` at `3142e15c6`) | 5405.4 | 0.692 | 1.4% |
+| wasmi 2.0.0 | 6622.5 | 0.848 | 1.7% |
+| Silverfir-nano `5f248e44` | 7812.5 | 1.000 | 0.8% |
+
+Both spellings were compiled by the same compiler. The natural form now
+splits as the `musttail` spelling did, into 318 arms over all 11 integer
+argument registers with 4 unchanging values in the frame, and scores the
+same within the spread. So phase 2 starts from the earlier attribution
+([where the time goes](#stage-3-where-the-time-goes)) unchanged: the gap to
+wasmi is 0.698 to 0.848. Compiling and checking take 23 s for the natural
+form and 6.3 s for the `musttail` spelling on that host.
+
+### The register classes (B4, Q141)
+
+The owner directed B4 to start from what wasmi and Silverfir-nano keep in
+registers, and to find general features a compiler can recognize in any
+`loop { match }`, not wasm-specific ones; without such features their
+register binding is out of reach. Read from wasmi 2.0.0's tail-call
+handler signature and Silverfir-nano's x86-64 and AArch64 generators (source
+only, nothing run):
+
+| class | wasmi | Silverfir-nano | feature in a `loop { match }` |
+|---|---|---|---|
+| dispatch state | `ip`; the next handler, from the cell | `pc`; the next handler word, preloaded | the matched sequence's cursor `seq[i]`, `i` loop-carried |
+| loop state few arms change | `sp`, the frame base; `instance`, changed at cross-instance calls | `frame`; `code_base`, changed at calls and returns | a loop-carried value most arms read and only some arms write |
+| storage shape | `mem0`, `mem0_len`, refreshed after growth and host calls | `mem_base`, `mem_len`, refreshed on chain re-entry | a base or length of storage that only effects on that storage change |
+| hot data | `ireg`, `freg32`, `freg64` | the accumulators and two pinned locals, chosen by its linker from the bytecode | the interpreter writer's own loop variables |
+| invariant context | `store` | the entry state pointer | a value the loop never changes |
+
+Owner's ruling: the compiler recognizes the dispatch state, loop state few
+arms change, storage shape and invariant context by these features; hot
+data is the interpreter's design, written as loop variables, which get
+registers first; when values exceed the registers, values on the
+loop-carried dependency chain keep their registers before invariant ones,
+instead of ranking by frequency. The source reading widened the second
+class from frame bases to any loop state few arms change, because wasmi's
+instance pointer and nano's code base share the frame base's feature.
+
+### Next: the handler word (B3, Q135 A)
+
+Candidate 1's prototype gave 1.101 on the 14900K in the `musttail`
+spelling; reproducing it on the natural form is the phase's exit. The
+representation follows Q135 A: a compiler-private word in every value of
+an enum that a split dispatch loop matches, written by its constructors,
+kept by copies and rewritten by whole-value replacement, aligned at most to
+the enum's ceiling so a 4-byte-aligned `Cell` admits it.
+
+**Criterion, fixed before measuring.** CoreMark 2K on the 14900K against
+main with a twin, 7 interleaved launches: adopted if the natural form's
+median rises at least 2% and neither of Halo's `fib` and `loop`, once Halo
+is written as `loop { match }`, is more than 2% slower. A result below 2%
+rejects this representation on the natural form and reopens the choice
+between an address and a 32-bit offset.
+
+### Outcome of the handler word on the natural form
+
+Observed on the 14900K with the gate's pinned LLVM
+([run 37789304542](https://github.com/Ming-Research/Whitefoot/actions/runs/37789304542)):
+the branch at `d63883029` against its merge base `1a6a96c5b`, both compiling
+the same `gen.py` output, CoreMark 2000 iterations, 7 interleaved launches,
+every final CRC 0x4983.
+
+| engine | median score | of nano | spread |
+|---|---:|---:|---:|
+| v2h, `loop { match }`, the branch's compiler | 5988.0 | 0.763 | 0.6% |
+| v2h, `loop { match }`, the merge base's compiler | 5449.6 | 0.695 | 1.1% |
+| its twin | 5449.6 | 0.695 | 0.8% |
+| v2h, the `musttail` spelling, the branch's compiler | 6006.0 | 0.766 | 1.5% |
+| wasmi 2.0.0 | 6644.5 | 0.847 | 0.7% |
+| Silverfir-nano `5f248e44` | 7843.1 | 1.000 | 0.4% |
+
+The natural form gains 1.099 over its base, ahead in all 7 launch pairs,
+with the twin equal to the base: the criterion's CoreMark half is met, and
+the phase's exit value, the prototype's 1.10, is reproduced on the natural
+form. The remaining gap to wasmi is 0.763 to 0.847.
+
+The Halo half, observed on the 14900K by Halo-wf
+([run 37837639995](https://github.com/Ming-Research/Halo-wf/actions/runs/37837639995)):
+Halo-wf main `c78426ef8`, whose `run` is `loop { match }`, built full-LTO by
+release `wf-691ea8106920` (main `691ea8106`) and by experiment release
+`wf-exp-78ff1a001486` (the same base plus only the handler word's two
+commits), 6 interleaved launch pairs with a twin of the base. The handler
+word's ledger line appears for `run` under the experiment and not under the
+base, and the binaries differ.
+
+| kernel | base median (s) | ratio | base spread | handler-word spread | twin |
+|---|---:|---:|---:|---:|---:|
+| `fib` | 0.1030 | 1.015 | 0.45% | 0.94% | 0.999 |
+| `loop` | 0.4346 | 0.978 | 1.50% | 0.95% | 1.001 |
+
+Halo's other kernels (integer-table 0.992, string-key 1.001, concat 1.000,
+sort 0.999, binary-trees 1.001) stay within noise. Neither kernel is more
+than 2% slower, so the criterion's Halo half is met and phase 2 exits.
+`fib`'s 1.5% slowdown is outside both spreads, the opposite direction of
+the prototype's 2.3% `fib` gain on the `musttail` spelling. One unverified
+cause: the word widens Halo's `Cell` from 12 to 20 bytes, so `fib`'s
+call-heavy path fetches more bytes per instruction. B8's tag packing
+(12 to 8 bytes) or a narrower handler word would test it.
+
+## Phase 3: the interpreter's design follows wasmi
+
+The owner approved (Q143) that v2h's translator adopt wasmi's register,
+immediate and call choices, as interpreter changes measured one at a time;
+a form Whitefoot then refuses or compiles poorly is a gap to report. A
+source reading of wasmi 2.0.0's translator and executor against `gen.py`
+ordered the candidates:
+
+1. A result that `local.set` or `local.tee` takes goes to the local's slot
+   and to the accumulator in one operation (wasmi's `SlotAndReg` forms), so
+   the next operation reading that local reads the accumulator; this
+   targets the slot written and read back by the next operation (`I32AddD`
+   4.7 cycles against `I32AddAD` 1.85 in the attribution).
+2. Immediate operands for `i32` arithmetic, compare-branches and stores,
+   instead of constants in frame slots.
+3. Calls that copy no constants and carry the callee's entry in the
+   operation.
+4. The accumulator kept across operations until overwritten, with every
+   integer operation having its accumulator forms.
+5. Branches on `and` and on not-`and`.
+
+Each step: CoreMark 2K on the 14900K against its base with a twin, adopted
+at +2% or more.
+
+**Step 0, observed** (hosted runner, run 37792262615, the branch's compiler
+at `9b9f14ac3`):
+- `I32Load`'s arm reads its four bytes with one 32-bit load after one
+  bounds test: the host optimizer combines `gen.py`'s byte reads, so the
+  per-byte spelling costs nothing and is not a gap.
+- Its dispatch is the handler word's: the next element's word loaded, the
+  cursor advanced, an indirect jump; the next-index bounds test remains.
+- Dispatch counts on CoreMark 2K, highest first: `I32Add` 48.4M, `Copy`
+  32.0M, `I32Load` 30.0M, `BrIf` 29.9M, `I32LoadD` 21.2M, `BrI32Ne` 20.9M,
+  `Copy2` 17.0M, `I32Store` 15.3M; `Call` 3.0M. Calls are about 0.6% of
+  dispatches, so step 3 is worth little on CoreMark; step 1 goes first.
+
+**Step 1, the change** (`gen.py`'s `SLOT_ACC` and `acc_slot_dest`;
+`interp_tail.wf`'s `set_local`, `acc_feed` and `acc_claim`):
+- `I32Add`, `I32Sub`, `I32Mul`, `I32And`, `I32Or`, `I32Xor`, the three
+  shifts and the five `i32` loads with their indexed forms gain `SD` forms
+  (and `ASD`, `BSD` where an `A` or `B` form exists) that write slot `d` and
+  set `acc` in one operation.
+- `local.set` and `local.tee` that take over the last operation's
+  destination choose its `SD` form and record in the translator state that
+  `acc` holds that local.
+- An operation reading that local, which has a form reading the operand
+  from `acc`, takes it from `acc`; so does a `br_if` or `if` condition. The
+  fresh-temporary path keeps priority.
+- The record is cleared when `acc` changes (an operation turned into a `D`
+  form), at every label (block and loop starts, `else`, `end`), after calls
+  (the callee changes `acc`), host calls and `memory.grow` (the interpreter
+  is re-entered with `acc` zero), and when the local is written. Between those points control reaches
+  the reader only by falling through from the `SD` operation, and the slot
+  always holds the same value, so the slot stays correct for every other
+  reader.
+
+**Step 1, observed on the 14900K**
+([run 37801224942](https://github.com/Ming-Research/Whitefoot/actions/runs/37801224942)):
+`gen.py` at `11ef14391` against `6575d3260`, both compiled by this
+branch's compiler, CoreMark 2000 iterations, 7 interleaved launches, every
+final CRC 0x4983. The step scores 6211.2 against 5988.0 (twin 5988.0),
+1.037, ahead in all 7 launch pairs (1.025 to 1.050): adopted. v2h is now
+0.795 of Silverfir-nano and wasmi 0.850. The split grew from 318 to 360
+arms; compiling and checking the interpreter takes 22.8 s against 19.1 s
+on that host.
+
+**Step 2, observed on the 14900K and not adopted**
+([run 37807864380](https://github.com/Ming-Research/Whitefoot/actions/runs/37807864380)):
+i32 immediate operands (94 variants, 454 arms) at `e44f21820` against step
+1 at `1cb4edb32`, same compiler, 7 interleaved launches, every final CRC
+0x4983. The step scores 6269.6 against 6230.5 (twin 6192.0), 1.006, with
+launch ratios from 0.964 to 1.016: below the +2% criterion, so it is
+reverted. A hosted EPYC sample had shown about +5% with a 1.3% twin gap,
+which the 14900K does not reproduce. A plausible reading, not tested: on
+this core a constant's frame-slot load issues early, off the dependency
+chain, so reading it from the operation instead saves little. The revert
+keeps one fix found with it: a local index is bounded by the constant
+slots' start, so a malformed module cannot reach a constant slot.
+
+**Step 4, observed on the 14900K and not adopted**
+([run 37815760130](https://github.com/Ming-Research/Whitefoot/actions/runs/37815760130)):
+acc tracked until overwritten (6 variants, 366 arms) at `74bccff82` against
+`4cad9dab9`, same compiler, 7 interleaved launches, every final CRC 0x4983.
+The step scores 6211.2 against 6192.0 (twin 6211.2), 1.003, launch ratios
+0.982 to 1.009: reverted.
+
+**What steps 2 and 4 say about the attribution.** Both removed frame-slot
+traffic the stage-3 attribution priced on the M5 (a slot written and read
+back by the next operation, constants in slots), and neither moved
+CoreMark on the 14900K, while step 1 gained 3.7%. The M5 prices do not
+transfer to this core, where store-to-load forwarding is cheap. The
+remaining gap to wasmi (0.795 to 0.850) is attributed next on the 14900K
+itself, per handler, before any further interpreter change.
+
+**Attribution on the 14900K** ([run 37820226964](https://github.com/Ming-Research/Whitefoot/actions/runs/37820226964)):
+`perf record -e cpu-clock` (software clock, no hardware counters) on
+CoreMark 2000 for v2h at `4cad9dab9`'s `gen.py` and for wasmi 2.0.0; each
+of v2h's arms is its own symbol, named by the order of `run`'s match arms
+(not by `gen.py --names`, whose enum order differs after step 1's
+variants), with step 0's dispatch counts per kind. v2h runs 337 ms of
+cpu-clock, wasmi 303 ms, an 11% gap; v2h averages 0.67 ns per dispatch.
+
+| v2h handler | share | dispatches | ns per dispatch |
+|---|---:|---:|---:|
+| `I32LoadSD` | 9.9% | 29.6M | 1.13 |
+| `BrTable` | 8.4% | 10.8M | 2.63 |
+| `I32AddSD` | 5.9% | 38.8M | 0.51 |
+| `Call` | 4.4% | 3.0M | about 5 |
+| `Copy` | 4.3% | 32.0M | 0.46 |
+| `I32LoadD` | 3.8% | 19.1M | 0.67 |
+| `I32Load8USD` | 3.2% | 9.0M | 1.20 |
+| `I32AddD` | 3.1% | 8.3M | 1.27 |
+
+Against wasmi's comparable handlers in absolute time, the largest single
+difference is the jump table: v2h's `BrTable` takes 28.4 ms, wasmi's
+`branch_table_s` and `branch_table_r` 14.9 ms together, about 13.5 ms of
+the 34 ms gap. Calls follow: 14.9 ms against `call_internal`'s 11.6 ms.
+`I32AddD` costs 1.27 ns a dispatch against `I32AddSD`'s 0.51, which also
+asks for its machine code. The next step reads `BrTable`'s and `Call`'s
+arms against wasmi's handlers before changing anything.
+
+**`BrTable` against wasmi's `branch_table_s`** (hosted runner, run 37821310401,
+the same LLVM): 50 instructions against 11. wasmi reads the selector from a
+slot, clamps it, loads a relative offset from the table inlined after the
+instruction, and jumps through the target cell's handler. v2h in addition:
+1. tests, for every jump, whether the selected entry moves a value into the
+   target block (a 16-byte entry: target, source slot, destination slot, a
+   flag), with a conditional copy, though CoreMark's switch moves nothing;
+   wasmi selects a separate instruction for tables that carry values;
+2. tests the entry index against the table's length and the target index
+   against the code's length at run time: the checker cannot know that a
+   table entry's target lies inside the code, which a range fact over the
+   table's contents (`forall k in 0..brtab.len: brtab[k].t < code.len`,
+   used per element) would prove once range facts serve ordinary proofs,
+   the checker-facts line's item;
+3. loads the table's base from the interpreter's context;
+4. spills a register around the arm.
+
+Items 1 and 3 are the interpreter's design; item 2 is a language gap already
+on the checker-facts line; item 4 follows from the others. The next v2h step
+takes item 1: a `BrTable` form without value moves for tables whose entries
+move nothing.
+
+**`BrTable` without moves, the change** (`gen.py`'s `CONTROL` and
+`ACC`; `interp_head.wf`'s `BrTableN` arm; `interp_tail.wf`'s
+`emit_table`):
+- `BrTableN(c, start, count)` has the operands and branch-table entries of
+  `BrTable`; its arm clamps the index, reads only the selected entry's
+  target and jumps, with no move test and no copy. `BrTableNC` takes the
+  index from `acc`.
+- The translator reads every entry before emitting the operation. An entry
+  moves a value under the rule a `br_if` uses: its label takes one result
+  and the label's slot differs from the slot of the value below the index.
+  When no entry moves a value it emits `BrTableN`, claiming `acc` for the
+  index as a `br_if` claims its condition; otherwise `BrTable`, unchanged,
+  which keeps reading the index from its slot since it has no `acc` form.
+  The operands are put in their temporaries after the entries are read,
+  which emits nothing in between that changes `acc`.
+- `BrTableN` keeps the 16-byte entries: a separate array of 4-byte targets
+  would add a storage to `run`, the loader and the patching of forward
+  entries, while the arm uses only the entry's target field, which the host
+  optimizer can load alone.
+
+**`BrTableN`, observed on the 14900K**
+([run 37825691341](https://github.com/Ming-Research/Whitefoot/actions/runs/37825691341)):
+a br_table form without value moves, which CoreMark's switch takes for 9.2M
+of its 10.8M table dispatches, at `684dbf76b` against `02575f56f`, same
+compiler, 7 interleaved launches, every final CRC 0x4983. It scores 6289.3
+against 6211.2 (twin 6211.2), 1.013, every launch pair at or above 1.003:
+a real gain below the +2% criterion then in force, so it was first reverted. The per-jump move
+test is therefore a small part of `BrTable`'s 13.5 ms difference from
+wasmi; the two run-time bounds tests and the separate table remain, the
+first of them waiting on range facts used per element in ordinary proofs.
+
+**The phase-3 criterion, changed by the owner** (status board, 2026-10-08,
+after the card on whether to relax +2%): a step is adopted when its median
+gains at least 1%, every one of the 7 interleaved launch pairs is at or
+above the base, the twin stays within 1% of the base, and its cost is
+small (few new arms, no clear rise in checking time). Under it `BrTableN`
+(1.013, every pair at or above 1.003, twin equal, 2 arms) is adopted and
+restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
+stay reverted.
+
+### Constructor and runtime-boundary audit
+
+The handler-word repair distinguishes values built by emitted constructors
+from values that linked code may produce. The eligibility census in
+`compiler/src/backend/emitter/handler_words.rs` derives exclusions from IR:
+bodyless and waiting signatures, shared-object/map shapes, opaque nominals,
+context-start signatures, and the operand/result types of scheduler hand-outs
+and loop splits. It follows reference/container element types and nominal
+payload containment in both directions. Primitive leaves do not connect
+otherwise unrelated enums. No nominal spelling selects an exclusion.
+Opaque leaves also cover the executable launcher's runtime-created `Inputs`
+and runtime-consumed `ExitStatus` through their actual payload graph.
+
+This is a source audit of the repair, not executed validation. The tables
+record the construction owners and dispositions; CI must establish that the
+new fixtures compile, execute and retain their asserted dispatch plans.
+
+| Producer or boundary | Source and disposition |
+| --- | --- |
+| Checked add, subtract, multiply, negate and absolute value | `emitter/integer.rs` enters place emission and constructs the selected Result arm through `places.rs`'s shared enum initializer. The initializer writes the tag and every family word, then the primitive writes its scalar payload through the variant view. Ordinary and handler-word results use this same path. |
+| Checked division and remainder | `emitter/integer.rs` retains its domain branch before division; each branch uses the same enum initializer. The error payload still distinguishes zero divisor from signed overflow. |
+| Checked numeric conversions, including float endpoints | `emitter/conversion.rs` and `conversion/float_endpoint.rs` converge on the same checked-result construction. Domain-only and exact conversions still return scalars. The added outcome branch belongs to result construction; dispatch acquires no branch or trap. |
+| Source enums and propagated errors | Source `ConstructEnum` operations use `places.rs`; `lowering/builder/results.rs` emits that operation for a propagated error. First-class `insertvalue` in `emitter/operations.rs` cannot handle a handler-word enum: stored enum constructors are intercepted by place emission, and tag-only enums cannot fit a handler word. |
+| Map reads, writes, insertion and absent defaults | `emitter/shared.rs` and `emitter.rs` use the map entry type from `IrShared::Map`. The C slot and emitted constant `None` stay zero-filled. Both the entry Option and its payload/containers are excluded, including when a compiler-owned constructor has a body. There is no separate Result-returning C map insertion operation. |
+| Context/waiting and parallel results | `emitter/contexts.rs`, `frames.rs` and `parallel.rs` transport typed storage through emitted thunks or linked start/finish entries. Context signature types and scheduler operand/result types are excluded. Ordinary internal calls, returns, joins and whole-value transfers preserve complete selected storage. |
+| Iteration, ranges and indexed helpers | `emitter/slice.rs`, `runs.rs`, `segments.rs` and `indexed.rs` synthesize pointer/count or storage descriptors, not Option/Result enums. Source/prelude helpers that return enums lower through ordinary `ConstructEnum` or calls. Indexed reduction identities are primitive constants. |
+| Drop helpers and defaults | `emitter/cleanup.rs` reads tags and releases existing payloads; it creates no enum value. `Window` initialization zeroes descriptor words and raw, unoccupied capacity, not live elements. Array/Buffer/Segments fills copy an initialized value with its complete selected layout; box/run allocation and growth use emitted stores or typed copies. Global constants admit scalars, arrays and structs, not payload-enum constructors. |
+
+The C boundary inventory is grouped by the owner of the ABI, including its
+platform implementations and the emitter sites that reach it:
+
+| C units and boundary | IR evidence and disposition |
+| --- | --- |
+| `concurrent_map.c`, `keyed_table.c`: `wf__shared_map_new`, table entry/hold/read-selection, scan, clear, swap, drain and key-set operations | Shared-map shape supplies the state and Option entry types, including nested values. `concurrent_map.c` zeroes its absent slot and fresh slots in direct, held and multi-key paths. All keep ordinary layout. Keys and key-set backing are byte ranges (`u8`) and descriptor words; they contain no nominal payload. Shared map cleanup uses the same excluded entry type. |
+| `completion/bridge.c`: `wf__shared_*`, atomic groups and watches | Shared-object shapes exclude state recursively, including maps inside a shared state. Header counters, locks and watch/hold records have private C layouts and no source enum. The C allocator initializes the shared header; emitted code initializes the state, which remains conservatively excluded as runtime-managed storage. |
+| `ordinary_values.c`, its `ordinary_values.ll` ABI wrappers, `windows_runtime.c`: args/text/path, clocks, filesystem, sockets, process and stop APIs | These cross bodyless IR signatures even when called by a function whose own body is emitted. Parameter/result closure excludes every nested Option/Result, error, endpoint and opaque value. `wf__ordinary_inputs` and `wf__ordinary_exit_code` are launcher calls; `driver/launcher.rs` only supplies the fixed Inputs/opaque status shapes, covered by opaque-leaf closure without a type-name exclusion list. |
+| `completion/bridge.c`, `runtime.c`, `file_adapter.c`, `file_posix.c`, `file_windows.c`, `linux_io_uring.c`, `windows_iocp.c`, `wait_host.c`, `wait_windows.c`, `stop_signals.c` | Linked waiting signatures supply the source-visible types to exclude. Native start/finish bodies translate completion records into those results. Ring/port records, socket addresses, deadlines and stop notifications below that boundary are native records or scalars; they do not independently synthesize another source nominal. `emitter/frames.rs` emits the start/finish calls. |
+| `completion/bridge.c`: context allocation/prepare/launch/join/root APIs | `ContextStart`/`ContextStartBound` signatures and waiting signatures exclude their boundary types. Emitted thunks construct results; the runtime schedules their storage. Local emitted values in coroutine frames are still constructed by emitted code, rather than synthesized from allocator bytes. |
+| `sched/core.c`, `sched/entry.c`, `sched/prim_host.c`, `sched/prim_windows.c` | `emitter/parallel.rs` and `frontier.rs` use scalar budgets and emitted call frames. Handed-out call and `LoopSplit` operand/result types seed exclusion. The runtime deque and lane metadata contain native records; emitted thunks own typed argument/result stores. |
+| `wf_floor.c`, `wf_floor_windows.c`, diagnostic calls in `emitter/floor.rs` and `emitter.rs` | Stack/heap exhaustion records and diagnostics carry native counters or byte messages, never a source enum. `malloc`/`free` only allocate/release raw storage; emitted box, array, run and segment initialization owns the live values. |
+| Root `floor_probe.c`, `ordinary_values_probe.c`, `concurrent_map_test.c`; `completion/*probe.c`, `completion/harness.c`, `completion/shared_object_test.c`; `sched/*probe.c`, `sched/smoke.c`, `sched/grant_observer.c`; `backend/tests/*.c` | Test/probe consumers of the preceding ABIs, not additional production value producers. Their independently linked source values use the bodyless-signature boundary; no test name or probe switches layout selection. |
+
+Regression coverage is in `compiler/src/backend/tests/match_dispatch.rs`:
+checked addition, checked conversion, checked absolute value and checked
+division each produce successful and failing results consumed by a split
+Result loop, require both arm-address stores, require the handler-word ledger
+line and require successful native execution. Before the repair, emission of
+these selected memory-only primitive results fails with `InvalidIr`.
+The map case reads an absent entry, reads a fresh write-locked slot before
+filling it, then reads the present value. It requires ordinary dispatch tables
+for the Option family and a separate enum enclosing the map payload, and a
+handler word for an unrelated enum in the same program. Before the exclusion
+repair the ordinary-layout assertions fail, and an absent/fresh read can call
+through a zero handler. Disabling all handler words would fail the unrelated
+enum control. These are predicted failures from inspection; no before/after
+execution was performed on the editing machine.
+
+CI must run these backend cases, existing integer/conversion and payload-enum
+coverage, the full project gate and platform I/O/runtime checks. It must also
+confirm Rust formatting/lints and the retained split families on supported
+host conventions. This repair changes no specification rule, conformance
+verdict or runtime map initialization, and leaves the implementations of
+the existing dispatch forms unchanged; it changes which form the affected
+enums receive, from handler-word addressing to tag-and-table dispatch.
