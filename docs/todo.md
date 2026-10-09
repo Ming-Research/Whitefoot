@@ -1469,20 +1469,6 @@ rarely insert at the same place.
   to publish. Reopen when a workload's rate on one hot key is within that
   10% of its criterion.
 
-- **The map's test has no gate run that checks memory.** A statement that
-  locked a cell in a table a move had left read the cell's node after a
-  statement in the next table had freed it; the result was always
-  discarded, so no test's outcome differed, and only a build with
-  `-fsanitize=address` saw it. `make -C compiler concurrent-map-test-sanitized`
-  is that build, 7 s on the 14900K, and fails under the mutant that keeps
-  the lock; it is not part of `completion-test`, whose runtime stage has
-  run over its budget on macOS. The decision for the owner: raise the
-  runtime budget and run it in the gate, or run it in a workflow of its
-  own. The change that brought keyed tables, key sets and holds in a
-  statement's frame passed it in 7.0 s, and passed a ThreadSanitizer build
-  of the same test, which no target runs. Reopen with the next change to
-  `concurrent_map.c`.
-
 - **A guard that reads an absent entry through a shared read can miss the
   insert that makes it true.** A guard's watch is registered while its
   statement still holds the units the guard read, so a writer that takes
