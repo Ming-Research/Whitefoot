@@ -75,14 +75,17 @@ const ROOT_INTERFACE: &[u8] =
 const ROOT_BODY: &[u8] = b"fn main() -> status: std::process::ExitStatus pure {\n  let code = pkg::user::use_half();\n  return std::process::exit_status(code: code);\n}\n";
 
 /// One resolved unit serves every module query without sharing traversal
-/// state. The expected sets distinguish direct uses, transitive contract
+/// state. The expected sets distinguish direct uses, transitive result-type
 /// uses, an unused declaration and a module with no declarations.
 #[test]
 fn shared_declaration_reads_preserve_each_modules_reached_items() {
+    // Use the complete program from
+    // `a_declaration_reached_through_a_result_type_is_read`, adding an empty
+    // module and a repeated call to exercise independent query traversal.
     let graph = crate::form_module_graph(
         SourceInput::new(
             "modules.wfg",
-            b"pkg::leaf: [];\npkg::base: [pkg::leaf];\npkg::empty: [];\npkg: [pkg::base];\n\nentry app = pkg::main;\n",
+            b"pkg::leaf: [];\npkg::base: [pkg::leaf];\npkg::user: [pkg::base, pkg::leaf];\npkg::empty: [];\npkg: [pkg::user, std::fs, std::io, std::process, std::text];\n\nentry app = pkg::main;\n",
         ),
         CompilerLimits::default(),
     )
@@ -90,19 +93,37 @@ fn shared_declaration_reads_preserve_each_modules_reached_items() {
     let records: Vec<(&str, &[u8])> = vec![
         (
             "leaf/module.wfm",
-            b"public const limit: u8 = 7_u8;\n\npublic struct Token {\n  public value: u8;\n}\n",
+            b"public enum Shade {\n  Dark();\n  Light();\n}\n\npublic fn first() -> shade: Shade pure doc \"The first shade.\";\n",
+        ),
+        (
+            "leaf/first.wf",
+            b"fn first() -> shade: Shade pure {\n  return Shade::Dark();\n}\n",
         ),
         (
             "base/module.wfm",
-            b"public fn make() -> result: u8 pure contract {\n  ensures result <= pkg::leaf::limit;\n} doc \"Makes a bounded value.\";\n\npublic fn unused() -> token: pkg::leaf::Token pure doc \"Supplies a token.\";\n",
+            b"public fn pick() -> shade: pkg::leaf::Shade pure doc \"Picks a shade.\";\n",
+        ),
+        (
+            "base/pick.wf",
+            b"fn pick() -> shade: pkg::leaf::Shade pure {\n  return pkg::leaf::Shade::Light();\n}\n",
+        ),
+        (
+            "user/module.wfm",
+            b"public fn tone() -> result: u8 pure doc \"Tells the picked shade apart.\";\n",
+        ),
+        (
+            "user/tone.wf",
+            b"fn tone() -> result: u8 pure {\n  let shade = pkg::base::pick();\n  let second = pkg::base::pick();\n  match shade {\n    Dark() => {\n      return 1_u8;\n    }\n    Light() => {\n      return 2_u8;\n    }\n  }\n}\n",
         ),
         ("empty/module.wfm", b"\n"),
+        ("module.wfm", ROOT_INTERFACE),
         (
             "main.wf",
-            b"fn main() -> result: u8 pure {\n  let first = pkg::base::make();\n  let second = pkg::base::make();\n  return first;\n}\n",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let code = pkg::user::tone();\n  return std::process::exit_status(code: code);\n}\n",
         ),
     ];
     let inputs = module_inputs(&graph, &records);
+    let inputs = super::with_library_records(&graph, &inputs);
     let limits = CompilerLimits::default();
     let bundle = crate::SourceBundle::with_prelude_and_modules(
         &inputs,
@@ -123,22 +144,19 @@ fn shared_declaration_reads_preserve_each_modules_reached_items() {
             .and_then(crate::ModuleId::from_index)
             .unwrap()
     };
-    let (leaf, base, empty, root) = (
+    let (leaf, base, user, empty) = (
         module(&["leaf"]),
         module(&["base"]),
+        module(&["user"]),
         module(&["empty"]),
-        module(&[]),
     );
     let item = |module, role: &str, name: &str| (module, (role.to_owned(), name.to_owned()));
     let expected = [
         (
-            root,
-            [item(base, "fn", "make"), item(leaf, "const", "limit")].into(),
+            user,
+            [item(base, "fn", "pick"), item(leaf, "enum", "Shade")].into(),
         ),
-        (
-            base,
-            [item(leaf, "const", "limit"), item(leaf, "struct", "Token")].into(),
-        ),
+        (base, [item(leaf, "enum", "Shade")].into()),
         (leaf, std::collections::BTreeSet::new()),
         (empty, std::collections::BTreeSet::new()),
     ];

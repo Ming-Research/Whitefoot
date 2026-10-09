@@ -1038,10 +1038,14 @@ mod tests {
 
     #[test]
     fn lazy_paths_and_reverse_lookup_match_eager_paths() {
+        // Complete programs, with the nested match/if, empty block and calls
+        // taken verbatim from the runnable grammar-combination corpus case.
         for source in [
-            b"\n".as_slice(),
-            b"const first: i32 = 1_i32;\n\nconst second: i32 = 2_i32;\n",
-            b"fn nested(value: bool) -> result: unit pure {\n  if value {\n    if value {\n      return unit;\n    }\n  } else {\n    return unit;\n  }\n  return unit;\n}\n",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+            b"const first: i32 = 1_i32;\n\nconst second: i32 = 2_i32;\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            include_bytes!(
+                "../../../tests/conformance/cases/x-gram-combo-flat-call-construct-match.wf"
+            ),
         ] {
             let syntax = canonical(source);
             let expected = eager_paths(&syntax);
