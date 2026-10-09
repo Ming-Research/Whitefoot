@@ -72,11 +72,18 @@ enum Owner {
 /// # Errors
 ///
 /// Returns a failure when a recorded dependency has no definition or
-/// declaration, or a symbol is defined more than once.
+/// declaration, a symbol is defined more than once, or whole-program enum
+/// threading was selected. Select fragments through `compile_for_emission`
+/// or `build_module_entry_for_emission` before layout and emission.
 pub fn split_module(
     llvm: &LlvmModule,
     granularity: FragmentGranularity,
 ) -> Result<Vec<String>, SplitFailure> {
+    if llvm.threaded_layout {
+        return Err(failure(
+            "whole-program handler-word layout: recompile with compile_for_emission or build_module_entry_for_emission and fragments=true",
+        ));
+    }
     split_emission(&llvm.model, granularity)
 }
 

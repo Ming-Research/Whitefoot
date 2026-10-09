@@ -82,6 +82,41 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         operation: &IrOperation,
     ) -> Result<bool, BackendFailure> {
         match operation {
+            // Checked primitives construct their nominal result in its planned
+            // slot, just like a source constructor, including handler words.
+            IrOperation::Integer {
+                operation,
+                operand_type,
+                arguments,
+            } if matches!(
+                operation,
+                IrIntegerOperation::AddChecked
+                    | IrIntegerOperation::SubtractChecked
+                    | IrIntegerOperation::MultiplyChecked
+                    | IrIntegerOperation::NegateChecked
+                    | IrIntegerOperation::AbsoluteChecked
+                    | IrIntegerOperation::DivideChecked
+                    | IrIntegerOperation::RemainderChecked
+            ) => {
+                self.materialize_operands(arguments.iter().copied())?;
+                self.emit_integer(result, ty, *operation, *operand_type, arguments)?;
+            }
+            IrOperation::NumericConversion {
+                mode: IrConversionMode::Checked,
+                source_type,
+                destination_type,
+                value,
+            } => {
+                self.materialize_operands([*value])?;
+                self.emit_numeric_conversion(
+                    result,
+                    ty,
+                    IrConversionMode::Checked,
+                    *source_type,
+                    *destination_type,
+                    *value,
+                )?;
+            }
             IrOperation::AddressOf { value, referent } => {
                 self.emit_address_of(result, ty, *value, *referent)?;
             }
@@ -341,13 +376,103 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         variant: u32,
         fields: &[IrValueId],
     ) -> Result<(), BackendFailure> {
-        let destination =
-            self.begin_construction(result, IrType::Nominal(nominal), Some(variant))?;
+        let destination = self.begin_enum_construction(result, nominal, variant)?;
         for (index, value) in fields.iter().enumerate() {
             let field = u32::try_from(index).map_err(|_| BackendFailure::CounterOverflow)?;
             let address = self.variant_field_pointer(nominal, variant, field, &destination)?;
             self.store_value_at(*value, &address)?;
         }
+        Ok(())
+    }
+
+    /// Common prefix for source and primitive enum constructors. Every
+    /// selected family is initialized before any consumer can see the value.
+    pub(super) fn begin_enum_construction(
+        &mut self,
+        result: IrValueId,
+        nominal: IrNominalId,
+        variant: u32,
+    ) -> Result<String, BackendFailure> {
+        let destination =
+            self.begin_construction(result, IrType::Nominal(nominal), Some(variant))?;
+        let handlers = self
+            .dispatch_layout
+            .families(nominal)
+            .iter()
+            .map(|family| {
+                family
+                    .handlers
+                    .get(variant as usize)
+                    .cloned()
+                    .ok_or(BackendFailure::InvalidIr)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if handlers.len() != self.nominal(nominal)?.handler_words as usize {
+            return Err(BackendFailure::InvalidIr);
+        }
+        for (word, handler) in handlers.iter().enumerate() {
+            self.output.symbol(handler.clone());
+            let address = self.handler_word_pointer(nominal, &destination, word)?;
+            let align = self.handler_word_alignment(nominal)?;
+            writeln!(
+                self.output,
+                "  store ptr @{handler}, ptr {address}, align {align}"
+            )?;
+        }
+        Ok(destination)
+    }
+
+    /// A primitive's scalar payload uses the same enum layout and handler
+    /// initialization as a source constructor; it has no separate SSA enum.
+    pub(super) fn construct_scalar_enum_at(
+        &mut self,
+        result: IrValueId,
+        variant: u32,
+        payload: &str,
+    ) -> Result<(), BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(result) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let IrNominalKind::Enum { variants } = self.nominal(nominal)?.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let selected = variants
+            .iter()
+            .find(|v| v.tag() == variant)
+            .ok_or(BackendFailure::InvalidIr)?;
+        let [field] = selected.fields() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let ty = field.ty();
+        if is_stored_aggregate(self.program, ty)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let destination = self.begin_enum_construction(result, nominal, variant)?;
+        let address = self.variant_field_pointer(nominal, variant, 0, &destination)?;
+        let llvm = self.output.type_name(self.program, ty)?;
+        writeln!(self.output, "  store {llvm} {payload}, ptr {address}")
+            .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Constructs one of the two checked-result variants into the result's
+    /// slot. The condition selects construction, never dispatch behavior.
+    pub(super) fn construct_checked_result(
+        &mut self,
+        result: IrValueId,
+        valid: &str,
+        converted: &str,
+    ) -> Result<(), BackendFailure> {
+        let ok = integer_safe_label(result);
+        let error = integer_error_label(result);
+        let done = integer_continue_label(result);
+        writeln!(self.output, "  br i1 {valid}, label %{ok}, label %{error}")?;
+        self.output.open_block(ok);
+        self.construct_scalar_enum_at(result, 0, converted)?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(error);
+        self.construct_scalar_enum_at(result, 1, "0")?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
         Ok(())
     }
 
