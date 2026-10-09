@@ -12,7 +12,7 @@ from a shared object holding one scalar?
 The selected direction is the owner's A: a basic-type field updated atomically
 under a read-only hold. This selects the problem to solve, not a spelling,
 effect rule, memory model or instruction-width policy. This investigation is
-a proposal checked against Whitefoot `fd9c080b98f2e4b4a73e9a6780a8ed31867a2e92`, branch
+a proposal checked against Whitefoot `c536d11b20cd1fbe119c5ce74da6cb31c7ed81e7`, branch
 `claude/relaxed-fields`, active specification v0.108. It changes no language
 rule or implementation. No new compilation, concurrency test or performance
 measurement has been run for it.
@@ -34,9 +34,12 @@ map, and a separate write-on-change statement. These are attribution controls,
 not replacements for the owner's direction. Then compare a surviving relaxed
 candidate against those controls. Separate hold route from stamp writes in
 a complete 2×2 comparison, and give every arm a same-source rebuild twin.
-The proposed depth-16 GET criterion on the i9-14900K requires loss within
-no-stamp twin noise, with a fixed 1% noise ceiling; a 3% residual loss is not
-acceptable. Excess noise means inconclusive, never a larger allowance.
+The proposed depth-16 uniform GET criterion on the i9-14900K requires loss
+within no-stamp twin noise, with a fixed 1% noise ceiling; a 3% residual loss
+there is not acceptable. Hot-key cells instead test recovery of the reader
+path against locking, with stamp-versus-no-stamp loss reported descriptively:
+store coherence traffic may remain after the path is recovered. Excess noise
+means inconclusive, with at most two corrective reruns, never a larger allowance.
 Faster code with a weaker safety proof does not qualify. The detailed
 protocol and shape-specific rejection conditions below precede any proposed
 implementation or new measurement.
@@ -491,7 +494,7 @@ region. RMW means an indivisible update, not an ordinary load/add/store.
 | ARMv8-M Baseline: Cortex-M23 | 8, 16, 32 | Unlike M0/M0+, M23 has 8/16/32-bit `LDREX`/`STREX` variants; it also adds acquire/release forms. | No 64-bit exclusive or native 64-bit atomic load/store. Baseline is not synonymous with “no RMW”; stronger ordering instructions need not be used for a monotonic operation. [M23 guide §3.5.7–10][arm-m23], [ARMv8-M ARM §B5.5][arm-v8m]. |
 | RV32I, including RV32IMC, without A or another atomic extension | 8, 16, 32 | No dedicated atomic instructions: neither LR/SC nor AMO. Native aligned ordinary loads/stores are nevertheless indivisible. | No native 64-bit atomic access. The ISA uses a weak memory model, RVWMO; an in-order implementation is not a stronger language contract. [RV32I §Load and Store Instructions][rv32], [RISC-V A §Specifying Ordering][riscv-a]. |
 | RV32 with A (Zaamo + Zalrsc) | 8, 16, 32 | 32-bit `AMOADD.W` for fetch-add; `LR.W`/`SC.W` for CAS. | A alone has no byte/halfword AMO and no RV32 doubleword LR/SC/AMO. Subword masked-word synthesis needs its own layout/interference qualification; do not infer it from 8/16-bit load/store. Monotonic RMW needs no `aq`/`rl` ordering bits. [RISC-V A §§Zalrsc, Zaamo][riscv-a]. |
-| Xtensa LX6 in the original ESP32 | 8, 16, 32 in suitable data RAM | Optional Xtensa `S32C1I` provides 32-bit compare/conditional-store; ESP32 declares it present. Fetch-add can use a CAS loop. | No generic 64-bit guarantee. Qualify the exact core configuration, memory region and atomic-control settings; do not generalize across all ESP32-branded chips. Ordinary memory ordering is weaker than x86; `S32C1I` itself imposes stronger order than monotonic needs. [Cadence ISA §§3.4, 3.8.1–3, 4.3.13][xtensa-isa], [ESP32 configuration][esp32-isa]. |
+| Xtensa LX6 in the original ESP32 | 8, 16, 32 in suitable data RAM | Optional Xtensa `S32C1I` provides 32-bit compare/conditional-store; ESP32 declares it present. Fetch-add can use a CAS loop. | No generic 64-bit guarantee. Qualify the exact core configuration, memory region and atomic-control settings; do not generalize across all ESP32-branded chips. Ordinary memory ordering is weaker than x86; `S32C1I` itself imposes stronger order than monotonic needs. An atomics-capable Xtensa LLVM backend by default is not established here: qualification needs a fixed toolchain, features and linked provider, as do the ARM/RISC-V probes. [Cadence ISA §§3.4, 3.8.1–3, 4.3.13][xtensa-isa], [ESP32 configuration][esp32-isa]. |
 | AVR and other 8/16-bit MCUs | AVR: 8; other cores only their documented native widths | No general integer RMW promise; target-specific instructions or interrupt exclusion must be declared separately. | On an 8-bit AVR even a 16-bit access can tear across an interrupt; `volatile` does not fix it. A 16-bit core likewise does not imply atomic 32-bit access. [AVR-LibC atomic-access example][avr-atomic]. |
 
 Thus ordinary 64-bit loads/stores on the listed 32-bit cores are **not** a
@@ -534,12 +537,29 @@ provider. Neither generic LLVM lowering nor a successful link automatically
 supplies or verifies that provider. A library named “critical section” may
 use a global spinlock on a multicore target; names are not evidence.
 
+Privilege is a functional premise, not just a deployment detail. On
+M-profile with unprivileged execution, unprivileged `CPSID` is ignored without
+a fault ([ARMv6-M ARM §B4.2.1][arm-v6m]; [ARMv7-M ARM §B5.2.1][arm-v7m]).
+A probe that returns successfully therefore proves no exclusion. The port
+must show that the entire mask/operation/restore sequence runs privileged,
+either directly or inside a privileged SVC handler; SVC entry alone does not
+establish mask coverage ([ARMv6-M ARM §A2.1.2][arm-v6m]). On RISC-V, U-mode
+access to the machine-level `mstatus` CSR raises an illegal-instruction
+exception ([privileged CSR rules and register table][riscv-csrs]). S-mode
+clearing SIE cannot mask M-mode interrupts: higher-privilege interrupts remain
+globally enabled while executing below that privilege
+([machine ISA §2.1.6.1][riscv-privilege]). Such handlers must be excluded as
+accessors or covered by a qualified higher-privilege provider.
+
 **Recommendation, awaiting the owner:** permit this as a declared
 single-core RMW implementation, subject to all of these conditions:
 
 * The target/runtime contract restricts all possible cell accessors to one
   executing core/hart. It states privilege, mask coverage, preemption and
-  interrupt-entry rules. NMI, faults, higher-priority or secure-world handlers
+  interrupt-entry rules. Mask coverage explicitly includes BASEPRI-style
+  partial masking on cores that implement it: a priority threshold leaves
+  higher-priority handlers able to run ([ARMv7-M ARM §B1.5.4][arm-v7m]).
+  NMI, faults, higher-priority or secure-world handlers
   left unmasked must not access the cell; masking interrupts does not exclude
   DMA or another bus master. Their access must be absent by construction or
   covered by a separately justified memory/ownership protocol.
@@ -575,8 +595,8 @@ still have their in-order meaning, and cell observations still lack proof
 authority. Do not infer permission for an ISR to enter today's waiting
 `atomic` statement or reuse the desktop map/hold runtime on an MCU. If the
 owner admits interrupt exclusion, each port must establish its context,
-interrupt, lifetime and hold-handoff contract before declaring the capability;
-until then its RMW entry is unavailable.
+privileged execution, interrupt coverage, lifetime and hold-handoff contract
+before declaring the capability; until then its RMW entry is unavailable.
 
 ### Representation and compiler qualification
 
@@ -670,7 +690,7 @@ implementation classes, not source effect categories.
 | RV32IMC without an approved single-core provider | 8,16,32 | empty | empty |
 | RV32IMC with an approved single-core provider | 8,16,32 | 8,16,32 / C | 8,16,32 / C |
 | RV32 with A, without additional subword qualification | 8,16,32 | 32 / I | 32 / E |
-| ESP32 Xtensa LX6 with qualified RAM and S32C1I | 8,16,32 | 32 / E | 32 / I |
+| ESP32 Xtensa LX6 with qualified RAM and S32C1I; fixed LLVM toolchain/provider required, default atomic lowering not established | 8,16,32 | 32 / E | 32 / I |
 | AVR native minimum, without an approved exclusion provider | 8 | empty | empty |
 
 For example, a future M0+ target would declare `thumbv6m-none-eabi`,
@@ -680,9 +700,11 @@ could instead declare C for those RMW widths after the owner accepts that
 implementation class and the port establishes its premises. An RV32IMC
 profile similarly fixes `rv32imc` and its ABI, with no A extension; a separate
 RV32+A profile declares the additional operations. The ISA does not establish
-the number of cores. Wider software-emulated loads/stores are outside this
-initial native-width rule even when interrupt exclusion could implement them;
-they would need a separate declared capability and decision, not a fallback.
+the number of cores: [RP2040 has two Cortex-M0+ cores][rp2040], so M0+ alone
+cannot justify single-core interrupt exclusion. Wider software-emulated
+loads/stores are outside this initial native-width rule even when interrupt
+exclusion could implement them; they would need a separate declared capability
+and decision, not a fallback.
 
 Module checking retains ordinary types/effects and records atomic requirements
 in composable interface/instance summaries. Selected-target composition
@@ -1245,13 +1267,28 @@ this panel. Retain today's ordinary locked-stamp implementation as a separate
 control if its generated access differs from L1. Every arm, including L0,
 L1 and that existing implementation, gets a twin.
 
+For hot keys, **choose path recovery, not equality with R0**, before seeing
+results. `read_in` calls `same_key`, which reads the node's length/key bytes;
+the value slot follows that header and key at its required alignment
+([concurrent_map.c:678–688,795–797,1217–1220][cmap]). Thus a stamp sharing a
+cache line with bytes readers inspect can make R1 pay for dirty-node
+coherence even with the reader path fully restored. This is a source-grounded
+hypothesis, particularly relevant with four or more readers of hot keys, not
+a measured loss or proof that every layout shares that line. Record offsets
+and test it with the attribution runs below. A <=1% R1/R0 requirement would
+conflate that store cost with failure to recover the hold path, and tightening
+noise would tighten the wrong comparison. The hot-key claim is therefore
+limited to resolved route savings; it makes no near-zero total-stamp-cost
+claim. Uniform cells retain the stricter total-loss criterion.
+
 1. **Before a language change**, pin Whitefoot, Firn-wf, Halo-wf, Redis benchmark
    version, Clang/linker versions, flags and one identical LTO mode for all
    arms. Use one firn source with only the named experimental factors varied;
    keep entry layout fixed. Also compare actual firn main without stamping
    to expose total layout cost. Run R0/L0, the current locked-stamp control,
-   and the second-map and separate write-on-change controls first; only after
-   semantic/target qualification add R1/L1 and complete the panel. Report the
+   and the second-map and separate write-on-change controls first, in the
+   staged order below; only after semantic/target qualification add R1/L1 and
+   complete the panel. Report the
    second-map and separate-statement representation/semantic differences
    separately; evaluate buffering as a policy alternative. A forced-route
    prototype must change only the final hold selection and its corresponding
@@ -1268,7 +1305,8 @@ L1 and that existing implementation, gets a twin.
    siblings; use one logical CPU per physical core and identical placement
    across arms. Recover the motivating settings from artifacts before
    replicating them. Measure 1, 2, 4 and 8 server P-cores separately, with
-   uniform and hot-key workloads at depth 16; retain depth 1 and SET controls.
+   uniform, hot-key and Zipf workloads at depth 16; retain GET depth 1 and
+   SET at depths 1 and 16 as controls.
    The [14900K has eight P-cores][14900k], so an eight-core server leaves none
    for a disjoint local client: that cell needs a separate CI-controlled
    P-core client host. Until available it remains unmeasured, not replaced
@@ -1284,29 +1322,63 @@ L1 and that existing implementation, gets a twin.
    build/layout variation, which must be reported rather than conflated.
    The old firn record says it reran each image; its numbers are not evidence
    of independent rebuild variation ([memory-limit/README.md:128–135][firn-evidence]).
-   Begin with two one-second no-stamp/twin pairs as a small timing/noise pilot.
+   Begin with two one-second no-stamp/twin pairs per pilot cell as a small
+   timing/noise pilot.
    Use that spread to choose and record the final run duration before timing
    the candidate. Exclude the pilot from the decision batch. Fix **ten paired
-   blocks per arm and workload cell**, each containing all arms and twins
-   with balanced ordering; do not stop early or add pairs after seeing a
-   favorable candidate result.
-4. Fix the estimator and limits now. In each cell, epsilon is the median of
-   `abs(R0_twin/R0 - 1)` over the ten blocks; loss is the larger of
-   `1 - median(R1/R0)` and `1 - median(R1_twin/R0_twin)`, paired by block.
-   A pass requires loss <= epsilon and epsilon <= **0.01** in every measured
-   depth-16 uniform/hot-key CPU cell. As a repeatability screen, every arm's
-   median absolute twin difference must be <= 0.01, and the first-five versus
-   last-five estimates of epsilon and of each candidate loss must differ by
-   <= 0.01. Failure of any noise/repeatability screen is **inconclusive**;
-   with those screens satisfied, loss > epsilon rejects the motivating
-   performance claim. Report all raw ratios and spread, not only medians.
-   The old no-stamp ratios differ from 1 by 3.1% and 2.7%; they do not supply
-   this paired estimator, and noise that large could not pass this protocol.
-   **A 3% residual loss is unacceptable under this proposed criterion.** If
-   inconclusive, diagnose the noise and prerecord a new duration/batch before
-   rerunning the complete panel; retain the first outcome and never widen
-   the 1% ceiling. These thresholds are prospective research recommendations,
-   not an owner-approved performance requirement or a retrospective verdict.
+   blocks per workload cell**, each containing every arm and twin assigned
+   to that stage, with balanced ordering; do not stop a batch early or add
+   pairs after seeing a favorable candidate result.
+4. Fix the estimator and limits now. For each arm A in a cell, let
+   `e_A = median(abs(A_twin/A - 1))` over the ten paired blocks. Every arm
+   in a decision batch must have `e_A <= 0.01`; otherwise that batch is
+   **inconclusive**, not a candidate failure. For depth-16 uniform GET,
+   epsilon is `e_R0`; loss is the larger of `1 - median(R1/R0)` and
+   `1 - median(R1_twin/R0_twin)`. A pass requires loss <= epsilon in every
+   measured uniform CPU/policy cell; with the noise screen satisfied,
+   loss > epsilon rejects this total-cost claim. **A 3% uniform residual
+   loss remains unacceptable.**
+
+   For depth-16 hot-key GET, let `e_route = max(e_R0, e_L0, e_R1, e_L1)`.
+   The no-store route penalty is the smaller of `1 - median(L0/R0)` and
+   its twin estimate; the stamped route saving is the smaller of
+   `1 - median(L1/R1)` and its twin estimate. Call the **path recovered**
+   only when both exceed `e_route` and the lowering inspection in step 5
+   confirms the reader route. These compare L0 against R0 and R1 against
+   L1 without requiring equal savings in the two store conditions. If the
+   no-store penalty is unresolved, report route attribution inconclusive;
+   if it is resolved but stamped savings do not exceed noise, the hot-key
+   path-recovery criterion fails. R1/R0 remains descriptive even when its
+   loss exceeds 1% or 3%; expose that cost and the interaction, never call
+   it a near-zero stamp cost. Zipf, depth-1 and SET results are controls
+   reported separately, not substitutes for a failed primary cell.
+
+   Report raw block ratios, spread and first-five/last-five medians. The
+   split-half difference is a drift diagnostic, **not another <=0.01
+   pass/fail screen**: two five-block estimates add sampling variability
+   and do not establish 1% precision. Balanced ordering and the full
+   ten-block twin screen supply the preregistered operational noise rule;
+   it is not a confidence interval or a guarantee of the true effect.
+   Record any placement, thermal or frequency departure alongside the data.
+   The old no-stamp ratios differ from 1 by 3.1% and 2.7%; they are not
+   this paired estimator, and no evidence yet establishes that the 14900K
+   can satisfy the new screen.
+
+   Allow **one initial batch and at most two corrective reruns per stage**.
+   Before each retry, record the diagnosed cause, duration and scheduling
+   change, and recompute the queue estimate; rerun all arms/twins/cells of
+   that stage, not just favorable or noisy cells. Keep all outcomes separate;
+   never pool attempts or select the best ratio. Reruns address inconclusive
+   measurement, not a noise-qualified performance failure. If the third
+   attempt still fails the twin screen, stop this campaign and report
+   **“this machine cannot measure at 1%” for these workloads and settings**;
+   this is a bounded experimental conclusion, not a permanent hardware limit.
+   An unresolved route contrast after the same limit instead ends with
+   “no resolved route cost/recovery”, not a claim of machine noise. Do not
+   queue later stages while their prerequisite is inconclusive, or widen
+   the ceiling. A new campaign requires an explicit revised protocol, not
+   resetting this retry counter. These thresholds remain prospective research
+   recommendations, not owner-approved requirements or retrospective verdicts.
 5. Inspect GET lowering and profile: actual stamp stores must execute; R1
    must retain reader acquisition/release without selecting the entry write
    route for that field. The complete panel supplies both same-source
@@ -1332,6 +1404,66 @@ L1 and that existing implementation, gets a twin.
    measured operations, workloads, CPU counts and client topology; missing
    four/eight-core cells preclude a claim covering those counts.
 
+### Hosted queue estimate and staged order
+
+Estimate before reserving the 14900K. The seven requested arms are R0, R1,
+L0, L1, current locked stamp, second map and write-on-change. Budget the
+current-lock control even if later inspection proves it identical to L1.
+The separate actual-main/no-stamp layout control in step 1 is an eighth arm,
+also with a twin. Buffering is a separate policy experiment, not silently
+included in this throughput budget.
+
+For the full set, the proposed inventory is four server counts (1/2/4/8),
+three distributions (uniform/hot/Zipf), two policies (LRU/LFU), and four
+operation/depth cells (GET/SET, each at 1/16). Each cell runs ten blocks,
+two images per arm, serially on the same server. Thus seven arms require
+`7 × 2 × 10 × 4 × 3 × 2 × 4 = 13,440` timed intervals. At an **assumed**
+five seconds per interval, that is **18 h 40 min** of measurement alone;
+including the eighth arm makes 15,360 intervals and **21 h 20 min**.
+Five seconds is a planning assumption, matching the old record's interval,
+not evidence that five seconds attains 1% precision here.
+
+Let `t` be the pilot-selected duration, `h` the measured per-interval warmup,
+reset and launch overhead, and `B` the total build/setup time, all in seconds.
+Full-set runner occupancy is `15,360 × (t + h) + B`, before separate profiles,
+eviction-quality runs or corrective retries. For illustration only, `t=5`
+and **unverified assumed** `h=5` gives **42 h 40 min + B**; build/setup time
+and actual overhead remain unmeasured. Two full-set retries at those same
+durations would raise it to **128 h + cumulative build/setup time**. The
+one/two/four-core subset is three quarters of the full set (16 h measurement
+alone with eight arms at five seconds); the eight-core panel also needs the
+separate CI client host and its occupancy. No full set is queued on these
+assumptions: first measure `t`, `h` and build/setup samples, then publish
+the revised total including the maximum retry cost and coordinate its slots.
+
+Use this order, with each decision batch completed before judging it:
+
+1. **Can the noise rule be met?** Start with LRU GET depth 16 on one-core
+   uniform and four-core hot-key cells: two one-second R0/twin pilot pairs
+   per cell (eight seconds timed in total), then ten R0/twin pairs at the
+   selected duration. At five seconds this calibration is 3 min 20 s,
+   excluding overhead. Stop under the finite retry rule if it cannot pass.
+2. **Does the existing path explain a recoverable cost?** On those same two
+   cells, run R0/L0, current locked stamp, second map, write-on-change and
+   actual-main/no-stamp, all with twins and ten blocks. At five seconds this
+   is 20 min timed. Inspect route differences and the controls' predicted
+   separating observations before proposing the relaxed implementation.
+3. **Does the qualified candidate recover it?** After semantic/target
+   qualification, run the complete four-arm R0/R1/L0/L1 panel on those two
+   cells, with twins and ten blocks: 13 min 20 s timed at five seconds.
+   Uniform loss and hot-key route recovery can reject the claim here before
+   expanding it. Success covers only these two cells, not LFU or scaling.
+4. **Complete the inventory.** Only after those prerequisites, schedule the
+   eight-arm matrix in preregistered batches: remaining depth-16 uniform/hot
+   cells and LFU first, then Zipf, GET depth 1 and SET controls. Defer
+   eight-core cells until their client topology exists. Rerun the early
+   cells with all eight arms in this final matrix; do not pool the earlier
+   subset batches into it. At the illustrative five-second duration, the
+   pilots, calibration, two subset stages and full matrix total
+   **21 h 56 min 48 s of timed intervals**, before overhead, builds, profiles,
+   policy-quality measurements or retries. Record incomplete coverage on
+   stopping; a small decisive subset permits rejection, not a full pass.
+
 ### Embedded qualification and cost experiment
 
 The hosted throughput criterion does not establish suitability for a weak
@@ -1344,32 +1476,90 @@ load/store mapping that tears or calls a hidden lock; a libcall in a default
 Clang probe instead identifies compiler/provider work still needed, never a
 reason to exclude that CPU from Whitefoot's intended targets.
 
-Use a pinned Clang/LLVM with ARM and RISC-V backends. Compile isolated aligned
-8/16/32-bit relaxed load/store functions, 32-bit wrapping fetch-add and strong
+Use a pinned Clang/LLVM with ARM and RISC-V backends. The predictions below
+are grounded in **LLVM 21.1.0 source inspection**, not a local probe result;
+if the experiment pins another version, inspect its corresponding paths
+and prerecord any changed prediction before running it. Compile isolated,
+aligned 8/16/32-bit relaxed load/store functions, 32-bit wrapping fetch-add and strong
 compare-exchange, and 64-bit load/store boundary cases. Use C atomic builtins
 with relaxed ordering and separately explicit LLVM `monotonic` IR, since a
 C frontend's combined atomic policy may introduce a library call before
 target lowering sees the load/store. Keep source, emitted IR, assembly,
-diagnostics, exit codes and helper dependencies. The initial target commands
-for the probe source `atomic-probe.c` are prospective, not runs performed here:
+diagnostics, exit codes and helper dependencies. Make the following two
+feature settings explicit arms for each target, keeping source and all other
+settings fixed. The supported width here is LLVM's backend atomic width,
+not the hardware's native load/store width.
+
+| Probe arm | thumbv6m / Cortex-M0+ | RV32IMC without A | Prediction for explicit aligned LLVM atomic IR |
+|---|---|---|---|
+| Default, no provider feature | No `+atomics-32`; supported width 0 | No `+forced-atomics`; supported width 0 | Even `u32` monotonic load/store expand to `__atomic_load_4` / `__atomic_store_4`; RMW/CAS also need `__atomic_*` calls. This is library dependence, not a source rejection. |
+| Provider feature selected | `+atomics-32`; supported width 32 | `+forced-atomics`; supported width 32 | Native 8/16/32-bit monotonic loads/stores; 32-bit fetch-add/CAS use `__sync_*` calls whose implementations the platform must supply. These flags assert provider availability, not new hardware instructions. 64-bit atomic load/store remain library boundary cases. |
+
+The width and helper selection are visible in
+[ARMISelLowering.cpp][llvm-arm-atomic-lowering],
+[ARM's `atomics-32` declaration][llvm-arm-atomics32], and
+[RISCVISelLowering.cpp][llvm-rv-atomic-lowering]. Thumb load/store patterns
+map supported accesses to native instructions
+([ARMInstrThumb.td][llvm-thumb-atomic-patterns]); the RISC-V
+[forced-atomics regression fixture][llvm-rv-forced-tests] explicitly expects
+the libcall/native split, including monotonic `i32` loads/stores and RMW
+helpers. These sources substantiate gran's recalled backend behavior for
+this revision. They do not establish the output of the future CI toolchain
+or the correctness/availability of any linked provider.
+
+Keep the C-frontend arm separate: in the inspected Clang 21.1.0 sources,
+ARM's inline-width test depends on architecture/Thumb version and RV32's on
+the A extension ([ARM.cpp][clang-arm-atomic-width];
+[RISCV.h][clang-rv-atomic-width]). Merely adding the backend provider feature
+therefore does not establish that a C builtin reaches LLVM as an atomic
+instruction; predict that the C arm may retain `__atomic_*` calls in its
+emitted IR even when the explicit-IR provider arm uses native load/store.
+Inspect that IR first. A frontend libcall is a separately located toolchain
+gap, not a falsification of the explicit-IR backend prediction.
+
+The initial C commands remain prospective, not runs performed here:
 
 ```sh
 clang --target=thumbv6m-none-eabi -mcpu=cortex-m0plus -mthumb -O2 -ffreestanding -S atomic-probe.c -o thumbv6m.s
 clang --target=riscv32imc-unknown-none-elf -march=rv32imc -mabi=ilp32 -O2 -ffreestanding -S atomic-probe.c -o rv32imc.s
 ```
 
+For each C target, retain a default run and a provider-feature run, requesting
+`-Xclang -target-feature -Xclang +atomics-32` or
+`-Xclang -target-feature -Xclang +forced-atomics`, respectively, and save
+`-S -emit-llvm` output too. Driver acceptance and feature propagation are
+unverified until the pinned CI run; a rejected/ignored flag is reported, not
+silently dropped. The independently authored `atomic-probe.ll` contains
+actual atomic IR, not C-generated libcalls, with no conflicting per-function
+CPU/features. Its two backend arms are specified directly:
+
+```sh
+llc -O2 -mtriple=thumbv6m-none-eabi -mcpu=cortex-m0plus -mattr=-atomics-32 atomic-probe.ll -o thumbv6m-default.s
+llc -O2 -mtriple=thumbv6m-none-eabi -mcpu=cortex-m0plus -mattr=+atomics-32 atomic-probe.ll -o thumbv6m-provider.s
+llc -O2 -mtriple=riscv32-unknown-none-elf -target-abi=ilp32 -mattr=+m,+c,-a,-forced-atomics atomic-probe.ll -o rv32imc-default.s
+llc -O2 -mtriple=riscv32-unknown-none-elf -target-abi=ilp32 -mattr=+m,+c,-a,+forced-atomics atomic-probe.ll -o rv32imc-provider.s
+```
+
+These command specifications have not been executed. Native accesses in the
+default explicit-IR arm, or a load/store libcall in the provider explicit-IR
+arm at a supported width, falsify the predicted mapping and require diagnosis
+against the recorded version/features. Do not relabel that result a pass.
+For both arms, inspect every called implementation before qualification;
+provider-feature code must not mix with mutex-based atomic access to the same
+cell ([LLVM's `__sync_*` interoperability requirements][llvm-atomic]).
+
 Record the driver's normalized triple; if that Clang requires the canonical
 RISC-V spelling `riscv32-unknown-none-elf`, use it with explicit `-march=rv32imc`
 and record that mapping to `riscv32imc-unknown-none-elf`, never silently enable
-A. Start with one `u32` load/store pair, record compilation duration, then
-expand the width/operation panel. Add M23 and RV32+A as positive RMW controls
-with their explicit CPU/ISA settings. In the no-RMW profiles, expect either
-an unsupported-operation diagnostic or a library call for RMW, not an
-invented hardware instruction. Resolve every called provider before claiming
+A. Start with one `u32` load/store pair in both feature arms, record compilation
+duration, then expand the width/operation panel. Add M23 and RV32+A as positive RMW controls
+with their explicit CPU/ISA settings. In these no-RMW LLVM profiles, predict
+the library calls above, not an invented hardware instruction or a successful
+source-level refusal. Resolve every called provider before claiming
 usable atomics: merely emitting `__atomic_*` is not a refusal and not an
-implementation qualification. If forced-atomics/provider support is explored,
-record its flags separately and inspect its entire implementation; do not
-use ordinary/volatile accesses to conceal an LLVM atomic-lowering gap.
+implementation qualification. The provider-feature arm requires inspection
+of its entire implementation; do not use ordinary/volatile accesses to conceal
+an LLVM atomic-lowering gap.
 
 For an eventual WF target, the same panel must additionally show successful
 composition for native-width load/store and source-positioned refusal of
@@ -1377,8 +1567,14 @@ composition for native-width load/store and source-positioned refusal of
 must select the bounded mask/restore sequence; selecting a multicore profile
 must refuse that implementation. Check nested/already-masked entry, permitted
 ISR access, privilege/security domains and preservation of the mask, with
-unmasked accessors excluded by the target/runtime contract. Prove the complete
-event-model mapping, including hold handoffs and no-thin-air, and inspect the
+unmasked accessors excluded by the target/runtime contract. Show the actual
+privilege of the mask/operation/restore sequence, including any SVC handler;
+a nonfaulting M-profile `CPSID` probe is insufficient. Include an unprivileged
+negative control where supported, verify exclusion with a competing permitted
+interrupt, and document BASEPRI threshold coverage or RISC-V privilege-level
+coverage. U-mode `mstatus` traps and unmasked M-mode handlers cannot be treated
+as successful exclusion. Prove the complete event-model mapping, including
+hold handoffs and no-thin-air, and inspect the
 linked image with its actual providers and LTO settings before qualification.
 These are prospective target tests, not assertions about current WF support.
 
@@ -1542,7 +1738,7 @@ owner's requirement preserves weak embedded CPUs in the intended target scope;
 the proposed capability declarations and conditional C provider are not yet
 approved rules or implemented target support.
 
-Unverified: the owner's intended Store abstraction; the complete relaxed
+Unverified: the complete relaxed
 execution model and progress guarantee; the choice and soundness of effect,
 proof and modular projection rules; actual code generation and layout for
 each declared operation/target/feature/runtime profile; bounded exclusion's
@@ -1551,7 +1747,8 @@ implementation; any general safe upgrade/replay protocol; firn's LFU quality,
 rollback and observable compatibility under relaxed updates; and the depth-16
 performance criterion and embedded path/interrupt cost. No acceptance,
 performance success or implementation completion is claimed for any candidate.
-Next run the existing-language same-source controls and embedded CI code-shape
+Next calibrate the hosted noise/duration and queue estimate, then run the
+staged existing-language same-source controls and two-arm embedded CI code-shape
 probe, and evaluate the proposed event model and target qualification plan for
 the owner's semantic choices, before changing language rules. No build, test
 suite or benchmark was run for this documentation revision. The local Clang
@@ -1559,7 +1756,11 @@ suite or benchmark was run for this documentation revision. The local Clang
 Effective LTO CPU/features and Linux outlined-atomic dependencies
 remain part of target qualification, not conclusions of that query. The
 embedded probe above is a protocol only; it has not been compiled or run for
-this documentation revision.
+this documentation revision. Its LLVM 21.1.0 backend predictions and privilege
+constraints are sourced; actual feature propagation, linked providers,
+Xtensa default atomic lowering and all embedded code/latency results remain
+unverified. The hosted time totals are arithmetic on explicit planning
+assumptions, not measured runner occupancy or evidence of attainable noise.
 
 ## Sources
 
@@ -1651,4 +1852,14 @@ Whitefoot qualification results.
 [zephyr-atomic-c]: https://docs.zephyrproject.org/latest/doxygen/html/atomic_8h_source.html
 [zephyr-spinlocks]: https://docs.zephyrproject.org/latest/kernel/services/synchronization/spinlocks.html
 [llvm-forced-atomics]: https://reviews.llvm.org/D130621
+[llvm-arm-atomic-lowering]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/ARM/ARMISelLowering.cpp#L1287-L1366
+[llvm-arm-atomics32]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/ARM/ARMFeatures.td#L570-L577
+[llvm-thumb-atomic-patterns]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/ARM/ARMInstrThumb.td#L1700-L1723
+[llvm-rv-atomic-lowering]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/RISCV/RISCVISelLowering.cpp#L691-L701
+[llvm-rv-forced-tests]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/test/CodeGen/RISCV/forced-atomics.ll
+[clang-arm-atomic-width]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/clang/lib/Basic/Targets/ARM.cpp#L137-L154
+[clang-rv-atomic-width]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/clang/lib/Basic/Targets/RISCV.h#L195-L200
+[riscv-csrs]: https://docs.riscv.org/reference/isa/v20240411/priv/priv-csrs.html
+[riscv-privilege]: https://docs.riscv.org/reference/isa/v20240411/priv/machine.html
+[rp2040]: https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html
 [14900k]: https://www.intel.com/content/www/us/en/products/sku/236773/intel-core-i9-processor-14900k-36m-cache-up-to-6-00-ghz/specifications.html
