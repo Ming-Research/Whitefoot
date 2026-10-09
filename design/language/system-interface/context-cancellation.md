@@ -15,7 +15,6 @@ Rejected:
 - S3, a watch set on the context: rejected because ambient cancellation hides the capability from the wait's parameters, needs an escape for a must-finish wait and needs another inheritance rule for spawned contexts.
 - S4, a watch bound into a resource handle: rejected because sleeps have no such handle and mixed cancellable and must-finish use of one resource needs two bindings.
 - Register at park under the source's lock: rejected because each request would pay shared lock and list-update traffic for a firing that happens once at shutdown, whereas the measured find-at-fire path matched polling within noise.
-
 - A bare cancel_fired query: rejected because a read-only row neither registers a guard dependency nor establishes a held coherent state observation.
 - A program-owned shared stop flag beside cancellation: rejected because its update and cancel_fire would be two independently observable transitions.
 - A cancellation-specific target (option B): rejected because SharedRead supplies the selected protection through the ordinary shared-object abstraction.

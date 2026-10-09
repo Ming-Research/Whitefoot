@@ -46,6 +46,5 @@ Rejected:
 - Ordering every object by identity alone and taking every target at entry: rejected because a conditional logging tail then holds its log object throughout a block that may never reach it.
 - Replaced single-state nesting prohibition: rejected because one statement now holds several objects under one order, which supplies the same absence of lock cycles.
 - Replaced unused-state or table-binding judgment: rejected because the header now names independent targets.
-
 - A cancellation-specific atomic target (option B): rejected because a general read-only handle supplies the required state authority through ordinary atomic targets without a host-specific admission rule.
 - Cancellation independently interrupting a pending atomic statement (option C): rejected because it adds a nonexecuting outcome and result/edge rules instead of the selected guard disjunction and ordinary atomic body.
