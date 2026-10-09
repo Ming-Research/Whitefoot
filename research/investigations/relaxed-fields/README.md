@@ -67,11 +67,12 @@ which the current data model removed, not for a scalar atomic wrapper
 ([design/language/data-model.md:9,28][data-model];
 [access-effects/RESEARCH.md:3,32][access-research]).
 
-**Working interpretation, awaiting the owner:** “Store<u32>” means
-`Shared<u32>`. If it denotes another intended abstraction, that abstraction's
-contract must be supplied before the design is selected.
+**Owner's answer:** “Store” was a typo for `Shared<T>` (board note on
+2026-10-09). The owner's question is therefore how a relaxed scalar field and
+`Shared<u32>` are defined together, given that the field looks like a
+`Shared<T>` for basic types.
 
-Under that interpretation, a relaxed scalar does **not** make `Shared<u32>`
+A relaxed scalar does **not** make `Shared<u32>`
 pointless. The distinction is granularity of atomicity and ownership:
 
 | Construct | What it owns/protects | What a client can rely on |
@@ -1436,12 +1437,13 @@ consumers to adapt, not evidence that relaxed interleavings already meet them.
 The discussion above answers the relationship/platform question before asking
 for a shape. These are open research decisions, not approvals or spec edits.
 
-1. **Does “Store<u32>” mean the current `Shared<u32>`?** Recommend yes as the
-   working interpretation, preserving Shared's whole-block/lifetime/guard
-   meaning. Otherwise identify the intended Store contract and repeat the
-   comparison. Confidence 4/5: current declarations and the historical
-   `Shared<Store>` sketch support the interpretation; only the owner can
-   settle the name.
+1. **Settled: “Store<u32>” meant `Shared<u32>`.** The owner confirmed it on
+   the board (2026-10-09). What remains open from that comment is decision 3
+   below together with this section's comparison: the field gives single
+   indivisible accesses inside its owner without a lock, while `Shared<u32>`
+   keeps whole-block transactions, guards and joint commits with other
+   targets; the investigation recommends keeping both, with S2 as an optional
+   optimization of single-operation `Shared<integer>` statements.
 2. **May explicitly designated scalar accesses interleave inside otherwise
    transactional blocks?** Recommend evaluating the proposed split model,
    including per-cell coherence, hold handoffs and the permitted litmus
