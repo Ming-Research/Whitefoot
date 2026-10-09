@@ -97,3 +97,40 @@ four-worker time from the emitted arm's:
 
 Step 1 is exploratory for the zero arm. Its readings above are fixed before
 the measurement, but no threshold is set for it.
+
+## Step 1 results
+
+Run [37904899953](https://github.com/Ming-Research/Whitefoot/actions/runs/37904899953)
+on the i9-14900K (16 cores and 32 threads as the runner reports them), at
+`aa794e6d0` (main `3b1e5de75` plus this bundle), with `CALLS` 200 million,
+11 rounds. Milliseconds are medians:
+
+| Arm | One worker | Four workers | Four over one |
+| --- | ---: | ---: | ---: |
+| emitted | 108.1 | 1074.7 | 9.95 |
+| twin | 108.0 | 1069.2 | 9.90 |
+| direct | 108.0 | 108.0 | 1.00 |
+| zero | 108.0 | 541.1 | 5.01 |
+| plain | 108.0 | 107.9 | 1.00 |
+
+Per round at four workers, over the emitted arm: twin 0.980 to 1.037, direct
+0.100 to 0.105, zero 0.501 to 0.520, plain 0.100 to 0.105.
+
+So `gap` is 966.6 ms, about 4.8 ns for each of the 200 million calls, and
+`noise` is 3.7 percent of the emitted time. The direct arm removes all of
+`gap` and is faster than the emitted arm in every round. By the readings fixed
+above, **the site is the cost**. The zero arm removes half of it: keeping the
+query costs about 2.2 ns a call, and the splitter entry together with the
+chunk not being inlined costs about the other 2.7 ns. A change that keeps
+either half recovers only half. At one worker every arm runs the same
+sequential world and takes the same time.
+
+A hosted sizing run before it
+([37904042475](https://github.com/Ming-Research/Whitefoot/actions/runs/37904042475),
+two cores with two threads each, 20 million calls, three rounds) agreed: four
+workers took 5.7 times one worker's time, direct 0.97 times, and zero 4.2 times.
+
+These numbers are for one program shape: a three-iteration loop of weight
+7, called back to back. How much a real program loses depends on how often
+it reaches such a site. Snowghost's measurements above are the motivating
+cases; they were taken with older compilers and are re-measured in step 2.
