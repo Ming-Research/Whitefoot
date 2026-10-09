@@ -324,9 +324,13 @@ struct wf__par_slot {
 
 struct wf__par_lane {
 #if defined(WF_PAR_DEMAND)
-    /* Demand is advice, never task/result synchronization. A private cache
-     * line keeps idle writers away from the owner's hot deque fields. */
-    _Alignas(WF_PAR_CACHE_LINE) _Atomic uint64_t request;
+    /* Demand is advice, never task/result synchronization. The word an idle
+     * thief writes is the owner thread's wf__par_demand_word, so that the
+     * emitted poll is one thread-local load with no call, pointer chase or
+     * null test; the lane only publishes that word's address, registered when
+     * its owner attaches and null before. A private cache line keeps the
+     * thieves' reads of the address away from the owner's deque fields. */
+    _Alignas(WF_PAR_CACHE_LINE) uint64_t *request_word;
 #endif
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
@@ -352,16 +356,28 @@ __attribute__((weak)) int wf__par_demand_mode(void) { return 0; }
 #endif
 static _Atomic int wf__par_demand_posts;
 static unsigned wf__par_demand_initialized;
-static _Thread_local int wf__par_demand_attached;
+/* This thread's request word, nonzero while an idle thief asks it for work.
+ * The --par-demand module reads it directly as `@wf__par_demand_word` (one
+ * thread-local load per poll) and the module's own weak zero definition is
+ * replaced by this one at link; the lane layout stays private. A thief writes
+ * it through the owner's registered address, which is valid while the owner
+ * thread lives: every lane owner here lives as long as the pool. */
+_Thread_local uint64_t wf__par_demand_word;
 static void wf__par_enable_demand(void) {
     atomic_store_explicit(&wf__par_demand_posts, WF_PAR_DEMAND_MODE() ? wf__sched_demand_requests() : 0, memory_order_relaxed);
 }
+/* An owner publishes its word's address once, at attachment. */
+static void wf__par_register_word(struct wf__par_lane *lane) {
+    __atomic_store_n(&lane->request_word, &wf__par_demand_word, __ATOMIC_RELEASE);
+}
+/* Write-if-zero: a word already asked stays asked, a lane without an owner yet
+ * cannot be asked, and a request is one relaxed store, never a read-modify-write. */
 static void wf__par_request(struct wf__par_lane *victim) {
+    uint64_t *word;
     if (!atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) return;
-    uint64_t expected = 0;
-    if (atomic_load_explicit(&victim->request, memory_order_relaxed) == 0)
-        atomic_compare_exchange_strong_explicit(&victim->request, &expected, 1,
-            memory_order_relaxed, memory_order_relaxed);
+    word = __atomic_load_n(&victim->request_word, __ATOMIC_ACQUIRE);
+    if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0)
+        __atomic_store_n(word, (uint64_t)1, __ATOMIC_RELAXED);
 }
 
 #endif
@@ -1159,6 +1175,9 @@ static void wf__par_worker_main(void *opaque) {
     wf__par_idling_reset(&idling);
     wf__par_self = lane;
     wf__par_attached = 1;
+#if defined(WF_PAR_DEMAND)
+    wf__par_register_word(lane);
+#endif
     wf_prim_floor_attach();
 
     __atomic_add_fetch(&wf__par_ready, 1u, __ATOMIC_RELEASE);
@@ -1220,7 +1239,7 @@ static void wf__par_worker_main(void *opaque) {
 static void wf__par_prepare(struct wf__par_lane *lane, int index) {
     int slot;
 #if defined(WF_PAR_DEMAND)
-    atomic_init(&lane->request, 0);
+    lane->request_word = NULL;
 #endif
     lane->top = 0;
     lane->bottom = 0;
@@ -1328,19 +1347,17 @@ static struct wf__par_lane *wf__par_attach(void) {
         return NULL;
     }
     wf__par_self = &wf__par_lanes[0];
+#if defined(WF_PAR_DEMAND)
+    wf__par_register_word(wf__par_self);
+#endif
     return wf__par_self;
 }
 
 #if defined(WF_PAR_DEMAND)
+/* The same word the emitted poll loads, for native probes and C callers. The
+ * emitted code never calls this: its poll is the load itself. */
 uint64_t wf__par_demand_requested(void) {
-    if (!wf__par_demand_attached) {
-        wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);
-        wf__par_demand_attached = 1;
-        /* Starting the pool cannot wait for an offer: an offer itself waits
-         * for a request, and otherwise the first request could never exist. */
-        if (!wf__par_self && !wf__par_attached) (void)wf__par_attach();
-    }
-    return wf__par_self ? atomic_load_explicit(&wf__par_self->request, memory_order_relaxed) : 0;
+    return __atomic_load_n(&wf__par_demand_word, __ATOMIC_RELAXED);
 }
 
 #endif
@@ -1376,9 +1393,12 @@ void wf__par_publish(void *frame, void (*fn)(void *)) {
     slot->run = fn;
 #if defined(WF_PAR_DEMAND)
     /* Clear before publication. A later idle request survives this publish;
-     * races may over-request but cannot affect correctness or lose tasks. */
-    if (atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed))
-        atomic_store_explicit(&slot->home->request, 0, memory_order_relaxed);
+     * races may over-request but cannot affect correctness or lose tasks.
+     * The publisher is the lane's owner, so this is its own word. */
+    if (atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) {
+        uint64_t *word = __atomic_load_n(&slot->home->request_word, __ATOMIC_RELAXED);
+        if (word != NULL) __atomic_store_n(word, (uint64_t)0, __ATOMIC_RELAXED);
+    }
 #endif
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
     wf__par_push(slot->home, slot);
@@ -1455,7 +1475,22 @@ void wf__par_release(void *frame) {
 #endif
 }
 
-int wf__par_pool_active(void) { return wf__sched_lanes() >= 2; }
+int wf__par_pool_active(void) {
+    int active = wf__sched_lanes() >= 2;
+#if defined(WF_PAR_DEMAND)
+    /* A demand poll is a plain load of this thread's word, so nothing on the
+     * no-request path starts the pool or registers this thread's word. World
+     * selection does both: an offer waits for a request, a request needs
+     * running thieves and a registered owner, so neither may wait on the
+     * other. Idempotent, and a thread that already attached pays one
+     * thread-local test. */
+    if (active && !wf__par_attached) {
+        wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);
+        (void)wf__par_attach();
+    }
+#endif
+    return active;
+}
 
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight) {
     struct wf__par_lane *lane = wf__par_self;

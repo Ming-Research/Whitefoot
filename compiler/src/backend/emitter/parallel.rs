@@ -308,9 +308,20 @@ pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFail
     Ok(module)
 }
 
-/// The private lane layout stays in C. The accessor's hot path is a TLS
-/// pointer read, null branch and relaxed atomic word load; without LTO the
-/// emitted call adds call/return overhead, measured by this prototype.
+/// The thread-local word a demand poll loads: this thread's request word,
+/// which an idle thief sets through the address the runtime registered for
+/// the lane. The private lane layout stays in C; the module names only this
+/// word. A poll is therefore one load, a compare and a branch, with no call,
+/// no saved registers and no pointer chase: the second and third 14900K runs
+/// measured the earlier accessor call at about 40 cycles per poll, which at
+/// one poll per 625 iterations was the whole `large_helper` loss.
+///
+/// On the optional-runtime targets the module carries a weak zero word, so a
+/// module linked without the scheduler polls a word nobody writes and runs
+/// sequentially, as the other weak fallbacks arrange; the runtime's strong
+/// definition replaces it at link. Windows takes the external declaration.
+pub(crate) const DEMAND_WORD_SYMBOL: &str = "wf__par_demand_word";
+
 pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     // The marker enables posting before even a legacy indexed splitter starts
@@ -321,17 +332,12 @@ pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
     body.instructions("  ret i32 1\n", &[]);
     module.define(mode.define(body, "")?);
     module.text("\n");
-    let mut signature = Signature::new("wf__par_demand_requested", "i64", vec![]);
     if windows {
-        module.declare(signature);
+        module.declare_global(DEMAND_WORD_SYMBOL, "thread_local global", "i64", 8);
     } else {
-        signature.linkage = Linkage::Weak;
-        let mut body = FunctionBody::default();
-        body.open_block("entry".to_owned());
-        body.instructions("  ret i64 0\n", &[]);
-        module.define(signature.define(body, "")?);
-        module.text("\n");
+        module.weak_global(DEMAND_WORD_SYMBOL, "thread_local global", "i64", "0", 8);
     }
+    module.text("\n");
     Ok(module)
 }
 
@@ -637,13 +643,17 @@ pub(crate) struct ComputeHandedOut {
 pub(crate) type HandedOut = ComputeHandedOut;
 
 impl FunctionEmitter<'_, '_> {
+    /// One poll: a monotonic load of this thread's request word. Monotonic so
+    /// that a poll inside a loop is executed each time round and never hoisted
+    /// as a repeated plain load would be; on every maintained target it is the
+    /// same single load instruction.
     pub(super) fn emit_demand_requested(&mut self, condition: &str) -> Result<(), BackendFailure> {
         self.parallel.queries_demand = true;
         let word = format!("%{}", self.next_temporary()?);
-        self.output.symbol("wf__par_demand_requested");
+        self.output.symbol(DEMAND_WORD_SYMBOL);
         writeln!(
             self.output,
-            "  {word} = call i64 @wf__par_demand_requested()\n  {condition} = icmp ne i64 {word}, 0"
+            "  {word} = load atomic i64, ptr @{DEMAND_WORD_SYMBOL} monotonic, align 8\n  {condition} = icmp ne i64 {word}, 0"
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
@@ -1090,13 +1100,28 @@ impl FunctionEmitter<'_, '_> {
         Ok(result)
     }
 
-    /// Keep no-request execution in the source caller. In whole-module output,
-    /// early chunk expansion exposes captures, bounds and enclosing-loop
-    /// invariants. Only an observed request enters the recursive driver.
+    /// Keep no-request execution in the source caller, as the loop the source
+    /// always had over successive slices of its range. In whole-module output
+    /// the chunk expands here (its definition is `alwaysinline` in demand
+    /// mode), so the body optimizes with the caller's captures, alias facts
+    /// and bounds. Only an observed request enters the recursive driver.
     ///
-    /// One polling interval is one minimum worthwhile span, in static work
-    /// units. The final short remainder runs once, with no poll. This is not
-    /// a time bound: runtime calibration remains a separate experiment.
+    /// **One slice loop, with a data-dependent length.** Every slice runs the
+    /// chunk over `[cursor, cursor + min(remaining, step))` from one call
+    /// site, so the inlined loop has the unknown trip count the sequential
+    /// build's loop has and LLVM shapes it the same way (runtime unrolling,
+    /// vectorization, interleaving). The previous candidate advanced by a
+    /// literal step and ran the remainder through a second chunk call: its
+    /// slice loop had a constant trip count, LLVM left it rolled, and the
+    /// third 14900K run put `large_helper` at 1.305 of sequential with the
+    /// rolled loop executing 99.4 percent of its iterations. A range below
+    /// the step takes one slice, so a tiny site pays the span compare, the
+    /// minimum and one addition beyond the sequential loop, and no poll.
+    ///
+    /// The step is one minimum worthwhile span in static work units, and the
+    /// polling interval: a poll is a thread-local load ([`Self::emit_demand_requested`]).
+    /// This is a count bound, not a time bound; runtime calibration remains a
+    /// separate experiment.
     fn emit_demand_split(
         &mut self,
         result: IrValueId,
@@ -1119,13 +1144,12 @@ impl FunctionEmitter<'_, '_> {
         let step = crate::lowering::demand_minimum_span(split.weight);
         let ordinal = result.ordinal();
         let label = |part| format!("par.{part}.v{ordinal}");
-        let (start, empty, head, ask, slice, tail, handoff, join) = (
+        let (start, empty, head, ask, slice, handoff, join) = (
             label("start"),
             label("empty"),
             label("head"),
             label("ask"),
             label("slice"),
-            label("tail"),
             label("handoff"),
             label("sliced"),
         );
@@ -1137,11 +1161,11 @@ impl FunctionEmitter<'_, '_> {
         let cursor = format!("%{}", self.next_temporary()?);
         let carried = format!("%{}", self.next_temporary()?);
         let remaining = format!("%{}", self.next_temporary()?);
-        let tiny = format!("%{}", self.next_temporary()?);
+        let worth = format!("%{}", self.next_temporary()?);
         let requested = format!("%{}", self.next_temporary()?);
         let end = format!("%{}", self.next_temporary()?);
         let next = format!("%{}", self.next_temporary()?);
-        let tail_result = format!("%{}", self.next_temporary()?);
+        let more = format!("%{}", self.next_temporary()?);
         let handoff_result = format!("%{}", self.next_temporary()?);
         writeln!(
             self.output,
@@ -1154,17 +1178,18 @@ impl FunctionEmitter<'_, '_> {
         self.output.open_block(start.clone());
         writeln!(self.output, "  br label %{head}").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(head.clone());
-        // The entry establishes cursor < upper. The backedge advances by
-        // step only when upper - cursor >= step, so cursor <= upper remains
-        // true even for upper == u64::MAX. No saturated-span select hides the
-        // difference from cancellation/loop-invariant motion after inlining.
+        // cursor < upper holds at the head: the entry tests it, and the
+        // backedge is taken only while end < upper. So `remaining` is at least
+        // one and `sub nuw` is exact, and `end = cursor + min(remaining, step)`
+        // is at most upper, so `add nuw` is exact even at upper == u64::MAX.
+        // Only a range worth handing out (at least the step) reads the word.
         writeln!(
             self.output,
             "  {cursor} = phi i64 [ {lower}, %{start} ], [ {end}, %{slice} ]\n  \
              {carried} = phi {result_type} [ {seed}, %{start} ], [ {next}, %{slice} ]\n  \
              {remaining} = sub nuw i64 {upper}, {cursor}\n  \
-             {tiny} = icmp ult i64 {remaining}, {step}\n  \
-             br i1 {tiny}, label %{tail}, label %{ask}"
+             {worth} = icmp uge i64 {remaining}, {step}\n  \
+             br i1 {worth}, label %{ask}, label %{slice}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(ask.clone());
@@ -1178,26 +1203,22 @@ impl FunctionEmitter<'_, '_> {
         slice_arguments[0] = format!("{result_type} {carried}");
         slice_arguments[1] = format!("i64 {cursor}");
         self.output.open_block(slice.clone());
-        writeln!(self.output, "  {end} = add nuw i64 {cursor}, {step}")
+        let count = self.emit_work_binary("llvm.umin.i64", &remaining, &step.to_string())?;
+        writeln!(self.output, "  {end} = add nuw i64 {cursor}, {count}")
             .map_err(|_| BackendFailure::TextEmission)?;
         slice_arguments[2] = format!("i64 {end}");
         self.output.symbol(chunk.clone());
         writeln!(
             self.output,
-            "  {next} = call {result_type} @{chunk}({})\n  br label %{head}",
-            slice_arguments.join(", ")
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        self.output.open_block(tail.clone());
-        slice_arguments[2] = format!("i64 {upper}");
-        writeln!(
-            self.output,
-            "  {tail_result} = call {result_type} @{chunk}({})\n  br label %{join}",
+            "  {next} = call {result_type} @{chunk}({})\n  \
+             {more} = icmp ult i64 {end}, {upper}\n  \
+             br i1 {more}, label %{head}, label %{join}",
             slice_arguments.join(", ")
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(handoff.clone());
         self.output.symbol(driver.to_owned());
+        slice_arguments[2] = format!("i64 {upper}");
         slice_arguments.push(format!("i64 {}", split.weight));
         writeln!(
             self.output,
@@ -1208,7 +1229,7 @@ impl FunctionEmitter<'_, '_> {
         self.output.open_block(join);
         writeln!(
             self.output,
-            "  {} = phi {result_type} [ {seed}, %{empty} ], [ {tail_result}, %{tail} ], [ {handoff_result}, %{handoff} ]",
+            "  {} = phi {result_type} [ {seed}, %{empty} ], [ {next}, %{slice} ], [ {handoff_result}, %{handoff} ]",
             value_name(result)
         )
         .map_err(|_| BackendFailure::TextEmission)

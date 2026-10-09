@@ -1,12 +1,16 @@
 /* Deterministic protocol probe over the delivered implementation. No timing,
  * random scheduling or retries select the result. Includes core for its
- * failed-scan entry and lane state; ordinary acquire/publish/join stay real. */
+ * failed-scan entry and lane state; ordinary acquire/publish/join stay real.
+ * One thread plays both lanes, so the idle lane registers a word of its own
+ * and the victim registers this thread's word, the one the emitted poll and
+ * the accessor read. */
 #define WF_PAR_DEMAND 1
 #define WF_PAR_DEMAND_MODE() 1
 #include "core.c"
 #include <assert.h>
 #include <string.h>
 static unsigned executed;
+static uint64_t idle_word;
 static void run(void *frame) { (void)frame; ++executed; }
 int main(void) {
     int enabled = strcmp(getenv("WF_PAR_DEMAND"), "off-never-request") != 0;
@@ -17,15 +21,20 @@ int main(void) {
     struct wf__par_lane *idle = &wf__par_lanes[0];
     struct wf__par_lane *victim = &wf__par_lanes[1];
     wf__par_self = idle;
+    /* An unregistered owner cannot be asked: the victim has no word yet. */
     assert(wf__par_find(idle) == NULL);
-    assert(atomic_load(&victim->request) == (uint64_t)enabled);
-    assert(atomic_load(&idle->request) == 0);
-    wf__par_self = victim;
+    assert(wf__par_demand_requested() == 0);
+    idle->request_word = &idle_word;
+    wf__par_register_word(victim);
+    assert(victim->request_word == &wf__par_demand_word);
+    assert(wf__par_find(idle) == NULL);
     assert(wf__par_demand_requested() == (uint64_t)enabled);
+    assert(idle_word == 0);
+    wf__par_self = victim;
     if (enabled) {
-        atomic_store(&victim->request, 7);
+        wf__par_demand_word = 7;
         wf__par_request(victim);
-        assert(atomic_load(&victim->request) == 7); /* write-if-zero */
+        assert(wf__par_demand_requested() == 7); /* write-if-zero */
     }
     void *frame = wf__par_acquire_lane(8);
     assert(frame);
@@ -35,6 +44,7 @@ int main(void) {
     wf__par_release(frame);
     assert(executed == 1);
     /* A new miss can request again after publication cleared the old one. */
+    wf__par_self = idle;
     assert(wf__par_find(idle) == NULL);
     assert(wf__par_demand_requested() == (uint64_t)enabled);
     puts("demand posting/clearing PASS");

@@ -22,6 +22,28 @@ fn dynamic(seed: u64, n: u64) -> result: u64 pure {
   return total;
 }
 "#;
+const RANGE: &str = r#"fn range(seed: u64, lo: u64, hi: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in lo..hi) {
+    set total = total +wrap i;
+  }
+  return total;
+}
+"#;
+const NESTED: &str = r#"fn nested(seed: u64, n: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in 0_u64..n) {
+    let inner = i;
+    for (j in 0_u64..n) {
+      set inner = inner +wrap j;
+    }
+    set total = total +wrap inner;
+  }
+  return total;
+}
+"#;
+/// The poll the demand mode emits: one monotonic load of this thread's word.
+const POLL: &str = "load atomic i64, ptr @wf__par_demand_word monotonic, align 8";
 
 #[test]
 fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
@@ -33,11 +55,11 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
     .unwrap();
     let small = function_body(&module, "@wf_small");
     assert!(small.contains("call i64 @wf__par_chunk_"), "{small}");
-    assert!(!small.contains("@wf__par_slice_") && !small.contains("@wf__par_demand_requested"));
+    assert!(!small.contains("@wf__par_slice_") && !small.contains("@wf__par_demand_word"));
     let dynamic = function_body(&module, "@wf_dynamic");
     assert!(dynamic.contains("call i64 @wf__par_slice_"), "{dynamic}");
     assert!(!dynamic.contains("@wf__par_split_budget"), "{dynamic}");
-    assert!(module.contains("call i64 @wf__par_demand_requested()"));
+    assert!(module.contains(POLL), "{module}");
     assert!(
         ledger
             .iter()
@@ -52,12 +74,16 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
     );
 }
 
-/// A small range reaches the unsliced tail without a runtime call. A large
-/// one must keep polling after progress, and only an observed request may
-/// enter the out-of-line recursive driver. The old caller dispatched straight
-/// to that driver on size alone, so it fails this check.
+/// The no-request path is one slice loop in the caller: every slice runs the
+/// chunk from one call site over `[cursor, cursor + min(remaining, step))`,
+/// so the inlined loop keeps the unknown trip count the sequential loop has.
+/// A range below the step takes one slice without touching the word; only an
+/// observed request enters the out-of-line recursive driver. The previous
+/// candidate advanced by a literal step from one call site and ran the
+/// remainder from a second (`par.tail.`): its constant-trip slice loop was
+/// left rolled by LLVM, which this shape check rejects.
 #[test]
-fn demand_executes_local_slices_and_only_enters_the_driver_on_request() {
+fn demand_runs_one_variable_length_slice_loop_and_enters_the_driver_only_on_request() {
     let module = emit_lowered(SMALL.as_bytes(), DEMAND);
     let caller = function_body(&module, "@wf_dynamic");
     let blocks = llvm_blocks(caller);
@@ -70,23 +96,30 @@ fn demand_executes_local_slices_and_only_enters_the_driver_on_request() {
     let head = block("par.head.");
     let ask = block("par.ask.");
     let slice = block("par.slice.");
-    let tail = block("par.tail.");
     let handoff = block("par.handoff.");
     assert!(
-        head.contains("label %par.tail.") && head.contains("label %par.ask."),
+        !blocks.iter().any(|block| block.starts_with("par.tail.")),
         "{caller}"
     );
-    assert!(ask.contains("@wf__par_demand_requested()"), "{caller}");
+    assert!(
+        head.contains("label %par.ask.") && head.contains("label %par.slice."),
+        "{caller}"
+    );
+    assert!(ask.contains(POLL) && !ask.contains("call "), "{caller}");
     assert!(
         ask.contains("label %par.handoff.") && ask.contains("label %par.slice."),
         "{caller}"
     );
     assert!(
-        slice.contains("@wf__par_chunk_") && slice.contains("br label %par.head."),
+        slice.contains("@llvm.umin.i64(")
+            && slice.contains("@wf__par_chunk_")
+            && slice.contains("label %par.head.")
+            && slice.contains("label %par.sliced."),
         "{caller}"
     );
-    assert!(
-        tail.contains("@wf__par_chunk_") && tail.contains("br label %par.sliced."),
+    assert_eq!(
+        caller.matches("call i64 @wf__par_chunk_").count(),
+        1,
         "{caller}"
     );
     assert_eq!(
@@ -98,24 +131,31 @@ fn demand_executes_local_slices_and_only_enters_the_driver_on_request() {
         handoff.contains("@wf__par_slice_") && handoff.contains("noinline"),
         "{caller}"
     );
-    for fast in [head, slice, tail] {
+    for fast in [head, slice] {
         assert!(
-            !fast.contains("@wf__par_demand_requested") && !fast.contains("@wf__par_slice_"),
+            !fast.contains("@wf__par_demand_word") && !fast.contains("@wf__par_slice_"),
             "{caller}"
         );
     }
-    // The step is a literal and the same as the worthwhile-span threshold:
-    // no variable division and no 5,000-unit slices inside a 150,000-unit
-    // hand-out grain. A wrong, shorter polling interval fails this equality.
+    assert!(!caller.contains("@wf__par_demand_requested"), "{caller}");
+    // The slice end is cursor plus the minimum of the remaining range and the
+    // step: never cursor plus a literal, which would give the inlined loop a
+    // constant trip count. The step is the worthwhile-span threshold too.
+    let add = slice
+        .lines()
+        .find(|line| line.contains("add nuw i64"))
+        .unwrap_or_else(|| panic!("missing slice end: {caller}"));
+    let addend = add.rsplit(", ").next().unwrap().trim();
+    assert!(addend.starts_with('%'), "{caller}");
     let literal = |text: &str, operation: &str| {
         text.lines()
             .find(|line| line.contains(operation))
-            .and_then(|line| line.rsplit(", ").next())
-            .and_then(|word| word.trim().parse::<u64>().ok())
+            .and_then(|line| line.split_whitespace().last())
+            .and_then(|word| word.trim_end_matches(')').parse::<u64>().ok())
             .unwrap_or_else(|| panic!("missing constant {operation}: {text}"))
     };
-    let step = literal(slice, "add nuw i64");
-    assert_eq!(step, literal(head, "icmp ult i64"));
+    let step = literal(slice, "@llvm.umin.i64(");
+    assert_eq!(step, literal(head, "icmp uge i64"));
     assert!(step >= 2);
     assert!(
         !caller.contains("udiv") && !caller.contains("select i1 %"),
@@ -125,19 +165,11 @@ fn demand_executes_local_slices_and_only_enters_the_driver_on_request() {
 
 /// Empty/inverted ranges return the original seed without subtracting; a
 /// nonempty range can end at MAX, and a partial fold must pass its live seed
-/// and cursor to either the final tail or a hand-out. These are the facts
-/// licensing nuw in the generated scheduling arithmetic, not source proofs.
+/// and cursor to the next slice or a hand-out. These are the facts licensing
+/// nuw in the generated scheduling arithmetic, not source proofs.
 #[test]
 fn demand_range_edges_and_reduction_continuations_keep_their_values() {
-    let module = emit_lowered(
-        br#"fn range(seed: u64, lo: u64, hi: u64) -> result: u64 pure {
-  let total = seed;
-  for (i in lo..hi) { set total = total +wrap i; }
-  return total;
-}
-"#,
-        DEMAND,
-    );
+    let module = emit_lowered(RANGE.as_bytes(), DEMAND);
     let caller = function_body(&module, "@wf_range");
     let blocks = llvm_blocks(caller);
     let block = |prefix: &str| *blocks.iter().find(|b| b.starts_with(prefix)).unwrap();
@@ -171,12 +203,20 @@ fn demand_range_edges_and_reduction_continuations_keep_their_values() {
         head.contains(&format!("sub nuw i64 %v2, {cursor}")),
         "{caller}"
     );
-    for part in ["par.tail.", "par.handoff."] {
-        assert!(
-            block(part).contains(&format!("(i64 {seed}, i64 {cursor}, i64 %v2")),
-            "{caller}"
-        );
-    }
+    let slice = block("par.slice.");
+    let end = slice
+        .lines()
+        .find(|line| line.contains("add nuw i64"))
+        .and_then(|line| line.trim().split(" = ").next())
+        .unwrap_or_else(|| panic!("missing slice end: {caller}"));
+    assert!(
+        slice.contains(&format!("(i64 {seed}, i64 {cursor}, i64 {end}")),
+        "{caller}"
+    );
+    assert!(
+        block("par.handoff.").contains(&format!("(i64 {seed}, i64 {cursor}, i64 %v2")),
+        "{caller}"
+    );
     assert!(
         block("par.sliced.").contains("[ %v0, %par.empty."),
         "{caller}"
@@ -187,18 +227,8 @@ fn demand_range_edges_and_reduction_continuations_keep_their_values() {
 fn demand_chunks_expand_before_loop_optimization_but_ordinary_chunks_do_not() {
     // Nested loops exercise both captures and nested synthesized chunks. The
     // assertions inspect every generated chunk, not a workload's symbol.
-    let source = br#"fn nested(seed: u64, n: u64) -> result: u64 pure {
-  let total = seed;
-  for (i in 0_u64..n) {
-    let inner = i;
-    for (j in 0_u64..n) { set inner = inner +wrap j; }
-    set total = total +wrap inner;
-  }
-  return total;
-}
-"#;
     for (mode, expected) in [(DEMAND, true), (OverlapLowering::OnWithCallGrain, false)] {
-        let module = emit_lowered(source, mode);
+        let module = emit_lowered(NESTED.as_bytes(), mode);
         let chunks: Vec<_> = module
             .lines()
             .filter(|line| line.starts_with("define ") && line.contains("par_chunk_"))
@@ -213,6 +243,26 @@ fn demand_chunks_expand_before_loop_optimization_but_ordinary_chunks_do_not() {
         }) {
             assert!(!header.contains("alwaysinline"), "{header}");
         }
+    }
+}
+
+/// A poll is a load of the module's thread-local request word: no call, so
+/// no saved registers around it and nothing for the no-request path to pay
+/// beyond a load, a compare and a branch. The word is a weak zero definition
+/// the runtime's strong one replaces, and nothing calls the C accessor.
+#[test]
+fn demand_polls_a_thread_local_word_and_never_calls_the_runtime_accessor() {
+    for source in [
+        SMALL.as_bytes(),
+        include_bytes!("../../../../tests/programs/parallel/tree.wf").as_slice(),
+    ] {
+        let module = emit_lowered(source, DEMAND);
+        assert!(
+            module.contains("@wf__par_demand_word = weak thread_local global i64 0, align 8"),
+            "{module}"
+        );
+        assert!(module.contains(POLL), "{module}");
+        assert!(!module.contains("@wf__par_demand_requested"), "{module}");
     }
 }
 
@@ -257,14 +307,15 @@ fn a_slice_driver_reads_the_request_word_only_for_a_range_worth_handing_out() {
     }
     let asks: Vec<&String> = blocks
         .iter()
-        .filter(|block| block.contains("@wf__par_demand_requested"))
+        .filter(|block| block.contains("@wf__par_demand_word"))
         .collect();
     assert_eq!(asks.len(), 1, "{driver}");
+    assert!(asks[0].contains(POLL), "{driver}");
     assert!(!asks[0].contains("icmp uge"), "{driver}");
     assert!(
         blocks
             .iter()
-            .any(|block| block.contains("icmp uge") && !block.contains("@wf__par_demand_requested")),
+            .any(|block| block.contains("icmp uge") && !block.contains("@wf__par_demand_word")),
         "{driver}"
     );
 }
@@ -275,7 +326,7 @@ fn demand_checks_groups_before_acquisition_and_keeps_the_budget_cut() {
     let demand = emit_lowered(source, DEMAND);
     assert!(demand.contains("par.demand.v"));
     assert!(demand.contains("phi ptr [ null, %par.demand.v"));
-    assert!(demand.contains("call i64 @wf__par_demand_requested()"));
+    assert!(demand.contains(POLL));
     assert!(demand.contains("@wf__par_budget_"));
     assert!(demand.contains("@wf__par_seq_"));
 }

@@ -20,7 +20,13 @@ void wf__par_publish(void *frame, void (*run)(void *));
 void wf__par_join(void *frame);
 void wf__par_release(void *frame);
 int wf__par_pool_active(void);
-/* Starts/attaches the demand pool on first use, then reads this lane. */
+/* This thread's demand request word, nonzero while an idle thief asks it for
+ * work. A --par-demand module polls it with one thread-local load; the
+ * accessor returns the same word for native probes. World selection
+ * (wf__par_pool_active) starts the pool and registers the word. */
+#if defined(WF_PAR_DEMAND)
+extern _Thread_local uint64_t wf__par_demand_word;
+#endif
 uint64_t wf__par_demand_requested(void);
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);
 uint64_t wf__par_recursion_budget(void);

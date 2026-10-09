@@ -397,6 +397,41 @@ impl Module {
             references,
         });
     }
+    /// A module-level variable another unit may define too: a weak definition
+    /// with the given initializer, which a linked strong definition replaces,
+    /// and the external declaration a fragment that only names it carries.
+    pub(crate) fn weak_global(
+        &mut self,
+        name: &str,
+        kind: &str,
+        ty: &str,
+        value: &str,
+        align: u64,
+    ) {
+        let header = format!("@{name} = weak {kind} {ty} {value}, align {align}");
+        self.define(Entity {
+            name: name.to_owned(),
+            header: header.clone(),
+            hidden_header: header,
+            declaration: format!("@{name} = external {kind} {ty}, align {align}"),
+            declaration_references: References::default(),
+            body: String::new(),
+            linkage: Linkage::Weak,
+            global: true,
+            references: References::default(),
+        });
+    }
+    /// A module-level variable this module only names; another unit defines it.
+    pub(crate) fn declare_global(&mut self, name: &str, kind: &str, ty: &str, align: u64) {
+        self.parts.push(ModulePart::Declaration(name.to_owned()));
+        self.declarations.insert(
+            name.to_owned(),
+            Declaration {
+                text: format!("@{name} = external {kind} {ty}, align {align}"),
+                references: References::default(),
+            },
+        );
+    }
     pub(crate) fn named_type(&mut self, name: String, body: String, references: References) {
         self.parts.push(ModulePart::Type(name.clone()));
         self.types.insert(

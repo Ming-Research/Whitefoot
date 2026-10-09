@@ -6,16 +6,18 @@ harness when that investigation ends. No gate consumes this directory.
 
 `--par-demand` implies `--par`, keeps every permitted group (so it rejects a
 simultaneous `--par-call-grain`), and keeps the existing recursion budget,
-cut and sequential clone. The [current unmeasured proposal](../../investigations/par-demand/DESIGN.md#caller-local-slices-proposed-third-change-before-measurement)
-emits non-indexed slices in the caller and requests early expansion of
-synthesized chunks in whole-module output; separately optimized fragments
-still need qualification. One slice has
-`max(2, ceil(150000 / static_weight))` iterations; these are work units, not
-nanoseconds. Only a request enters the recursive driver, which offers the
-far half and runs the near half locally. Accumulated reductions seed the
-near half with their live value and combine near then far after joining.
-A final short remainder runs once without polling. The coarser polling
-interval and early expansion need an owner decision before adoption.
+cut and sequential clone. The [current unmeasured candidate](../../investigations/par-demand/DESIGN.md#the-fourth-change-fixed-before-it-measures)
+emits non-indexed slices in the caller as one slice loop and requests early
+expansion of synthesized chunks in whole-module output; separately optimized
+fragments still need qualification. Every slice runs the chunk from one call
+site over `[cursor, cursor + min(remaining, step))`, where the step is
+`max(2, ceil(150000 / static_weight))` iterations (work units, not
+nanoseconds), so the inlined loop keeps the unknown trip count the sequential
+loop has; a range below the step is one slice and never polls. Only a request
+enters the recursive driver, which offers the far half and runs the near half
+locally. Accumulated reductions seed the near half with their live value and
+combine near then far after joining. The polling interval and early expansion
+need an owner decision before adoption.
 Indexed accumulators deliberately retain the existing prepare/split/finish path;
 the ledger says `legacy splitter for indexed`. This exception can still publish
 work with requests off. Inspect each formal kernel's ledger before attributing
@@ -28,10 +30,11 @@ site only after the demand-mode pass. Its caller goes straight to the chunk,
 and its unused driver is omitted. The existing non-demand lowering, weight
 assignment and emission branches retain their output text.
 
-The C lane layout remains private. Both checks emit:
+The C lane layout remains private. Both checks emit one load of the module's
+thread-local request word:
 
 ```llvm
-%word = call i64 @wf__par_demand_requested()
+%word = load atomic i64, ptr @wf__par_demand_word monotonic, align 8
 %requested = icmp ne i64 %word, 0
 ```
 
@@ -39,25 +42,33 @@ At a group this branches around acquisition and merges a null frame into the
 existing refused edge. At a non-indexed loop, the remaining-work comparison
 precedes the poll, and a false poll executes a caller-local slice then returns
 to the comparison. A true poll enters the driver. Its recursive workers use
-the same interval and still check before offering a half. The accessor's warm path reads its
-thread-local attachment flag, reads the lane pointer and performs one relaxed
-atomic word load; it includes call/return overhead without cross-language LTO.
-The compiler's ordinary native path compiles separate objects, so that cost
-belongs to the measured candidate. There is no exported lane offset and no
-clock read in the scheduling decision. The emitted strong demand-mode marker
-lets the runtime enable posting before a pool starts even through an indexed
-splitter. Ordinary modules lack the marker. Their C units preprocess out the demand
-field, posting, clearing, accessor and startup setting entirely; only demand
-modules link the two opt-in scheduler objects. This preserves the ordinary
-runtime's lane layout and scheduler path as well as legacy LLVM emission.
+the same interval and still check before offering a half. The word is this
+thread's `wf__par_demand_word`, a `_Thread_local` the demand scheduler unit
+defines; the module carries a weak zero definition so that it still links and
+runs sequentially without the runtime (Windows takes the external
+declaration). On ELF the load is one `mov %fs:...` instruction; on Mach-O a
+thread-local access is a `_tlv_get_addr` call, which only correctness relies
+on. There is no exported lane offset, no runtime call on the no-request path
+and no clock read in the scheduling decision. The emitted strong demand-mode
+marker lets the runtime enable posting before a pool starts even through an
+indexed splitter. Ordinary modules lack the marker. Their C units preprocess
+out the demand field, posting, clearing, accessor and startup setting
+entirely; only demand modules link the two opt-in scheduler objects. This
+preserves the ordinary runtime's lane layout and scheduler path as well as
+legacy LLVM emission.
 
 An idle worker writes one selected victim's word only when zero after a failed
-scan. Publication clears the owner's word before making its frame stealable.
-The setting `WF_PAR_DEMAND=off-never-request` is read once on demand startup,
-prevents every posting and leaves the checks at zero. `on` (or unset) enables
-posting. Hints carry no task or result synchronization; deque and join ordering
-remain the existing protocol. The accessor starts the pool on its first use,
-so asking for demand cannot deadlock startup behind the first offer.
+scan, through the address the victim's lane registered when its owner thread
+attached (null, and so unaskable, before). Publication clears the owner's own
+word before making its frame stealable. The setting
+`WF_PAR_DEMAND=off-never-request` is read once on demand startup, prevents
+every posting and leaves the checks at zero. `on` (or unset) enables posting.
+Hints carry no task or result synchronization; deque and join ordering remain
+the existing protocol. World selection (`wf__par_pool_active`) starts the
+pool and attaches the selecting thread in demand mode, so asking for demand
+cannot wait on the first offer and the first offer cannot wait on a request.
+`wf__par_demand_requested()` returns the same word for native probes; the
+emitted code never calls it.
 
 ## Reproduction in CI
 

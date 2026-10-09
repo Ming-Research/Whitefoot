@@ -30,7 +30,7 @@ and the design must change before anything else is built.
 
 ## The prototype
 
-This describes the measured prototype. The [proposed third change](#caller-local-slices-proposed-third-change-before-measurement) below describes the current unmeasured draft.
+This describes the first measured prototype. The [fourth change](#the-fourth-change-fixed-before-it-measures) below describes the current unmeasured candidate; the sections between record each measured change and its result.
 
 Behind `--par-demand` (compiler) and with no worker ever asking (runtime
 setting `WF_PAR_DEMAND=off-never-request`, so every check answers "nobody
@@ -503,3 +503,258 @@ assertion (their sources did not compile). So caller-local slicing with
 inlined chunks and per-offer-unit polling, as implemented, is rejected by
 its own predictions; following the owner's instruction, the record goes to
 the strongest model.
+
+## Diagnosis of the third rerun, and the fourth change, fixed before it measures
+
+This section reads the saved images of the second rerun (`run3`, revision
+122afdc1d) and the third (`run4`, revision 7c5c99301) against the sequential
+build, says where the no-request time goes, and fixes the next candidate and
+its predictions before the i9-14900K measures it. Line numbers are in the
+saved `.o.s` files of each run's `demand` and `seq` arms. Cycle estimates
+assume about one cycle per sequential `large_helper` iteration (200 million
+iterations in 40.1 ms), so they are rough and serve attribution, not
+accounting.
+
+### The idle workers are parked; the cost is the main thread's code
+
+In every demand cell at four and eight workers, in both runs, the process CPU
+time of the candidate equals its wall time: `large_helper` 42.65 ms wall and
+42.63 ms CPU in the second rerun, 52.29 and 52.29 in the third; `fir` 6.88
+and 6.88; `small_split` 211.1 and 211.1. Today's `par` arm, whose helpers
+work and spin, shows their CPU plainly (84 ms CPU for 21 ms wall on
+`large_helper` at four workers). So during the measured sample the helpers
+are parked and execute nothing: they do not share a core with the main
+thread, do not read its deque lines, and nothing writes the request word.
+`hot_helper` and `recursion`, which run with the same parked helpers and
+poll at every group call, sit at 0.99 to 1.01. The whole difference between
+a one-worker cell and a four-worker cell is therefore which code the main
+thread runs: the sequential clone at one worker, the demand body at four.
+
+A cell that runs the demand body with no helper threads at all would close
+the question beyond doubt: a one-lane pool (the runtime starts no worker and
+world selection still enters the demand body). It needs a runtime setting the
+scheduler does not have (`wf__par_start` refuses fewer than two lanes) and is
+not implemented here; its prediction is that it equals the four- and
+eight-worker demand cells within the twin's noise. Add it only if a later run
+shows a demand cell whose CPU exceeds its wall.
+
+### What each workload paid, run by run
+
+**`large_helper`, second rerun, 1.065.** The hot loop is the out-of-line
+slice driver's. Its slice loop (`run3/demand/large_helper.o.s`, `.LBB11_8` at
+line 610 to `.LBB11_15` at 606) runs per slice: the span test, a
+`callq wf__par_demand_requested@PLT` (line 622) with the register shuffling
+around it, the minimum and end computation (`.LBB11_10`, 627), the
+runtime-unroll prologue (`.LBB11_12`, 640) and then the same four-way body as
+the sequential build (`.LBB11_14`, 656, against the sequential `wf_helper`
+`.LBB0_4` at line 24). With weight 8 a slice is 625 iterations, so each
+million-iteration helper call runs 1,600 slices: 320,000 slices per
+repetition at about 40 cycles each over 200 million one-cycle iterations is
+6.4 percent, which is the measured 6.5. The accessor itself is eleven
+instructions in the linked image (`large_helper.disassembly` at `0x171c0`: a
+thread-local flag test, a thread-local pointer load, a null test and the
+word load, around a push and pop), and the call forces the caller to move
+its live values into callee-saved registers and reload them after. The
+static price put a slice at "about 5 microseconds"; it was 125 nanoseconds.
+The IR weight overestimates this body's cost per iteration about eightfold.
+
+**`large_helper`, third rerun, 1.305.** The caller-local slice loop is
+rolled. `wf_workload` in `run4/demand/large_helper.o.s` computes the slice
+end as a literal (`leaq 18750(%rbp), %rax`, line 525) and its inner loop
+`.LBB10_17` (527 to 534) is one iteration per trip: `rolq; imulq; addq;
+incq; cmpq; jb`, where the sequential `wf_helper` loop (`.LBB0_4`, 24 to 44)
+and the caller's inlined copy (`.LBB1_5`, 104 to 125) run four iterations
+per trip. The second slice loop (`.LBB10_32`, 639) is the same, and only the
+final remainder loop (`.LBB10_23`, 573), which runs once per helper call, is
+unrolled. A slice of 18,750 iterations fifty-three times per call puts 99.4
+percent of the iterations in the rolled loop, and the measured 30 percent is
+the rolled loop's cost per iteration. The cause is the shape the candidate
+chose: a constant trip count. LLVM's runtime unroller serves loops whose trip
+count it does not know, which is what the sequential loop and the second
+rerun's driver loop had; a loop that LLVM knows runs exactly 18,750 times is
+neither runtime-unrolled nor partially unrolled at this optimization level,
+and 18,750 is not a multiple of four. The polls themselves had become cheap
+(53 per million iterations) and were not the cost.
+
+**`small_split`, second rerun, 1.126.** `mark` and its chunk inline into the
+walker. Against the sequential walker (`run3/seq/small_split.o.s`, the
+vectorized `.LBB3_21` at 265 and scalar `.LBB3_23` at 282), the demand walker
+(`run3/demand/small_split.o.s`, 423 to 435) reloads the Box slot from the
+stack on every call (`movq 8(%rsp), %rax` before the length compare), forms
+the span, saturates it (`cmovaeq`, line 433), compares it with 21,428 and
+branches, then runs the same three stores. The reload is the cost of the cold
+hand-out path: the driver receives the address of the `cells` slot, so the
+slot escapes and LLVM cannot keep the Box pointer in a register as the
+sequential build does. A sequential `mark` call is about five cycles
+(187 ms over 200 million calls), so a few instructions and one dependent
+load are 12 percent.
+
+**`small_split`, third rerun, 1.26.** Worse because the caller-local slice
+machinery raised register pressure in the walker itself:
+`run4/demand/small_split.o.s` spills before the span test on every call
+(`movq %r8, 40(%rsp)` at 589 and the stores around it) and reloads three
+registers after the one-slice path (`.LBB12_25`, 595 to 598), whether or not
+the range is tiny. The compare itself is not the problem; the spills around
+it are.
+
+**`fir`.** In the second rerun the chunk is out of line
+(`run3/demand/fir.o.s`, `wf__par_chunk_filter.1` at 1002): its inner loop
+(`.LBB19_6`, 1059) is unrolled four ways into one chain of dependent
+`addsd`, and the caller's `noalias` facts on the two range pointers
+(`fir.ll.raw` line 229) are not on the chunk's bare pointer parameters (line
+840). The sequential `wf_filter` (`run3/seq/fir.o.s`) keeps the compact
+inner loop (`.LBB2_14`, 152) and unrolls the outer loop by two (`.LBB2_13`,
+144, `.LBB2_16`, 171). In the third rerun the chunk inlined into `wf_filter`
+and the inner loop (`run4/demand/fir.o.s`, `.LBB11_10`, 302) is instruction
+for instruction the sequential one; the outer loop (`.LBB11_9`, 294) differs
+by two instructions per output of sixty-four taps, which cannot explain 13
+to 16 percent. `fir`'s one-worker cell, which runs the sequential clone in
+both runs, moved from 0.952 to 1.000 between them, so about five percent of
+any `fir` cell is code placement, and both runs' `fir` cells were
+inconclusive (twin spreads 5.9 to 7.1 percent). The third rerun's `fir`
+loss is unattributed; the polls are not it (one per 825 outputs).
+
+**`spine`, 1.035 in both runs.** The recursion budget at four and eight
+workers is eight levels; below the cut the sequential clone runs. The eight
+budgeted levels pay the accessor call and five saved registers each, about
+twenty cycles against about one for a plain level, and 8 x 20 over 4,000
+levels is the measured 3.5 percent.
+
+**`records`, 1.05 to 1.07 in the third rerun from 1.01 to 1.02.** Not
+inspected to the instruction; the same constant-trip slice shape applies to
+its record loop, and its cells were inconclusive (spreads 7 to 8 percent).
+
+### The three mechanisms
+
+1. **The poll was a call.** Eleven instructions plus call, return and the
+   caller's register traffic, about 40 cycles, paid once per slice and once
+   per budgeted group call. At 625-iteration slices it was all of
+   `large_helper`'s loss; at 18,750 it was negligible, but `spine` and every
+   group site still pay it.
+2. **The slice loop did not have the sequential loop's shape.** Outlined
+   with bounds and captures as parameters (runs 1 to 3), it lost the caller's
+   alias and bounds facts; inlined with a literal step (run 4), it gained a
+   constant trip count and lost runtime unrolling. In both cases LLVM
+   compiled a different loop from the one the sequential build has.
+3. **A tiny runtime extent in a hot caller pays the cold path.** Captures
+   passed by address escape, and a hand-out call in the loop body raises
+   register pressure in the hot caller. These are fractions of a cycle per
+   call, which is 10 to 25 percent of a five-cycle call.
+
+### Options considered
+
+- **A. Keep the accessor call and only widen the interval.** Removes most of
+  the slice polls (the third rerun already did) but leaves the loop-shape
+  loss that caused that run's failure, and the group sites' cost on `spine`.
+  Not taken.
+- **B. One slice loop with a data-dependent length, and a poll that is one
+  thread-local load.** Taken, below. It makes the no-request path the
+  sequential loop over successive sub-ranges plus a compare, a minimum, an
+  addition and a load per slice.
+- **C. Test once at loop entry and run the sequential clone when nobody
+  asks.** Exactly the sequential code, but a request arriving during a long
+  loop is never answered; it gives up experiment 2 and is not taken, as
+  before.
+- **D. Asynchronous promotion (patchable safe points).** Would remove every
+  poll instruction; needs a target-specific continuation and register-map
+  design. Out of this experiment's scope, as the third change recorded.
+- **E. Capture by loaded value.** When a captured reference is only loaded
+  in the loop body, pass the loaded pointer instead of the slot's address, so
+  the slot does not escape and the sequential register allocation survives.
+  This is the general fix for mechanism 3's reload and would also improve
+  today's `--par` chunks; it is a lowering change in `split.rs`'s capture
+  construction with its own correctness argument (the body must not store to
+  the slot, which PAR-2's independence gives), not taken in this round and
+  recorded as the next step if `small_split` is to improve further.
+
+### The fourth change, fixed before it measures
+
+1. **The poll is a load.** The demand module defines a thread-local word
+   `@wf__par_demand_word` (a weak zero definition the scheduler's strong
+   `_Thread_local` replaces at link; Windows takes the external declaration),
+   and every check, at a group call, in the caller's slice loop and in the
+   out-of-line driver, is `load atomic i64 ... monotonic`, a compare and a
+   branch: on ELF one `mov %fs:...` instruction, no call, no saved registers.
+   The lane keeps only the address of its owner's word, registered when the
+   owner attaches; an idle thief writes through it (write-if-zero), and
+   publication clears the owner's own word. World selection
+   (`wf__par_pool_active`) starts the pool and attaches the selecting thread
+   in demand mode, since no poll starts anything any more. The C accessor
+   `wf__par_demand_requested` remains for the native probe and returns the
+   same word. The lane layout stays private; the module names one word.
+2. **One slice loop, variable length.** `emit_demand_split` emits a head
+   that computes `remaining = upper - cursor`, polls only when `remaining >=
+   step`, and runs the chunk from one call site over `[cursor, cursor +
+   min(remaining, step))`; the backedge is taken while `end < upper`. There
+   is no second chunk call for a tail, so the inlined loop (the chunk is
+   still `alwaysinline` in demand mode) has one copy with an unknown trip
+   count, as the sequential loop has. A range below the step is one slice and
+   never reads the word. `nuw` on the subtraction and addition follow from
+   `cursor < upper` at the head and `count <= remaining`.
+3. **The interval is unchanged**: `max(2, ceil(150,000 / weight))`
+   iterations, as the third change set it; adopting it is still the owner's
+   decision. At this interval the second rerun's loop-shape evidence says the
+   per-slice work beyond the body is a few instructions plus the loop's
+   runtime-unroll remainder, and the third rerun's says 53 polls per million
+   iterations are immaterial once each is a load.
+
+Not addressed: mechanism 3. The tiny-extent site still pays the span
+compare, the minimum, the addition and the escaped capture's reload per call.
+Option E would remove the reload; nothing removes the compare short of
+hoisting the extent test out of the enclosing source loop, which LLVM does
+not do here (the extent is loop-invariant in `small_split`'s walker, but the
+range endpoints are not). **On the owner's bar:** a site whose whole
+sequential cost is five cycles cannot absorb any runtime decision within two
+percent. All three studies said so (the plan's "H1 as written cannot be met
+literally" and its proposed per-decision-point allowance for sites with a
+runtime extent); this round makes that concrete: `small_split` will not pass
+the 1.02 bound under direction B or any other direction that decides at run
+time, and its verdict should be read against an allowance the owner sets, or
+the site must be priced statically (the extent is a runtime value here by
+construction of the workload). Every other workload is predicted to pass.
+
+### Validation boundary
+
+`cargo check` and `cargo clippy` (`--offline --lib --tests`,
+`CARGO_BUILD_JOBS=4`) pass; the changed Rust files are `rustfmt`-clean; the
+embedded Whitefoot sources of the backend tests were checked with a released
+compiler and compile. Nothing was built or run. CI must run the backend
+tests (`par_demand.rs`: the single-call-site slice loop, the thread-local
+poll and no accessor call, the driver's word read behind its span test, the
+group check, ordinary-emission byte identity), the scheduler probe
+`sched-demand-test` (posting through the registered address, write-if-zero,
+clearing on publication, the disabled setting), the maintained program tests
+at widths 1 and 4 with both settings, the legacy-identity comparison, and
+then experiment 1 on the i9-14900K.
+
+### Prediction for the fourth run
+
+Candidate over sequential at four and eight workers with requests disabled;
+one worker runs the sequential clone and is predicted near 1.00 as before.
+The pass/fail rule is unchanged.
+
+| Workload | Predicted ratio at 4 / 8 | What would falsify the diagnosis |
+| --- | --- | --- |
+| small_constant | 0.99–1.01 | pruning still emits no poll |
+| small_split | 1.06–1.14 | expected to fail the 1.02 bound: mechanism 3 is not addressed; below 1.06 would mean the reload was not the cost, above 1.14 that the one-slice path spills |
+| recursion | 0.99–1.01 | group paths unchanged, poll now a load |
+| spine | 1.00–1.03 | the budgeted levels' cost falls from about 20 cycles to the budget machinery alone; above 1.03 means the call was not the cost |
+| hot_helper | 0.99–1.01 | group poll a load |
+| large_helper | 1.00–1.02 | the inlined slice loop must be four-way unrolled as the sequential one (inspect `wf_workload`); above 1.02 with that shape means strip-mining itself costs |
+| mandelbrot | 0.99–1.02 | expensive iterations amortize everything |
+| records | 0.98–1.04 | noise-bound; the slice loop shape must match the sequential record loop |
+| fir | 0.98–1.06 | inner loop identical to sequential (it already was in the third rerun); the width is placement, which the one-worker cell's own swing bounds |
+| stencil, prefix, histogram | inconclusive by twin spread, as in every run | an indexed fallback on prefix and histogram says nothing about slices |
+
+### Consequence for experiment 2
+
+A request is answered at the next slice boundary or group call, so hand-out
+latency is bounded by one step of work: about 18,750 iterations (a few
+microseconds) on `large_helper`, 825 outputs of 64 taps (tens of
+microseconds) on `fir`. Static units overestimate these bodies' time about
+eightfold, so the nominal 150,000-unit slice is far shorter than 150
+microseconds here; a body whose optimized cost per unit is much lower still
+(a vectorized map) would make slices shorter, which only shortens the latency
+and costs a few cycles per slice. The driver, once entered, halves on demand
+as before, so the speedup side of experiment 2 is unchanged by this round
+except for the lower cost of each poll inside it.
