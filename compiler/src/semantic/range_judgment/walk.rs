@@ -1590,13 +1590,17 @@ impl<'program> Walker<'program> {
         Vec<Linear>,
         Option<Vec<CheckedRangeProjection>>,
     )> {
+        let root = match place.root.formation.as_deref() {
+            Some(formation) => Some(self.eval(state, formation)),
+            None => state.values.get(&place.root.binding).cloned(),
+        };
         let index = self.int(state, &place.offset);
         let Some(Value::Ref(View::Run {
             container,
             prefix,
             offset,
             length,
-        })) = state.values.get(&place.root.binding).cloned()
+        })) = root
         else {
             return None;
         };
@@ -2137,7 +2141,11 @@ impl<'program> Walker<'program> {
                 }
             }
             CheckedExpression::RangeMeasure { measure, root } => {
-                match (state.values.get(&root.binding), measure) {
+                let value = match root.formation.as_deref() {
+                    Some(formation) => Some(self.eval(state, formation)),
+                    None => state.values.get(&root.binding).cloned(),
+                };
+                match (value.as_ref(), measure) {
                     (Some(Value::Ref(View::Run { length, .. })), CheckedMeasure::Length) => {
                         Value::Int(length.clone())
                     }

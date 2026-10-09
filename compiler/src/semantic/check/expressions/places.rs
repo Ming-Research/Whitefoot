@@ -164,6 +164,7 @@ impl<'unit> Checker<'_, 'unit> {
                     expression: CheckedExpression::RangeMeasure {
                         measure,
                         root: super::super::super::model::CheckedRangeRoot {
+                            formation: None,
                             binding,
                             element,
                             element_type: place.ty,
@@ -715,7 +716,7 @@ impl<'unit> TypeContext<'unit> {
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
-    fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
+    pub(super) fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };

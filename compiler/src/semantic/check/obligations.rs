@@ -539,12 +539,16 @@ impl Records<'_> {
             CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
             | CheckedExpression::ProjectValue { value, .. } => self.expression(value),
+            CheckedExpression::RangeMeasure { root, .. } => {
+                if let Some(formation) = root.formation.as_deref() {
+                    self.expression(formation);
+                }
+            }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
             | CheckedExpression::Binding { .. }
             | CheckedExpression::ArrayMeasure { .. }
             | CheckedExpression::BufferMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::DerefAddressed { .. }
             | CheckedExpression::Project { .. } => {}
         }
@@ -556,6 +560,9 @@ impl Records<'_> {
 
     /// [OP-4, REF-4] the outer range position, then every nested subscript.
     fn range_element_place(&mut self, place: &CheckedRangeElementPlace) {
+        if let Some(formation) = place.root.formation.as_deref() {
+            self.expression(formation);
+        }
         self.expression(&place.offset);
         self.source(
             SemanticRule::Op4,

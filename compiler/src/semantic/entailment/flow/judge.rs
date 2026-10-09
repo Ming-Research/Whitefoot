@@ -933,7 +933,12 @@ impl Analyzer<'_, '_> {
             // [OP-4, TYPE-9] a segment owes `i < len_of(s)` after the
             // `Segments` place's own subscripts; the run of every element owes
             // nothing more.
-            CheckedExpression::BorrowSegment { root, segment, .. } => {
+            CheckedExpression::BorrowSegment {
+                carrier,
+                root,
+                segment,
+                ..
+            } => {
                 let obligation_start = self.output.obligations.len();
                 let mut reached = match root {
                     crate::semantic::CheckedSegmentSource::Storage(root) => {
@@ -945,9 +950,7 @@ impl Analyzer<'_, '_> {
                 };
                 let place = match root {
                     crate::semantic::CheckedSegmentSource::Storage(root) => judged_place(root),
-                    crate::semantic::CheckedSegmentSource::Element(place) => {
-                        ResolvedPlace::from_path(place.root.binding, place.place_path())
-                    }
+                    crate::semantic::CheckedSegmentSource::Element(place) => place.proof_place(),
                 };
                 if let crate::semantic::CheckedSegmentSelect::One(index)
                 | crate::semantic::CheckedSegmentSelect::Page(index) = segment
@@ -981,6 +984,48 @@ impl Analyzer<'_, '_> {
                         );
                     }
                     reached &= reaches_offset;
+                }
+                if reached
+                    && self
+                        .judging()
+                        .obligations_since_discharged(obligation_start)
+                    && let crate::semantic::CheckedSegmentSelect::Page(index) = segment
+                {
+                    let mut captured = match root {
+                        crate::semantic::CheckedSegmentSource::Storage(root) => root.proof_place(),
+                        crate::semantic::CheckedSegmentSource::Element(place) => {
+                            place.proof_place()
+                        }
+                    };
+                    let mut current = captured.clone();
+                    captured.path.push(PlaceStep::Page(index.captured));
+                    current
+                        .path
+                        .push(PlaceStep::Page(index.captured.goal_identity()));
+                    let left = self.reasoning().place_measure_term(
+                        CheckedMeasure::Length,
+                        captured,
+                        MeasuredKind::Range,
+                        None,
+                    );
+                    let right = self.reasoning().place_measure_term(
+                        CheckedMeasure::Length,
+                        current,
+                        MeasuredKind::Range,
+                        None,
+                    );
+                    let event = self
+                        .vocabulary
+                        .proof_event(FlowEventKind::S6, Some(carrier));
+                    states.facts.establish(
+                        &Relation::Equal {
+                            left,
+                            right,
+                            difference: 0,
+                        },
+                        &mut self.vocabulary.derivations,
+                        event,
+                    );
                 }
                 ExpressionJudgment {
                     prepared_call: None,
@@ -1164,6 +1209,11 @@ impl Analyzer<'_, '_> {
                 | CheckedExpression::RangeIndex { place, .. } => {
                     self.judge_range_element_place(place, states);
                 }
+                CheckedExpression::RangeMeasure { root, .. } => {
+                    // A direct run measure carries its selector's formation;
+                    // it owes the same bounds as the corresponding borrow.
+                    self.judge_children_reach_parent(root.formation.as_deref(), states);
+                }
                 _ => {}
             }
         }
@@ -1176,15 +1226,7 @@ impl Analyzer<'_, '_> {
     ) {
         for expression in expression.postorder() {
             if let CheckedAffineExpressionKind::Measure(measure) = &expression.kind {
-                match measure.as_ref() {
-                    CheckedExpression::ContainerMeasure { root, .. } => {
-                        self.judge_place_subscripts(root, states);
-                    }
-                    CheckedExpression::RangeElementMeasure { place, .. } => {
-                        self.judge_range_element_place(place, states);
-                    }
-                    _ => {}
-                }
+                self.judge_clause_places(std::slice::from_ref(measure.as_ref()), states);
             }
         }
     }
@@ -1258,11 +1300,12 @@ impl Analyzer<'_, '_> {
         place: &super::super::super::model::CheckedRangeElementPlace,
         states: &mut ProofFlowState,
     ) -> bool {
-        let mut base = ResolvedPlace::spelled(
-            PlaceRoot::Binding(place.root.binding),
-            is_holder(place.root.binding),
-            Vec::new(),
-        );
+        let mut base = place.root.proof_place();
+        if let Some(formation) = place.root.formation.as_deref()
+            && !self.judge_children_reach_parent(std::iter::once(formation), states)
+        {
+            return false;
+        }
         let reaches_offset =
             self.judge_children_reach_parent(std::iter::once(&place.offset), states);
         let obligation_start = self.output.obligations.len();
@@ -1815,13 +1858,7 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
             if path.contains(&PlaceStep::Index(CapturedValue::unknown())) {
                 return None;
             }
-            let mut place = ResolvedPlace::spelled(
-                PlaceRoot::Binding(target.root.binding),
-                is_holder(target.root.binding),
-                Vec::new(),
-            );
-            place.path.extend(path);
-            Some(place)
+            Some(target.proof_place())
         }
     }
 }

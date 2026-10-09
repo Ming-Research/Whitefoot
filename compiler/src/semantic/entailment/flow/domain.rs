@@ -92,10 +92,7 @@ impl Input<'_, '_> {
                 if place.readonly_field_term(self.context.nominals)
                     == Some(SubscriptedTerm::Represented) =>
             {
-                Some(ResolvedPlace::from_path(
-                    place.root.binding,
-                    place.place_path(),
-                ))
+                Some(place.proof_place())
             }
             _ => None,
         }

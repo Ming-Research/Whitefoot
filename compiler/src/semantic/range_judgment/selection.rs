@@ -242,7 +242,7 @@ impl Selection<'_> {
                     self.goal(
                         &index.obligation,
                         GoalKind::Bounds,
-                        term(&index.offset) && root.offsets().all(term),
+                        term(&index.offset) && root.offsets().all(source_offset_term),
                     );
                 }
             }
@@ -391,6 +391,17 @@ fn domain(
         (Op::NegateExact | Op::AbsoluteExact, [value]) => term(value),
         (Op::ShiftLeftExact | Op::ShiftRightExact, [_, amount]) => term(amount),
         _ => false,
+    }
+}
+
+/// A direct run contributes its borrow formation to the source operands.
+/// Classify the scalar offsets inside that formation, not its reference value.
+fn source_offset_term(expression: &CheckedExpression) -> bool {
+    match expression {
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            root.offsets().all(source_offset_term) && segment.offset().is_none_or(term)
+        }
+        _ => term(expression),
     }
 }
 
