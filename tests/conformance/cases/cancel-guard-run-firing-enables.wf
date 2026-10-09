@@ -1,0 +1,26 @@
+fn fire(source: std::time::CancelSource) -> result: unit pure waits {
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let unfired = False();
+  atomic before = &stop {
+    set unfired = bnot(before^.fired);
+  }
+  spawn fire(source: move source);
+  let observed = False();
+  atomic after = &stop when after^.fired {
+    set observed = after^.fired;
+  }
+  let correct = band(unfired, observed);
+  if correct {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

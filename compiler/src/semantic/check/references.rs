@@ -827,7 +827,15 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_place_borrow_through(
-            context, carrier, site, place_node, bindings, loop_depth, false,
+            context,
+            carrier,
+            site,
+            place_node,
+            bindings,
+            loop_depth,
+            false,
+            None,
+            LexicalUseRole::PlaceBase,
         )
     }
 
@@ -843,12 +851,20 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
         self.check_place_borrow_through(
-            context, carrier, site, place_node, bindings, loop_depth, true,
+            context,
+            carrier,
+            site,
+            place_node,
+            bindings,
+            loop_depth,
+            true,
+            None,
+            LexicalUseRole::PlaceBase,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn check_place_borrow_through(
+    pub(super) fn check_place_borrow_through(
         &mut self,
         context: FunctionContext<'_, '_>,
         carrier: NodeId,
@@ -857,6 +873,8 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         without_last: bool,
+        supplied_suffixes: Option<&[NodeId]>,
+        root_role: LexicalUseRole,
     ) -> Result<TypedExpression, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let pbase = self
@@ -880,11 +898,13 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(place_node, Production::Psuffix)?;
-        let written_deref = self.types.declarations.tree.reference_step(&suffixes)? == Some(0);
+        let suffixes = supplied_suffixes.unwrap_or(&suffixes);
+        let written_suffixes = suffixes;
+        let written_deref = self.types.declarations.tree.reference_step(suffixes)? == Some(0);
         let suffixes = if written_deref {
             &suffixes[1..]
         } else {
-            suffixes.as_slice()
+            suffixes
         };
         // [TYPE-7] whether a step is written after the root, the last one
         // included when the caller resolves it itself.
@@ -894,10 +914,12 @@ impl<'unit> Checker<'_, 'unit> {
             (true, None) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
             (false, _) => suffixes,
         };
-        let root_use =
-            self.types
-                .declarations
-                .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+        let written_suffixes =
+            &written_suffixes[..written_suffixes.len() - usize::from(without_last)];
+        let root_use = self
+            .types
+            .declarations
+            .use_at(check_context, pbase, root_role)?;
         let (root, root_type, root_binding) = match root_use.target() {
             ResolvedTarget::Source {
                 declaration,
@@ -1017,7 +1039,7 @@ impl<'unit> Checker<'_, 'unit> {
                 carrier,
                 place_node,
                 suffixes[position],
-                &suffixes[..position],
+                &written_suffixes[..written_suffixes.len() - 1],
                 root,
                 root_type,
                 root_binding.as_ref(),
@@ -1030,10 +1052,65 @@ impl<'unit> Checker<'_, 'unit> {
         // that element place. The range's checked type is its element type,
         // so sending this suffix through the ordinary storage-path walk
         // would incorrectly ask whether T itself is an indexable base.
-        if written_deref
+        let direct_range = if let Some(last) = self
+            .types
+            .declarations
+            .tree
+            .last_subscript(written_suffixes)?
+        {
+            let last =
+                self.run_element_subscript(context, place_node, written_suffixes, bindings, last)?;
+            if last > 0 {
+                self.selected_run_place(
+                    context,
+                    place_node,
+                    &written_suffixes[..last],
+                    bindings,
+                    loop_depth,
+                    root_role,
+                )?
+                .map(|range| (range, last))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let range_base = if let Some((range, last)) = direct_range {
+            Some((
+                range.root,
+                range.resolved.members,
+                range.offsets,
+                &written_suffixes[last..],
+            ))
+        } else if written_deref
             && root_binding
                 .as_ref()
                 .is_some_and(|local| local.mode.is_range())
+        {
+            let local = root_binding
+                .as_ref()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            Some((
+                CheckedRangeRoot {
+                    formation: None,
+                    binding: local.binding,
+                    element: self.types.intern_element(local.ty)?,
+                    element_type: local.ty,
+                },
+                local
+                    .reference
+                    .as_ref()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                    .paths
+                    .clone(),
+                super::expressions::flat_storage::CarriedOperands::default(),
+                suffixes,
+            ))
+        } else {
+            None
+        };
+        if let Some((range, mut places, formation_operands, suffixes)) = range_base
             && let Some(first) = suffixes.first()
             && let Some(offset_node) = self.types.declarations.tree.subscript_offset(*first)?
         {
@@ -1048,19 +1125,13 @@ impl<'unit> Checker<'_, 'unit> {
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
-            let mut places = local
-                .reference
-                .as_ref()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                .paths
-                .clone();
             for place in &mut places {
                 place.path.push(PlaceStep::Index(captured));
             }
             let (path, ty, mut carried, selection) = self.resolve_borrow_storage(
                 context,
                 &suffixes[1..],
-                local.ty,
+                range.element_type,
                 bindings,
                 loop_depth,
             )?;
@@ -1069,13 +1140,10 @@ impl<'unit> Checker<'_, 'unit> {
                     .path
                     .extend(path.iter().map(CheckedPlaceStep::place_step));
             }
-            let element = self.types.intern_element(local.ty)?;
+            carried.effects = formation_operands.effects.union(carried.effects);
+            carried.accesses.extend(formation_operands.accesses);
             let place = Box::new(crate::semantic::CheckedRangeElementPlace {
-                root: CheckedRangeRoot {
-                    binding: local.binding,
-                    element,
-                    element_type: local.ty,
-                },
+                root: range,
                 offset: offset.expression,
                 path,
                 ty,
@@ -1513,7 +1581,7 @@ impl<'unit> Checker<'_, 'unit> {
         carrier: NodeId,
         place_node: NodeId,
         suffix: NodeId,
-        base_suffixes: &[NodeId],
+        written_base_suffixes: &[NodeId],
         root: PlaceRoot,
         root_type: CheckedType,
         root_binding: Option<&LocalBinding>,
@@ -1528,20 +1596,72 @@ impl<'unit> Checker<'_, 'unit> {
         else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         };
+        let base_suffixes = &written_base_suffixes[usize::from(written_deref)..];
         // [REF-4] re-slicing: the base is the run another range names, whose
         // element type the `^` already selected [TYPE-7].
         let range_base = written_deref && root_binding.is_some_and(|local| local.mode.is_range());
         let mut carried = super::expressions::flat_storage::CarriedOperands::default();
-        let (source, base_places, element_type) = if range_base && !base_suffixes.is_empty() {
-            // [REF-4, OP-4] an indexable place below one element of the run
-            // a range names: the element is selected as a borrow of it
-            // would be, and the storage walk continues below it.
+        // [OP-4] an element below a direct run selector is an ordinary
+        // element place, including when its array or window is sliced.
+        let direct_range = if let Some(last) = self
+            .types
+            .declarations
+            .tree
+            .last_subscript(written_base_suffixes)?
+        {
+            let last = self.run_element_subscript(
+                context,
+                place_node,
+                written_base_suffixes,
+                bindings,
+                last,
+            )?;
+            self.selected_run_place(
+                context,
+                place_node,
+                &written_base_suffixes[..last],
+                bindings,
+                loop_depth,
+                LexicalUseRole::PlaceBase,
+            )?
+            .map(|range| (range, last))
+        } else {
+            None
+        };
+        let element_base = if let Some((range, last)) = direct_range {
+            carried = range.offsets;
+            Some((
+                range.root,
+                range.resolved.members,
+                &written_base_suffixes[last..],
+            ))
+        } else if range_base && !base_suffixes.is_empty() {
             let local = root_binding.ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            let Some(offset_node) = self
-                .types
-                .declarations
-                .tree
-                .subscript_offset(base_suffixes[0])?
+            Some((
+                CheckedRangeRoot {
+                    formation: None,
+                    binding: local.binding,
+                    element: self.types.intern_element(local.ty)?,
+                    element_type: local.ty,
+                },
+                local
+                    .reference
+                    .as_ref()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                    .paths
+                    .clone(),
+                base_suffixes,
+            ))
+        } else {
+            None
+        };
+        let (source, base_places, element_type) = if let Some((range, bases, suffixes)) =
+            element_base
+        {
+            // [REF-4, OP-4] an indexable place below one element of the run
+            // selected directly or named by a reference: select the element
+            // as its borrow does, then continue the storage walk below it.
+            let Some(offset_node) = self.types.declarations.tree.subscript_offset(suffixes[0])?
             else {
                 return self
                     .types
@@ -1558,13 +1678,13 @@ impl<'unit> Checker<'_, 'unit> {
             );
             let (path, ty, offsets) = self.resolve_storage_path(
                 context,
-                &base_suffixes[1..],
-                local.ty,
+                &suffixes[1..],
+                range.element_type,
                 bindings,
                 loop_depth,
                 true,
             )?;
-            carried.effects = offset.effects.union(offsets.effects);
+            carried.effects = carried.effects.union(offset.effects).union(offsets.effects);
             carried.accesses.extend(offset.accesses);
             carried.accesses.extend(offsets.accesses);
             if matches!(
@@ -1597,13 +1717,8 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             };
-            let named = local
-                .reference
-                .as_ref()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                .paths
-                .iter()
-                .cloned()
+            let named = bases
+                .into_iter()
                 .map(|mut place| {
                     place.path.push(PlaceStep::Index(captured));
                     place
@@ -1612,18 +1727,13 @@ impl<'unit> Checker<'_, 'unit> {
                     place
                 })
                 .collect();
-            let range_element = self.types.intern_element(local.ty)?;
             (
                 CheckedRangeSource::Element(Box::new(crate::semantic::CheckedRangeElementPlace {
-                    root: CheckedRangeRoot {
-                        binding: local.binding,
-                        element: range_element,
-                        element_type: local.ty,
-                    },
+                    root: range,
                     offset: offset.expression,
                     path,
                     ty,
-                    obligation: self.types.declarations.tree.path(base_suffixes[0])?.clone(),
+                    obligation: self.types.declarations.tree.path(suffixes[0])?.clone(),
                     target_domain: CheckedTargetDomainObligation::ElementAddress,
                     captured,
                 })),
@@ -1640,6 +1750,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             (
                 CheckedRangeSource::Range(CheckedRangeRoot {
+                    formation: None,
                     binding: local.binding,
                     element,
                     element_type: local.ty,
@@ -1999,7 +2110,16 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(self
             .state_path(place, bindings)?
             .into_iter()
-            .map(EffectPath::from)
+            .map(|path| EffectPath {
+                path,
+                // Keep this before state_path truncates a dynamic selector.
+                // Descendant covers cannot establish where a payload lies.
+                inside_payload: place
+                    .path
+                    .iter()
+                    .take_while(|step| !matches!(step, PlaceStep::Descendant(_)))
+                    .any(|step| matches!(step, PlaceStep::Payload { .. })),
+            })
             .collect())
     }
 

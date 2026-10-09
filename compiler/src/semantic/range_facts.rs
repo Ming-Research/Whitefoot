@@ -8,7 +8,7 @@
 //! resulting facts and judges every obligation they create, after the
 //! entailment flow.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{DeclarationId, NodePath};
 
@@ -45,6 +45,23 @@ pub(crate) enum CheckedRangeStep {
     BoxContent,
 }
 
+/// An owned selection below an element, optionally ending at a measure.
+/// Ordinals identify declared fields and variants of the selected type.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CheckedRangeProjection {
+    Field(u32),
+    BoxContent,
+    /// A subscript below the outer element, indexing this tuple position.
+    Index(u32),
+    Measure(CheckedMeasure),
+    Payload {
+        variant: u32,
+        field: u32,
+        variants: u32,
+    },
+    Tag(u32),
+}
+
 /// The value shape a range read selects from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeShape {
@@ -77,11 +94,12 @@ pub(crate) enum CheckedRangeTerm {
         place: CheckedRangePlace,
         segment: Box<CheckedRangeTerm>,
     },
-    /// One integer element read, `p[i]` or `s[d][k]`.
+    /// An integer or measure selected below `p[i]` or `s[d][k]`.
     Read {
         place: CheckedRangePlace,
         shape: CheckedRangeShape,
         indices: Vec<CheckedRangeTerm>,
+        projection: Vec<CheckedRangeProjection>,
         element: IntegerType,
     },
     /// `constant + sum(coefficient * term)`.
@@ -203,14 +221,28 @@ pub(crate) struct CheckedRangeFacts {
     pub(crate) postconditions: Vec<CheckedRangePostcondition>,
     pub(crate) loops: BTreeMap<CheckedLoopId, CheckedRangeLoop>,
     pub(crate) certified: Vec<CheckedCertifiedLoop>,
+    /// TYPE-11 obligations attached to each construction in this body.
+    pub(crate) constructions: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
+    /// TYPE-11 clauses over each atomic target binding.
+    pub(crate) atomics: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
+    /// Atomic targets whose possibly shared storage the range walk cannot model yet.
+    pub(crate) atomic_aliases: BTreeSet<NodePath>,
 }
 
 impl CheckedRangeFacts {
+    /// Whether a call to this function makes its caller participate in RANGE-2.
+    /// Lifted ordinary FN-9 relations supply facts to an existing range walk;
+    /// they do not themselves declare a range boundary.
+    pub(crate) fn has_boundary(&self) -> bool {
+        !self.requirements.is_empty() || self.postconditions.iter().any(|post| post.owed)
+    }
+
     /// Whether the function states no range clause the range judgment owes.
     pub(crate) fn is_empty(&self) -> bool {
-        self.requirements.is_empty()
+        !self.has_boundary()
+            && self.constructions.is_empty()
+            && self.atomics.is_empty()
             && self.loops.is_empty()
-            && !self.postconditions.iter().any(|post| post.owed)
     }
 
     /// Whether `declaration` names one of these range facts.
@@ -293,5 +325,49 @@ impl CheckedRangeClause {
         out.sort();
         out.dedup();
         out
+    }
+}
+
+impl CheckedRangeClause {
+    /// Instantiate a type-invariant template's binder at one boundary subject.
+    pub(crate) fn with_subject(&self, root: CheckedRangeRoot, reference: bool) -> Self {
+        fn term(value: &mut CheckedRangeTerm, root: CheckedRangeRoot, reference: bool) {
+            match value {
+                CheckedRangeTerm::Value(subject) => *subject = root,
+                CheckedRangeTerm::Measure { place, .. }
+                | CheckedRangeTerm::SegmentLength { place, .. }
+                | CheckedRangeTerm::Read { place, .. } => {
+                    place.root = root;
+                    if !reference && place.path.first() == Some(&CheckedRangeStep::Referent) {
+                        place.path.remove(0);
+                    }
+                }
+                _ => {}
+            }
+            match value {
+                CheckedRangeTerm::SegmentLength { segment, .. } => term(segment, root, reference),
+                CheckedRangeTerm::Read { indices, .. } => {
+                    for index in indices {
+                        term(index, root, reference);
+                    }
+                }
+                CheckedRangeTerm::Sum { terms, .. } => {
+                    for (_, value) in terms {
+                        term(value, root, reference);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut clause = self.clone();
+        for binder in &mut clause.binders {
+            term(&mut binder.start, root, reference);
+            term(&mut binder.end, root, reference);
+        }
+        for relation in clause.guards.iter_mut().chain(&mut clause.conclusions) {
+            term(&mut relation.left, root, reference);
+            term(&mut relation.right, root, reference);
+        }
+        clause
     }
 }

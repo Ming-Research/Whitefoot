@@ -10,21 +10,23 @@
 //! One problem judges one obligation. Its instances are fixed by the
 //! problem itself: every active fact is instantiated at each tuple whose
 //! every bound variable takes a value some element read of the problem
-//! already selects through one of the fact's own reads (its triggers), once,
-//! together with the instances a certificate writes. No instance is formed
-//! from an instance's reads.
+//! already selects through one of the fact's own reads (its triggers), then
+//! once more at the reads those first instances add. Second-round instances
+//! form none. Written certificate instances join the completed two rounds.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::model::CheckedMeasure;
 use super::super::range_facts::{
-    CheckedRangeClause, CheckedRangePlace, CheckedRangeRelation, CheckedRangeRoot,
-    CheckedRangeShape, CheckedRangeTerm, RangeComparison,
+    CheckedRangeClause, CheckedRangePlace, CheckedRangeProjection, CheckedRangeRelation,
+    CheckedRangeRoot, CheckedRangeShape, CheckedRangeTerm, RangeComparison,
 };
 use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
-use super::world::{AtomDef, ContainerId, FactId, VersionDef, VersionId, World};
+use super::world::{
+    AtomDef, ContainerId, FactId, Stored, VersionDef, VersionId, World, projections_overlap,
+};
 
 /// What one place of a clause denotes in a frame.
 #[derive(Clone, Debug)]
@@ -45,6 +47,12 @@ pub(super) enum PlaceView {
         version: VersionId,
         generation: u32,
         rows: Linear,
+    },
+    /// An indexable value below an outer container element.
+    Element {
+        version: VersionId,
+        indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
     },
     /// A place the judgment cannot view.
     Unknown,
@@ -104,27 +112,61 @@ impl Former<'_> {
                     (PlaceView::Segments { rows, .. }, CheckedMeasure::Length) => {
                         Some(rows.clone())
                     }
+                    (
+                        PlaceView::Element {
+                            version,
+                            indices,
+                            projection,
+                        },
+                        measure,
+                    ) => {
+                        let mut path = projection.clone();
+                        path.push(CheckedRangeProjection::Measure(*measure));
+                        Some(self.world.read(
+                            *version,
+                            indices.clone(),
+                            path,
+                            Some(super::super::model::IntegerType::U64),
+                        ))
+                    }
                     _ => None,
                 }
             }
             CheckedRangeTerm::SegmentLength { place, segment } => {
                 let row = self.term(segment)?;
-                let PlaceView::Segments {
-                    container,
-                    generation,
-                    rows,
-                    ..
-                } = self.frame.places.get(place)?.clone()
-                else {
-                    return None;
-                };
-                self.within(&row, &rows);
-                Some(self.world.segment_length(container, generation, row))
+                match self.frame.places.get(place)?.clone() {
+                    PlaceView::Segments {
+                        container,
+                        generation,
+                        rows,
+                        ..
+                    } => {
+                        self.within(&row, &rows);
+                        Some(self.world.segment_length(container, generation, row))
+                    }
+                    PlaceView::Element {
+                        version,
+                        mut indices,
+                        mut projection,
+                    } => {
+                        projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                        indices.push(row);
+                        projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                        Some(self.projected_read(
+                            version,
+                            indices,
+                            &projection,
+                            super::super::model::IntegerType::U64,
+                        ))
+                    }
+                    _ => None,
+                }
             }
             CheckedRangeTerm::Read {
                 place,
                 shape,
                 indices,
+                projection,
                 element,
             } => {
                 let mut values = Vec::with_capacity(indices.len());
@@ -142,13 +184,14 @@ impl Former<'_> {
                         },
                         CheckedRangeShape::Run,
                     ) => {
-                        let [index] = values.as_slice() else {
-                            return None;
-                        };
+                        let index = values.first()?;
                         self.within(index, &length);
+                        let projection =
+                            super::world::shift_projection(projection, 0, prefix.len());
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
-                        Some(self.world.read(version, selected, Some(*element)))
+                        selected.extend_from_slice(&values[1..]);
+                        Some(self.projected_read(version, selected, &projection, *element))
                     }
                     (
                         PlaceView::Segments {
@@ -159,15 +202,35 @@ impl Former<'_> {
                         },
                         CheckedRangeShape::Segments,
                     ) => {
-                        let [row, index] = values.as_slice() else {
-                            return None;
-                        };
+                        let row = values.first()?;
+                        let index = values.get(1)?;
                         self.within(row, &rows);
                         let length = self
                             .world
                             .segment_length(container, generation, row.clone());
                         self.within(index, &length);
-                        Some(self.world.read(version, values, Some(*element)))
+                        Some(self.projected_read(version, values, projection, *element))
+                    }
+                    (
+                        PlaceView::Element {
+                            version,
+                            indices: prefix,
+                            projection: mut path,
+                        },
+                        _,
+                    ) => {
+                        let base = prefix.len();
+                        let count = match shape {
+                            CheckedRangeShape::Run => 1,
+                            CheckedRangeShape::Segments => 2,
+                        };
+                        for position in 0..count {
+                            path.push(CheckedRangeProjection::Index((base + position) as u32));
+                        }
+                        path.extend(super::world::shift_projection(projection, 0, base));
+                        let mut indices = prefix;
+                        indices.extend(values);
+                        Some(self.projected_read(version, indices, &path, *element))
                     }
                     _ => None,
                 }
@@ -180,6 +243,54 @@ impl Former<'_> {
                 Some(sum)
             }
         }
+    }
+
+    fn projected_read(
+        &mut self,
+        version: VersionId,
+        indices: Vec<Linear>,
+        projection: &[CheckedRangeProjection],
+        element: super::super::model::IntegerType,
+    ) -> Linear {
+        let mut depth = projection
+            .iter()
+            .find_map(|step| match step {
+                CheckedRangeProjection::Index(position) => Some(*position as usize),
+                _ => None,
+            })
+            .unwrap_or(indices.len());
+        for (at, step) in projection.iter().enumerate() {
+            if let CheckedRangeProjection::Index(position) = step {
+                let position = *position as usize;
+                let mut length_path = projection[..at].to_vec();
+                length_path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                let length = self.world.read(
+                    version,
+                    indices[..position].to_vec(),
+                    length_path,
+                    Some(super::super::model::IntegerType::U64),
+                );
+                self.within(&indices[position], &length);
+                depth = position + 1;
+            }
+            if let CheckedRangeProjection::Payload {
+                variant, variants, ..
+            } = step
+            {
+                let mut tag_path = projection[..at].to_vec();
+                tag_path.push(CheckedRangeProjection::Tag(*variants));
+                let tag = self
+                    .world
+                    .read(version, indices[..depth].to_vec(), tag_path, None);
+                self.bounds.push(Literal::new(
+                    tag,
+                    Relation::Equal,
+                    Linear::constant(*variant as i128),
+                ));
+            }
+        }
+        self.world
+            .read(version, indices, projection.to_vec(), Some(element))
     }
 
     fn within(&mut self, index: &Linear, length: &Linear) {
@@ -251,13 +362,21 @@ pub(super) fn form(
 /// One read of a clause whose indices name bound variables directly.
 struct Trigger {
     place: CheckedRangePlace,
+    shape: CheckedRangeShape,
     /// Per index position: the bound variable it names, or `None`.
     positions: Vec<Option<u32>>,
+    projection: Vec<CheckedRangeProjection>,
 }
 
 fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
     match term {
-        CheckedRangeTerm::Read { place, indices, .. } => {
+        CheckedRangeTerm::Read {
+            place,
+            shape,
+            indices,
+            projection,
+            ..
+        } => {
             let positions: Vec<Option<u32>> = indices
                 .iter()
                 .map(|index| match index {
@@ -268,7 +387,9 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
             if positions.iter().any(Option::is_some) {
                 out.push(Trigger {
                     place: place.clone(),
+                    shape: *shape,
                     positions,
+                    projection: projection.clone(),
                 });
             }
             for index in indices {
@@ -302,6 +423,28 @@ pub(super) struct Query {
     pub(super) rules: Vec<Rule>,
 }
 
+impl Query {
+    fn add_instance(
+        &mut self,
+        world: &mut World,
+        fact: &Fact,
+        binders: &[Linear],
+        iterations: &[Linear],
+        atoms: &mut BTreeSet<AtomId>,
+    ) {
+        let Some(formed) = form(world, &fact.clause, &fact.frame, binders, iterations) else {
+            return;
+        };
+        for literal in formed.premises.iter().chain(&formed.conclusions) {
+            collect_literal(literal, atoms);
+        }
+        self.rules.push(Rule {
+            guards: formed.premises,
+            conclusions: formed.conclusions,
+        });
+    }
+}
+
 /// Judges one query with the given facts active and the given written
 /// instances, by the fixed procedure of [`super::solver`].
 pub(super) fn judge(
@@ -327,70 +470,113 @@ pub(super) fn judge(
         collect_literal(literal, &mut atoms);
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
-    // Triggered instances, from the reads the problem holds now.
-    let ground: Vec<(VersionId, Vec<Linear>)> = atoms
-        .iter()
-        .filter_map(|atom| match &world.atoms[*atom as usize].def {
-            AtomDef::Read { version, indices } => Some((*version, indices.clone())),
-            _ => None,
-        })
-        .collect();
-    let mut instances: Vec<(FactId, Vec<Linear>, Vec<Linear>)> = written.to_vec();
-    for fact_id in active {
-        let fact = &facts[*fact_id as usize];
-        let mut triggers = Vec::new();
-        for relation in fact.clause.relations() {
-            collect_triggers(&relation.left, &mut triggers);
-            collect_triggers(&relation.right, &mut triggers);
-        }
-        let mut candidates: Vec<BTreeSet<Linear>> =
-            vec![BTreeSet::new(); fact.clause.binders.len()];
-        for trigger in &triggers {
-            let Some(view) = fact.frame.places.get(&trigger.place) else {
-                continue;
-            };
-            for (version, indices) in &ground {
-                match_trigger(view, trigger, *version, indices, &mut candidates);
-            }
-        }
-        // [RANGE-3] the ceiling counts the instances the fact forms: the
-        // product over its binders, which is zero when one has no value.
-        let formed = candidates
+    // Freeze the read set before each round. All facts see the same set,
+    // regardless of their order; reads formed in round two never trigger a
+    // third round. Keep each fact/tuple once across both rounds [RANGE-3].
+    let mut seen = BTreeSet::new();
+    for _ in 0..2 {
+        let ground: Vec<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>)> = atoms
             .iter()
-            .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
-        if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
-            return Err(Capacity::Instances);
-        }
-        let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
-        for values in &candidates {
-            let mut next = Vec::new();
-            for tuple in &tuples {
-                for value in values {
-                    let mut extended = tuple.clone();
-                    extended.push(value.clone());
-                    next.push(extended);
+            .filter_map(|atom| match &world.atoms[*atom as usize].def {
+                AtomDef::Read {
+                    version,
+                    indices,
+                    projection,
+                } => Some((*version, indices.clone(), projection.clone())),
+                _ => None,
+            })
+            .collect();
+        let mut instances = Vec::new();
+        for fact_id in active {
+            let fact = &facts[*fact_id as usize];
+            let mut triggers = Vec::new();
+            for binder in &fact.clause.binders {
+                collect_triggers(&binder.start, &mut triggers);
+                collect_triggers(&binder.end, &mut triggers);
+            }
+            for relation in fact.clause.relations() {
+                collect_triggers(&relation.left, &mut triggers);
+                collect_triggers(&relation.right, &mut triggers);
+            }
+            let mut candidates: Vec<BTreeSet<Linear>> =
+                vec![BTreeSet::new(); fact.clause.binders.len()];
+            for trigger in &triggers {
+                let Some(view) = fact.frame.places.get(&trigger.place) else {
+                    continue;
+                };
+                for (version, indices, projection) in &ground {
+                    let expected = match view {
+                        PlaceView::Run { prefix, .. } => {
+                            super::world::shift_projection(&trigger.projection, 0, prefix.len())
+                        }
+                        PlaceView::Element {
+                            indices: prefix,
+                            projection,
+                            ..
+                        } => {
+                            let mut path = projection.clone();
+                            let count = match trigger.shape {
+                                CheckedRangeShape::Run => 1,
+                                CheckedRangeShape::Segments => 2,
+                            };
+                            for position in 0..count {
+                                path.push(CheckedRangeProjection::Index(
+                                    (prefix.len() + position) as u32,
+                                ));
+                            }
+                            path.extend(super::world::shift_projection(
+                                &trigger.projection,
+                                0,
+                                prefix.len(),
+                            ));
+                            path
+                        }
+                        _ => trigger.projection.clone(),
+                    };
+                    if expected == *projection {
+                        match_trigger(view, trigger, *version, indices, &mut candidates);
+                    }
                 }
             }
-            tuples = next;
-        }
-        for tuple in tuples {
-            if tuple.len() == fact.clause.binders.len() {
-                instances.push((*fact_id, tuple, Vec::new()));
+            // [RANGE-3] the ceiling counts the instances the fact forms: the
+            // product over its binders, which is zero when one has no value.
+            // Reads accumulate across rounds, so this also counts the union
+            // of both rounds, not a fresh allowance of 256 for each.
+            let formed = candidates
+                .iter()
+                .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
+            if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
+                return Err(Capacity::Instances);
+            }
+            let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
+            for values in &candidates {
+                let mut next = Vec::new();
+                for tuple in &tuples {
+                    for value in values {
+                        let mut extended = tuple.clone();
+                        extended.push(value.clone());
+                        next.push(extended);
+                    }
+                }
+                tuples = next;
+            }
+            for tuple in tuples {
+                if seen.insert((*fact_id, tuple.clone())) {
+                    instances.push((*fact_id, tuple));
+                }
             }
         }
-    }
-    for (fact_id, binders, iterations) in instances {
-        let fact = &facts[fact_id as usize];
-        let Some(formed) = form(world, &fact.clause, &fact.frame, &binders, &iterations) else {
-            continue;
-        };
-        for literal in formed.premises.iter().chain(formed.conclusions.iter()) {
-            collect_literal(literal, &mut atoms);
+        for (fact_id, binders) in instances {
+            let fact = &facts[fact_id as usize];
+            query.add_instance(world, fact, &binders, &[], &mut atoms);
         }
-        query.rules.push(Rule {
-            guards: formed.premises,
-            conclusions: formed.conclusions,
-        });
+        expand(world, &mut atoms, &mut expanded, &mut query)?;
+    }
+    // [RANGE-4] Written instances join the automatic instances; their reads
+    // do not seed additional automatic rounds.
+    for (fact_id, binders, iterations) in written {
+        let fact = &facts[*fact_id as usize];
+        query.add_instance(world, fact, binders, iterations, &mut atoms);
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
     // Each typed atom's range.
@@ -428,6 +614,9 @@ fn match_trigger(
             ..
         } => (*version, prefix.as_slice(), Some(offset)),
         PlaceView::Segments { version, .. } => (*version, &[][..], None),
+        PlaceView::Element {
+            version, indices, ..
+        } => (*version, indices.as_slice(), None),
         PlaceView::Unknown => return,
     };
     if view_version != version || indices.len() != prefix.len() + trigger.positions.len() {
@@ -443,7 +632,7 @@ fn match_trigger(
         let index = &indices[prefix.len() + position];
         let value = match offset {
             // The last position of a run view is relative to its offset.
-            Some(offset) if position + 1 == trigger.positions.len() => index.minus(offset),
+            Some(offset) if position == 0 => index.minus(offset),
             _ => Some(index.clone()),
         };
         if let (Some(value), Some(set)) = (value, candidates.get_mut(*binder as usize)) {
@@ -488,18 +677,73 @@ fn expand(
         match def {
             AtomDef::Opaque | AtomDef::Measure => {}
             AtomDef::SegmentLength { row, .. } => collect_linear(&row, atoms),
-            AtomDef::Read { version, indices } => {
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            } => {
                 for index in &indices {
                     collect_linear(index, atoms);
                 }
+                if let Some(CheckedRangeProjection::Tag(variants)) = projection.last() {
+                    query.units.push(Literal::new(
+                        value.clone(),
+                        Relation::GreaterEqual,
+                        Linear::constant(0),
+                    ));
+                    query.units.push(Literal::new(
+                        value.clone(),
+                        Relation::Less,
+                        Linear::constant(*variants as i128),
+                    ));
+                }
                 match world.versions[version as usize].def.clone() {
                     VersionDef::Initial | VersionDef::Fresh => {}
+                    VersionDef::Copied { source, arity } => {
+                        let mut path = source.projection;
+                        path.extend((0..arity).map(|position| {
+                            CheckedRangeProjection::Index((source.indices.len() + position) as u32)
+                        }));
+                        path.extend(super::world::shift_projection(
+                            &projection,
+                            0,
+                            source.indices.len(),
+                        ));
+                        let selected = world.read(
+                            source.version,
+                            source.indices.into_iter().chain(indices).collect(),
+                            path,
+                            ty,
+                        );
+                        alternatives.push(vec![Literal::new(
+                            value.clone(),
+                            Relation::Equal,
+                            selected,
+                        )]);
+                    }
+                    VersionDef::Forget {
+                        previous,
+                        projections,
+                    } => {
+                        if !projections
+                            .iter()
+                            .any(|path| projections_overlap(path, &projection))
+                        {
+                            let old = world.read(previous, indices.clone(), projection.clone(), ty);
+                            alternatives.push(vec![Literal::new(
+                                value.clone(),
+                                Relation::Equal,
+                                old,
+                            )]);
+                        }
+                    }
                     VersionDef::Write {
                         previous,
                         indices: written,
-                        value: stored,
+                        projection: footprint,
+                        values: stored,
                     } => {
-                        let old = world.read(previous, indices.clone(), ty);
+                        let old = world.read(previous, indices.clone(), projection.clone(), ty);
                         let mut hit: Vec<Literal> = indices
                             .iter()
                             .zip(&written)
@@ -507,8 +751,98 @@ fn expand(
                                 Literal::new(index.clone(), Relation::Equal, at.clone())
                             })
                             .collect();
-                        if let Some(stored) = stored {
-                            hit.push(Literal::new(value.clone(), Relation::Equal, stored));
+                        // Different declared fields are disjoint. An ancestor
+                        // replacement overlaps every descendant, measures included.
+                        if !projections_overlap(&projection, &footprint) {
+                            hit.push(Literal::new(value.clone(), Relation::Equal, old.clone()));
+                        } else if let Some(relative) = projection.strip_prefix(footprint.as_slice())
+                        {
+                            for length in (0..=relative.len()).rev() {
+                                if let Some(stored) = stored.get(&relative[..length]) {
+                                    let defined = match stored {
+                                        Stored::Int(value) if length == relative.len() => {
+                                            Some(value.clone())
+                                        }
+                                        Stored::Collection {
+                                            container,
+                                            version,
+                                            generation,
+                                            arity,
+                                        } => {
+                                            let suffix = &relative[length..];
+                                            match suffix {
+                                                [CheckedRangeProjection::Measure(measure)] => {
+                                                    Some(world.measure(
+                                                        *container,
+                                                        *generation,
+                                                        *measure,
+                                                    ))
+                                                }
+                                                [
+                                                    CheckedRangeProjection::Index(at),
+                                                    CheckedRangeProjection::Measure(
+                                                        CheckedMeasure::Length,
+                                                    ),
+                                                ] if *arity == 2 => Some(world.segment_length(
+                                                    *container,
+                                                    *generation,
+                                                    indices[*at as usize].clone(),
+                                                )),
+                                                [CheckedRangeProjection::Index(at), ..]
+                                                    if suffix.len() >= *arity =>
+                                                {
+                                                    let at = *at as usize;
+                                                    Some(world.read(
+                                                        *version,
+                                                        indices[at..].to_vec(),
+                                                        super::world::shift_projection(
+                                                            &suffix[*arity..],
+                                                            at,
+                                                            0,
+                                                        ),
+                                                        ty,
+                                                    ))
+                                                }
+                                                _ => None,
+                                            }
+                                        }
+                                        Stored::Read(source) => {
+                                            let mut path = source.projection.clone();
+                                            path.extend(super::world::shift_projection(
+                                                &relative[length..],
+                                                written.len(),
+                                                source.indices.len(),
+                                            ));
+                                            Some(
+                                                world.read(
+                                                    source.version,
+                                                    source
+                                                        .indices
+                                                        .iter()
+                                                        .cloned()
+                                                        .chain(
+                                                            indices[written.len()..]
+                                                                .iter()
+                                                                .cloned(),
+                                                        )
+                                                        .collect(),
+                                                    path,
+                                                    ty,
+                                                ),
+                                            )
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(defined) = defined {
+                                        hit.push(Literal::new(
+                                            value.clone(),
+                                            Relation::Equal,
+                                            defined,
+                                        ));
+                                    }
+                                    break;
+                                }
+                            }
                         }
                         alternatives.push(hit);
                         for (index, at) in indices.iter().zip(&written) {
@@ -521,7 +855,8 @@ fn expand(
                     VersionDef::Join { join, versions } => {
                         let arms = world.joins[join as usize].clone();
                         for (arm, version) in arms.iter().zip(versions) {
-                            let selected = world.read(version, indices.clone(), ty);
+                            let selected =
+                                world.read(version, indices.clone(), projection.clone(), ty);
                             let mut alternative = arm.clone();
                             alternative.push(Literal::new(
                                 value.clone(),
@@ -579,14 +914,23 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Problem {
             map_linear(&literal.right),
         )
     };
+    let mut reads: BTreeMap<(VersionId, Vec<CheckedRangeProjection>), u32> = BTreeMap::new();
     let mut descriptors: BTreeMap<(ContainerId, u32), u32> = BTreeMap::new();
     let mut kinds = Vec::with_capacity(atoms.len());
     for atom in atoms {
         let kind = match &world.atoms[*atom as usize].def {
-            AtomDef::Read { version, indices } => AtomKind::Read {
-                place: *version,
-                indices: indices.iter().map(&map_linear).collect(),
-            },
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            } => {
+                let next = reads.len() as u32;
+                let place = *reads.entry((*version, projection.clone())).or_insert(next);
+                AtomKind::Read {
+                    place,
+                    indices: indices.iter().map(&map_linear).collect(),
+                }
+            }
             AtomDef::SegmentLength {
                 container,
                 generation,

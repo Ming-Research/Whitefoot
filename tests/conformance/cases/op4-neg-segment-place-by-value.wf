@@ -1,0 +1,16 @@
+fn consume_scalar(number: u64) -> result: u64 pure {
+  doc "Require an owned scalar value.";
+  return number;
+}
+
+fn invalid(values: &Segments<u64>) -> result: u64 reads(values) contract {
+  requires 0_u64 < values^.len;
+} {
+  doc "A selected run is not a by-value argument.";
+  return consume_scalar(number: values^[0_u64]);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The preceding function is rejected at its invalid run-place use.";
+  return std::process::exit_status(code: 0_u8);
+}

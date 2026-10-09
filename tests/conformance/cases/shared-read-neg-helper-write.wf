@@ -1,0 +1,19 @@
+struct State {
+  ready: Bool;
+}
+
+fn change(state: &State) -> result: unit writes(state.ready) {
+  set state^.ready = True();
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let no = False();
+  let initial = State(ready: no);
+  let owner = shared_new::<State>(value: initial);
+  let view = shared_read::<State>(shared: &owner);
+  atomic held = &view {
+    change(state: held);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

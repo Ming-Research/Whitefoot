@@ -1,10 +1,12 @@
 fn read(p: &Paged<u64>, k: u64) -> result: unit reads(p) contract {
   requires k < p^.pages.len;
 } {
+  doc "A page selector names a run place and cannot initialize a value binding.";
   let page = p^.pages[k];
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
+  doc "The page binding above is rejected by OP-4.";
   return std::process::exit_status(code: 0_u8);
 }

@@ -1515,6 +1515,13 @@ impl<'unit> TypeContext<'unit> {
                     pending.push(self.element_type(element)?);
                 }
                 CheckedType::Nominal(id) => {
+                    if let Some((template, _)) = &self.source_nominal_instances[id.0 as usize]
+                        && self.is_opaque_struct_declaration(
+                            self.nominal_templates[*template].declaration,
+                        )?
+                    {
+                        return Ok(false);
+                    }
                     let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
                         return Ok(false);
                     };
@@ -1735,19 +1742,19 @@ impl<'unit> TypeContext<'unit> {
                     match shape {
                         WindowShape::Slots => 12,
                         WindowShape::Ring => 13,
-                        WindowShape::Paged => 26,
+                        WindowShape::Paged => 15,
                     },
                     None,
                 )
             }
             CheckedType::Segments { element } => (14, Some(element)),
-            CheckedType::KeySet => (18, None),
-            CheckedType::Entries { element } => (19, Some(element)),
-            CheckedType::Bool => (20, None),
+            CheckedType::KeySet => (20, None),
+            CheckedType::Entries { element } => (21, Some(element)),
+            CheckedType::Bool => (22, None),
             CheckedType::Nominal(id) => {
                 if let CheckedNominalKind::Box { referent, .. } = self.nominals[id.0 as usize].kind
                 {
-                    result.push("015".to_owned());
+                    result.push("016".to_owned());
                     result.extend(self.atomic_type_order(referent)?);
                     return Ok(result);
                 }
@@ -1756,14 +1763,15 @@ impl<'unit> TypeContext<'unit> {
                 {
                     let template = &self.nominal_templates[*template];
                     let rank = match template.name.as_str() {
-                        "Box" => 15,
-                        "Shared" => 16,
-                        "ConcurrentHashMap" => 17,
-                        "Option" => 21,
-                        "Result" => 22,
-                        "Overflow" => 23,
-                        "DivError" => 24,
-                        "NarrowError" => 25,
+                        "Box" => 16,
+                        "Shared" => 17,
+                        "SharedRead" => 18,
+                        "ConcurrentHashMap" => 19,
+                        "Option" => 23,
+                        "Result" => 24,
+                        "Overflow" => 25,
+                        "DivError" => 26,
+                        "NarrowError" => 27,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));
@@ -1790,19 +1798,19 @@ impl<'unit> TypeContext<'unit> {
                 }
                 match self.prelude_type(id) {
                     Some(PreludeType::Option(t)) => {
-                        result.push("021".to_owned());
+                        result.push("023".to_owned());
                         result.extend(self.atomic_type_order(t)?);
                         return Ok(result);
                     }
                     Some(PreludeType::Result(a, b)) => {
-                        result.push("022".to_owned());
+                        result.push("024".to_owned());
                         result.extend(self.atomic_type_order(a)?);
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
-                    Some(PreludeType::Overflow) => (23, None),
-                    Some(PreludeType::DivError) => (24, None),
-                    Some(PreludeType::NarrowError) => (25, None),
+                    Some(PreludeType::Overflow) => (25, None),
+                    Some(PreludeType::DivError) => (26, None),
+                    Some(PreludeType::NarrowError) => (27, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)

@@ -1002,3 +1002,458 @@ fn main() -> status: std::process::ExitStatus pure {{
         |kind| matches!(kind, SemanticIssueKind::InvalidReferenceUse { .. }),
     );
 }
+
+/// Every selector recorded inside a proof-only measure must be answered,
+/// even when the measure's value is nonnegative without any additional fact.
+/// These proof-only reads exhibit no body effect [EFF-2].
+#[test]
+fn direct_run_measures_judge_selectors_in_requirements_and_invariants() {
+    for (storage, selector, outer_bound) in [
+        ("Segments<u64>", "values^[item]", "values^.len"),
+        ("Paged<u64>", "values^.pages[item]", "values^.pages.len"),
+    ] {
+        for in_requirement in [true, false] {
+            for bound in ["<", "<="] {
+                let (requirement, invariant) = if in_requirement {
+                    (
+                        format!("  requires 0_u64 <= {selector}.len;\n"),
+                        String::new(),
+                    )
+                } else {
+                    (
+                        String::new(),
+                        format!("  invariant nonnegative: 0_u64 <= {selector}.len;\n"),
+                    )
+                };
+                let source = format!(
+                    r#"fn inspect(values: &{storage}, item: u64) -> result: unit pure contract {{
+  requires item {bound} {outer_bound};
+{requirement}}} {{
+{invariant}  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+                );
+                if bound == "<" {
+                    assert_accepts(source.as_bytes());
+                } else {
+                    with_semantics(source.as_bytes(), |outcome| {
+                        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                            panic!("selector bound must be rejected: {outcome:?}");
+                        };
+                        assert_eq!(issue.rule(), SemanticRule::Op4);
+                        let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } =
+                            issue.kind()
+                        else {
+                            panic!("expected the selector's bounds obligation: {issue:?}");
+                        };
+                        assert_eq!(residual, &format!("item < {outer_bound}"));
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// A page index in a contract is a formal ordinal, not a captured subscript.
+/// Formation, body checking and call substitution must retain its page path;
+/// the caller deliberately gives the value parameters different ordinals.
+#[test]
+fn page_measure_requirements_substitute_the_page_parameter() {
+    let source = |bound| {
+        format!(
+            r#"fn at(values: &Paged<u64>, item: u64, slot: u64) -> result: u64 reads(values) contract {{
+  requires item < values^.pages.len;
+  requires slot < values^.pages[item].len;
+}} {{
+  return values^.pages[item][slot];
+}}
+
+fn forward(offset: u64, pages: &Paged<u64>, selected: u64) -> result: u64 reads(pages) contract {{
+  requires selected < pages^.pages.len;
+  requires offset {bound} pages^.pages[selected].len;
+}} {{
+  return at(values: pages, item: selected, slot: offset);
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    assert_accepts(source("<").as_bytes());
+    assert_call_goal(
+        source("<=").as_bytes(),
+        CallRequirementDisposition::Unproved,
+        "offset < pages^.pages[selected].len",
+    );
+}
+
+/// [ENT-3.S6] an inline page borrow's call proof retains the formation
+/// equality between distinct captured and direct length terms. A segment
+/// borrow instead reuses the direct length's ordinary index identity [ENT-2].
+#[test]
+fn run_borrow_length_keeps_page_formation_evidence_and_segment_identity() {
+    use crate::semantic::entailment::{DerivationNode, FlowEventKind, Relation, TermKind};
+    use crate::semantic::model::CheckedMeasure;
+    use crate::semantic::places::PlaceStep;
+
+    with_semantics(
+        include_bytes!(
+            "../../../../tests/conformance/cases/ent2-pos-run-borrow-length-at-formation.wf"
+        ),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("{outcome:?}");
+            };
+            let page = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "inspect_page")
+                .expect("page helper")
+                .entailment;
+            assert_eq!(page.call_goals.len(), 1);
+            let root = page.call_goals[0].derivation.expect("discharged call goal");
+            let mut pending = vec![root];
+            let mut seen = vec![false; page.derivations.nodes.len()];
+            let mut found_formation = false;
+            while let Some(id) = pending.pop() {
+                if std::mem::replace(&mut seen[id.0 as usize], true) {
+                    continue;
+                }
+                let node = &page.derivations.nodes[id.0 as usize];
+                pending.extend(node.parent_ids());
+                let DerivationNode::SourceBound {
+                    relation:
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: 0,
+                        },
+                    event,
+                    ..
+                } = node
+                else {
+                    continue;
+                };
+                if page.derivations.events[event.0 as usize].kind != FlowEventKind::S6 {
+                    continue;
+                }
+                let (
+                    TermKind::Measure(CheckedMeasure::Length, captured),
+                    TermKind::Measure(CheckedMeasure::Length, direct),
+                ) = (
+                    &page.inventory.terms[left.0 as usize],
+                    &page.inventory.terms[right.0 as usize],
+                )
+                else {
+                    continue;
+                };
+                let mut current = captured.clone();
+                let Some(PlaceStep::Page(index)) = current.path.last_mut() else {
+                    continue;
+                };
+                *index = index.goal_identity();
+                if captured != direct && &current == direct {
+                    found_formation = true;
+                }
+            }
+            assert!(
+                found_formation,
+                "the call proof must use the page's S6 equality"
+            );
+
+            let segment = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "inspect_segment")
+                .expect("segment helper")
+                .entailment;
+            assert_eq!(segment.call_goals.len(), 1);
+            assert!(segment.call_goals[0].derivation.is_some());
+            let segment_lengths = segment
+                .inventory
+                .terms
+                .iter()
+                .filter(|term| {
+                    matches!(term, TermKind::Measure(CheckedMeasure::Length, place)
+                    if matches!(place.path.last(), Some(PlaceStep::Index(_))))
+                })
+                .count();
+            assert_eq!(
+                segment_lengths, 1,
+                "direct and borrowed segment lengths share one term"
+            );
+        },
+    );
+}
+
+/// [ENT-2, FN-8] the direct guard on the Segments descriptor below a page
+/// supplies the same length term as a callee's borrowed referent. The element
+/// write between guard and call preserves that descriptor fact [MSR-2].
+#[test]
+fn a_borrow_below_a_direct_page_selector_reuses_the_guarded_length() {
+    use crate::semantic::entailment::TermKind;
+    use crate::semantic::model::CheckedMeasure;
+    use crate::semantic::places::PlaceStep;
+
+    with_semantics(
+        include_bytes!("../../../../tests/conformance/cases/op4-pos-nested-run-places.wf"),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("the earlier direct guards must discharge the borrowed call: {outcome:?}");
+            };
+            let selected = program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "read_selected")
+                .expect("borrowed Segments helper");
+            let main = &program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .expect("caller")
+                .entailment;
+            let requirements = main
+                .call_goals
+                .iter()
+                .filter(|goal| goal.callee == selected.id)
+                .collect::<Vec<_>>();
+            assert_eq!(requirements.len(), 2);
+            assert!(requirements.iter().all(|goal| goal.derivation.is_some()));
+            let lengths = main
+                .inventory
+                .terms
+                .iter()
+                .filter_map(|term| match term {
+                    TermKind::Measure(CheckedMeasure::Length, place)
+                        if matches!(
+                            place.path.as_slice(),
+                            [
+                                PlaceStep::Deref,
+                                PlaceStep::Page(_),
+                                PlaceStep::Index(_),
+                                PlaceStep::Deref
+                            ]
+                        ) =>
+                    {
+                        Some(place)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lengths.len(),
+                1,
+                "direct and borrowed inner.len must share one term"
+            );
+            let PlaceStep::Page(offset) = lengths[0].path[1] else {
+                unreachable!("filtered page step");
+            };
+            assert_eq!(offset, offset.goal_identity());
+        },
+    );
+}
+
+/// [MSR-2] canonical identity does not make a direct page length immutable:
+/// place_back writes the owner's length and kills the earlier equality.
+#[test]
+fn direct_page_length_fact_dies_after_place_back() {
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-append.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.pages[0].len == 1_u64",
+    );
+}
+
+/// [REF-4, MSR-2] a guard on the borrow's captured length survives append
+/// and discharges the later requirement on that same captured length.
+#[test]
+fn borrowed_page_length_survives_append() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/ent2-pos-borrowed-page-length-after-append.wf"
+    ));
+}
+
+/// [ENT-3.S6, MSR-2] append kills the formation equality's direct term while
+/// the captured-length fact survives; the later direct read remains unproved.
+#[test]
+fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.pages[0].len == 1_u64",
+    );
+}
+
+/// The whole-cell write of grow_paged reaches the same direct length support
+/// as a write to p.inner.len, even though its contract preserves total len.
+#[test]
+fn direct_page_length_fact_dies_after_grow_paged() {
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-grow.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.inner.pages[0].len == 1_u64",
+    );
+}
+
+/// [MSR-2] removal reaches direct length support through take_back's len
+/// write. The later page selector is bounded again, so the failed obligation
+/// is the element's bound against the page length, not the page-count bound.
+#[test]
+fn direct_page_element_bound_dies_after_take_back() {
+    with_semantics(
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-stale-length.wf"
+        ),
+        |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the stale element bound must be refused: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Op4);
+            let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } = issue.kind()
+            else {
+                panic!("expected the element's bounds obligation: {issue:?}");
+            };
+            assert_eq!(residual, "1_u64 < values^.pages[0].len");
+        },
+    );
+}
+
+/// The checked paths, rather than merely acceptance, must identify the same
+/// storage under direct access and a bound range, with ordinary OWN-7 answers.
+#[test]
+fn direct_segment_elements_retain_borrowed_place_identity() {
+    use crate::semantic::model::{CheckedExpression, CheckedSetTarget, CheckedStatement};
+    use crate::semantic::places::{PlaceMap, PlaceRoot, UnprovedSeparations, places_overlap};
+    let source =
+        br#"fn inspect_runs(runs: &Segments<u64>, slot: u64) -> result: u64 writes(runs) contract {
+  requires 1_u64 < runs^.len;
+  requires slot < runs^[0_u64].len;
+  requires slot < runs^[1_u64].len;
+} {
+  doc "Direct elements and borrowed elements carry one checked storage path.";
+  let first_run = &runs^[0_u64];
+  if slot >= first_run^.len {
+    return 0_u64;
+  }
+  let direct_first = runs^[0_u64][slot];
+  let borrowed_first = first_run^[slot];
+  let direct_second = runs^[1_u64][slot];
+  set runs^[0_u64][slot] = borrowed_first;
+  return direct_second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Inspect the helper's checked identities without executing it.";
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|f| f.name == "inspect_runs")
+            .expect("helper");
+        let places = PlaceMap::for_function(function);
+        let body = function.body.as_deref().expect("body");
+        let elements = body
+            .iter()
+            .filter_map(|statement| match statement {
+                CheckedStatement::Let {
+                    value: CheckedExpression::RangeIndex { place, .. },
+                    ..
+                } => Some(place),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(elements.len(), 3);
+        let resolved = elements
+            .iter()
+            .map(|place| {
+                places.resolve(PlaceRoot::Binding(place.root.binding), &place.place_path())[0]
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolved[0].clone().term_identity(),
+            resolved[1].clone().term_identity()
+        );
+        assert!(!places_overlap(
+            &UnprovedSeparations,
+            &resolved[0],
+            &resolved[2]
+        ));
+        let run = &elements[0].root;
+        let whole = places.resolve(PlaceRoot::Binding(run.binding), &run.place_path());
+        assert!(places_overlap(
+            &UnprovedSeparations,
+            &resolved[0],
+            &whole[0]
+        ));
+        let target = body
+            .iter()
+            .find_map(|statement| match statement {
+                CheckedStatement::Set {
+                    target: CheckedSetTarget::RangeIndex(place),
+                    ..
+                } => Some(place),
+                _ => None,
+            })
+            .expect("direct set target");
+        let written = places.resolve(
+            PlaceRoot::Binding(target.root.binding),
+            &target.place_path(),
+        );
+        assert_eq!(
+            written[0].clone().term_identity(),
+            resolved[1].clone().term_identity()
+        );
+    });
+}
+
+/// Negative conformance verdicts must come from the missing inner bound,
+/// not from the old rejection of a run selector as an element base.
+#[test]
+fn direct_run_elements_report_the_undischarged_inner_bound() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-segment-place-element-bound.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-element-bound.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-segment-count-is-not-element-length.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-offset-written.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Op4, |kind| {
+            matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. })
+        });
+    }
+}

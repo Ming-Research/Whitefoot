@@ -1,0 +1,59 @@
+# The concurrent map's runtime test under AddressSanitizer and under
+# ThreadSanitizer, on every push to a pull request that changes the map's
+# runtime or its test, so each head of such a pull request has its run.
+# Some of its failures change no outcome of an ordinary run: a read of a freed
+# node whose result is discarded, or a race two threads win in one order
+# only. The owner chose to run both on every such change and to merge none
+# that fails them (status board, 2026-10-09). The ordinary builds of the same
+# test run in the gate's runtime group.
+name: map-sanitizers
+
+on:
+  pull_request:
+    paths:
+      - compiler/src/backend/concurrent_map.c
+      - compiler/src/backend/concurrent_map.h
+      - compiler/src/backend/concurrent_map_test.c
+      - compiler/src/backend/keyed_table.c
+      - compiler/src/backend/completion/bridge.h
+      - compiler/Makefile
+      - .github/workflows/map-sanitizers.yml
+  workflow_dispatch:
+
+concurrency:
+  group: map-sanitizers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitizers:
+    name: map sanitizers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    # Clang on both hosts: GCC's ThreadSanitizer refuses the map's
+    # atomic_thread_fence under -Werror (-Wtsan).
+    env:
+      CC: clang
+    steps:
+      # The pull request's head, the revision a merge would take, rather
+      # than the merge commit a pull request run checks out by default.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+      - name: AddressSanitizer and UndefinedBehaviorSanitizer
+        run: perl .github/run-check.pl map-asan make -C compiler concurrent-map-test-sanitized
+      - name: ThreadSanitizer
+        run: perl .github/run-check.pl map-tsan make -C compiler concurrent-map-test-tsan
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record; the stages
+      # themselves kept their own statuses.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"

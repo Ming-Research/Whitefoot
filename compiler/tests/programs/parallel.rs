@@ -507,6 +507,7 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
     for path in [
         "parallel/indexed_reductions.wf",
         "parallel/indexed_marks_fields.wf",
+        "parallel/indexed_calls.wf",
     ] {
         let plain = build_program(&compile_program(path));
         let reference = plain.run_with_workers(Some("1"));
@@ -520,4 +521,10 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
             assert!(output.stderr.is_empty(), "{workers}: {output:?}");
         }
     }
+}
+
+/// GET-like payload updates keep every increment on hits and never insert misses.
+#[test]
+fn map_payload_updates_preserve_absence_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_payload_updates.wf", 2);
 }

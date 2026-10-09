@@ -131,6 +131,10 @@ impl<'unit> Checker<'_, 'unit> {
         place: ElaboratedPlace,
     ) -> Result<TypedExpression, CheckStop> {
         for member in &place.resolved.members {
+            if options.explicit_move {
+                self.types
+                    .reject_shared_read_write(node, member, bindings)?;
+            }
             self.check_commit_place_live(member, use_node, false)?;
         }
         // [OP-15, MSR-1] a measure is a read-only `own u64` member of the
@@ -160,6 +164,7 @@ impl<'unit> Checker<'_, 'unit> {
                     expression: CheckedExpression::RangeMeasure {
                         measure,
                         root: super::super::super::model::CheckedRangeRoot {
+                            formation: None,
                             binding,
                             element,
                             element_type: place.ty,
@@ -711,7 +716,7 @@ impl<'unit> TypeContext<'unit> {
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
-    fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
+    pub(super) fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
@@ -1255,6 +1260,28 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(())
     }
+    /// Read authority belongs to the resolved atomic root, not an alias's type.
+    pub(in crate::semantic::check) fn reject_shared_read_write(
+        &self,
+        target: NodeId,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        if bindings
+            .values()
+            .any(|local| local.read_only_state && path.root == PlaceRoot::Binding(local.binding))
+        {
+            return self.declarations.issue_node(
+                SemanticRule::Share2,
+                target,
+                SemanticIssueKind::ReadonlyWriteTarget {
+                    spelling: "SharedRead state".to_owned(),
+                    mechanical_fix: "read this state without writing or consuming it; to update an ordinary shared object, use a target of a mutable Shared handle if one is available; fire cancellation through cancel_fire outside the atomic statement",
+                },
+            );
+        }
+        Ok(())
+    }
     /// [TYPE-2] applies the readonly provenance carried by one resolved path
     /// to either a direct write through a reference or a written-reference
     /// call argument.
@@ -1265,6 +1292,7 @@ impl<'unit> TypeContext<'unit> {
         path: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
+        self.reject_shared_read_write(target, path, bindings)?;
         let Some(spelling) =
             self.readonly_member_on_resolved_path(check_context, path, bindings)?
         else {

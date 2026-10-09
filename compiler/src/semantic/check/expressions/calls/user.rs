@@ -1316,11 +1316,7 @@ impl<'unit> TypeContext<'unit> {
                     element: Some(root.element),
                     constant: None,
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: root.binding,
-                    projections: Vec::new(),
-                    ty: root.element_type,
-                }),
+                self.goal_referent_image(&root.proof_place(), root.element_type, atom)?,
             )),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1331,11 +1327,7 @@ impl<'unit> TypeContext<'unit> {
                     element: place.element(),
                     constant: place.type_constant(),
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: place.root.binding,
-                    projections: place.goal_projections(),
-                    ty: place.ty,
-                }),
+                self.goal_referent_image(&place.proof_place(), place.ty, atom)?,
             )),
             _ => None,
         };
@@ -1369,14 +1361,11 @@ impl<'unit> TypeContext<'unit> {
         node: NodeId,
     ) -> Result<GoalExpression, CheckStop> {
         let mut projections = Vec::new();
-        for step in &place.path {
+        for step in place.proof_steps() {
             match step {
-                PlaceStep::Field(field) => projections.push(GoalProjection::Field(*field)),
+                PlaceStep::Field(field) => projections.push(GoalProjection::Field(field)),
                 PlaceStep::Payload { variant, field } => {
-                    projections.push(GoalProjection::Payload {
-                        variant: *variant,
-                        field: *field,
-                    });
+                    projections.push(GoalProjection::Payload { variant, field });
                 }
                 PlaceStep::Deref => projections.push(GoalProjection::Deref),
                 PlaceStep::Index(index) => {
@@ -1388,12 +1377,13 @@ impl<'unit> TypeContext<'unit> {
                 // quantities [MSR-1], so it is kept and never collapsed onto
                 // its base.
                 PlaceStep::Range(range) => {
-                    projections.push(GoalProjection::Range(*range));
+                    projections.push(GoalProjection::Range(range));
                 }
-                // [REF-4] the page a `&[T]` actual formed from `&p.pages[k]`
-                // names; kept for the same reason as a range step.
+                // [ENT-2, REF-4] proof_steps preserves a terminal page
+                // borrow's capture and canonicalizes a selector above a
+                // borrowed descendant, such as `&p.pages[k][i].inner`.
                 PlaceStep::Page(page) => {
-                    projections.push(GoalProjection::Page(*page));
+                    projections.push(GoalProjection::Page(page));
                 }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.

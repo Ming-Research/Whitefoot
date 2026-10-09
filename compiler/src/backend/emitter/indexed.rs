@@ -12,12 +12,15 @@ pub(super) struct IndexedPrivate {
     roots: Vec<PrivateRoot>,
 }
 
-struct PrivateRoot {
-    pointer: String,
-    bytes: String,
-    cells: String,
-    total: String,
-    original: String,
+#[derive(Clone)]
+pub(super) struct PrivateRoot {
+    pub(super) pointer: String,
+    pub(super) bytes: String,
+    pub(super) cells: String,
+    pub(super) total: String,
+    pub(super) original: String,
+    pub(super) spec: usize,
+    pub(super) block_bytes: Option<String>,
 }
 
 impl FunctionEmitter<'_, '_> {
@@ -104,6 +107,23 @@ impl FunctionEmitter<'_, '_> {
         self.output.open_block(allocate);
         let mut roots: Vec<PrivateRoot> = Vec::new();
         for (ordinal, root) in split.indexed.iter().enumerate() {
+            if roots
+                .iter()
+                .any(|previous| split.indexed[previous.spec].capture == root.capture)
+            {
+                continue;
+            }
+            if root.root.is_some() {
+                let private = self.emit_indexed_blocks_prepare(
+                    split,
+                    ordinal,
+                    &leaves,
+                    &roots,
+                    &format!("indexed.{id}.{ordinal}"),
+                )?;
+                roots.push(private);
+                continue;
+            }
             let range = *split
                 .captures
                 .get(root.capture)
@@ -134,14 +154,7 @@ impl FunctionEmitter<'_, '_> {
                 "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @wf__heap_take(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
             )?;
             self.output.open_block(failed);
-            for previous in &roots {
-                self.output.symbol("wf__heap_give");
-                writeln!(
-                    self.output,
-                    "  call void @wf__heap_give(ptr {}, i64 {})",
-                    previous.pointer, previous.bytes
-                )?;
-            }
+            self.emit_indexed_release(&roots, &format!("{prefix}.cleanup"))?;
             self.output.symbol("wf_resource_abort");
             writeln!(
                 self.output,
@@ -171,6 +184,8 @@ impl FunctionEmitter<'_, '_> {
                 cells: count,
                 total,
                 original: self.value_name(range),
+                spec: ordinal,
+                block_bytes: None,
             });
         }
         writeln!(self.output, "  br label %{ready}")?;
@@ -189,11 +204,20 @@ impl FunctionEmitter<'_, '_> {
                 "  {pointer} = phi ptr [ {}, %{ready} ], [ null, %{sequential} ]\n  {bytes} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]\n  {total} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]",
                 root.pointer, root.bytes, root.total
             )?;
+            if let Some(block_bytes) = &mut root.block_bytes {
+                let joined = format!("%indexed.{id}.{ordinal}.block_bytes");
+                writeln!(
+                    self.output,
+                    "  {joined} = phi i64 [ {block_bytes}, %{ready} ], [ 0, %{sequential} ]"
+                )?;
+                *block_bytes = joined;
+            }
             root.pointer = pointer;
             root.bytes = bytes;
             root.total = total;
         }
-        for (ordinal, (root, spec)) in roots.iter().zip(split.indexed).enumerate() {
+        for (ordinal, root) in roots.iter().enumerate() {
+            let spec = &split.indexed[root.spec];
             let range = split.captures[spec.capture];
             let range_type = self.value_type(range).ok_or(BackendFailure::InvalidIr)?;
             let ty = self.output.type_name(self.program, range_type)?;
@@ -240,7 +264,12 @@ impl FunctionEmitter<'_, '_> {
             "  br i1 {active}, label %{combine}, label %{finished}"
         )?;
         self.output.open_block(combine);
-        for (ordinal, (root, spec)) in private.roots.iter().zip(split.indexed).enumerate() {
+        for (ordinal, root) in private.roots.iter().enumerate() {
+            let spec = &split.indexed[root.spec];
+            if spec.root.is_some() {
+                self.emit_indexed_blocks_finish(split, root, &format!("indexed.{id}.{ordinal}"))?;
+                continue;
+            }
             let prefix = format!("indexed.{id}.{ordinal}");
             let entry = format!("{prefix}.entry");
             let head = format!("{prefix}.combine.head");
@@ -287,59 +316,7 @@ impl FunctionEmitter<'_, '_> {
                 "  %{prefix}.from = getelementptr inbounds {ty}, ptr {}, i64 %{prefix}.i\n  %{prefix}.left = load {ty}, ptr {destination}\n  %{prefix}.right = load {ty}, ptr %{prefix}.from",
                 root.pointer
             )?;
-            let IrIndexedFamilyKind::Reduce { op, .. } = spec.kind else {
-                return Err(BackendFailure::InvalidIr);
-            };
-            let opcode = match op {
-                Ok(IrIntegerOperation::AddWrap) => "add",
-                Ok(IrIntegerOperation::MultiplyWrap) => "mul",
-                Ok(IrIntegerOperation::AddSaturating) => {
-                    let IrType::Integer {
-                        width,
-                        signed: false,
-                    } = spec.projection.value_type
-                    else {
-                        return Err(BackendFailure::InvalidIr);
-                    };
-                    let intrinsic = format!("llvm.uadd.sat.i{width}");
-                    self.intrinsics.insert(IntrinsicDeclaration::Binary {
-                        name: intrinsic.clone(),
-                        ty: ty.clone(),
-                    });
-                    self.output.symbol(&intrinsic);
-                    writeln!(
-                        self.output,
-                        "  %{prefix}.value = call {ty} @{intrinsic}({ty} %{prefix}.left, {ty} %{prefix}.right)"
-                    )?;
-                    ""
-                }
-                Ok(IrIntegerOperation::BitAnd) | Err(IrBooleanOperation::And) => "and",
-                Ok(IrIntegerOperation::BitOr) | Err(IrBooleanOperation::Or) => "or",
-                Ok(IrIntegerOperation::BitXor) | Err(IrBooleanOperation::ExclusiveOr) => "xor",
-                Ok(operation @ (IrIntegerOperation::Minimum | IrIntegerOperation::Maximum)) => {
-                    let IrType::Integer { signed, .. } = spec.projection.value_type else {
-                        return Err(BackendFailure::InvalidIr);
-                    };
-                    let comparison = match (operation, signed) {
-                        (IrIntegerOperation::Minimum, true) => "slt",
-                        (IrIntegerOperation::Minimum, false) => "ult",
-                        (IrIntegerOperation::Maximum, true) => "sgt",
-                        _ => "ugt",
-                    };
-                    writeln!(
-                        self.output,
-                        "  %{prefix}.choose = icmp {comparison} {ty} %{prefix}.left, %{prefix}.right\n  %{prefix}.value = select i1 %{prefix}.choose, {ty} %{prefix}.left, {ty} %{prefix}.right"
-                    )?;
-                    ""
-                }
-                _ => return Err(BackendFailure::InvalidIr),
-            };
-            if !opcode.is_empty() {
-                writeln!(
-                    self.output,
-                    "  %{prefix}.value = {opcode} {ty} %{prefix}.left, %{prefix}.right"
-                )?;
-            }
+            self.emit_indexed_combine_value(spec, &prefix, &ty)?;
             writeln!(
                 self.output,
                 "  store {ty} %{prefix}.value, ptr {destination}\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
@@ -356,6 +333,68 @@ impl FunctionEmitter<'_, '_> {
         self.output.open_block(finished);
         Ok(())
     }
+    pub(super) fn emit_indexed_combine_value(
+        &mut self,
+        spec: &crate::ir::IrIndexedReduction,
+        prefix: &str,
+        ty: &str,
+    ) -> Result<(), BackendFailure> {
+        let IrIndexedFamilyKind::Reduce { op, .. } = spec.kind else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let opcode = match op {
+            Ok(IrIntegerOperation::AddWrap) => "add",
+            Ok(IrIntegerOperation::MultiplyWrap) => "mul",
+            Ok(IrIntegerOperation::AddSaturating) => {
+                let IrType::Integer {
+                    width,
+                    signed: false,
+                } = spec.projection.value_type
+                else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                let intrinsic = format!("llvm.uadd.sat.i{width}");
+                self.intrinsics.insert(IntrinsicDeclaration::Binary {
+                    name: intrinsic.clone(),
+                    ty: ty.to_owned(),
+                });
+                self.output.symbol(&intrinsic);
+                writeln!(
+                    self.output,
+                    "  %{prefix}.value = call {ty} @{intrinsic}({ty} %{prefix}.left, {ty} %{prefix}.right)"
+                )?;
+                ""
+            }
+            Ok(IrIntegerOperation::BitAnd) | Err(IrBooleanOperation::And) => "and",
+            Ok(IrIntegerOperation::BitOr) | Err(IrBooleanOperation::Or) => "or",
+            Ok(IrIntegerOperation::BitXor) | Err(IrBooleanOperation::ExclusiveOr) => "xor",
+            Ok(operation @ (IrIntegerOperation::Minimum | IrIntegerOperation::Maximum)) => {
+                let IrType::Integer { signed, .. } = spec.projection.value_type else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                let comparison = match (operation, signed) {
+                    (IrIntegerOperation::Minimum, true) => "slt",
+                    (IrIntegerOperation::Minimum, false) => "ult",
+                    (IrIntegerOperation::Maximum, true) => "sgt",
+                    _ => "ugt",
+                };
+                writeln!(
+                    self.output,
+                    "  %{prefix}.choose = icmp {comparison} {ty} %{prefix}.left, %{prefix}.right\n  %{prefix}.value = select i1 %{prefix}.choose, {ty} %{prefix}.left, {ty} %{prefix}.right"
+                )?;
+                ""
+            }
+            _ => return Err(BackendFailure::InvalidIr),
+        };
+        if !opcode.is_empty() {
+            writeln!(
+                self.output,
+                "  %{prefix}.value = {opcode} {ty} %{prefix}.left, %{prefix}.right"
+            )?;
+        }
+        Ok(())
+    }
+
     /// Both layouts are compiler-owned: select the byte stride and field
     /// offset before forming an inbounds pointer, never form an out-of-range
     /// source-layout pointer into a dense slab even on an untaken path.

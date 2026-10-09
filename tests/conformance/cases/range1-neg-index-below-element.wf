@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn inspect(rows: &[u64]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k][0_u64] == 0_u64;
+} {
+  doc "The requirement subscripts an integer element, which is not indexable under RANGE-1.";
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

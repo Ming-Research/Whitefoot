@@ -384,6 +384,27 @@ impl FunctionEmitter<'_, '_> {
         self.emit_unit_call(result, "wf__keyed_table_clear", &arguments)
     }
 
+    /// Releases a table's reserve storage and answers its bytes; the runtime
+    /// takes only the table's own short lock, so no hold is needed.
+    pub(super) fn emit_keyed_table_release_reserve(
+        &mut self,
+        result: IrValueId,
+        table: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        self.checked_entry(nominal)?;
+        self.names(&["wf__keyed_table_release_reserve"]);
+        writeln!(
+            self.output,
+            "  {} = call i64 @wf__keyed_table_release_reserve(ptr {})",
+            self.value_name(result),
+            self.value_name(table)
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     pub(super) fn emit_table_held_entry(
         &mut self,
         result: IrValueId,
@@ -420,6 +441,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Locks one key's entry, keeping the lock in its record and the slot's
     /// address in the record's word.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn emit_table_lock_entry(
         &mut self,
         result: IrValueId,
@@ -427,6 +449,7 @@ impl FunctionEmitter<'_, '_> {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_table(table)? || record.kind() != IrRecordKind::TableEntry {
@@ -439,7 +462,7 @@ impl FunctionEmitter<'_, '_> {
             self.output,
             "  %{bare}.slot = call ptr @wf__table_lock_entry(ptr {table}, ptr %{bare}.key, i64 %{bare}.length, i32 {read}, ptr {record})\n  store ptr %{bare}.slot, ptr {word}",
             table = self.value_name(table),
-            read = if read {1 + 2 * u32::from(stable_absence)} else {0},
+            read = if read {1 + 2 * u32::from(stable_absence)} else if !inserts {4 + 2 * u32::from(stable_absence)} else {0},
             record = record_name(record),
             word = record_slot_name(record),
         )
@@ -860,10 +883,14 @@ impl FunctionEmitter<'_, '_> {
         nominal: IrNominalId,
         object: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if ty != IrType::Nominal(nominal) || self.value_type(object) != Some(ty) {
+        let Some(IrType::Nominal(source)) = self.value_type(object) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if ty != IrType::Nominal(nominal)
+            || self.shared_state(source)? != self.shared_state(nominal)?
+        {
             return Err(BackendFailure::InvalidIr);
         }
-        self.shared_state(nominal)?;
         self.names(&["wf__shared_share"]);
         writeln!(
             self.output,

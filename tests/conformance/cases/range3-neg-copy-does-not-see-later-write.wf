@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Flow {
+  Open(block: u32);
+}
+
+fn need(order: &[Flow], expected: u32) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..order^.len): order^[k].Open.block == expected;
+} {
+  doc "Owes nothing; its requirement names the Open payload of every entry.";
+  return unit;
+}
+
+fn rewrite(order: &[Flow]) -> result: unit writes(order) contract {
+  requires order^.len == 1_u64;
+} {
+  doc "Copies the entry holding three, overwrites the entry with nine, then writes the copy's payload back.";
+  set order^[0_u64] = Flow::Open(block: 3_u32);
+  let item = order^[0_u64];
+  set order^[0_u64] = Flow::Open(block: 9_u32);
+  match item {
+    Open(block: b) => {
+      set order^[0_u64] = Flow::Open(block: b);
+    }
+  }
+  need(order: order, expected: 9_u32);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -19,7 +19,9 @@
 //! operation into the running context's operation block or answers at once,
 //! then, only for an operation still pending, `wf__context_wait` and a
 //! suspension until the record is complete, and for any submitted operation
-//! its `.finish`, which reads the record into the result.
+//! its `.finish`, which reads the record into the result. A shared-acquisition
+//! start instead requests retry on each resume; its finish runs with the
+//! acquired unit held and releases it after updating the state.
 //!
 //! Every suspension returns to the context driver in the completion bridge,
 //! which resumes the frame a context parked when the context is ready.
@@ -365,7 +367,8 @@ impl FunctionEmitter<'_, '_> {
         self.output.symbol(start.clone());
         self.output.symbol(finish.clone());
         // The start answers 0 when it wrote the result itself, 1 when its
-        // operation has already completed, and 2 when it is still pending.
+        // operation has already completed, 2 when a host record is pending,
+        // and 3 when context_wait must retry a resumable shared acquisition.
         // An answer the start gave passes through `wf__context_pass`, which
         // reads no record and may make the context yield after a run of such
         // answers [WAIT-2]; only a pending operation reaches the wait.
@@ -391,11 +394,14 @@ impl FunctionEmitter<'_, '_> {
         self.emit_suspension(
             &format!("%{prefix}.saved"),
             &prefix,
-            &format!("{prefix}.finish"),
+            &format!("{prefix}.resumed"),
         )?;
         writeln!(
             self.output,
-            "{prefix}.finish:\n  \
+            "{prefix}.resumed:\n  \
+             %{prefix}.retry = icmp eq i32 %{prefix}.started, 3\n  \
+             br i1 %{prefix}.retry, label %{prefix}.wait, label %{prefix}.finish\n\
+             {prefix}.finish:\n  \
              call void @{finish}({arguments})\n  \
              br label %{prefix}.done"
         )

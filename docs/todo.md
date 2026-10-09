@@ -1374,19 +1374,6 @@ rarely insert at the same place.
   module's assertions pin today; no test changes. Reopen with the next edit of
   that module.
 
-- **A segment borrowed below a range element does not emit.** In
-  `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
-  `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
-  projection, `SegmentSlice`), but LLVM emission returns `InvalidIr`; the same
-  borrow through a `Box<Paged<u64>>` element emits. The lowering test
-  `page_borrows_below_range_elements_keep_the_outer_projection` in
-  `compiler/src/lowering/tests.rs` covers the Paged form only; the Segments
-  form failed in the gate run of the paged-storage branch. Find which
-  operand type `emit_segment_slice` or the surrounding measure emission
-  refuses and give that projection the address type the emitter expects;
-  validate with the Segments helper restored to that test. Reopen when a
-  program stores segmented runs in a range of cells.
-
 - **Growth kills facts about Paged elements it does not change.**
   grow_paged writes the whole cell, so every fact about a filled element dies
   although no element moves or changes. Snowghost's splice publication would
@@ -1468,20 +1455,6 @@ rarely insert at the same place.
   proportion to how long the holder has held, which the holder would have
   to publish. Reopen when a workload's rate on one hot key is within that
   10% of its criterion.
-
-- **The map's test has no gate run that checks memory.** A statement that
-  locked a cell in a table a move had left read the cell's node after a
-  statement in the next table had freed it; the result was always
-  discarded, so no test's outcome differed, and only a build with
-  `-fsanitize=address` saw it. `make -C compiler concurrent-map-test-sanitized`
-  is that build, 7 s on the 14900K, and fails under the mutant that keeps
-  the lock; it is not part of `completion-test`, whose runtime stage has
-  run over its budget on macOS. The decision for the owner: raise the
-  runtime budget and run it in the gate, or run it in a workflow of its
-  own. The change that brought keyed tables, key sets and holds in a
-  statement's frame passed it in 7.0 s, and passed a ThreadSanitizer build
-  of the same test, which no target runs. Reopen with the next change to
-  `concurrent_map.c`.
 
 - **A guard that reads an absent entry through a shared read can miss the
   insert that makes it true.** A guard's watch is registered while its
