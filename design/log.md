@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 A map's reserve is released on request without waiting
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
+
+Summary: `shared_map_release_reserve` frees the cells a map keeps for its next move of their size and answers their bytes. It only tries the map's own short lock and answers zero while a mover or a reclaim holds it, since its caller, a server over its memory limit, asks again on its next command; waiting would add a move to that command's latency.
 ## 2026-10-09 A moved map keeps spare cells only of its current size
 
 Nodes: compiler/waiting-contexts/concurrent-map

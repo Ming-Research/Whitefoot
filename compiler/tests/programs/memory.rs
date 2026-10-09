@@ -66,3 +66,16 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
         assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
     }
 }
+
+/// A steady map's reserve goes on request: the release answers the bytes
+/// the heap reading falls by, exactly, for a small map whose reserve is a
+/// pool block larger than its cells, for a larger pooled one, and for one
+/// whose cells are mapped from the host; a second release answers nothing,
+/// and every entry stays [SHARE-1, PRE-2]. Exit codes 11 to 15, 21 to 25
+/// and 31 to 35 name the failing check of each map.
+#[test]
+fn releasing_a_map_reserve_lowers_the_heap_reading_by_its_bytes() {
+    let program = build_program(&compile_program("map_release_reserve.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}

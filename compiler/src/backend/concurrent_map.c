@@ -56,6 +56,11 @@
 #ifndef WF_CMAP_CURRENT_USER
 #define WF_CMAP_CURRENT_USER(map) ((wf_cmap_user *)NULL)
 #endif
+/* The size the includer's pool grants a request of `bytes`, which its heap
+ * reading counts [PRE-2]; the request itself when it grants exactly. */
+#ifndef WF_CMAP_GRANTED
+#define WF_CMAP_GRANTED(bytes) (bytes)
+#endif
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -2436,6 +2441,15 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
     settle_whole_hold(b, tag_offset, tag_width, none_tag);
     fold_users(a);
     fold_users(b);
+    /* No statement is inside either map, but a release of a reserve
+     * (wf_cmap_release_reserve) needs no statement: it takes the map's own
+     * lock, which the exchange below holds on both maps, lower address
+     * first, so that a reserve moves with its map or is released, never
+     * both. A map swapped with itself is locked once. */
+    wf_cmap *first = (uintptr_t)a < (uintptr_t)b ? a : b;
+    lock_map(first);
+    if (b != a)
+        lock_map(first == a ? b : a);
     table *current = atomic_load_explicit(&a->current, memory_order_relaxed);
     atomic_store_explicit(&a->current, atomic_load_explicit(&b->current, memory_order_relaxed),
                           memory_order_relaxed);
@@ -2460,6 +2474,9 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
     SWAP_FIELD(uint64_t, pending_bytes);
     a->generation += 1;
     b->generation += 1;
+    unlock_map(a);
+    if (b != a)
+        unlock_map(b);
     /* Published before either map is handed to another statement. */
     atomic_thread_fence(memory_order_seq_cst);
 }
@@ -2637,6 +2654,33 @@ void wf_cmap_release_cleared(wf_cmap *cleared) {
         cleared->cleared_release(cleared);
         cleared = next;
     }
+}
+
+/* The bytes a cell array counts for in the heap reading [PRE-2]: a pool
+ * block's granted size, or the requested bytes of a host mapping. */
+static uint64_t cells_counted(uint64_t count) {
+    uint64_t bytes = count * sizeof(cell);
+    return bytes < HUGE_BYTES ? (uint64_t)WF_CMAP_GRANTED(bytes) : bytes;
+}
+
+/* The reserve is map->spare, which a mover takes, reclaim replaces and a
+ * swap exchanges only under the map's lock, so taking it under that lock
+ * leaves it to this call alone. The lock is only tried: a holder is a
+ * mover, a reclaim or a swap, and the caller asks again later rather than
+ * waiting. The answer is what the heap reading counted for the reserve. */
+uint64_t wf_cmap_release_reserve(wf_cmap *map) {
+    if (atomic_load_explicit(&map->lock, memory_order_relaxed) ||
+        atomic_exchange_explicit(&map->lock, 1, memory_order_acquire))
+        return 0;
+    cell *cells = map->spare;
+    uint64_t capacity = map->spare_capacity;
+    map->spare = NULL;
+    unlock_map(map);
+    if (cells == NULL)
+        return 0;
+    uint64_t counted = cells_counted(capacity);
+    free_cells(cells, capacity);
+    return counted;
 }
 
 uint64_t wf_cmap_count(wf_cmap *map) {

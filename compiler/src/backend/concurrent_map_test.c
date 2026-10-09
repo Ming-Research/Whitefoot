@@ -2864,6 +2864,12 @@ static void maps_swap(void) {
         fail("a swap moved a map's watches (kept, moved)", swap_map->watch.count, other->watch.count);
     swap_map->watch.count = 0;
     wf_cmap_destroy(other);
+    /* A map swapped with itself keeps its entries */
+    put_counted(swap_map, 0, 7, 70);
+    wf_cmap_swap(swap_map, swap_map, VALUE_TAG);
+    if (wf_cmap_count(swap_map) != 1 || counted_value(swap_map, 7) != 70)
+        fail("a map swapped with itself lost its entries (count, value)", wf_cmap_count(swap_map),
+             counted_value(swap_map, 7));
     wf_cmap_destroy(swap_map);
 }
 
@@ -3363,6 +3369,97 @@ static void spares_match_the_current_size(void) {
  * included, keeps what the statement writes after it, and hands the old
  * entries to their release only once the hold is given up, leaking no
  * block. */
+/* A map's reserve, the cells it keeps for the next move of their size, goes
+ * on request: the release answers its bytes and changes no entry, a second
+ * answers 0, one made while the map's own lock is held answers 0 and leaves
+ * the reserve, and the map moves as before after a release. */
+static void reserves_release_on_request(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *user = wf_cmap_enter(map);
+    uint64_t got = 0;
+    for (uint64_t k = 0; k < 20000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    uint64_t next = 20000;
+    for (; map->spare == NULL && next < 420000; next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+    }
+    if (map->spare == NULL)
+        fail("a steady map never kept a reserve (keys inserted)", next, 0);
+    uint64_t bytes = map->spare_capacity * sizeof(cell);
+    atomic_store(&map->lock, 1);
+    uint64_t locked = wf_cmap_release_reserve(map);
+    if (locked != 0 || map->spare == NULL)
+        fail("a release while the map's lock was held took the reserve (freed, kept)", locked, map->spare != NULL);
+    atomic_store(&map->lock, 0);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != bytes || map->spare != NULL)
+        fail("a release did not free the reserve (freed, reserve bytes)", freed, bytes);
+    uint64_t again = wf_cmap_release_reserve(map);
+    if (again != 0)
+        fail("a second release freed bytes (freed, expected)", again, 0);
+    if (wf_cmap_count(map) != 20000)
+        fail("a release changed the count (count, expected)", wf_cmap_count(map), 20000);
+    if (!wf_cmap_get(user, key_of(next - 1), &got) || got != next - 1)
+        fail("a release lost an entry (value, expected)", got, next - 1);
+    for (uint64_t end = next + 200000; next < end; next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+    }
+    if (wf_cmap_count(map) != 20000)
+        fail("churn after a release lost or gained keys (count, expected)", wf_cmap_count(map), 20000);
+    wf_cmap_leave(user);
+    wf_cmap_destroy(map);
+}
+
+static _Atomic int releasing_stop;
+static _Atomic uint64_t released_bytes;
+
+static void *release_reserves(void *arg) {
+    wf_cmap **maps = (wf_cmap **)arg;
+    while (!atomic_load(&releasing_stop)) {
+        uint64_t freed = wf_cmap_release_reserve(maps[0]) + wf_cmap_release_reserve(maps[1]);
+        atomic_fetch_add(&released_bytes, freed);
+    }
+    return NULL;
+}
+
+/* A release needs no statement, so it can meet a swap, which only needs no
+ * statement inside either map: each reserve moves with its map or is
+ * released, never both, so destroying both maps frees each array once. */
+static void reserves_release_beside_swaps(void) {
+    wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
+    wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
+    uint64_t next[2] = {0, 1000000};
+    for (int m = 0; m < 2; m++)
+        for (uint64_t k = 0; k < 64; k++, next[m]++)
+            wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+    atomic_store(&releasing_stop, 0);
+    atomic_store(&released_bytes, 0);
+    pthread_t releaser;
+    pthread_create(&releaser, NULL, release_reserves, maps);
+    for (unsigned round = 0; round < 20000; round++) {
+        for (int m = 0; m < 2; m++)
+            for (unsigned step = 0; step < 16; step++, next[m]++) {
+                wf_cmap_remove(users[m], key_of(next[m] - 64));
+                wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+            }
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+    }
+    atomic_store(&releasing_stop, 1);
+    pthread_join(releaser, NULL);
+    if (atomic_load(&released_bytes) == 0)
+        fail("no release met a reserve beside the swaps (rounds)", 20000, 0);
+    for (int m = 0; m < 2; m++)
+        if (wf_cmap_count(maps[m]) != 64)
+            fail("a map lost or gained keys beside releases and swaps (count, expected)", wf_cmap_count(maps[m]), 64);
+    for (int m = 0; m < 2; m++) {
+        wf_cmap_leave(users[m]);
+        wf_cmap_destroy(maps[m]);
+    }
+}
+
 static void maps_clear(void) {
     wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
@@ -3659,6 +3756,8 @@ int main(int argc, char **argv) {
         concurrent(1);
         histories(20);
     }
+    reserves_release_on_request();
+    reserves_release_beside_swaps();
     spares_match_the_current_size();
     if (atomic_load(&mapped_bytes_out) != 0)
         fail("map checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
