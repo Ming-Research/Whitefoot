@@ -23,7 +23,6 @@ fn walk(stack: &Box<Array<u64>>, fp0: i64) -> result: u64 writes(stack.inner) co
       return remaining;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

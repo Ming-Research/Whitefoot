@@ -7,5 +7,4 @@ fn main() -> status: std::process::ExitStatus pure {
     set value = 1_u64;
     continue;
   }
-  return std::process::exit_status(code: 0_u8);
 }

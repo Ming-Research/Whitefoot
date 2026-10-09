@@ -21,7 +21,6 @@ fn script(state: &State, clock: &Clock, deadline: Instant) -> killed: Bool write
     }
     set state^.count = state^.count +wrap 1_u64;
   }
-  return False();
 }
 
 fn job(clock: Clock) -> status: Bool pure waits {

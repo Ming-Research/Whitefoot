@@ -5,6 +5,21 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 A break-free loop has no normal successor
+
+Nodes: language/loop-completion, compiler/checker-facts
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: An ordinary loop keeps a normal successor exactly when a break resolves to it, and a final loop without one delivers a value initializer by divergence, because a return-only or endless loop cannot fall through and a required trailing `return` invents a path with no execution; giving every ordinary loop a conservative fallthrough edge was refused. The checker records each loop's continuation once on the checked loop, and proof reachability, the invariant induction inventory and lowering read it rather than rediscovering exits from labels.
+
+## 2026-10-09 Proof queries demand the affine index
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design decision 'proof queries build the index on demand' (see the latest log)" with "agreed" (translated), after selecting direction A2 of the wide-match checking investigation (Q155).
+
+Summary: Ordinary affine queries and certificates keep one function-local memo of unchanged states; on a miss they pair only candidates whose coefficient vector a DIRECT or residual query needs and enumerate the final AUTO family lazily in its first-occurrence order, so endpoints, bounds and parents equal the full rebuild's, which the tests keep as their oracle. Reuse alone recovered about 10% of the natural wasm interpreter's check on the M5; demanding the index cuts that check to 0.215 of its base on the 14900K, while the constant-assignment series, whose cost is the join, is unchanged ([check-time](../research/investigations/check-time/DESIGN.md#14900k-timing-results)). Eager all-pair rebuilding, target-overlap pruning and cross-event winner repair were refused.
 ## 2026-10-09 Handler words for whole-program dispatch families
 
 Nodes: compiler/match-dispatch-lowering

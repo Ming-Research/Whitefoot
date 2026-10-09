@@ -1,0 +1,10 @@
+fn spin_empty() -> result: unit pure {
+  loop {
+  }
+}
+
+fn spin_continue() -> result: unit pure {
+  loop {
+    continue;
+  }
+}
