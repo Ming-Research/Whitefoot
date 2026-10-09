@@ -2410,11 +2410,13 @@ the per-rule additions were special cases.
 ## Controls and the pause (2026-10-09)
 
 Decision 2 made the semantic change conditional on the existing-language
-controls failing to recover the stamp cost. Exploratory runs of those controls
-on the i9-14900K preceded the protocol above, and their results led the owner
-to pause the design. All builds used compiler `wf-exp-81609eda3c84`: no stamp
+controls failing to recover the stamp cost. Runs of those controls on the
+i9-14900K departed from the protocol above and are exploratory; their results
+led the owner to pause the design. All builds used compiler `wf-exp-81609eda3c84`: no stamp
 (`base`, Firn-wf `6585531`), the locked stamp of maxmemory step 1 (`lock`,
-`66ff776`), the lock without the stamp write (`l0`, `bccf871`), a separate
+`66ff776`), the lock with no stamp work (`l0`, `bccf871`: GET drops the
+refresh, its stamp calculation and journal, and keeps a no-op write so the
+statement still locks the entry), a separate
 write-on-change statement (`c3`, `02363da`) and stamps in a second map (`c2`,
 `deed1d1`). Each cell is `redis-benchmark` GET at pipeline depth 16, two
 interleaved passes, median throughput relative to `base`. Stage 1 ran Firn-wf
@@ -2422,11 +2424,14 @@ interleaved passes, median throughput relative to `base`. Stage 1 ran Firn-wf
 branch `exp/bench-keyspace` (`50e00997`), which adds the `keyspace` input
 setting `-r`.
 
-These runs depart from the protocol fixed above, so their results are
-exploratory: each `-twin` measures the same image again, so twins show run
-noise only, not rebuild noise (step 3); there were two passes and no pilot
-instead of ten paired blocks (step 3); server and client placement was not
-pinned or recorded, and the 8-CPU cells used a co-located client (step 2);
+The departures from the protocol fixed above: each `-twin` measures the
+same image again, so twins show run noise only, not rebuild noise (step 3);
+`l0` removes the stamp calculation as well as the store, where the panel was
+to keep all other work equal, and no IR or linked-code inspection checked the
+arms' difference (step 1); the cells are not the staged order's; there were two passes and no pilot
+instead of ten paired blocks (step 3); server and client were pinned to
+disjoint logical CPUs without checking or recording P-core and SMT placement,
+and the 8-CPU cells used a co-located client (step 2);
 several arms fail the `e_A <= 0.01` screen (step 4); and no corrective
 reruns were made (step 4).
 
@@ -2453,8 +2458,8 @@ statement is read-only, writes nothing on a miss; no loss is resolved for it
 at this noise, though one of 2–4% is not excluded. The 9–17% loss of `lock`
 and `l0` stands well above the run noise here (base twin within 2%, arm twins
 within 4%), but not under the protocol's 1% screen. `c2` is no evidence on
-the second-map design: its statement writes the stamp map's entry, so a miss
-takes the same transient claim there.
+the second-map design: its statement may write the stamp map's entry, so by
+the same source reading a miss takes the transient claim there.
 
 **Stage 2, GET after SET, 100,000 keys** ([run 37913253551][stamp-run-2],
 09:45–10:03 UTC). `redis-benchmark -r 100000` SET ran before GET in the same
@@ -2484,11 +2489,15 @@ hit changes its stamp.
 The base twins in stage 2 differ from `base` by up to 4.7%, so the hit cells
 resolve no loss at the protocol's 1% ceiling. The locked stamp's cells reach
 0.95–0.96, which does not exclude a loss above the protocol's 3% limit.
-`c3`'s hit cells, 0.90–1.02, are likewise unresolved; the second map was not
-measured on hits.
+`c3`'s hit cells are unresolved at 1% too, but in the
+10,000,000-key run its 0.92–0.94 at 2 CPUs and 0.93 at 8 CPUs lie 6–8% below
+`base` against base twins within 2.5%: like the stage-1 loss, well above the
+run noise here though not under the 1% screen, so `c3` does not indicate
+recovery of the hit-path cost when stamps nearly always change. The second
+map was not measured on hits.
 
-**Outcome.** Decision 2's condition is settled for misses and undetermined
-for hits. On misses, the loss is attributed by source and by `l0 ≈ lock` to
+**Outcome.** Decision 2's condition is indicated, exploratorily, for misses
+and undetermined for hits. On misses, the loss is attributed by source and by `l0 ≈ lock` to
 the transient claim, which a statement that never inserts need not make.
 gran's Whitefoot branch `claude/map-miss-no-claim` (status-board item
 `coord-wfbl-03-06`) implements that, deciding "never inserts" from the
