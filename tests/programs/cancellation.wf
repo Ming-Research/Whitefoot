@@ -374,7 +374,7 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
     Err(error: send_error) => {
       give False();
     }
-  };
+  }
   if sent_ok {
   } else {
     std::time::close_cancel_watch(watch: move never);
