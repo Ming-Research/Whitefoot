@@ -507,6 +507,7 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
     for path in [
         "parallel/indexed_reductions.wf",
         "parallel/indexed_marks_fields.wf",
+        "parallel/indexed_calls.wf",
     ] {
         let plain = build_program(&compile_program(path));
         let reference = plain.run_with_workers(Some("1"));

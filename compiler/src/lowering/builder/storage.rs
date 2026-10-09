@@ -326,6 +326,9 @@ impl IrBuilder<'_> {
             let offset = self.expression(&index.offset)?;
             return self.indexed_address(family, offset, index.target_domain.into());
         }
+        if let Some(address) = self.indexed_block_address(root)? {
+            return Ok(address);
+        }
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
                 .bindings
