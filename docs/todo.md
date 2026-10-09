@@ -947,6 +947,20 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+- **A frame holding a one-byte slot keeps every slot in one aggregate.**
+  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
+  separate allocations only when they share one alignment. A function with
+  an atomic statement's `i1` unit flags therefore gets one frame aggregate,
+  and LLVM keeps copies into its fields that separate allocations would let
+  it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
+  to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
+  copy costs nothing measurable: moving the match into a helper removed it
+  and `RPOP` measured 0.998 over 9 pairs, and giving every slot its own
+  allocation did not make it faster
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)). Match a borrowed
+  scrutinee's tag through its address when a measured path pays for the
+  copy.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -1403,20 +1417,6 @@ rarely insert at the same place.
   affects the judgment; validate empty scalar and zero-capacity controls too.
 
 ## Parallel lowering and runtime
-
-- **Overlap conservatively prevents reuse of unrelated return storage.**
-  `FlowGraph::from_function` in `compiler/src/backend/storage.rs` disables
-  coalescing throughout a function with overlap because refused calls read
-  their operands at join. In `tests/programs/parallel/tree.wf`, this also
-  leaves both of `main`'s `ExitStatus` results in separate ordinary roots;
-  sequential lowering shares the caller's result destination. The Linux and
-  macOS failure dumps for [PR #292's separate frame allocations](https://github.com/Ming-Research/Whitefoot/pull/292)
-  expose these as two 32-byte allocas after
-  frame splitting, each immediately copied to the result. They are not lane
-  frames; their surviving machine cost is unmeasured. Defer narrower reuse
-  until a program's measured frame cost warrants it: represent deferred
-  operand lifetimes, then validate reuse after joins and refusal-path reads
-  before comparing machine frames with and without overlap.
 
 - **PAR-1 operand footprints treat a copied reference as its referent.**
   `collect_operand_reads` in `compiler/src/semantic/permission.rs` resolves
@@ -3074,20 +3074,15 @@ rarely insert at the same place.
   Reopen with the first consumer whose loop spills a value its hot arms
   read, or a host without `preserve_none`.
 
-- **Validate Firn GET's Entry copy after separating mixed-alignment roots.**
-  Amendment S removes atomic `i1` hold flags, and LLVM
+- **Firn GET retains an Entry copy because its existing byte slot makes the
+  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
   eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
-  prior 72-byte copy under the former uniform-alignment restriction: its
-  ordinary `i8` slot forced a shared frame. Independent allocation planning
-  now admits mixed alignments in `compiler/src/target.rs`; whether it removes
-  this copy remains unverified. Reopen with firn GET performance work;
-  inspect the actual emitted frame and validate the normal GET path's optimized IR
+  prior 72-byte copy: its ordinary `i8` slot fails
+  `plan_target_frame`'s independent-slot alignment test in
+  `compiler/src/target.rs`. Investigate separating slots with different
+  alignments without changing their lifetimes or alias facts. Reopen with
+  firn GET performance work; validate the normal GET path's optimized IR
   loses the copy while the frame and borrow tests retain their observations.
-  The existing word-sized lazy-group flags also remain: their earlier
-  frame-separation rationale no longer establishes an advantage over one
-  Boolean per lazy group. If flag storage or generated code becomes material,
-  compare the two with the same frame layout and workload, checking lazy
-  acquisition and release behavior; no flag-width change is selected here.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
@@ -3104,21 +3099,6 @@ rarely insert at the same place.
   worth a compiler change only if it is no more than 2% slower there.
   Reopen when the wasm interpreter's profile shows register pressure the
   convention cannot hold, or when a target without `preserve_none` matters.
-
-- **Split interpreter loops retain shared-frame snapshot copies.** Split
-  dispatch parts keep one `%wf.frame`, so separating ordinary frame roots
-  does not address a dead snapshot copy inside a split interpreter loop.
-  Halo's call path has the 32-byte `Step` returned by `enter_lua` copied into
-  the loop slot, and `prepare` reads a 16-byte `Value` into a temporary.
-  Impact: these transfers can survive even if the ordinary mixed-alignment
-  witness loses its copy; their runtime cost and exact cause remain to be
-  qualified separately. Change: trace the two destinations and their uses
-  across split parts, then evaluate destination forwarding or more precise
-  part-local storage while preserving the shared frame's lifetime and part
-  signatures. Validate emitted and optimized IR plus native snapshot
-  preservation cases and Halo's call path under the same compiler revision.
-  Reopen when Halo's call-path profile identifies these copies as material;
-  defer because ordinary allocation provenance does not change split frames.
 
 - **Handler words are disabled for fragment builds.** Whole-program emission
   computes one layout plan for every selected dispatch family and applies it
@@ -3273,34 +3253,6 @@ rarely insert at the same place.
   verdicts on the `range*` cases and by the permission tests. Reopen with
   the next change to how either resolves a place, or when a range verdict
   differs from what the ownership judgment says the code touches.
-
-- **Split dispatch part-local allocas take the whole frame's alignment.**
-  `compiler/src/backend/emitter/dispatch.rs`, `FunctionFramePlan::render_split`,
-  emits each part-local alloca with `self.target.struct_layout().align()`
-  (the audited alloca was at line 524). Impact: a bound using those roots'
-  natural alignments would not cover the stronger alignments actually emitted;
-  the ordinary independent-root bound does not qualify these allocations.
-  Change: qualify each part's emitted allocation set with its actual
-  alignments, or select and qualify natural alignments for its local roots
-  while preserving alignments promised at every use. Validate a mixed-alignment
-  split with a low-alignment local root and a more-aligned shared root, exact
-  address-domain boundaries and overflow, and the existing split behavior.
-  Reopen before claiming complete split-part storage qualification or changing
-  part-local allocation layout; deferred from ordinary frame separation.
-
-- **Generated storage outside TargetFramePlan lacks complete frame accounting.**
-  Context groups (`compiler/src/backend/emitter/contexts.rs`,
-  `context_group_prelude`), shared records (`shared.rs`, `record_prelude`),
-  dispatch pins (`dispatch.rs`, part preludes) and cleanup temporaries
-  (`cleanup.rs`) allocate outside the plan. Impact: its extent cannot be
-  described as qualifying all generated storage, even when every planned root
-  fits; the full extent's representability remains unverified. Change: route
-  these reservations through a shared target-qualified inventory, preserving
-  their lifetimes and ABI alignment requirements. Validate that each emitted
-  reservation participates, with target-boundary and overflow cases for each
-  class and unchanged waiting, shared, dispatch and cleanup behavior. Reopen
-  before extending any of these allocation paths or claiming complete frame
-  qualification; deferred because this change covers the existing planned roots.
 
 ## Open language questions
 
