@@ -314,7 +314,7 @@ mod tests {
             .filter(|tag| !tag.is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        assert_eq!(variants.len(), 29, "IoError's variant count");
+        assert_eq!(variants.len(), 30, "IoError's variant count");
         assert_eq!(tags, variants);
     }
 

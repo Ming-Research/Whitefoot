@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  atomic t = &store {
+    let freed = shared_map_release_reserve::<u8>(map: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

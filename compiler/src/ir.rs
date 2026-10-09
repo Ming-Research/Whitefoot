@@ -1268,6 +1268,13 @@ pub enum IrOperation {
     ConcurrentHashMapClear {
         table: IrValueId,
     },
+    /// [SHARE-1] releases the storage the table `table` keeps beyond what
+    /// holding its entries needs, without a hold of the object whose state
+    /// it is: the runtime takes only the table's own short lock and changes
+    /// no entry. Defines `u64`, the bytes released.
+    ConcurrentHashMapReleaseReserve {
+        table: IrValueId,
+    },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
     /// table `table`, creating it holding `None` when absent, and keeps the
     /// lock in `record`; with `read`, beside the other statements that only

@@ -16,7 +16,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   set bytes[3_u64] = 122_u8;
   let window = &bytes[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 0_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 0_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       if written == 0_u64 {
       } else {
@@ -27,7 +30,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       return exit_status(code: 211_u8);
     }
   }
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 3_u64, deadline: no_deadline) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: written) => {
       let code = cvt::<u64, u8>(written);
       return exit_status(code: code);

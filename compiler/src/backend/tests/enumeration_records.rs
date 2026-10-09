@@ -287,7 +287,10 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, o
         }
       }
       let no_deadline = None<std::time::Instant>();
-      match std::io::write_once(factory: files, output: out, source: window, start: 0_u64, end: available, deadline: no_deadline) {
+      let wait_cancel_1 = std::time::cancel_never();
+      let wait_outcome_1 = std::io::write_once(factory: files, output: out, source: window, start: 0_u64, end: available, deadline: no_deadline, cancel: &wait_cancel_1);
+      std::time::close_cancel_watch(watch: move wait_cancel_1);
+      match wait_outcome_1 {
         Ok(value: written) => {
         }
         Err(error: problem) => {

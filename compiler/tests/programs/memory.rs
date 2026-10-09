@@ -1,7 +1,12 @@
 use super::support::{build_program, compile_program};
 
 #[test]
-fn heap_reading_tracks_a_box_and_grown_cell_and_returns_to_its_initial_bound() {
+fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
+    // PRE-2: the map's two waves distinguish newly carved and reused nodes.
+    // A presized table avoids moves masking node deltas: on the unfixed
+    // runtime insertion contributes zero bytes and exits with status 8.
+    // Status 9 independently catches missing host-mapped cell accounting;
+    // 11 catches retained free nodes, and 14 catches drain/drop imbalance.
     let program = build_program(&compile_program("memory_statistics.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -60,4 +65,17 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
         assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
     }
+}
+
+/// A steady map's reserve goes on request: the release answers the bytes
+/// the heap reading falls by, exactly, for a small map whose reserve is a
+/// pool block larger than its cells, for a larger pooled one, and for one
+/// whose cells are mapped from the host; a second release answers nothing,
+/// and every entry stays [SHARE-1, PRE-2]. Exit codes 11 to 15, 21 to 25
+/// and 31 to 35 name the failing check of each map.
+#[test]
+fn releasing_a_map_reserve_lowers_the_heap_reading_by_its_bytes() {
+    let program = build_program(&compile_program("map_release_reserve.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
