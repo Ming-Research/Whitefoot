@@ -721,6 +721,8 @@ fn free_empty_requirement_is_discharged_only_by_a_range_fact() {
             // An element read in the guard triggers the instance relating
             // the observed value to the consumed window's length. Ordinary
             // entailment knows the guard, but has no relation to that length.
+            // The other arm consumes w into a branch-local owner, released
+            // at that arm's exit, so w is dead on both paths into the join.
             check(
                 &format!(
                     "fn probe(xs: &Array<u64, 1>, w: {window}) -> result: unit reads(xs) contract {{
@@ -728,6 +730,8 @@ fn free_empty_requirement_is_discharged_only_by_a_range_fact() {
 }} {{
   if xs^[0_u64] == {observed}_u64 {{
     free_empty(window: move w);
+  }} else {{
+    let remaining = move w;
   }}
   return unit;
 }}"
@@ -741,12 +745,12 @@ fn free_empty_requirement_is_discharged_only_by_a_range_fact() {
 #[test]
 fn owned_box_take_is_walked_in_a_participating_function() {
     check(
-        "fn probe(xs: &Array<u64, 1>, table: &Array<u64, 4>, cell: Box<u64>) -> result: u64 reads(xs), reads(table) contract {
+        "fn probe(xs: &Array<u64, 1>, table: &Array<u64, 4>, cell: Box<Slots<u64, 2>>) -> result: Slots<u64, 2> reads(xs), reads(table) contract {
   requires forall bounded(k in 0_u64..1_u64): xs^[k] < 4_u64;
 } {
   let taken = move cell.inner;
   let value = table^[xs^[0_u64]];
-  return taken;
+  return move taken;
 }",
         None,
     );
@@ -1160,20 +1164,20 @@ fn written_premise_measure_subscripts_receive_their_own_range_verdict() {
 #[test]
 fn invariant_measure_subscripts_are_walked_after_an_unrepresented_term() {
     for relation in [
-        "N + rows^[index].len == N + rows^[index].len",
-        "N - rows^[index].len == N - rows^[index].len",
-        "N == N + rows^[index].len - rows^[index].len",
+        "n + rows^[index].len == n + rows^[index].len",
+        "n - rows^[index].len == n - rows^[index].len",
+        "n == n + rows^[index].len - rows^[index].len",
     ] {
         for body in [
             format!("invariant same: {relation};"),
-            format!("loop (invariant same: {relation}) {{\n    break;\n  }}"),
+            format!("loop (\n    invariant same: {relation}\n  ) {{\n    break;\n  }}"),
         ] {
             for (index, expected) in [(0, None), (4, Some(SemanticRule::Op4))] {
-                // Ordinary entailment proves the identity. The symbolic N
+                // Ordinary entailment proves the identity. The symbolic n
                 // has no range-walk value, but every measure still owes OP-4.
                 check(
                     &format!(
-                        "fn probe<const N: u64>(indices: &Array<u64, 1>, rows: &Array<Slots<u8, 8>, 4>) -> result: unit reads(indices) contract {{
+                        "fn probe<const n: u64>(indices: &Array<u64, 1>, rows: &Array<Slots<u8, 8>, 4>) -> result: unit reads(indices) contract {{
   requires forall at(k in 0_u64..1_u64): indices^[k] == {index}_u64;
 }} {{
   let index = indices^[0_u64];
@@ -1193,7 +1197,7 @@ fn invariant_measure_subscripts_are_walked_after_affine_overflow() {
     let relation = "large + large + rows^[index].len == large + large + rows^[index].len";
     for body in [
         format!("invariant same: {relation};"),
-        format!("loop (invariant same: {relation}) {{\n    break;\n  }}"),
+        format!("loop (\n    invariant same: {relation}\n  ) {{\n    break;\n  }}"),
     ] {
         for (index, expected) in [(0, None), (4, Some(SemanticRule::Op4))] {
             // The target is an ordinary identity. Its expansion in the walk
