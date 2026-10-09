@@ -5,6 +5,20 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Range facts below elements, route A and range type invariants
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated), covering the choices the owner made on the status board on 2026-10-08 and 2026-10-09 that the specification log entry for v0.112 lists.
+
+Summary: Range facts read integer values below an element, a range type invariant replaces the decision that live storage carries no range fact across passes, ordinary obligations whose goals are range-term comparisons are proved by the range judgment while every other undischarged obligation keeps its ordinary verdict, `place_back`/`take_back` are placed writes, a computed give delivers its relations, instantiation runs two rounds, possibly aliased atomic targets that would establish a range type invariant are an unsupported capability for now, and a counted-element repair offers its range alternatives per row; grounds and measurements are in the range-field-terms, ordinary-range-obligations and range-type-invariants investigations.
+## 2026-10-09 Selected call results produced in place and read-through snapshots
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese: on the card asking whether the compiler may read a by-value array element directly from its source when the snapshot is only read and the source is unchanged until its last use, recommended option A, a compiler rule decided from checked effect facts with the language unchanged: "choose A" (translated); and on the item request approving the design decision of #310 that unobserved join parameters are removed before storage planning so a selected call result is written directly into its final place: "agreed" (translated).
+
+Summary: Internal block parameters and their incoming arguments that no operand, scrutinee, return, drop or cleanup observes are removed before storage planning, because a continuing match carried every binding in scope and an unobserved duplicate kept a provisional call result and the selected result in separate storage, copying the whole value on the unchanged arms (Halo's `instruction_call`). A by-value snapshot that is never written or exposed reads through its source wherever checked effects prove the source unchanged up to the use, and a use that cannot read through copies from the source right before it on that path only, because Halo's `prepare` copied each called element before reading its tag; making writers borrow-match instead and making indexed by-value reads borrows were refused. Read-only facts now cover range and run parameters as well [CALL-1, REF-4]. In Halo's call path both copies are gone from the optimized IR ([read-through snapshots](../research/investigations/in-place-parameters/DESIGN.md#read-through-snapshots)).
 ## 2026-10-09 A payload-only keyed statement takes nothing for an absent key
 
 Nodes: compiler/waiting-contexts/concurrent-map

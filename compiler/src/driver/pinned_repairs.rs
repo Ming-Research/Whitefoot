@@ -2133,6 +2133,85 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [OP-4, INV-1] a counted loop's header invariant read at its binder:
+    // the element need not exist at the empty run's entry or the last
+    // backedge, so the per-element fact moves to a range clause [RANGE-1].
+    RepairPair {
+        name: "loop-invariant-element-at-the-binder.wf",
+        rejected: br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant fits: rows^[i].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n",
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`; when the input guarantees it, require it of every element, `requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;`\n",
+        ],
+        repaired: &[
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) contract {
+  requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+} {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (i in 0_u64..n) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // Repairs that no goal selects.
     // -------------------------------------------------------------------

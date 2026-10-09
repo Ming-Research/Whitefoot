@@ -2574,6 +2574,8 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
     for source in [
         "struct Slots {\n}\n",
         "struct DivideByZero {\n}\n",
+        "fn place_back(window: u64, value: u64) -> result: unit pure {\n  return unit;\n}\n",
+        "fn shared_new(value: u64) -> result: unit pure {\n  return unit;\n}\n",
         "fn box_new() -> result: unit pure {\n  return unit;\n}\n",
     ] {
         with_resolution_sources(
@@ -2842,32 +2844,50 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[68].1, "Run");
     assert_eq!(first[68].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[69].1, "box_new");
-    assert_eq!(first[88].1, "box_segments_filled");
-    assert_eq!(first[103].1, "box_paged_new");
-    assert_eq!(first[114].1, "place_back");
-    assert_eq!(first[149].1, "grow_paged");
-    assert_eq!(first[153].1, "paged_page_len");
-    assert_eq!(first[164].1, "swap");
-    assert_eq!(first[168].1, "shared_new");
-    assert_eq!(first[171].1, "shared_map_new");
-    assert_eq!(first[174].1, "shared_share");
-    assert_eq!(first[177].1, "map_count");
-    assert_eq!(first[180].1, "map_scan");
-    assert_eq!(first[186].1, "map_clear");
-    assert_eq!(first[189].1, "key_set_new");
-    assert_eq!(first[191].1, "key_set_insert");
-    assert_eq!(first[194].1, "key_set_read_key");
-    assert_eq!(first[198].1, "free_empty");
+    assert_eq!(first[72].1, "array_filled");
+    assert_eq!(first[73].1, "T");
+    assert_eq!(first[74].1, "n");
+    assert_eq!(first[75].1, "value");
+    assert_eq!(first[76].1, "filled");
+    assert_eq!(first[77].1, "k");
+    assert_eq!(first[78].1, "slots_new");
+    assert_eq!(first[81].1, "ring_new");
+    assert_eq!(first[84].1, "box_array_filled");
+    assert_eq!(first[88].1, "filled");
+    assert_eq!(first[89].1, "k");
+    assert_eq!(first[90].1, "box_segments_filled");
+    assert_eq!(first[105].1, "box_paged_new");
+    assert_eq!(first[116].1, "place_back");
+    assert_eq!(first[151].1, "grow_paged");
+    assert_eq!(first[155].1, "paged_page_len");
+    assert_eq!(first[166].1, "swap");
+    assert_eq!(first[170].1, "shared_new");
+    assert_eq!(first[173].1, "shared_map_new");
+    assert_eq!(first[176].1, "shared_share");
+    assert_eq!(first[179].1, "map_count");
+    assert_eq!(first[182].1, "map_scan");
+    assert_eq!(first[188].1, "map_clear");
+    assert_eq!(first[191].1, "key_set_new");
+    assert_eq!(first[193].1, "key_set_insert");
+    assert_eq!(first[196].1, "key_set_read_key");
+    assert_eq!(first[200].1, "free_empty");
     // The opaque phase holds the five storage shapes, the cell, the
     // shared-object handle, the keyed table, the key set and the keyed
     // entries, 44 records: `Array` contributes five, `Slots` six, `Ring`
     // seven, `Segments` four, `Paged` five, `Box` four, `Shared`,
     // `ConcurrentHashMap` and `KeySet` three each and `Entries` four. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 201 records. The last record is `free_empty`'s
-    // value parameter; removing the former final release row changes no
-    // preceding ordinal.
-    assert_eq!(first.len(), 201);
+    // inventory holds 203 records where it held 397: v0.84's range
+    // postconditions of `box_array_filled` and `box_segments_filled` add
+    // their fact names and bound variables, seven records [RANGE-1], v0.94's
+    // `map_scan`, `map_clear` and `key_set_read_key` add thirteen [SHARE-1],
+    // v0.95's `Paged`, `Run`, `box_paged_new`, `grow_paged` and
+    // `paged_page_len` add fifteen, the range postcondition of `array_filled`
+    // adds its fact name `filled` and bound variable `k`, and v0.113 moves
+    // v0.110's `shared_map_release_reserve` and its three records to
+    // `std::process` [PRE-2]. The last record is `free_empty`'s value
+    // parameter, so that removal moves no preceding ordinal.
+    assert_eq!(first.len(), 203);
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
         first
@@ -2880,7 +2900,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 201, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 203, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2897,7 +2917,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 198)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 200)
             );
         },
     );

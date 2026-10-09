@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.112: releasing a map's reserve through the memory meter
+## 2026-10-09 v0.113: releasing a map's reserve through the memory meter
 
 Rules: changed PRE-1, PRE-2, SHARE-1
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller": the release takes the memory meter and writes it, `reads(map), writes(meter)` ("choose A", translated); and option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process": it moves to `std::process` as `release_map_reserve`, host functions may declare type parameters, and the prelude function `shared_map_release_reserve` is removed ("choose A", translated).
 
 Summary: PRE-1 removes `shared_map_release_reserve`, the last entry of the declaration preorder, so no other ordinal moves. PRE-2 adds `release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter)` to `std::process` and states that a host function may declare type parameters under the ordinary generic rules, every instantiation using the one definition the build supplies. SHARE-1 names the moved function; what it says of the release is unchanged. Selection ground: v0.111's `writes(map)` kept the call out of guards but made every caller up a server's command path write the store, while an atomic statement changes the same map under `reads`; the release's answer is a drop in the heap reading, so it writes the meter as `heap_in_use` does, which also keeps it out of guards, and the meter's type lives in `std::process`, which the prelude does not reference.
+
+## 2026-10-09 v0.112: range facts below elements, ordinary obligations owed to the range judgment, range type invariants
+
+Rules: changed GRAM-4, GIVE-1, TYPE-11, PRE-1, ENT-1, ENT-5, RANGE-1, RANGE-2, RANGE-3, RANGE-4, RANGE-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated). The choices it records were the owner's earlier, on the status board: on 2026-10-08, the enum-payload scope with copy provenance and precise field support of range terms (two cards, option A each), route A for range facts reaching ordinary proofs, and range type invariants for how an invariant over stored data reaches its callers; on 2026-10-09, a computed give carrying its relations, one more instantiation round, keeping the per-row header refusal with an improved repair, and accepting the second round's check-time cost (option A each).
+
+Summary: Range terms read below an element through struct fields, `Box` content, an enum payload by variant (its tag an integer read), a nested subscript and a final measure, with copies defined by their source and located writes keeping disjoint projections (RANGE-1, RANGE-2, RANGE-3, RANGE-5). In a function that takes part in the range judgment, an operation domain, subscript bound, call requirement or invariant obligation that ordinary entailment leaves open, and whose goal is a comparison or conjunction of comparisons over range terms, is proved by the range judgment at its site and otherwise keeps its ordinary verdict (RANGE-2, RANGE-3, RANGE-4, ENT-1). A struct may declare a range type invariant, owed and assumed at TYPE-11's sites (GRAM-4, TYPE-11, RANGE-1 to RANGE-3). `place_back` and `take_back` are placed writes, `array_filled` states its contents as `box_array_filled` does (RANGE-2, PRE-1), a computed integer `give` delivers its relations as a `let` does (GIVE-1, ENT-5), and RANGE-3 step 1 forms a second instantiation round. Selection ground: Snowghost's stored left inverse and its sibling move, which needed facts below elements, at ordinary obligations and across calls; the measured cost is +6.8% conformance check time, all in range certificates.
 
 ## 2026-10-09 v0.111: releasing a map's reserve
 

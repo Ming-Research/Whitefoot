@@ -122,6 +122,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn array_filled<T: copy, const n: u64>(value: T) -> result: Array<T, n> pure contract {
   ensures result.len == n;
+  ensures forall filled(k in 0_u64..result.len): result[k] == value;
 };
 "#,
     ),

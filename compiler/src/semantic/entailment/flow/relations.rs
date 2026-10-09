@@ -3,6 +3,7 @@
 
 use super::super::state::AffineRelationInstance;
 use super::super::{LoopFormationFailure, LoopRelationEvidence};
+use super::render::BinderSpelling;
 use super::*;
 
 pub(super) struct NextHeader<'a> {
@@ -368,20 +369,24 @@ impl Reasoning<'_, '_, '_> {
             proofs.push(proof.derivation.expect("formed subscript has evidence"));
             Ok(())
         } else {
-            let counted_next_binder = next.map(|next| next.binder);
-            let offset = match offset {
-                CheckedExpression::Binding { binding, .. } => self
-                    .input
-                    .render_header_binding(*binding, counted_next_binder),
-                _ => self.input.render_expression(offset),
+            let counted = next.map(|next| BinderSpelling::Next(next.binder));
+            let binding = match offset {
+                CheckedExpression::Binding { binding, .. } => Some(*binding),
+                _ => None,
+            };
+            let rendered = match binding {
+                Some(binding) => self.input.render_header_binding(binding, counted),
+                None => self.input.render_expression(offset),
             };
             let required = format!(
-                "{offset} < {}.len",
-                self.input.render_header_place(base, counted_next_binder)
+                "{rendered} < {}.len",
+                self.input.render_header_place(base, counted)
             );
             Err(Some(LoopFormationFailure {
                 site: site.clone(),
                 required,
+                offset: binding,
+                extent: format!("{}.len", self.input.render_place(base)),
             }))
         }
     }
