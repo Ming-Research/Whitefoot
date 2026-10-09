@@ -15,7 +15,12 @@ mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
-pub(crate) use places::{PlaceRoot as CheckedPlaceRoot, ResolvedPlace as CheckedResolvedPlace};
+#[cfg(test)]
+pub(crate) use places::UnprovedSeparations;
+pub(crate) use places::{
+    PlaceMap as CheckedPlaceMap, PlaceRoot as CheckedPlaceRoot, PlaceStep as CheckedResolvedStep,
+    ResolvedPlace as CheckedResolvedPlace,
+};
 mod postcondition;
 mod range_facts;
 mod range_judgment;

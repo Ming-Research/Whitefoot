@@ -11,13 +11,28 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.114: no merging or reordering of waiting calls
+## 2026-10-09 v0.116: no merging or reordering of waiting calls
 
 Rules: changed EFF-3
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated): EFF-3's licence applies only to calls that do not wait.
 
 Summary: EFF-3 licensed deduplicating and reordering any `pure`, non-allocating call with equal arguments, while a `pure waits` function may change shared objects whose changes take effect in the execution's order (WAIT-2, SHARE-3) and appear in no row (SHARE-2); the two rules conflicted with no stated priority. The licence now excludes waiting calls. No compiler behaviour changes today, since the backend derives no function attributes from rows; the rule closes the hazard before it does. Selection ground: found while answering the owner's question about Shared and effect rows on the relaxed-fields research (#301).
+## 2026-10-09 v0.115: scientific float spelling
+
+Rules: changed FORM-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated): change the specification so that a candidate with an exponent has an integer component of one digit 1–9, then select by byte count and lexicographic order.
+
+Summary: FORM-5's canonical float spelling now considers only decimals whose integer component is one nonzero digit when an exponent is present, then keeps the fewest-bytes, least-bytes selection. Before, a zero integer component won every tie (500 was `0.5e3`) and the compiler, which never generated that form, refused it, so no spelling of 500 satisfied both; a longer integer component could also be shortest (`12.345e9`). Now 500 is `5.0e2` and 12345000000 is `1.2345e10`. Selection ground: Firn-wf reported the mismatch while writing `500.0`-valued constants, and scientific notation is the form writers produce.
+## 2026-10-09 v0.114: copied cells and helper-call updates in indexed reductions
+
+Rules: changed PAR-2
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: An indexed operation update's accumulator operand may be one fresh, immutable, single-use copy of the same cell made earlier in the same block (`let old = R[e]; let next = old op x; set R[e] = next;`), with no root access or write to the subscript's or contribution's support in between. A call is an update of an indexed family when its reference argument reaches the root and the callee carries an indexed summary for that parameter: its whole body uses the parameter only for measure reads and admitted updates of families below its referent, through an acyclic chain of such calls; the caller's family takes the summary's kind. A family is identified by its resolved storage place and cell projection, so updates through different references to one storage are one family with one operation. The callee's net effect is a multiset of cell contributions under the family operation, or a set of cells receiving its constant, reading no root contents, so per-cell recombination stays exact. The selection ground is the pre-registered criterion: Snowghost's recount admitted 17 of its 32 histogram-like loops, exactly the six predicted beyond v0.107's 11 ([results](../research/investigations/indexed-reductions/DESIGN.md#copied-cells-and-helper-calls)).
+
 ## 2026-10-09 v0.113: guards observe cancellation through read-only shared handles
 
 Rules: changed TYPE-2, TYPE-9, TYPE-11, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, PRE-2

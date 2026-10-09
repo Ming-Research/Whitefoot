@@ -6,6 +6,7 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod indexed;
 mod loops;
 mod parameters;
 mod prelude;
@@ -22,7 +23,7 @@ mod work;
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
-use crate::semantic::permission::CallStorageEffects;
+use crate::semantic::permission::PermissionSite;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
@@ -477,6 +478,11 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    if overlap == OverlapLowering::On {
+        builder.places = Some(std::rc::Rc::new(
+            crate::semantic::CheckedPlaceMap::for_function(function),
+        ));
+    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -758,6 +764,10 @@ struct IrBuilder<'program> {
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
     /// Indexed families, their current ranges, and source/private storage modes.
     indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
+    indexed_blocks: Vec<indexed::BlockBinding>,
+    /// The checker's resolved origins, shared by this body and its chunks.
+    places: Option<std::rc::Rc<crate::semantic::CheckedPlaceMap>>,
+    indexed_block_families: Vec<crate::semantic::IndexedReduction>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -825,6 +835,9 @@ impl<'program> IrBuilder<'program> {
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
             indexed_roots: Vec::new(),
+            indexed_blocks: Vec::new(),
+            places: None,
+            indexed_block_families: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -989,8 +1002,9 @@ impl<'program> IrBuilder<'program> {
     ///   and the join, where the value does not exist yet; and
     /// - no member releases a place that overlaps a place another member
     ///   borrows at entry or loads through during argument formation. These
-    ///   places come from the checker; a conflict ends the group before the
-    ///   new member's argument formation, after earlier members have joined.
+    ///   places and pair-local separation answers come from the checker; a
+    ///   conflict ends the group before the new member's argument formation,
+    ///   after earlier members have joined.
     ///   The new member can start another group, and disjoint written Box
     ///   references remain eligible together.
     ///
@@ -1006,7 +1020,7 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
+        let finish = |members: &mut Vec<(IrValueId, &PermissionSite)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
@@ -1053,17 +1067,29 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
-                let effects = &site.storage_effects;
-                if members
-                    .iter()
-                    .any(|(_, previous)| effects.conflicts(previous))
-                {
+                let conflict = members.iter().find_map(|(_, previous)| {
+                    let pair = permissions.storage_pairs.iter().find(|pair| {
+                        pair.first == previous.statement && pair.second == site.statement
+                    });
+                    match pair {
+                        Some(pair) if pair.conflict.is_none() => None,
+                        Some(pair) => Some(pair.ledger.clone()),
+                        // Every current permitted call pair is recorded. If a
+                        // new producer omits one, it cannot authorize overlap.
+                        None => Some(format!(
+                            "PAR actualization  {}  pair({}, {})  narrowed: unavailable pair-local storage evidence",
+                            self.function_name, previous.callee_name, site.callee_name,
+                        )),
+                    }
+                });
+                if let Some(line) = conflict {
+                    self.synthesis.borrow_mut().note_storage_conflict(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push((value, effects));
+                members.push((value, site));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
@@ -1155,8 +1181,9 @@ impl<'program> IrBuilder<'program> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         let condition = self.expression(conditional.scrutinee)?;
         let mut values = vec![condition];
-        for argument in arguments {
-            values.push(self.expression(argument)?);
+        for (position, argument) in arguments.iter().enumerate() {
+            let value = self.expression(argument)?;
+            values.push(self.indexed_call_argument(conditional.site, position, value)?);
         }
         let mut guard = Self::new(
             self.context(),
@@ -1884,7 +1911,11 @@ impl<'program> IrBuilder<'program> {
                 let source_arguments = arguments.iter().map(lower_source_argument).collect();
                 let arguments = arguments
                     .iter()
-                    .map(|argument| self.expression(argument))
+                    .enumerate()
+                    .map(|(position, argument)| {
+                        let value = self.expression(argument)?;
+                        self.indexed_call_argument(call, position, value)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 // The definition takes the callee's declared IR result, which
                 // carries the result mode: a borrow-returning callee delivers

@@ -185,23 +185,21 @@ fn equivalent_spellings(
     negative: bool,
 ) -> Option<Vec<String>> {
     let digits = significand.to_string();
-    let mut spellings = Vec::with_capacity(digits.len() + 1);
+    let mut spellings = Vec::with_capacity(2);
     spellings.push(with_sign(
         fixed_spelling(&digits, decimal_exponent)?,
         negative,
     ));
-    for point in 1..=digits.len() {
-        let exponent = decimal_exponent.checked_add(i32::try_from(digits.len() - point).ok()?)?;
-        if exponent == 0 {
-            continue;
-        }
+    // [FORM-5] an exponent form's integer component is one nonzero digit.
+    let exponent = decimal_exponent.checked_add(i32::try_from(digits.len() - 1).ok()?)?;
+    if exponent != 0 {
         let mut spelling = String::new();
-        spelling.push_str(&digits[..point]);
+        spelling.push_str(&digits[..1]);
         spelling.push('.');
-        if point == digits.len() {
+        if digits.len() == 1 {
             spelling.push('0');
         } else {
-            spelling.push_str(&digits[point..]);
+            spelling.push_str(&digits[1..]);
         }
         spelling.push('e');
         spelling.push_str(&exponent.to_string());
@@ -261,6 +259,7 @@ mod tests {
             b"0.0001_f64",
             b"1.0e-5_f64",
             b"6.022e23_f64",
+            b"1.2345e10_f64",
         ] {
             assert!(
                 parse_float_literal(spelling).is_some(),
@@ -276,6 +275,8 @@ mod tests {
             b"0.00001_f64",
             b"6.0220e23_f64",
             b"1.0e999_f64",
+            b"12.345e9_f64",
+            b"0.5e3_f64",
         ] {
             assert!(
                 parse_float_literal(spelling).is_none(),

@@ -13,6 +13,27 @@ Owner-approved: On the shared status board of 2026-10-09, written in Chinese, th
 
 Summary: The merge-and-reorder licence of a `pure` row covers only calls that do not wait, because a waiting function's shared-object changes take effect in the execution's order and appear in no row; redefining `pure` and a backend-only exclusion were refused.
 
+## 2026-10-09 Scientific float spelling
+
+Nodes: language/surface-form/float-literals
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated).
+
+Summary: A float's canonical spelling is chosen among scientific forms (one nonzero integer digit before an exponent) and the fixed form, by bytes and then lexicographic order, so the specification agrees with what the compiler generated and with how writers spell numbers; the rejected alternatives were generating the `0.5e3` forms the old rule selected and accepting every rounding decimal.
+## 2026-10-09 Copied cells and helper-call updates in indexed reductions
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Loop permission admits a copied-cell accumulator operand and helper calls whose callee treats a reference parameter as an indexed accumulator, identifying families by resolved storage, because both preserve the per-cell order-independence argument and recover the six natural spellings that kept Snowghost below its criterion. Lowering gives every root with a call-updated family one private block per leaf with the root's storage shape and measures, all of that root's families in it, identity-filled for operations and filled with the constant's inverted-low-bit sentinel for marks, because a callee indexes the whole root by logical index and may read its measures, so a dense family slab cannot be passed; passing dense slabs or rewriting the callee are rejected ([lowering](../research/investigations/indexed-reductions/DESIGN.md#lowering)).
+## 2026-10-09 The release/borrow group boundary uses proved separations
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request "approve adding 'with the same proved separations used by the parallel permission' to the parallel-lowering decision that keeps a released place and a borrowed place out of one overlap group" with "agree" (translated); earlier the same day, on Snowghost's card handing the owning-element serialization to Whitefoot: "choose A" (translated).
+
+Summary: The overlap-group boundary that keeps a call releasing storage apart from a call borrowing it compares released and borrowed places with the separations the permission judgment proved for that ordered pair, because the unproved oracle it used serialized sibling calls on proved-disjoint ranges of an owning-element run (Snowghost's layout lost its 4-thread parallelism between releases 631d3ff and b2209fd); unknown roots and unproved overlap still split the group, and every member's borrowed and released places now come from the same statements as its footprint, which closes conditional-call and call-rooted-match members that recorded none.
 ## 2026-10-09 Guards observe cancellation through read-only shared handles
 
 Nodes: language/waiting/shared-objects, language/system-interface/context-cancellation, compiler/waiting-contexts, compiler/waiting-contexts/state-locks
