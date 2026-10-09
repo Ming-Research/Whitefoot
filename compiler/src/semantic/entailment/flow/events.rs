@@ -148,8 +148,10 @@ impl Input<'_, '_> {
             return false;
         }
         let mut descriptor = support.clone();
-        // A direct page measure observes the current initialized extent. Its
-        // canonical page offset identifies a spelling, not a captured slice.
+        // [MSR-1, MSR-2] a direct page length reads the owner's current len.
+        // Removing its canonical page step makes writes(window.len), as in
+        // place_back and take_back, reach that support; a whole-owner write,
+        // as in grow_paged, reaches it through ordinary prefix overlap.
         if matches!(descriptor.path.last(), Some(PlaceStep::Page(offset))
             if offset.is_current_spelling())
         {

@@ -1807,10 +1807,13 @@ impl<'unit> TypeContext<'unit> {
                 range_referent =
                     !range_step && (pages || matches!(ty, CheckedType::Segments { .. }));
                 projections.push(if pages {
-                    let GoalProjection::Subscript(offset) = projection else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    GoalProjection::Page(offset)
+                    match projection {
+                        GoalProjection::Subscript(offset) => GoalProjection::Page(offset),
+                        GoalProjection::FormalSubscript { ordinal } => {
+                            GoalProjection::FormalPage { ordinal }
+                        }
+                        _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                    }
                 } else {
                     projection
                 });

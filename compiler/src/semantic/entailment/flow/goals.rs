@@ -583,7 +583,9 @@ impl Input<'_, '_> {
             }
             // [MSR-1] the same element selection a written subscript makes;
             // the offset is what the reader substitutes, not the type.
-            GoalProjection::FormalSubscript { .. } => element_type(input, self.context.elements),
+            GoalProjection::FormalSubscript { .. } | GoalProjection::FormalPage { .. } => {
+                element_type(input, self.context.elements)
+            }
         }
     }
 
@@ -642,18 +644,22 @@ impl Input<'_, '_> {
                     .body_projections(PlaceRoot::Binding(binding), projections)
                     .iter()
                     .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal } => self
+                        GoalProjection::FormalSubscript { ordinal }
+                        | GoalProjection::FormalPage { ordinal } => self
                             .function
                             .parameters
                             .get(*ordinal as usize)
                             .map(|offset| {
-                                GoalProjection::Subscript(
-                                    CapturedValue::new(
-                                        CaptureId::source(u32::MAX),
-                                        CapturedTerm::Binding(offset.binding),
-                                    )
-                                    .goal_identity(),
+                                let offset = CapturedValue::new(
+                                    CaptureId::source(u32::MAX),
+                                    CapturedTerm::Binding(offset.binding),
                                 )
+                                .goal_identity();
+                                if matches!(projection, GoalProjection::FormalPage { .. }) {
+                                    GoalProjection::Page(offset)
+                                } else {
+                                    GoalProjection::Subscript(offset)
+                                }
                             }),
                         other => Some(*other),
                     })
@@ -1676,8 +1682,8 @@ pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection
             field: *field,
         }),
         PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
-        // A page, like a range, retains its formation identity: its length
-        // is captured then, even if another formation selects the same page.
+        // [ENT-2] retain the supplied page identity: borrowed pages carry
+        // their formation capture; direct selectors are already canonical.
         PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
         // [REF-4] a range step's endpoint captures identify the formation
         // whose immutable affine image gives the anonymous range its length.

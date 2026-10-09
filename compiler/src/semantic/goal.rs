@@ -225,6 +225,11 @@ pub(crate) enum GoalProjection {
     FormalSubscript {
         ordinal: u32,
     },
+    /// A page selection whose offset names a value parameter, instantiated
+    /// like `FormalSubscript` while retaining the distinct [REF-4] page path.
+    FormalPage {
+        ordinal: u32,
+    },
 }
 
 impl GoalProjection {
@@ -240,6 +245,7 @@ impl GoalProjection {
             Self::Page(offset) => PlaceStep::Page(offset),
             Self::Range(range) => PlaceStep::Range(range),
             Self::FormalSubscript { .. } => PlaceStep::Index(CapturedValue::unknown()),
+            Self::FormalPage { .. } => PlaceStep::Page(CapturedValue::unknown()),
         }
     }
 }

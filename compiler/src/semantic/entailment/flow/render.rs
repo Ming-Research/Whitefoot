@@ -661,6 +661,10 @@ impl Input<'_, '_> {
                     rendered.push_str(&format!("[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
+                GoalProjection::FormalPage { ordinal } => {
+                    rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
+                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
+                }
             }
         }
         rendered

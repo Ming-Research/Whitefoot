@@ -607,10 +607,10 @@ impl ResolvedPlace {
         for step in &mut self.path {
             match step {
                 PlaceStep::Index(offset) => *offset = offset.goal_identity(),
-                // [REF-4] a page captures its extent at formation, and an
-                // append between two formations of one page index gives them
-                // different lengths, so a page keeps its formation captures
-                // exactly as a range does.
+                // [ENT-2, REF-4] a borrowed page keeps its formation capture
+                // because its extent survives append. Direct page selectors
+                // arrive canonicalized by CheckedRangeRoot::proof_place;
+                // preserving that identity keeps the two cases distinct.
                 PlaceStep::Range(_) | PlaceStep::Page(_) => {}
                 PlaceStep::Field(_)
                 | PlaceStep::Descendant(_)

@@ -2507,6 +2507,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
                             Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
+                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
+                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                        ),
                         other => *other,
                     };
                     image = image

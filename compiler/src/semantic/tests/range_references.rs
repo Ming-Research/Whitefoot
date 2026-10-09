@@ -1005,6 +1005,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 
 /// Every selector recorded inside a proof-only measure must be answered,
 /// even when the measure's value is nonnegative without any additional fact.
+/// These proof-only reads exhibit no body effect [EFF-2].
 #[test]
 fn direct_run_measures_judge_selectors_in_requirements_and_invariants() {
     for (storage, selector, outer_bound) in [
@@ -1025,7 +1026,7 @@ fn direct_run_measures_judge_selectors_in_requirements_and_invariants() {
                     )
                 };
                 let source = format!(
-                    r#"fn inspect(values: &{storage}, item: u64) -> result: unit reads(values) contract {{
+                    r#"fn inspect(values: &{storage}, item: u64) -> result: unit pure contract {{
   requires item {bound} {outer_bound};
 {requirement}}} {{
 {invariant}  return unit;
@@ -1055,6 +1056,115 @@ fn main() -> status: std::process::ExitStatus pure {{
             }
         }
     }
+}
+
+/// A page index in a contract is a formal ordinal, not a captured subscript.
+/// Formation, body checking and call substitution must retain its page path;
+/// the caller deliberately gives the value parameters different ordinals.
+#[test]
+fn page_measure_requirements_substitute_the_page_parameter() {
+    let source = |bound| {
+        format!(
+            r#"fn at(values: &Paged<u64>, item: u64, slot: u64) -> result: u64 reads(values) contract {{
+  requires item < values^.pages.len;
+  requires slot < values^.pages[item].len;
+}} {{
+  return values^.pages[item][slot];
+}}
+
+fn forward(offset: u64, pages: &Paged<u64>, selected: u64) -> result: u64 reads(pages) contract {{
+  requires selected < pages^.pages.len;
+  requires offset {bound} pages^.pages[selected].len;
+}} {{
+  return at(values: pages, item: selected, slot: offset);
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    assert_accepts(source("<").as_bytes());
+    assert_call_goal(
+        source("<=").as_bytes(),
+        CallRequirementDisposition::Unproved,
+        "offset < pages^.pages[selected].len",
+    );
+}
+
+/// [ENT-2] separate direct reads of one page share a term while its owner
+/// length and selector support remain unchanged.
+#[test]
+fn direct_page_length_reuses_a_fact_at_a_later_read() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/ent2-pos-direct-page-length-reuse.wf"
+    ));
+}
+
+/// [MSR-2] canonical identity does not make a direct page length immutable:
+/// place_back writes the owner's length and kills the earlier equality.
+#[test]
+fn direct_page_length_fact_dies_after_place_back() {
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-append.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.pages[0].len == 1_u64",
+    );
+}
+
+/// [ENT-2, REF-4] an append preserves a borrow's captured length, while a
+/// later direct read of the same page cannot inherit that captured value.
+#[test]
+fn borrowed_page_length_survives_append_without_identifying_a_later_direct_read() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/ent2-pos-borrowed-page-length-after-append.wf"
+    ));
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.pages[0].len == 1_u64",
+    );
+}
+
+/// The whole-cell write of grow_paged reaches the same direct length support
+/// as a write to p.inner.len, even though its contract preserves total len.
+#[test]
+fn direct_page_length_fact_dies_after_grow_paged() {
+    assert_call_goal(
+        include_bytes!(
+            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-grow.wf"
+        ),
+        CallRequirementDisposition::Unproved,
+        "p^.inner.pages[0].len == 1_u64",
+    );
+}
+
+/// [MSR-2] removal reaches direct length support through take_back's len
+/// write. The later page selector is bounded again, so the failed obligation
+/// is the element's bound against the page length, not the page-count bound.
+#[test]
+fn direct_page_element_bound_dies_after_take_back() {
+    with_semantics(
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-stale-length.wf"
+        ),
+        |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the stale element bound must be refused: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Op4);
+            let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } = issue.kind()
+            else {
+                panic!("expected the element's bounds obligation: {issue:?}");
+            };
+            assert_eq!(residual, "1_u64 < values^.pages[0].len");
+        },
+    );
 }
 
 /// The checked paths, rather than merely acceptance, must identify the same
@@ -1168,10 +1278,6 @@ fn direct_run_elements_report_the_undischarged_inner_bound() {
         .as_slice(),
         include_bytes!(
             "../../../../tests/conformance/cases/op4-neg-segment-count-is-not-element-length.wf"
-        )
-        .as_slice(),
-        include_bytes!(
-            "../../../../tests/conformance/cases/op4-neg-paged-page-place-stale-length.wf"
         )
         .as_slice(),
         include_bytes!(

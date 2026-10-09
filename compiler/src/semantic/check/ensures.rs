@@ -931,7 +931,10 @@ impl<'unit> Checker<'_, 'unit> {
             ) if projections.iter().any(|projection| {
                 matches!(
                     projection,
-                    GoalProjection::Subscript(_) | GoalProjection::FormalSubscript { .. }
+                    GoalProjection::Subscript(_)
+                        | GoalProjection::Page(_)
+                        | GoalProjection::FormalSubscript { .. }
+                        | GoalProjection::FormalPage { .. }
                 )
             }) =>
             {

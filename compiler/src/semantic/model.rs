@@ -1725,6 +1725,9 @@ impl CheckedRangeRoot {
                 };
                 place.path.push(match segment {
                     CheckedSegmentSelect::Page(index) => {
+                        // [ENT-2, MSR-1] a direct selection reads the current
+                        // extent, so its selector compares as an index. This
+                        // is not the captured path of a source `&p.pages[k]`.
                         super::places::PlaceStep::Page(index.captured.goal_identity())
                     }
                     _ => segment.place_step(),
