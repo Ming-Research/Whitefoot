@@ -497,12 +497,23 @@ outside the plan; exact stored-type qualification remains separate.
 
 Split dispatch frames, parallel lane frames and context argument frames keep
 their shared-object interfaces; zero-sized and over-aligned ordinary roots
-keep the struct fallback. No post-change CI or runtime result is recorded yet.
-The temporary job remains for this comparison.
+keep the struct fallback.
 
-### Candidate rule, not an implementation selection
+**Result after the change**
+([run 37871073792](https://github.com/Ming-Research/Whitefoot/actions/runs/37871073792),
+head `0a0776ce9`, same toolchain): `let-union-mixed-frame` now matches
+`let-union-uniform-frame`, one optimized `memcpy` (the 12 bytes of the
+comparator the call needs) and a 56-byte static stack, against three copies
+including the dead 152-byte snapshot and 296 bytes before. The five first
+witnesses are unchanged. The explanation survives its falsifier for this
+shape. The job did not execute the programs; native correctness rests on the
+gate. The temporary job is removed; its definition is in this branch's
+history at `0a0776ce9`.
 
-A by-value let could read through its source place when, on every path from
+### Candidate rule, not selected
+
+The results above show the snapshot copy follows the frame representation,
+not a later write, so this rule was not needed for the observed cost. A by-value let could read through its source place when, on every path from
 the let to each use of the binding, nothing may write that source: no `set`
 to it or overlapping storage, no call whose writes reach it, and no write
 through a reference reaching it. The binding must never be written or have

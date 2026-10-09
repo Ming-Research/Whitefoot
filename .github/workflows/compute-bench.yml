@@ -9,23 +9,17 @@
 # i9-14900K. Remove that job with the investigation's harness when the
 # alignment decision no longer needs re-measuring.
 #
-# With `experiment: inplace-lets`, inspect the five aggregate-let witnesses
-# on hosted x86-64 Linux. Remove this temporary job after the investigation
-# records the emitted and optimized snapshots; it supplies no gate verdict.
-#
 # research-boundary: manual-only
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
 #
-# FAILURE POLICY. The scoreboard fails on a `deps`, `build` or `verify` failure and on
+# FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
 # nothing else. The manual `compare` step's exit status is the reducer's, and the
 # reducer fails only on a missing or malformed row. No ratio, no spread, no
 # ordering and no elapsed time selects a pass anywhere in this workflow.
 # Performance-regression verdicts belong to compute-regression.yml, outside
 # deterministic `make check`. `timeout-minutes` bounds a stuck runner and
 # decides no source-language result.
-# The inplace-lets job fails on tool or instrument errors, never on copy
-# counts or frame sizes. Its results stay in the in-place-parameters record.
 #
 # Every table a batch relies on is copied by hand into
 # `research/investigations/compute-runtime/RESULTS.md` with its run id,
@@ -40,9 +34,9 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, code placement, or aggregate-let IR inspection
+        description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement, inplace-lets]
+        options: [scoreboard, placement]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -113,7 +107,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment == 'scoreboard'
+    if: inputs.experiment != 'placement'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -362,126 +356,3 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
-
-  inplace-lets:
-    name: in-place let snapshots (x86-64)
-    if: inputs.experiment == 'inplace-lets'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install the gate's host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/inplace-lets-scratch" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/inplace-lets"
-          {
-            git rev-parse HEAD
-            uname -a
-            /usr/bin/clang --version
-            rustc -vV
-            cargo --version
-            echo 'Compiler profile: gate; host flags: -O2 -target x86_64-unknown-linux-gnu'
-            echo 'Assembly additionally requests -fstack-usage; no noinline or IR rewrites.'
-          } > "$RUNNER_TEMP/inplace-lets/manifest.txt"
-          cat "$RUNNER_TEMP/inplace-lets/manifest.txt"
-
-      - name: Fetch locked compiler dependencies
-        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-
-      - name: Build the compiler with the gate profile
-        run: |
-          perl .github/run-check.pl compiler/build \
-            cargo build --manifest-path compiler/Cargo.toml --profile gate \
-            --bin whitefootc --locked --offline
-
-      # Start with one small witness before the rest. No performance is timed;
-      # the artifacts answer a code-generation question on this exact toolchain.
-      - name: Emit the witnesses, optimized LLVM and x86-64 assembly
-        run: |
-          for name in let-no-write let-write-other-path let-write-after-last-use let-write-before-use let-field-of-param let-union-mixed-frame let-union-uniform-frame; do
-            out="$RUNNER_TEMP/inplace-lets/$name"
-            compiler/target/gate/whitefootc --emit-llvm -o "$out.ll" \
-              "research/investigations/in-place-parameters/witnesses/$name.wf"
-            /usr/bin/clang -O2 -target x86_64-unknown-linux-gnu -x ir \
-              -S -emit-llvm "$out.ll" -o "$out.opt.ll"
-            /usr/bin/clang -O2 -target x86_64-unknown-linux-gnu -x ir \
-              -S -fstack-usage "$out.ll" -o "$out.s"
-          done
-
-      - name: Print copy calls and the reader's stack frame
-        run: |
-          python3 - "$RUNNER_TEMP/inplace-lets" <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          root = pathlib.Path(sys.argv[1])
-          symbol = "wf_inplace_let_probe"
-
-          def body(text):
-              found = re.findall(
-                  rf'^define\b[^\n]*@"?{symbol}"?\([^\n]*\{{\n(.*?)^\}}',
-                  text, re.M | re.S)
-              if len(found) != 1:
-                  raise ValueError(f"expected one definition of {symbol}, got {len(found)}")
-              return found[0]
-
-          def copies(text, operation):
-              return len(re.findall(
-                  rf'\b(?:call|invoke)\b[^\n]*@"?(?:llvm\.)?{operation}(?:\.[\w.]+)?"?\(',
-                  text))
-
-          # Instrument controls run only here in CI: declarations are not calls,
-          # both intrinsic and libc calls count, and a missing reader is an error.
-          assert copies('declare void @llvm.memmove.p0.p0.i64()', 'memmove') == 0
-          assert copies('call void @llvm.memmove.p0.p0.i64()', 'memmove') == 1
-          assert copies('tail call ptr @memcpy()', 'memcpy') == 1
-          try:
-              body('')
-          except ValueError:
-              pass
-          else:
-              raise AssertionError('missing reader was accepted')
-
-          rows = ['witness\traw_memcpy\traw_memmove\topt_memcpy\topt_memmove\tstatic_stack_bytes']
-          for name in ('let-no-write', 'let-write-other-path', 'let-write-after-last-use',
-                       'let-write-before-use', 'let-field-of-param',
-                       'let-union-mixed-frame', 'let-union-uniform-frame'):
-              raw = body((root / f'{name}.ll').read_text())
-              opt = body((root / f'{name}.opt.ll').read_text())
-              stack = [line.split('\t') for line in (root / f'{name}.su').read_text().splitlines()
-                       if line.split('\t')[0].rsplit(':', 1)[-1] == symbol]
-              if len(stack) != 1 or len(stack[0]) != 3 or stack[0][2] != 'static':
-                  raise ValueError(f'{name}: missing, ambiguous or non-static stack usage: {stack}')
-              size = int(stack[0][1])
-              rows.append('\t'.join(map(str, (name, copies(raw, 'memcpy'), copies(raw, 'memmove'),
-                                             copies(opt, 'memcpy'), copies(opt, 'memmove'), size))))
-          report = '\n'.join(rows) + '\n'
-          print(report, end='')
-          (root / 'summary.tsv').write_text(report)
-          PY
-          {
-            echo '## Aggregate let snapshots'
-            echo 'Counts cover wf_inplace_let_probe only; declarations and other functions are excluded.'
-            echo 'Stack bytes are Clang static stack usage (.su), not just the subq immediate.'
-            echo 'Zero copy calls may still mean scalar/vector copies; inspect .opt.ll and .s.'
-            echo '```text'
-            cat "$RUNNER_TEMP/inplace-lets/summary.tsv"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: inplace-lets-x86-64
-          if-no-files-found: warn
-          path: ${{ runner.temp }}/inplace-lets/
