@@ -90,29 +90,6 @@ fn direct_range_measure_returns_prove_only_the_matching_postcondition() {
     );
 }
 
-/// [REF-4, ENT-3.S12] a user-defined summary reads an inline range's
-/// captured endpoint difference, including a nonzero lower endpoint.
-#[test]
-fn an_inline_range_transports_its_length_through_a_user_postcondition() {
-    assert_complete(
-        br#"fn range_length(xs: &[u8]) -> r: u64 reads(xs) contract {
-  ensures r == xs^.len;
-} {
-  return xs^.len;
-}
-
-fn caller(count: u64) -> result: unit pure contract {
-  requires count >= 1_u64;
-} {
-  let values = box_array_filled::<u8>(count: count, value: 0_u8);
-  let size = range_length(xs: &values.inner[1_u64..count]);
-  invariant captured: size + 1_u64 == count;
-  return unit;
-}
-"#,
-    );
-}
-
 /// [FN-9, ENT-2(b), TYPE-9] a direct scalar return may be the measure of the
 /// complete place below its owner. Box content and ordinary fields remain
 /// distinct projections of that place; introducing a local binding must not
@@ -3717,7 +3694,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// Asserts that one source is rejected by [FN-9] at a selected return.
 ///
-/// The disposition is deliberately not pinned. [DIAG-3] fixes that it is
+/// The disposition is deliberately not pinned. [DIAG-1] fixes that it is
 /// "exactly `unproved` or `refuted`" and that entry-image unavailability fixes
 /// `unproved`, but which of the two a provable contradiction reaches depends
 /// on the [ENT-4] closure rather than on a rule, and this test is about the

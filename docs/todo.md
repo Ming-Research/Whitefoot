@@ -2663,15 +2663,14 @@ rarely insert at the same place.
   writer report shows the normalized form costing a round.
 
 - **Compiler comments cite the retired DIAG-3.** DIAG-3 was the v0.39 runtime
-  claim-trap record, retired with claims in v0.40, yet four comments still
-  cite it: three for words that are now [DIAG-1]'s (byte identity only where
-  selection and encoding are fixed, and the `unproved` or `refuted`
-  disposition) in `compiler/src/driver/pinned_sentences.rs`,
-  `compiler/src/semantic/tests/postconditions.rs` and
+  claim-trap record, retired with claims in v0.40, yet three comments still
+  cite it: two for words that are now [DIAG-1]'s (byte identity only where
+  selection and encoding are fixed) in
+  `compiler/src/driver/pinned_sentences.rs` and
   `compiler/src/semantic/tests/requires.rs`, and one, the module doc of
   `compiler/src/semantic/permission_ledger.rs`, for the retired record
   itself. A reader following the reference finds no rule. Cite DIAG-1 in the
-  first three and drop the ledger's clause; reopen with the next edit of any
+  first two and drop the ledger's clause; reopen with the next edit of any
   of these files.
 
 - **The callee-`ensures` route can name a call whose result no longer

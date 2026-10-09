@@ -1697,9 +1697,11 @@ impl Reasoning<'_, '_, '_> {
                 .flatten();
         }
         if mode.is_range() && projections.is_empty() && measure == Some(CheckedMeasure::Length) {
-            // [REF-4, ENT-3.S12] the actual names either a range holder or
-            // an inline formation's captured path. Both read the range's
-            // length, not a measure of its element type or source storage.
+            // [REF-4, ENT-3.S12] the actual is any place naming a range: a
+            // holder, an inline formation's captured path, a segment or a
+            // page. Each reads that range's own length, the term its
+            // formation or binding relates, not a measure of the element
+            // type or of the source storage.
             let GoalExpression::Datum(datum) = actual else {
                 return None;
             };
