@@ -1173,14 +1173,15 @@ fn forward<T: copy>(values: &[T], value: T) -> result: unit pure {{
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{
-  let cells = box_array_filled::<{ty}>(count: 2_u64, value: {value});
-  forward::<{ty}>(values: &cells.inner[0_u64..2_u64], value: {value});
+  let value = {value};
+  let cells = box_array_filled::<{ty}>(count: 2_u64, value: value);
+  forward::<{ty}>(values: &cells.inner[0_u64..2_u64], value: value);
   return std::process::exit_status(code: 0_u8);
 }}
 "
         )
     };
-    with_semantics(source("Bool", "true").as_bytes(), |outcome| {
+    with_semantics(source("Bool", "True()").as_bytes(), |outcome| {
         assert!(
             matches!(outcome, SemanticOutcome::Complete(_)),
             "a noninteger instance owes no range requirement: {outcome:?}"

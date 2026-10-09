@@ -616,3 +616,48 @@ fn forward(rows: &[Row], flag: Bool) -> result: unit reads(rows) contract {
 }
 ", Some((SemanticRule::Range3, "a call")));
 }
+
+fn processed_prefix(stored: &str) -> String {
+    format!(
+        "struct Block {{
+  slot: u64;
+}}
+
+fn finish_sequence(order: &Slots<u64, 2>, blocks: &[Block], pending: &[u64]) -> result: unit reads(pending), writes(order), writes(blocks) contract {{
+  requires order^.len == 0_u64;
+  requires pending^.len <= order^.cap;
+  requires forall pending_bounds(j in 0_u64..pending^.len): pending^[j] < blocks^.len;
+  requires forall pending_inverse(j in 0_u64..pending^.len) when pending^[j] < blocks^.len: blocks^[pending^[j]].slot == j;
+}} {{
+  for (
+    k in 0_u64..pending^.len,
+    invariant length: order^.len == k,
+    invariant forall prefix(j in 0_u64..k): order^[j] == pending^[j], blocks^[{stored}[j]].slot == j
+  ) {{
+    let target = pending^[k];
+    place_back(window: order, value: target);
+    set blocks^[target].slot = k;
+  }}
+  return unit;
+}}
+"
+    )
+}
+
+// The prefix names the appended target through the store, so the target
+// read pending[j] reaches the backedge problem only through the prefix
+// instance, and RANGE-3 step 1 forms no pending_inverse instance from it.
+#[test]
+fn processed_prefix_through_the_store_lacks_the_second_inverse_instance() {
+    check(
+        &processed_prefix("order^"),
+        Some((SemanticRule::Range3, "a loop back edge")),
+    );
+}
+
+// Naming the target through pending puts pending[j] in the owed problem
+// itself, so step 1 forms both inverse instances.
+#[test]
+fn processed_prefix_through_pending_closes_with_the_owed_reads() {
+    check(&processed_prefix("pending^"), None);
+}

@@ -159,9 +159,12 @@ fn complete_inventory_is_pinned() {
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
-    // The type-invariant choice adds two rows, plus one new `invariant (`
-    // row each at struct_decl's field and type-invariant repeats.
-    assert_eq!(SELECT_ROWS.len(), 7_921);
+    // The type-invariant choice adds two rows. Its new `invariant (`
+    // prefix adds one row each at struct_decl's doc optional, field repeat
+    // and type-invariant repeat. The range_clause conclusion repeat gains
+    // two exit rows with the type_invariant semicolon's provenance:
+    // `; invariant` and `; }`. Together these add seven rows to 7,917.
+    assert_eq!(SELECT_ROWS.len(), 7_924);
     assert_eq!(diagnostic_terminal_order().len(), 115);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -598,6 +601,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 7_921);
+    assert_eq!(total_rows, 7_924);
     assert!(saw_atom_only);
 }

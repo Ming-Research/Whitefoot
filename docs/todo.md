@@ -782,11 +782,18 @@ rarely insert at the same place.
 - **Resolve the processed-prefix writer's range derivation gap.**
   `finish_sequence_uses_one_range_invariant_over_the_processed_prefix` in
   `compiler/src/semantic/tests/range_type_invariants.rs` appends pending
-  block IDs and updates their entry slots and owners. Its fixture now names
-  the constructed `Flow` before passing it to `place_back`, as GRAM-4
-  requires; its expected acceptance and invariant are unchanged. The
-  supplied CI log stops this fixture at parsing, so the following is a
-  source-level derivation analysis, not an observed solver result.
+  block IDs and updates their entry slots and owners. Gate run
+  [37890142581, Linux unit job](https://github.com/Ming-Research/Whitefoot/actions/runs/37890142581/job/113690761813)
+  at `b9b3093f8d2230cab10b4ec5937b5d6016f783a6` reaches RANGE-3:
+  fact `prefix`, site `a loop back edge`, missing
+  `c^.blocks[c^.orders[0_u64].payloads[j].Open.block].entry_slot == j`
+  (fixture line 33). This is the derivation gap below, not a fixture error;
+  the test's expected acceptance and invariant remain unchanged.
+  [The standalone witness](../research/investigations/range-field-terms/processed-prefix.wf)
+  removes the nested stores, enum, owner field and type invariant: it
+  appends to one store and sets one field per target, with one processed-prefix
+  range invariant and the entry inverse (plus the target-bounds requirement).
+  This reduction has been inspected against the rules but has not run in CI.
   On the backedge, let P be pending, O the payloads at the arbitrary header,
   B the blocks there, B0 the entry blocks, and O'/B' the state after appending
   P[k] and writing that block. For an old position `0 <= j < k`, the second
@@ -806,9 +813,10 @@ rarely insert at the same place.
   The problem builder snapshots ground reads before adding instances in
   `compiler/src/semantic/range_judgment/facts.rs`; each conclusion has its
   own query in `compiler/src/semantic/range_judgment/walk.rs`.
-  Reopen immediately after the repaired fixture reaches this obligation in
-  CI. Confirm its first open conclusion and ground reads, then ask the owner
-  to select a language/proof design that closes the witness. Do not add a
+  The original fixture's diagnostic confirms the first open conclusion;
+  the ground-read account above follows source inspection, not a solver trace.
+  Next run the standalone witness in CI and ask the owner to select a
+  language/proof design that closes it. Do not add a
   runtime guard, strengthen the fixture, change its expected verdict, or
   extend the specified instantiation procedure without that decision.
 
