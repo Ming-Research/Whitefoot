@@ -497,6 +497,15 @@ invariant total_limit: first + second + third <= first_limit + second_limit + th
 The target is published only after every use and the final combination have
 been checked. Proofs are erased and add no runtime branch.
 
+An ordinary `loop` with no `break` targeting it needs no trailing return: it
+can finish the function by returning inside the loop, or keep iterating
+[FN-1]. A statement after that loop is unreachable and rejected. A break
+targeting an enclosing loop does not let an inner loop fall through; a
+counted `for` still needs a return after its possible exhaustion. In a value
+initializer, a branch ending with such an ordinary loop can deliver by
+divergence; the initializer still needs a nonempty `give` delivery set to
+determine the binding's type [GIVE-1].
+
 ## P9. Put a contract on a true API requirement
 
 Use `requires` when every valid caller must establish the condition, and

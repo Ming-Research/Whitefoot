@@ -19,7 +19,6 @@ fn run(stack: &Box<Array<u64>>, fp: u64, c: u64) -> r: u64 writes(stack.inner) c
       touch(stack: stack);
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

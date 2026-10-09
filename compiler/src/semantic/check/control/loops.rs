@@ -49,12 +49,11 @@ struct ReferenceLoopTarget {
     label: Option<DeclarationId>,
     header: ReferenceFlowPoint,
     exit: Option<ReferenceFlowPoint>,
+    has_break: bool,
 }
 
 #[derive(Default)]
 struct ReferenceRebindingGraph {
-    // An ordinary loop's conservative successor belongs only to its entry,
-    // never to an iteration reached by fallthrough or continue.
     predecessors: HashMap<ReferenceFlowPoint, Vec<ReferenceFlowPoint>>,
     loops: Vec<ReferenceLoopTarget>,
     gives: Vec<Option<ReferenceFlowPoint>>,
@@ -1117,11 +1116,10 @@ impl<'unit> Checker<'_, 'unit> {
                 escaping_loop_transfers.push(state);
             }
         }
-        // An ordinary loop with no break resolved to itself has no executable
-        // continuation input. `join_states` deliberately leaves the
-        // structurally retained continuation bindings unchanged for that
-        // empty join; ENT-5's proof flow marks the same continuation
-        // contradictory, and lowering emits an unreachable exit block.
+        // [FN-1] only breaks resolved to this identity reach its successor.
+        // Escapes from nested loops and value initializers are retained in
+        // the same transfer set; a break to another loop is not a local exit.
+        let can_continue = !own_loop_transfers.is_empty();
         self.types.declarations.join_states(
             &base_keys,
             &own_loop_transfers,
@@ -1143,12 +1141,11 @@ impl<'unit> Checker<'_, 'unit> {
                 invariants,
                 body: checked.statements,
                 backedge_drops,
+                continues: can_continue,
             },
-            // FN-1 conservatively gives every loop a normal successor; the
-            // executable path reaches it only through a checked break edge.
-            can_continue: true,
+            can_continue,
             effects: checked.effects,
-            all_paths_deliver: false,
+            all_paths_deliver: !can_continue,
             direct_give: false,
             give_states: checked.give_states,
             loop_transfers: escaping_loop_transfers,
@@ -1268,6 +1265,7 @@ impl<'unit> DeclarationInventory<'unit> {
             label,
             header,
             exit: None,
+            has_break: false,
         });
         self.reference_rebinding_block(check_context, statements, Some(header), &mut graph)?;
         let mut reaching = HashSet::new();
@@ -1323,7 +1321,7 @@ impl<'unit> DeclarationInventory<'unit> {
             Production::BreakStmt | Production::ContinueStmt => {
                 let uses = self.uses_at_ordered(context, statement, LexicalUseRole::BreakLabel)?;
                 let target = match uses.as_slice() {
-                    [] => graph.loops.last(),
+                    [] => graph.loops.last_mut(),
                     [usage] => {
                         let ResolvedTarget::Source {
                             declaration,
@@ -1334,7 +1332,7 @@ impl<'unit> DeclarationInventory<'unit> {
                         };
                         graph
                             .loops
-                            .iter()
+                            .iter_mut()
                             .rev()
                             .find(|target| target.label == Some(declaration))
                     }
@@ -1345,6 +1343,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     if production == Production::ContinueStmt {
                         Some(target.header)
                     } else {
+                        target.has_break = true;
                         target.exit
                     }
                 });
@@ -1387,17 +1386,18 @@ impl<'unit> DeclarationInventory<'unit> {
                     label,
                     header,
                     exit: normal,
+                    has_break: false,
                 });
                 let body = self.tree.children_with(statement, Production::Stmt)?;
                 let entry = self.reference_rebinding_block(context, &body, Some(header), graph)?;
-                graph.loops.pop();
+                let has_break = graph.loops.pop().is_some_and(|target| target.has_break);
                 graph.edge(ReferenceFlowPoint::Statement(statement), Some(header));
                 graph.edge(header, entry);
                 if production == Production::ForStmt {
                     graph.edge(header, normal);
-                } else {
-                    // FN-1's conservative ordinary-loop successor does not
-                    // turn a continue into a possible loop exit.
+                } else if has_break {
+                    // [FN-1] the direct edge belongs only to loop entry;
+                    // fallthrough and continue still return to the header.
                     graph.edge(ReferenceFlowPoint::Statement(statement), normal);
                 }
             }

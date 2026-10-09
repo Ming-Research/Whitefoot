@@ -1,0 +1,72 @@
+enum LoopDeliveryChoice {
+  LoopDeliveryReturn();
+  LoopDeliveryGive();
+}
+
+fn choose_if(flag: Bool) -> result: u64 pure {
+  let selected = if flag {
+    loop {
+      return 7_u64;
+    }
+  } else {
+    give 9_u64;
+  }
+  return selected;
+}
+
+fn choose_match(choice: LoopDeliveryChoice) -> result: u64 pure {
+  let selected = match choice {
+    LoopDeliveryReturn() => {
+      loop {
+        return 7_u64;
+      }
+    }
+    LoopDeliveryGive() => {
+      give 9_u64;
+    }
+  }
+  return selected;
+}
+
+fn choose_loop_give(flag: Bool) -> result: u64 pure {
+  let selected = if flag {
+    loop {
+      give 11_u64;
+    }
+  } else {
+    return 13_u64;
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let yes = True();
+  let no = False();
+  let returned_if = choose_if(flag: yes);
+  let given_if = choose_if(flag: no);
+  let given_loop = choose_loop_give(flag: yes);
+  let returned_loop = choose_loop_give(flag: no);
+  let return_choice = LoopDeliveryChoice::LoopDeliveryReturn();
+  let give_choice = LoopDeliveryChoice::LoopDeliveryGive();
+  let returned_match = choose_match(choice: return_choice);
+  let given_match = choose_match(choice: give_choice);
+  if returned_if != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if given_if != 9_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if returned_match != 7_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if given_match != 9_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if given_loop != 11_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if returned_loop != 13_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

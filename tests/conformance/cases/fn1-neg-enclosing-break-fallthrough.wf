@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure {
+  loop @outer {
+    loop @inner {
+      break @outer;
+    }
+  }
+}

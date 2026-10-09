@@ -38,7 +38,6 @@ fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
     set lower = next_lower;
     set upper = next_upper;
   }
-  return count;
 }
 
 fn copy_values(input: &[u64], output: &[u64]) -> result: u64 reads(input), writes(output) contract {

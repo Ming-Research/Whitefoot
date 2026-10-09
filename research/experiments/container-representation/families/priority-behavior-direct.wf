@@ -73,7 +73,6 @@ fn sift_rise(queue: &uniq Queue, count: own u64, env: &Ascending) -> result: own
       exchange_at(heap: &uniq deref(queue).heap, left: parent, right: at);
       set at = parent;
     }
-    return unit;
   }
 }
 
@@ -116,7 +115,6 @@ fn sift_sink(queue: &uniq Queue, count: own u64, env: &Ascending) -> result: own
       exchange_at(heap: &uniq deref(queue).heap, left: at, right: best);
       set at = best;
     }
-    return unit;
   }
 }
 
