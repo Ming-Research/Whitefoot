@@ -1971,6 +1971,354 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+// The recursive owning-element split that lost its offers when the storage
+// boundary discarded the permission judgment's retained range proofs.
+const OWNING_RANGE_VISIT: &str = r#"enum Frontier {
+  doc "A sparse directory over stable element slots.";
+  Vacant();
+  Mark();
+  Fork(left: Box<Frontier>, right: Box<Frontier>);
+}
+
+fn visit(frontier: &Frontier, values: &[Box<u64>], span: u64) -> ok: Bool reads(frontier), writes(values) {
+  doc "Visits independent leaves and joins only their completion results.";
+  let count = values^.len;
+  match frontier^ {
+    Vacant() => {
+      return True();
+    }
+    Mark() => {
+      if 0_u64 < count {
+        let fresh = box_new::<u64>(value: 1_u64);
+        set values^[0_u64] = move fresh;
+        return True();
+      }
+      return False();
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      let left_ok = visit(frontier: &left_tree^.inner, values: &values^[0_u64..middle], span: half);
+      let right_ok = visit(frontier: &right_tree^.inner, values: &values^[middle..count], span: half);
+      let both_ok = band(left_ok, right_ok);
+      return both_ok;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn proved_disjoint_owning_ranges_keep_recursive_overlap_and_lane_emission() {
+    with_checked(OWNING_RANGE_VISIT.as_bytes(), |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("visit")
+            .expect("visit permissions");
+        let pair = permissions
+            .pairs
+            .iter()
+            .find(|pair| pair.first.callee_name == "visit" && pair.second.callee_name == "visit")
+            .expect("recursive sibling pair");
+        assert!(pair.verdict.is_eligible(), "{pair:?}");
+        // The old boundary sees a conflict on these exact checked places.
+        assert!(
+            pair.first
+                .storage_effects
+                .conflict(
+                    &crate::semantic::places::UnprovedSeparations,
+                    &pair.second.storage_effects,
+                )
+                .is_some()
+        );
+        let boundary = permissions
+            .storage_pairs
+            .iter()
+            .find(|boundary| {
+                boundary.first == pair.first.statement && boundary.second == pair.second.statement
+            })
+            .expect("the same ordered pair has a storage answer");
+        assert!(boundary.conflict.is_none(), "{boundary:?}");
+        let program = lower_checked(checked, OverlapLowering::OnWithCallGrain)
+            .expect("recursive owning ranges lower with the default call grain");
+        let visit = function(&program, "visit");
+        let calls = calls_to(&program, visit, &["visit"]);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(visit.overlaps().len(), 1);
+        assert_eq!(visit.overlaps()[0].members, calls);
+        assert!(
+            !program
+                .actualization_ledger()
+                .iter()
+                .any(|line| line.contains("release/borrow conflict"))
+        );
+        let module = crate::emit_llvm(&program)
+            .expect("recursive owning ranges emit")
+            .into_string();
+        let body = module
+            .split("\ndefine ")
+            .find(|body| {
+                body.lines()
+                    .next()
+                    .is_some_and(|line| line.contains("@wf__par_budget_visit("))
+            })
+            .expect("the recursive offer keeps its budgeted body");
+        let body = body.split("\n}").next().expect("function body");
+        for operation in [
+            "call ptr @wf__par_acquire_lane(",
+            "call void @wf__par_publish(",
+            "call void @wf__par_join(",
+        ] {
+            assert!(body.contains(operation), "missing {operation}:\n{body}");
+        }
+    });
+}
+
+#[test]
+fn overlapping_owning_ranges_do_not_form_a_recursive_overlap_group() {
+    let source = OWNING_RANGE_VISIT.replace(
+        "values: &values^[middle..count]",
+        "values: &values^[0_u64..count]",
+    );
+    with_checked(source.as_bytes(), |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("visit")
+            .expect("visit permissions");
+        let pair = permissions
+            .pairs
+            .iter()
+            .find(|pair| pair.first.callee_name == "visit" && pair.second.callee_name == "visit")
+            .expect("recursive sibling pair");
+        assert!(
+            !pair.verdict.is_eligible(),
+            "overlapping writes deny PAR-1: {pair:?}"
+        );
+        let boundary = permissions
+            .storage_pairs
+            .iter()
+            .find(|boundary| {
+                boundary.first == pair.first.statement && boundary.second == pair.second.statement
+            })
+            .expect("recursive storage pair");
+        assert!(boundary.conflict.is_some(), "{boundary:?}");
+        let program = lower_checked(checked, OverlapLowering::On)
+            .expect("overlapping calls lower sequentially");
+        let visit = function(&program, "visit");
+        let calls = calls_to(&program, visit, &["visit"]);
+        assert_eq!(calls.len(), 2);
+        assert!(
+            !visit
+                .overlaps()
+                .iter()
+                .any(|group| calls.iter().all(|call| group.members.contains(call)))
+        );
+        assert!(
+            !program
+                .actualization_ledger()
+                .iter()
+                .any(|line| line.contains("release/borrow conflict")),
+            "a source denial is not a lowering narrowing"
+        );
+    });
+}
+
+#[test]
+fn nonadjacent_owning_range_members_use_their_own_pair_proofs() {
+    let source = OWNING_RANGE_VISIT.replace(
+        "      let both_ok = band(left_ok, right_ok);",
+        "      let empty_ok = visit(frontier: &right_tree^.inner, values: &values^[count..count], span: half);\n      let both_ok = band(left_ok, right_ok);",
+    );
+    with_checked(source.as_bytes(), |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("visit")
+            .expect("visit permissions");
+        let run = permissions
+            .runs
+            .iter()
+            .find(|run| {
+                run.sites
+                    .iter()
+                    .filter(|site| site.callee_name == "visit")
+                    .count()
+                    == 3
+            })
+            .expect("three mutually permitted recursive calls");
+        let calls = run
+            .sites
+            .iter()
+            .filter(|site| site.callee_name == "visit")
+            .collect::<Vec<_>>();
+        let first = &calls[0].statement;
+        let third = &calls[2].statement;
+        let boundary = permissions
+            .storage_pairs
+            .iter()
+            .find(|pair| pair.first == *first && pair.second == *third)
+            .expect("nonadjacent storage pair");
+        assert!(boundary.conflict.is_none(), "{boundary:?}");
+        assert!(
+            checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "visit")
+                .expect("checked visit")
+                .entailment
+                .permission_separations
+                .iter()
+                .any(|proof| {
+                    proof.query.first == *first && proof.query.second == *third && proof.discharged
+                }),
+            "nonadjacent members need their own retained proof"
+        );
+        let program =
+            lower_checked(checked, OverlapLowering::On).expect("three recursive calls lower");
+        let visit = function(&program, "visit");
+        let calls = calls_to(&program, visit, &["visit"]);
+        assert_eq!(calls.len(), 3);
+        assert!(visit.overlaps().iter().any(|group| group.members == calls));
+    });
+}
+
+// Ignored reference arguments have no read effect, but still need live
+// storage at entry. This isolates lowering's boundary from PAR-1 denial.
+const IGNORED_OWNING_RANGE: &str = r#"fn replace(values: &[Box<u64>]) -> result: unit writes(values) {
+  let count = values^.len;
+  if 0_u64 < count {
+    let fresh = box_new::<u64>(value: 1_u64);
+    set values^[0_u64] = move fresh;
+  }
+  return unit;
+}
+
+fn ignore(values: &[Box<u64>]) -> result: unit pure {
+  return unit;
+}
+
+fn pair(values: &[Box<u64>], middle: u64) -> result: unit writes(values) contract {
+  requires middle <= values^.len;
+} {
+  let count = values^.len;
+  replace(values: &values^[0_u64..middle]);
+  ignore(values: &values^[middle..count]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn ignored_range_borrows_plan_storage_separations_and_report_actual_cuts() {
+    for (endpoints, reverse) in [
+        ("middle..count", false),
+        ("0_u64..count", false),
+        ("0_u64..count", true),
+    ] {
+        let disjoint = endpoints == "middle..count";
+        let release = "  replace(values: &values^[0_u64..middle]);";
+        let borrow = format!("  ignore(values: &values^[{endpoints}]);");
+        let calls = if reverse {
+            format!("{borrow}\n{release}")
+        } else {
+            format!("{release}\n{borrow}")
+        };
+        let source = IGNORED_OWNING_RANGE.replace(
+            "  replace(values: &values^[0_u64..middle]);\n  ignore(values: &values^[middle..count]);",
+            &calls,
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permissions = checked
+                .data
+                .permission
+                .named("pair")
+                .expect("pair permissions");
+            let pair = permissions
+                .pairs
+                .iter()
+                .find(|pair| pair.first.call.is_some() && pair.second.call.is_some())
+                .expect("two calls");
+            assert!(
+                pair.verdict.is_eligible(),
+                "ignored borrows keep source permission: {pair:?}"
+            );
+            let program =
+                lower_checked(checked, OverlapLowering::On).expect("ignored borrow lowers");
+            let pair = function(&program, "pair");
+            let calls = calls_to(&program, pair, &["replace", "ignore"]);
+            assert_eq!(calls.len(), 2);
+            assert_eq!(
+                pair.overlaps().iter().any(|group| group.members == calls),
+                disjoint
+            );
+            let lines = program
+                .actualization_ledger()
+                .iter()
+                .filter(|line| line.contains("release/borrow conflict"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lines.len(),
+                usize::from(!disjoint),
+                "report only actual cuts, once: {lines:?}"
+            );
+            if !disjoint {
+                let line = lines[0];
+                let names = if reverse {
+                    "pair(ignore, replace)"
+                } else {
+                    "pair(replace, ignore)"
+                };
+                let releasing = if reverse { "s2" } else { "s1" };
+                let borrowing = if reverse { "s1" } else { "s2" };
+                assert!(line.starts_with("PAR actualization  test.wf:"), "{line}");
+                assert!(
+                    line.contains(names) && line.contains(" through line "),
+                    "{line}"
+                );
+                assert!(line.ends_with(&format!(
+                    "narrowed: release/borrow conflict; {releasing} releases storage at &values^[0_u64..middle] overlapping storage at &values^[0_u64..count] borrowed by {borrowing}"
+                )), "{line}");
+            }
+        });
+    }
+}
+
+#[test]
+fn a_nonadjacent_release_borrow_conflict_ends_the_group() {
+    let source = IGNORED_OWNING_RANGE.replace(
+        "  ignore(values: &values^[middle..count]);",
+        "  ignore(values: &values^[middle..count]);\n  ignore(values: &values^[0_u64..middle]);",
+    );
+    with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
+        let pair = function(program, "pair");
+        let calls = calls_to(program, pair, &["replace", "ignore"]);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(pair.overlaps().len(), 1);
+        assert_eq!(pair.overlaps()[0].members, calls[..2]);
+        let lines = program
+            .actualization_ledger()
+            .iter()
+            .filter(|line| line.contains("release/borrow conflict"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1, "the nonadjacent cut is reported: {lines:?}");
+        assert!(
+            lines[0].contains(
+                "storage at &values^[0_u64..middle] overlapping storage at &values^[0_u64..middle]"
+            ),
+            "{lines:?}"
+        );
+    });
+}
+
 #[test]
 fn paged_cell_growth_preserves_formation_and_borrow_entry_order() {
     for (actual, kind, reverse, wrapper) in [
@@ -2028,7 +2376,11 @@ fn paged_cell_growth_preserves_formation_and_borrow_entry_order() {
             assert!(
                 pair.first
                     .storage_effects
-                    .conflicts(&pair.second.storage_effects),
+                    .conflict(
+                        &crate::semantic::places::UnprovedSeparations,
+                        &pair.second.storage_effects
+                    )
+                    .is_some(),
                 "the checked places must order growth against its borrow: {pair:?}"
             );
         });
@@ -2123,7 +2475,11 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             pair.first
                 .storage_effects
-                .conflicts(&pair.second.storage_effects),
+                .conflict(
+                    &crate::semantic::places::UnprovedSeparations,
+                    &pair.second.storage_effects
+                )
+                .is_some(),
             "a page borrows storage below the released Paged owner: {pair:?}"
         );
     });

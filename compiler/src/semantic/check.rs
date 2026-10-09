@@ -51,7 +51,7 @@ use super::model::{
     NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
-use super::permission_ledger::{LedgerSource, render_ledger};
+use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
 use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
@@ -1335,7 +1335,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         for (function, judged) in functions.iter_mut().zip(ranges) {
             function.range_facts.certified = judged.certified;
         }
-        let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        let mut permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        prepare_storage_ledger(
+            &mut permission,
+            &PermissionLedgerSource {
+                tree: &self.types.declarations.tree,
+            },
+        )?;
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
         for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
