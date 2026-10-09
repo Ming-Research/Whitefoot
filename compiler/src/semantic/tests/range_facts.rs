@@ -803,8 +803,16 @@ fn the_instance_ceiling_counts_both_rounds_without_recounting_duplicates() {
   requires next^.len == cells^.len;
   requires forall relay(k in 0_u64..cells^.len) when next^[k] < cells^.len: cells^[next^[k]] == cells^[k];",
                 1,
+            )
+            .replacen(
+                "  let got = zeros(",
+                "  if 0_u64 < next^.len {
+    let hop = next^[0_u64];
+  }
+  let got = zeros(",
+                1,
             );
-        assert!(source.contains("forall relay(") && source.contains("next: &[u64]"));
+        assert!(source.contains("forall relay(") && source.contains("let hop = next^[0_u64];"));
         let outcome = undischarged(source.as_bytes());
         if reads == 127 {
             assert_eq!(outcome, None);
