@@ -44,6 +44,24 @@ def main():
             pass
         else:
             raise AssertionError(f"bad {key} accepted")
+    extra = copy.deepcopy(rows)
+    extra[0][None] = ["surplus"]
+    missing = copy.deepcopy(rows)
+    missing[0]["checksum"] = None
+    malformed = copy.deepcopy(rows)
+    for row in malformed:
+        row["checksum"] = "12a"
+    for broken in (extra, missing, malformed):
+        try:
+            reduce(broken)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a malformed raw row was accepted")
+    program = copy.deepcopy(rows)
+    for row in program:
+        row["checksum"] = "exit:0;stdout-sha256:" + "0" * 64
+    assert reduce(program)["verdict"] == "pass"
     for broken in (rows[:-1], rows + [rows[0]]):
         try:
             reduce(broken)

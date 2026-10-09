@@ -109,7 +109,8 @@ inconclusive and the ratios below are exploratory):
   32 logical CPUs, branch at fc594f767 (main 184a4c3ef plus this suite),
   worker counts 1, 2, 4, 8, 16, 32 and default (32).
 
-The ratio is the median `--par` wall time over the sequential image's. Cells
+The ratio is the median over rounds of the paired per-round ratio of the
+`--par` image's process wall time to the sequential image's. Cells
 by ratio on the 14900K, visible and held-out split counted apart:
 
 | workers | split | cells | > 2 | 1.1 to 2 | 0.9 to 1.1 | < 0.9 |
@@ -131,18 +132,30 @@ maximum ratio):
 | size | 10 | 0.98 | 1.04 | 15.54 |
 | hot, 10 calls | 3 | 0.97 | 8.09 | 8.98 |
 | hot, 10,000 calls | 1 | 39.14 | 39.14 | 39.14 |
-| hot, 10,000,000 calls | 2 | 1.00 | 248 | 248 |
-| real programs | 10 | 0.93 | 1.01 | 9.05 |
+| hot, 10,000,000 calls | 2 | 1.00 | 124.56 | 248.11 |
+| real programs | 10 | 0.93 | 1.00 | 9.05 |
 
 The visible real programs most slowed: `merge_sort` 9.05, `range_split` 7.16,
 `radix_scatter` 4.86, `sha256_abc` 1.35; the other six within 0.93 to 1.01.
 
-The hot family is a four-leaf recursive split called from a dependent
-sequential loop; every call hands its leaves out, so its cost grows with the
-call count and with the worker count (the hosted 4-vCPU run measured a
-median of 40 at 10,000,000 calls, the 14900K 248 at 32 workers). On both hosts
-today's `--par` is slower than one thread in far more cells than it is
-faster, which fails H1 as stated above at every worker count measured.
+The six visible hot cells, a site called 10 to 10,000,000 times from a
+sequential loop, by shape and call count, at the default 32 workers on the
+14900K (hosted, default 4 workers, in parentheses): the recursive shapes are
+slow and grow with the call count, `p057` balanced, 10 calls, 8.09 (2.74);
+`p090` skewed 90 percent, 10 calls, 8.98 (3.54); `p124` skewed 99 percent,
+10,000 calls, 39.14 (6.08); `p092` skewed 90 percent, 10,000,000 calls,
+248.11 (39.92); the flat and DAG shapes are not, `p024` flat, 10 calls, 0.97
+(0.95); `p191` DAG, 10,000,000 calls, 1.00 (1.00). Which of them hand work
+out at run time is not established here; the retained `--par` ledgers and a
+profile would show it.
+
+Read as exploratory observations, not as an H1 verdict (`d=0` is
+uncalibrated, no cell had its rerun, and the two campaigns differ in host and
+revision): on both hosts and at every worker count above one, many more cells
+ran slower under `--par` than faster, and the recursive hot cells, the
+real programs `merge_sort`, `range_split` and `radix_scatter`, and the
+slowest `work`, `bound` and `size` cells are the candidates for the reruns
+that would refute or confirm H1.
 
 Held-out discipline: the held-out cells are reported only in the counts
 above. One working listing of the 14900K real programs printed all twelve,

@@ -4,11 +4,15 @@ import argparse
 import csv
 import json
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
 RAW_FIELDS = ("cell", "build", "workers", "round", "wall_ns", "cpu_ns", "exit_status", "checksum")
+# A generated cell prints its checksum in decimal; a real program is
+# identified by its exit status and the hash of its standard output (run.py).
+CHECKSUM = re.compile(r"[0-9]+|exit:[0-9]+;stdout-sha256:[0-9a-f]{64}")
 
 
 def read_tsv(path):
@@ -24,14 +28,18 @@ def summarize(rows, cells, widths, rounds, epsilon, startup_ns, default_workers=
     samples = {}
     checksums = defaultdict(set)
     for row in rows:
+        # csv.DictReader files an extra field under None and leaves a missing
+        # one None, so the exact field set rejects both.
+        if set(row) != set(RAW_FIELDS) or any(value is None for value in row.values()):
+            raise ValueError(f"malformed raw row: {row}")
         key = (row["cell"], row["build"], row["workers"], int(row["round"]))
         if key not in expected or key in samples:
             raise ValueError(f"unexpected or duplicate sample: {key}")
         wall, cpu, status = (int(row[k]) for k in ("wall_ns", "cpu_ns", "exit_status"))
         if wall <= 0 or cpu < 0 or status != int(cells[key[0]].get("expected_exit", 0)):
             raise ValueError(f"failed or malformed process: {key}")
-        if not row["checksum"]:
-            raise ValueError(f"missing checksum: {key}")
+        if not CHECKSUM.fullmatch(row["checksum"]):
+            raise ValueError(f"missing or malformed checksum: {key}")
         samples[key] = (wall, cpu)
         checksums[key[0]].add(row["checksum"])
     if samples.keys() != expected:
@@ -81,7 +89,11 @@ def write_summary(directory):
         writer = csv.DictWriter(stream, list(table[0]), delimiter="\t")
         writer.writeheader()
         writer.writerows(table)
-    lines = [f"H1 cell observations: epsilon={config['epsilon']}, d={config['startup_ns']} ns",
+    # Only the verdict phase measures the held-out cells on the dedicated
+    # host; any other phase is exploratory and says so first.
+    lines = [] if config["phase"] == "verdict" else [
+        f"Exploratory {config['phase']} phase: these labels decide nothing."]
+    lines += [f"H1 cell observations: epsilon={config['epsilon']}, d={config['startup_ns']} ns",
              f"Allowance provenance: {config['allowance_source']} (uncalibrated-zero is exploratory)",
              "A fail requires one independent rerun before refutation; W1 is diagnostic.",
              "Process intervals include startup; kernel call intervals are separate.",

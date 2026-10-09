@@ -286,18 +286,26 @@ jobs:
             --build-dir "$RUNNER_TEMP/par-pilot-build" --results "$RUNNER_TEMP/par-pilot" \
             --phase pilot --rounds 3 --workers 1 2 \
             --startup-ns 0 --allowance-source uncalibrated-zero
-      - name: Measure the frozen baseline grid for a verdict
+      # Only the i9-14900K measures for a verdict, held-out cells and the
+      # maintained kernels' verdict included. A hosted runner shares its
+      # cores, so it measures the visible cells alone, as an exploratory
+      # sizing run whose labels decide nothing.
+      - name: Measure the frozen baseline grid
         env:
           ROUNDS: ${{ inputs.placement_rounds }}
           PLACEMENT_RUNNER: ${{ inputs.placement_runner }}
         run: |
           widths=(1 2 4 8 16)
-          if [ "$PLACEMENT_RUNNER" = 14900k ]; then widths+=(32); fi
+          phase=(--phase visible --skip-kernels)
+          if [ "$PLACEMENT_RUNNER" = 14900k ]; then widths+=(32); phase=(--phase verdict); fi
           python3 -B research/experiments/par-suite/run.py \
             --compiler "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
             --build-dir "$RUNNER_TEMP/par-build" --results "$RUNNER_TEMP/par-results" \
-            --phase verdict --rounds "$ROUNDS" --workers "${widths[@]}" default \
+            "${phase[@]}" --rounds "$ROUNDS" --workers "${widths[@]}" default \
             --startup-ns 0 --allowance-source uncalibrated-zero
+          if [ "$PLACEMENT_RUNNER" != 14900k ]; then
+            echo "Hosted exploratory run: visible cells only, no verdict." >> "$GITHUB_STEP_SUMMARY"
+          fi
           cat "$RUNNER_TEMP/par-results/summary.txt" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
