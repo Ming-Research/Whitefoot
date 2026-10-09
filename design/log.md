@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Scientific float spelling
+
+Nodes: language/surface-form/float-literals
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated).
+
+Summary: A float's canonical spelling is chosen among scientific forms (one nonzero integer digit before an exponent) and the fixed form, by bytes and then lexicographic order, so the specification agrees with what the compiler generated and with how writers spell numbers; the rejected alternatives were generating the `0.5e3` forms the old rule selected and accepting every rounding decimal.
+
 ## 2026-10-09 Offset disequalities, invariant L0 facts and origin transport
 
 Nodes: language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge/origin-transport
