@@ -47,21 +47,35 @@ use crate::target::{
 use super::system::with_ir;
 use super::*;
 
-/// The baseline clears the complete empty-window representation, including
-/// every descriptor word. This checks the shared row, not its callers.
-fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
+/// Only descriptor words may be stored by an empty-window constructor.
+/// Inspect the shared row: callers use the same ordinary construction body.
+fn assert_empty_window_headers(module: &str, row: &str, header_fields: usize) {
     let body = emitted_prelude_row(module, row);
     assert!(!body.contains("poison"), "{body}");
     assert!(!body.contains("undef"), "{body}");
-    let store = body
+    assert!(!body.contains("zeroinitializer"), "{body}");
+    assert!(!body.contains("@llvm.mem"), "{body}");
+    assert!(!body.contains("@memset"), "{body}");
+    let stores = body
         .lines()
         .map(str::trim)
-        .find(|line| line.ends_with(" zeroinitializer, ptr %wf.result"))
-        .expect("the complete empty window is initialized in its result destination");
-    assert!(
-        store.starts_with(&format!("store {{ {}[", "i64, ".repeat(header_fields))),
-        "the zero aggregate includes every descriptor word before its slots: {body}"
-    );
+        .filter(|line| line.starts_with("store "))
+        .collect::<Vec<_>>();
+    assert_eq!(stores.len(), header_fields, "{body}");
+    for (field, store) in stores.into_iter().enumerate() {
+        let address = store
+            .strip_prefix("store i64 0, ptr ")
+            .expect("one zero header word");
+        assert!(
+            body.lines().any(|line| {
+                line.trim().starts_with(&format!(
+                    "{address} = getelementptr inbounds {{ {}[64 x ",
+                    "i64, ".repeat(header_fields)
+                )) && line.ends_with(&format!(", ptr %wf.result, i32 0, i32 {field}"))
+            }),
+            "header store must address the expected word, not an element: {body}"
+        );
+    }
 }
 
 const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
@@ -159,9 +173,15 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
 
 #[test]
 fn empty_fixed_windows_initialize_descriptors_before_return() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  let slots = slots_new::<Array<u64, 32>, 4>();
-  let ring = ring_new::<Array<u64, 32>, 4>();
+    let source = br#"struct Frame {
+  first: u32;
+  second: u32;
+  third: u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<Frame, 64>();
+  let ring = ring_new::<Frame, 64>();
   if slots.len != 0_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -175,12 +195,123 @@ fn empty_fixed_windows_initialize_descriptors_before_return() {
 }
 "#;
     let module = compile(source);
-    assert_empty_window_zeroed(&module, "slots_new", 1);
-    assert_empty_window_zeroed(&module, "ring_new", 2);
+    assert!(
+        module
+            .lines()
+            .any(|line| line.ends_with(" = type { i32, i32, i32 }"))
+    );
+    assert_empty_window_headers(&module, "slots_new", 1);
+    assert_empty_window_headers(&module, "ring_new", 2);
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+/// One IR-only compilation covers recursive layout selection and the
+/// unchanged inactive-payload and ordinary-Array initialization boundaries.
+#[test]
+fn aggregate_construction_omits_only_copied_window_fields() {
+    let source = br#"struct Holder {
+  prefix: u64;
+  slots: Slots<u32, 64>;
+  suffix: Array<u64, 2>;
+}
+struct Outer {
+  value: Holder;
+  marker: u64;
+}
+struct Many {
+  values: Array<Slots<u32, 64>, 2>;
+  marker: u64;
+}
+enum Product {
+  Active(value: Holder);
+  Empty();
+}
+enum Choice {
+  Active(prefix: u64, value: Slots<u32, 64>, marker: u64);
+  Other(bytes: Array<u64, 64>);
+}
+struct Plain {
+  values: Array<u64, 2>;
+  marker: u64;
+}
+fn holder() -> result: Holder pure {
+  let slots = slots_new::<u32, 64>();
+  let suffix = array_filled::<u64, 2>(value: 73_u64);
+  return Holder(prefix: 11_u64, slots: move slots, suffix: suffix);
+}
+fn outer(value: Holder) -> result: Outer pure {
+  return Outer(value: move value, marker: 17_u64);
+}
+fn many(values: Array<Slots<u32, 64>, 2>) -> result: Many pure {
+  return Many(values: move values, marker: 19_u64);
+}
+fn product(value: Holder) -> result: Product pure {
+  return Product::Active(value: move value);
+}
+fn empty_product() -> result: Product pure {
+  return Product::Empty();
+}
+fn choice(value: Slots<u32, 64>) -> result: Choice pure {
+  return Choice::Active(prefix: 23_u64, value: move value, marker: 29_u64);
+}
+fn other() -> result: Choice pure {
+  let bytes = array_filled::<u64, 64>(value: 31_u64);
+  return Choice::Other(bytes: bytes);
+}
+fn plain() -> result: Plain pure {
+  let values = array_filled::<u64, 2>(value: 37_u64);
+  return Plain(values: values, marker: 41_u64);
+}
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = compile(source);
+    let zero_stores = |name| {
+        emitted_body(&module, name)
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains(" zeroinitializer, ptr "))
+            .map(|line| line.split_once(", ptr ").expect("store address").0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        zero_stores("holder"),
+        [
+            "store i64 zeroinitializer",
+            "store [2 x i64] zeroinitializer"
+        ]
+    );
+    assert_eq!(zero_stores("outer"), ["store i64 zeroinitializer"]);
+    assert_eq!(zero_stores("many"), ["store i64 zeroinitializer"]);
+    assert_eq!(zero_stores("product"), ["store i32 zeroinitializer"]);
+    // The union is 520 bytes (tag, padding, 64 u64s). Its active window
+    // occupies [16, 280): retain both the prefix and all inactive suffix.
+    assert_eq!(
+        zero_stores("choice"),
+        [
+            "store [16 x i8] zeroinitializer",
+            "store [240 x i8] zeroinitializer"
+        ]
+    );
+    let choice = emitted_body(&module, "choice");
+    for offset in [0, 280] {
+        assert!(
+            choice.lines().any(
+                |line| line.contains("getelementptr inbounds i8, ptr %wf.result")
+                    && line.ends_with(&format!(", i64 {offset}"))
+            ),
+            "{choice}"
+        );
+    }
+    for name in ["empty_product", "other", "plain"] {
+        let stores = zero_stores(name);
+        assert_eq!(stores.len(), 1, "{name}: {stores:?}");
+        assert!(stores[0].starts_with("store %wf.t."), "{name}: {stores:?}");
+    }
 }
 
 /// A take changes the descriptor even when no element bytes exist. Ring's

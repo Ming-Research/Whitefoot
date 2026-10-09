@@ -300,7 +300,6 @@ impl TargetFrameField {
         self.layout.align
     }
 
-    #[cfg(test)]
     pub(super) const fn offset(self) -> u64 {
         self.offset
     }

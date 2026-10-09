@@ -1,0 +1,116 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+struct Holder {
+  before: u64;
+  slots: Slots<Box<u64>, 64>;
+  ring: Ring<Box<u64>, 4>;
+  after: Array<u64, 3>;
+}
+
+enum Held {
+  Windows(value: Holder);
+  Cell(value: Box<u64>);
+}
+
+fn inspect(held: Held, expected: u64) -> result: Bool pure {
+  doc "Whole-value transfers preserve live elements; scope cleanup must ignore the stale Box pointers left by takes.";
+  match move held {
+    Windows(value: holder) => {
+      if holder.before != expected {
+        return False();
+      }
+      if holder.slots.len != 1_u64 {
+        return False();
+      }
+      if holder.ring.len != 1_u64 {
+        return False();
+      }
+      if holder.ring.head != 3_u64 {
+        return False();
+      }
+      if holder.slots[0_u64].inner != expected {
+        return False();
+      }
+      if holder.ring[0_u64].inner != expected {
+        return False();
+      }
+      for (i in 0_u64..3_u64) {
+        if holder.after[i] != expected {
+          return False();
+        }
+      }
+      return True();
+    }
+    Cell(value: cell) => {
+      return False();
+    }
+  }
+}
+
+fn churn(seed: u64) -> result: Bool pure {
+  doc "Reuse short-lived frame storage, including empty windows, partial windows and a wrapped Ring with releasing elements.";
+  let empty = slots_new::<Box<u64>, 64>();
+  let zero = ring_new::<Box<u64>, 0>();
+  if empty.len != 0_u64 {
+    return False();
+  }
+  if zero.len != 0_u64 {
+    return False();
+  }
+  if zero.head != 0_u64 {
+    return False();
+  }
+  let slots = slots_new::<Box<u64>, 64>();
+  let first = box_new::<u64>(value: seed);
+  let next = seed +wrap 1_u64;
+  let second = box_new::<u64>(value: next);
+  place_back(window: &slots, value: move first);
+  place_back(window: &slots, value: move second);
+  let taken = take_back(window: &slots);
+  if taken.inner != next {
+    return False();
+  }
+  place_back(window: &slots, value: move taken);
+  let again = take_back(window: &slots);
+  if again.inner != next {
+    return False();
+  }
+  give move again;
+
+  let ring = ring_new::<Box<u64>, 4>();
+  let front = box_new::<u64>(value: seed);
+  let back = box_new::<u64>(value: next);
+  place_front(window: &ring, value: move front);
+  place_back(window: &ring, value: move back);
+  let last = take_back(window: &ring);
+  if last.inner != next {
+    return False();
+  }
+  give move last;
+  let after = array_filled::<u64, 3>(value: seed);
+  let holder = Holder(before: seed, slots: move slots, ring: move ring, after: after);
+  let held = Held::Windows(value: move holder);
+  return inspect(held: move held, expected: seed);
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let baseline = std::process::heap_in_use(meter: &meter);
+  for (seed in 0_u64..256_u64) {
+    let correct = churn(seed: seed);
+    let failed = bnot(correct);
+    if failed {
+      return exit_status(code: 1_u8);
+    }
+    let after = std::process::heap_in_use(meter: &meter);
+    if after != baseline {
+      return exit_status(code: 2_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}
