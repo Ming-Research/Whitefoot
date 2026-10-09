@@ -2,16 +2,22 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 const names: Array<u8, 4> =[97_u8, 98_u8, 99_u8, 100_u8];
-struct Counter { stamp: u64; }
+
+struct Counter {
+  stamp: u64;
+}
 
 fn bump(store: Shared<ConcurrentHashMap<Counter>>) -> result: unit pure waits {
   for @round (round in 0_u64..100_u64) {
     for @key (at in 1_u64..5_u64) {
       let key = &names[0_u64..at];
-      atomic entry = &store[key] {
-        match entry^ {
-          Some(value: v) => { set v^.stamp = v^.stamp +wrap 1_u64; }
-          None() => {}
+      atomic slot = &store[key] {
+        match slot^ {
+          Some(value: v) => {
+            set v^.stamp = v^.stamp +wrap 1_u64;
+          }
+          None() => {
+          }
         }
       }
     }
@@ -23,9 +29,9 @@ fn main() -> status: ExitStatus pure waits {
   let store = shared_map_new::<Counter>(capacity: 2_u64);
   for @seed (at in 1_u64..3_u64) {
     let key = &names[0_u64..at];
-    atomic entry = &store[key] {
+    atomic slot = &store[key] {
       let value = Counter(stamp: 0_u64);
-      set entry^ = Some<Counter>(value: value);
+      set slot^ = Some<Counter>(value: value);
     }
   }
   let first_handle = shared_share::<ConcurrentHashMap<Counter>>(shared: &store);
@@ -34,21 +40,33 @@ fn main() -> status: ExitStatus pure waits {
   let second = spawn bump(store: move second_handle);
   let joined_first = first;
   let joined_second = second;
+  let code = 0_u8;
   for @check (at in 1_u64..5_u64) {
     let key = &names[0_u64..at];
-    atomic entry = &store[key] {
-      match entry^ {
+    atomic slot = &store[key] {
+      match slot^ {
         Some(value: v) => {
-          if at > 2_u64 { return exit_status(code: 1_u8); }
-          if v^.stamp != 200_u64 { return exit_status(code: 2_u8); }
+          if at > 2_u64 {
+            set code = 1_u8;
+          }
+          if v^.stamp != 200_u64 {
+            set code = 2_u8;
+          }
         }
-        None() => { if at <= 2_u64 { return exit_status(code: 3_u8); } }
+        None() => {
+          if at <= 2_u64 {
+            set code = 3_u8;
+          }
+        }
       }
     }
   }
+  let count = 0_u64;
   atomic all = &store {
-    let count = map_count::<Counter>(map: all);
-    if count != 2_u64 { return exit_status(code: 4_u8); }
+    set count = map_count::<Counter>(map: all);
   }
-  return exit_status(code: 0_u8);
+  if count != 2_u64 {
+    set code = 4_u8;
+  }
+  return exit_status(code: code);
 }
