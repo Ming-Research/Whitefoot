@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Separate allocations for every ordinary frame root
+
+Nodes: compiler/storage-placement, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve #292's two design node changes (storage-placement, state-locks, see the latest log)" with "agreed" (translated), after choosing option A of the card "should every stack slot be allocated separately" ("choose A", translated); the completion report stated that the card's extent formula undercounted and that the implementation checks the corrected bound.
+
+Summary: Every positive-sized, naturally aligned root of an ordinary frame becomes its own entry allocation whatever the roots' alignments, and the target plan checks the sum over roots of size plus alignment minus one, plus the largest alignment minus one, which bounds every ordering the host may choose; split dispatch frames and their part signatures, parallel lane frames and context argument frames keep one object because their parts or runtime share its pointer and field offsets, and zero-sized or over-aligned roots keep the struct. A shared frame struct let one slot pointer passed to a surviving call pin a dead 152-byte snapshot copy; separate roots remove it in the witnesses and in Halo's `sort_compare`, where Halo's comparator sort runs 0.941 times as long and string-key 0.748 on the 14900K ([in-place parameters](../research/investigations/in-place-parameters/DESIGN.md#halo-with-separate-roots)). Uniform-alignment-only independent allocations and alignment groups were refused. The state-locks word-sized flag keeps its decision on restated grounds, since its former reason was the uniform-alignment rule.
+
 ## 2026-10-09 A break-free loop has no normal successor
 
 Nodes: language/loop-completion, compiler/checker-facts
