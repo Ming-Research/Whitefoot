@@ -17,7 +17,10 @@ mod permission_ledger;
 mod places;
 #[cfg(test)]
 pub(crate) use places::UnprovedSeparations;
-pub(crate) use places::{PlaceRoot as CheckedPlaceRoot, ResolvedPlace as CheckedResolvedPlace};
+pub(crate) use places::{
+    PlaceMap as CheckedPlaceMap, PlaceRoot as CheckedPlaceRoot, PlaceStep as CheckedResolvedStep,
+    ResolvedPlace as CheckedResolvedPlace,
+};
 mod postcondition;
 mod range_facts;
 mod range_judgment;

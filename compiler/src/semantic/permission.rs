@@ -440,7 +440,7 @@ pub(crate) fn analyze_permission(
     signatures: &[PermissionSignature],
     selected: &[bool],
 ) -> PermissionMetadata {
-    let program = Program { signatures };
+    let program = Program::new(functions, signatures);
     PermissionMetadata {
         functions: functions
             .iter()
@@ -464,11 +464,12 @@ pub(crate) fn plan_permission_separations(
     function: &CheckedFunction,
     signatures: &[PermissionSignature],
 ) -> Vec<PermissionSeparationQuery> {
-    let program = Program { signatures };
+    let program = Program::new(&[], signatures);
     program.plan_function_separations(function)
 }
 
 pub(super) struct Program<'check> {
+    pub(super) indexed_summaries: super::loop_permission::IndexedSummaries<'check>,
     signatures: &'check [PermissionSignature],
 }
 
@@ -624,6 +625,16 @@ enum Refusal {
 }
 
 impl<'check> Program<'check> {
+    pub(super) fn new(
+        functions: &'check [CheckedFunction],
+        signatures: &'check [PermissionSignature],
+    ) -> Self {
+        Self {
+            signatures,
+            indexed_summaries: super::loop_permission::IndexedSummaries::new(functions),
+        }
+    }
+
     fn plan_function_separations(
         &self,
         function: &'check CheckedFunction,
@@ -2096,6 +2107,9 @@ pub(super) fn set_target_place(
         // [REF-4] a range reference names one path, so the element a
         // subscript through it writes is that path extended by the index.
         CheckedSetTarget::RangeIndex(target) => {
+            if let Some(formation) = target.root.formation.as_deref() {
+                collect_operand_reads(places, formation, node, footprint);
+            }
             collect_operand_reads(places, &target.offset, node, footprint);
             for step in &target.path {
                 if let CheckedPlaceStep::Subscript(index) = step {
@@ -2339,7 +2353,7 @@ fn push_reference_holder_read(
 /// The match is exhaustive on purpose. A future expression form that reads
 /// caller storage must be classified here rather than silently contributing
 /// nothing, because a missing operand read widens permission.
-fn collect_operand_reads(
+pub(super) fn collect_operand_reads(
     places: &PlaceMap,
     expression: &CheckedExpression,
     node: &NodePath,
@@ -2408,7 +2422,7 @@ fn collect_operand_reads(
         CheckedExpression::RangeMeasure { root, .. } => {
             read(
                 footprint,
-                places.resolve(PlaceRoot::Binding(root.binding), &[]),
+                places.resolve(PlaceRoot::Binding(root.binding), &root.place_path()),
             );
         }
         CheckedExpression::RangeElementMeasure { place, .. }

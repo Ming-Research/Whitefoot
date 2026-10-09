@@ -2534,13 +2534,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 self.install_expression_call_requirements(check_context, start, requirements)?;
                 self.install_expression_call_requirements(check_context, end, requirements)?;
             }
+            CheckedExpression::RangeMeasure { root, .. } => {
+                if let Some(formation) = root.formation.as_deref_mut() {
+                    self.install_expression_call_requirements(
+                        check_context,
+                        formation,
+                        requirements,
+                    )?;
+                }
+            }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
             | CheckedExpression::Binding { .. }
             | CheckedExpression::ArrayMeasure { .. }
             | CheckedExpression::BufferMeasure { .. }
             | CheckedExpression::ContainerMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::BorrowAddressed { .. }
             | CheckedExpression::DerefAddressed { .. }
             | CheckedExpression::Project { .. } => {}
@@ -2595,6 +2603,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
+                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                        ),
+                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
                             Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,

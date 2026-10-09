@@ -899,7 +899,13 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
             expression_bindings(start, roots);
             expression_bindings(end, roots);
         }
-        CheckedExpression::RangeMeasure { root, .. } => roots.push(Root::whole(root.binding)),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref() {
+                expression_bindings(formation, roots);
+            } else {
+                roots.push(Root::whole(root.binding));
+            }
+        }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => element_roots(place, roots),
@@ -944,7 +950,11 @@ fn container_roots(root: &CheckedContainerRoot, roots: &mut Vec<Root>) {
 }
 
 fn element_roots(place: &CheckedRangeElementPlace, roots: &mut Vec<Root>) {
-    roots.push(Root::whole(place.root.binding));
+    if let Some(formation) = place.root.formation.as_deref() {
+        expression_bindings(formation, roots);
+    } else {
+        roots.push(Root::whole(place.root.binding));
+    }
     expression_bindings(&place.offset, roots);
     steps_roots(&place.path, roots);
 }

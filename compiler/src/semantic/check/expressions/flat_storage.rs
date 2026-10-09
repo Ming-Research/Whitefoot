@@ -52,11 +52,12 @@ impl CheckedArrayPlace {
 /// recovered from that type; this place carries the row by construction.
 #[derive(Clone)]
 pub(in crate::semantic::check) struct CheckedRangePlace {
-    root: CheckedRangeRoot,
-    declaration: DeclarationId,
-    element_type: CheckedType,
+    pub(in crate::semantic::check) root: CheckedRangeRoot,
+    pub(in crate::semantic::check) declaration: DeclarationId,
+    pub(in crate::semantic::check) element_type: CheckedType,
     /// The place the reference names [REF-1], for effects and [OWN-7].
-    resolved: ResolvedPlaceSet,
+    pub(in crate::semantic::check) resolved: ResolvedPlaceSet,
+    pub(in crate::semantic::check) offsets: CarriedOperands,
 }
 
 #[derive(Clone)]
@@ -555,6 +556,8 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
+        let subscript =
+            self.run_element_subscript(context, place, suffixes, bindings, subscript)?;
         let FunctionContext { check_context, .. } = context;
         // [MSR-1] the measure selects no storage below itself, so the place it
         // is read over is everything written before it.
@@ -568,6 +571,58 @@ impl<'unit> Checker<'_, 'unit> {
                 == ".pages";
         let mut measure = measure;
         let base = &suffixes[..suffixes.len() - if page_count { 2 } else { 1 }];
+        if !page_count
+            && let Some(range) = self.selected_run_place(
+                context,
+                place,
+                base,
+                bindings,
+                options.loop_depth,
+                LexicalUseRole::PlaceBase,
+            )?
+        {
+            if measure != CheckedMeasure::Length {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Op4,
+                    *base
+                        .last()
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
+                    SemanticIssueKind::type_mismatch("a run's `len` measure", measure.spelling()),
+                );
+            }
+            if options.explicit_move && Checker::judges_class_spelling(check_context) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Own1,
+                    use_node,
+                    SemanticIssueKind::MoveOfCopy {
+                        mechanical_fix: "read the measure without `move`",
+                    },
+                );
+            }
+            let mut effects = range.offsets.effects;
+            let mut accesses = range.offsets.accesses;
+            for member in &range.resolved.members {
+                self.check_commit_place_live(member, use_node, false)?;
+                for path in self.effect_paths_for_descriptor(use_node, member, bindings, measure)? {
+                    effects.add_read(path);
+                }
+                accesses.push(PlaceAccess {
+                    place: member.clone(),
+                    selected: true,
+                });
+            }
+            return Ok(TypedExpression {
+                expression: CheckedExpression::RangeMeasure {
+                    measure,
+                    root: range.root,
+                },
+                mode: CheckedMode::Own,
+                reference: None,
+                reference_value: false,
+                effects,
+                accesses,
+            });
+        }
         let anchor = base[subscript];
         let indexed = self
             .check_indexed_place(
@@ -641,7 +696,7 @@ impl<'unit> Checker<'_, 'unit> {
                 for member in &resolved.members {
                     self.check_commit_place_live(member, use_node, false)?;
                 }
-                let mut effects = carried.effects;
+                let mut effects = range.offsets.effects.union(carried.effects);
                 for member in &resolved.members {
                     for path in
                         self.effect_paths_for_descriptor(use_node, member, bindings, measure)?
@@ -652,6 +707,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut accesses = carried
                     .accesses
                     .into_iter()
+                    .chain(range.offsets.accesses)
                     .map(PlaceAccess::operand)
                     .collect::<Vec<_>>();
                 accesses.extend(resolved.members.into_iter().map(|place| PlaceAccess {
@@ -1012,6 +1068,8 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
+        let subscript =
+            self.run_element_subscript(context, place, suffixes, bindings, subscript)?;
         let FunctionContext { check_context, .. } = context;
         let suffix = suffixes[subscript];
         let indexed = self
@@ -1185,6 +1243,17 @@ impl<'unit> Checker<'_, 'unit> {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
         }
+        if let CheckedIndexedPlace::Range(range) = &indexed {
+            effects = effects.union(range.offsets.effects.clone());
+            accesses.extend(
+                range
+                    .offsets
+                    .accesses
+                    .iter()
+                    .cloned()
+                    .map(PlaceAccess::operand),
+            );
+        }
         let expression = match indexed {
             CheckedIndexedPlace::Array(array) => CheckedExpression::ArrayIndex {
                 carrier: self.types.declarations.tree.path(use_node)?.clone(),
@@ -1259,6 +1328,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
+        let subscript = self.run_element_subscript(context, node, suffixes, bindings, subscript)?;
         let FunctionContext { check_context, .. } = context;
         let suffix = suffixes[subscript];
         let indexed = self
@@ -1397,6 +1467,7 @@ impl<'unit> Checker<'_, 'unit> {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
             CheckedIndexedPlace::Range(range) => {
+                effects = effects.union(range.offsets.effects);
                 for member in &range.resolved.members {
                     let mut member = member.clone();
                     member.path.push(PlaceStep::Index(offset_place));
@@ -1844,6 +1915,7 @@ impl<'unit> Checker<'_, 'unit> {
             let element = self.types.intern_element(place.ty)?;
             return Ok(CheckedIndexedPlace::Range(CheckedRangePlace {
                 root: CheckedRangeRoot {
+                    formation: None,
                     binding,
                     element,
                     element_type: place.ty,
@@ -1851,6 +1923,7 @@ impl<'unit> Checker<'_, 'unit> {
                 declaration: place.declaration,
                 element_type: place.ty,
                 resolved: place.resolved,
+                offsets: CarriedOperands::default(),
             }));
         }
         let (binding, mut path, proof_base) = self
@@ -1914,6 +1987,239 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
+    /// Classify the selected kind from declared types alone. This does not
+    /// evaluate offsets or form speculative borrows of ordinary element paths.
+    fn is_run_selection(
+        &self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<bool, CheckStop> {
+        let Some(last) = suffixes.last() else {
+            return Ok(false);
+        };
+        if self
+            .types
+            .declarations
+            .tree
+            .subscript_offset(*last)?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        let pbase = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+            return Ok(false);
+        }
+        let usage = self
+            .types
+            .declarations
+            .use_at(context.check_context, pbase, root_role)?;
+        let ResolvedTarget::Source { declaration, .. } = usage.target() else {
+            return Ok(false);
+        };
+        let Some(local) = bindings.get(&declaration) else {
+            return Ok(false);
+        };
+        let mut ty = local.ty;
+        let mut range = false;
+        let mut pages = false;
+        let mut selected_run = false;
+        for (position, suffix) in suffixes.iter().enumerate() {
+            selected_run = false;
+            match self.types.declarations.tree.place_suffix(*suffix)? {
+                crate::syntax::views::PlaceSuffix::Dereference => {
+                    if position != 0 || !local.mode.is_reference() {
+                        return Ok(false);
+                    }
+                    range = local.mode.is_range();
+                }
+                crate::syntax::views::PlaceSuffix::Index { .. } => {
+                    if range {
+                        range = false;
+                    } else {
+                        selected_run = pages || matches!(ty, CheckedType::Segments { .. });
+                        let element = match ty {
+                            CheckedType::Array { element, .. }
+                            | CheckedType::Buffer { element }
+                            | CheckedType::Window { element, .. }
+                            | CheckedType::Segments { element }
+                            | CheckedType::Entries { element } => element,
+                            _ => return Ok(false),
+                        };
+                        ty = self.types.element_type(element)?;
+                        range = selected_run;
+                        pages = false;
+                    }
+                }
+                crate::syntax::views::PlaceSuffix::Member(_) => {
+                    if range {
+                        return Ok(false);
+                    }
+                    let name = self
+                        .types
+                        .declarations
+                        .deferred_use_at(*suffix, crate::DeferredUseRole::ProjectedField)?
+                        .spelling();
+                    if name == "pages"
+                        && matches!(
+                            ty,
+                            CheckedType::Window {
+                                shape: super::super::super::model::WindowShape::Paged,
+                                ..
+                            }
+                        )
+                    {
+                        pages = true;
+                    } else {
+                        let Some(member) = self.types.place_member(ty, name)? else {
+                            return Ok(false);
+                        };
+                        ty = member.ty();
+                    }
+                }
+                crate::syntax::views::PlaceSuffix::Range { .. } => return Ok(false),
+            }
+        }
+        Ok(selected_run)
+    }
+
+    pub(in crate::semantic::check) fn run_element_subscript(
+        &self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        ordinary: usize,
+    ) -> Result<usize, CheckStop> {
+        for (position, suffix) in suffixes.iter().enumerate().rev() {
+            if self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(*suffix)?
+                .is_some()
+                && self.is_run_selection(
+                    context,
+                    node,
+                    &suffixes[..position],
+                    bindings,
+                    LexicalUseRole::PlaceBase,
+                )?
+            {
+                return Ok(position);
+            }
+        }
+        Ok(ordinary)
+    }
+
+    /// [OP-4, REF-4] a run selector uses the existing reference formation,
+    /// but supplies a range base directly rather than a source reference value.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::semantic::check) fn selected_run_place(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<CheckedRangePlace>, CheckStop> {
+        let Some(last) = suffixes.last() else {
+            return Ok(None);
+        };
+        if self
+            .types
+            .declarations
+            .tree
+            .subscript_offset(*last)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        if !self.is_run_selection(context, node, suffixes, bindings, root_role)? {
+            return Ok(None);
+        }
+        let formed = self.check_place_borrow_through(
+            context,
+            node,
+            node,
+            node,
+            bindings,
+            loop_depth,
+            false,
+            Some(suffixes),
+            root_role,
+        )?;
+        let CheckedExpression::BorrowSegment {
+            root,
+            element,
+            element_type,
+            ..
+        } = &formed.expression
+        else {
+            return Ok(None);
+        };
+        let binding = root
+            .binding()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let declaration = bindings
+            .values()
+            .find(|local| local.binding == binding)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .declaration;
+        let reference = formed
+            .reference
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let identity = root.place();
+        let mut identity = ResolvedPlace {
+            root: identity.0,
+            path: identity.1,
+            atomic_aliases: Vec::new(),
+        };
+        let CheckedExpression::BorrowSegment { segment, .. } = &formed.expression else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        identity.path.push(segment.place_step());
+        let identity = if reference.paths.len() == 1 {
+            reference.paths[0].clone()
+        } else {
+            identity
+        };
+        let resolved = ResolvedPlaceSet {
+            identity,
+            members: reference.paths,
+        };
+        let element = *element;
+        let element_type = *element_type;
+        Ok(Some(CheckedRangePlace {
+            root: CheckedRangeRoot {
+                binding,
+                formation: Some(Box::new(formed.expression)),
+                element,
+                element_type,
+            },
+            declaration,
+            element_type,
+            resolved,
+            offsets: CarriedOperands {
+                effects: formed.effects,
+                accesses: formed
+                    .accesses
+                    .into_iter()
+                    .filter(|access| !access.selected)
+                    .collect(),
+            },
+        }))
+    }
+
     /// Checks "pbase plus the given suffix run" as one place of indexable
     /// storage. A subscript passes the chain before its own `psuffix` and
     /// anchors its wrong-base judgment there [OP-4]. Measure factors use
@@ -1956,6 +2262,16 @@ impl<'unit> Checker<'_, 'unit> {
         root_role: LexicalUseRole,
         required: RequiredReferent,
     ) -> Result<CheckedIndexedPlace, CheckStop> {
+        if let Some(range) = self.selected_run_place(
+            context,
+            node,
+            base_suffixes,
+            bindings,
+            loop_depth,
+            root_role,
+        )? {
+            return Ok(CheckedIndexedPlace::Range(range));
+        }
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types

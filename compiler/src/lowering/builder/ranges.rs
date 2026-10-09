@@ -210,16 +210,7 @@ impl IrBuilder<'_> {
                     &place.path,
                     place.target_domain,
                 )?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::ContainerMeasure {
-                        measure: super::runs::lower_measure(measure),
-                        container,
-                    },
-                )
+                self.lower_runtime_measure(measure, place.ty, container)
             }
             MeasureCell::Absent => Err(LoweringFailure::InvalidCheckedProgram),
         }
@@ -298,7 +289,10 @@ impl IrBuilder<'_> {
         &mut self,
         root: &CheckedRangeRoot,
     ) -> Result<IrValueId, LoweringFailure> {
-        let slice = self.binding_value(root.binding)?;
+        let slice = match root.formation.as_deref() {
+            Some(formation) => self.expression(formation)?,
+            None => self.binding_value(root.binding)?,
+        };
         if !matches!(self.value_type(slice)?, IrType::Range { element } | IrType::Run { element } if element == lower_element(self.erasure, root.element)?)
         {
             return Err(LoweringFailure::InvalidCheckedProgram);
