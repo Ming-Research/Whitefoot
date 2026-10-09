@@ -8,7 +8,7 @@ BUILD ?= $(patsubst %/,%,$(if $(TMPDIR),$(TMPDIR),/tmp))/loop-split-grain
 WFC ?= $(ROOT)/compiler/target/gate/whitefootc
 CLANG ?= /usr/bin/clang
 PYTHON ?= python3
-CALLS ?= 20000000
+CALLS ?= 200000000
 ARMS := emitted direct zero plain
 .DEFAULT_GOAL := build
 .DELETE_ON_ERROR:
