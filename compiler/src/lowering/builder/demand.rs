@@ -51,6 +51,7 @@ impl IrBuilder<'_> {
         let (header, carried) = b.new_block(&[result_type, U64])?;
         let (done, _) = b.new_block(&[])?;
         let (check, _) = b.new_block(&[])?;
+        let (ask, _) = b.new_block(&[])?;
         let (slice, _) = b.new_block(&[])?;
         let (halve, _) = b.new_block(&[])?;
         b.terminate(IrTerminator::Jump {
@@ -70,7 +71,6 @@ impl IrBuilder<'_> {
         })?;
         b.current = Some(check);
         let span = b.demand_binary(Op::SubtractWrap, upper, cursor)?;
-        let requested = b.define(IrType::Bool, IrOperation::DemandRequested)?;
         let worth = b.demand_binary(Op::GreaterEqual, span, minimum_span)?;
         let divisible = b.demand_binary(Op::Greater, span, one)?;
         let worth = b.define(
@@ -80,14 +80,13 @@ impl IrBuilder<'_> {
                 arguments: vec![worth, divisible],
             },
         )?;
-        let hand_out = b.define(
-            IrType::Bool,
-            IrOperation::Boolean {
-                operation: crate::IrBooleanOperation::And,
-                arguments: vec![requested, worth],
-            },
-        )?;
-        b.branch(hand_out, halve, slice)?;
+        // Only a range worth handing out reads the request word: a range
+        // below the minimum span never touches the word idle workers write,
+        // so its slices cost what the sequential loop costs at any width.
+        b.branch(worth, ask, slice)?;
+        b.current = Some(ask);
+        let requested = b.define(IrType::Bool, IrOperation::DemandRequested)?;
+        b.branch(requested, halve, slice)?;
         b.current = Some(slice);
         let count = b.demand_binary(Op::Minimum, span, step)?;
         // count <= upper - cursor: the cursor addition cannot wrap, even at MAX.

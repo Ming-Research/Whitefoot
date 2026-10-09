@@ -96,14 +96,14 @@ def summarize(path, inspection=None, sizing=False):
                 result["reason"] = "hosted sizing only" if sizing else "optimized hot-site inspection missing or work optimized away"
             result["status"] = status
             results.append(result)
-    # DESIGN says a noisy workload decides nothing, even if another width
-    # looks bad. Keep all cell statistics visible under that workload verdict.
-    for name in MANIFEST:
-        cells = [r for r in results if r["workload"] == name]
-        if any(r["initial"]["spread"] > 0.02 or r.get("rerun", {}).get("spread", 0) > 0.02 for r in cells):
-            for row in cells:
-                row["status"] = "inconclusive"
-                row["reason"] = "twin spread exceeds 2 percent for this workload"
+    # DESIGN ("The rerun's rule"): the twin spread decides each workload and
+    # width on its own, so a noisy width leaves the others' verdicts standing.
+    for row in results:
+        if row["status"] != "inconclusive" or "reason" in row:
+            continue
+        noisy = row["initial"]["spread"] > 0.02 or row.get("rerun", {}).get("spread", 0) > 0.02
+        row["reason"] = ("twin spread exceeds 2 percent for this width" if noisy
+                         else "the rerun came within its bound")
     return results
 
 

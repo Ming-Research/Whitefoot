@@ -53,6 +53,43 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
 }
 
 #[test]
+fn a_slice_driver_reads_the_request_word_only_for_a_range_worth_handing_out() {
+    let module = emit_lowered(SMALL.as_bytes(), DEMAND);
+    let driver = module
+        .split("\ndefine ")
+        .find(|function| {
+            function
+                .lines()
+                .next()
+                .is_some_and(|header| header.contains("@wf__par_slice_dynamic"))
+        })
+        .unwrap_or_else(|| panic!("the module defines dynamic's slice driver: {module}"));
+    // A block runs from its label to the next one. The block that reads the
+    // request word must be one the minimum-span comparison already chose, so
+    // a range too small to hand out never touches the word idle workers write.
+    let mut blocks = vec![String::new()];
+    for line in driver.lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            blocks.push(String::new());
+        }
+        blocks.last_mut().expect("a block").push_str(line);
+        blocks.last_mut().expect("a block").push('\n');
+    }
+    let asks: Vec<&String> = blocks
+        .iter()
+        .filter(|block| block.contains("@wf__par_demand_requested"))
+        .collect();
+    assert_eq!(asks.len(), 1, "{driver}");
+    assert!(!asks[0].contains("icmp uge"), "{driver}");
+    assert!(
+        blocks
+            .iter()
+            .any(|block| block.contains("icmp uge") && !block.contains("@wf__par_demand_requested")),
+        "{driver}"
+    );
+}
+
+#[test]
 fn demand_checks_groups_before_acquisition_and_keeps_the_budget_cut() {
     let source = include_bytes!("../../../../tests/programs/parallel/tree.wf");
     let demand = emit_lowered(source, DEMAND);

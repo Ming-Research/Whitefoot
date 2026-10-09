@@ -148,3 +148,31 @@ at four and eight workers, within the noise bound in most cells; `spine` 2 to
 4 percent; the group-call check on `recursion`, `hot_helper` and `mandelbrot`
 stayed within 1 percent. The optimized-site inspection the rule requires was
 not done, so no cell could pass.
+
+## The rerun's change and rule, fixed before it measures
+
+The owner chose to treat `small_split` as a failure, change the candidate and
+rerun experiment 1 on the i9-14900K before experiment 2 (status board,
+2026-10-09).
+
+Change: the slice driver tests whether the remaining range is worth handing
+out (at least the minimum span and more than one iteration) before it reads
+the request word, and reads the word only when it is. A range below the
+minimum span never touches the word. Reading the word once per call instead
+of once per slice was considered and not taken: after the reordering only a
+range worth handing out reads it, once per slice of about 5,000 work units,
+and a once-per-call read would keep a long loop from ever handing work to a
+worker that becomes idle during it, which experiment 2 measures. The
+statement groups' check is unchanged.
+
+Rule: as in "Pass and fail" above, with one change. The twin's spread decides
+each workload and width on its own: a cell whose spread exceeds 2 percent
+decides nothing, and the other widths of that workload keep their verdicts.
+The spread stays the range of all candidate and twin samples of that cell over
+their median. The optimized code of each hot site is inspected after the run,
+from the images' disassembly, before any cell is counted as a pass.
+
+Expected if the change works: `small_split` at four and eight workers within
+its bound, as at one worker. If it stays above its bound after a rerun, the
+cost is not the request word's read and the attribution goes back to the
+owner.

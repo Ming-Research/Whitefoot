@@ -12,7 +12,7 @@ class VerdictTests(unittest.TestCase):
         self.inspection = {name: dict(hot_work_survives=True, evidence="controlled test image",
                                     check_compiles_to="load and branch") for name in MANIFEST}
 
-    def write(self, ratio=1.0, twin=None, attempts=(1,), one_ratio=1.0):
+    def write(self, ratio=1.0, twin=None, attempts=(1,), one_ratio=1.0, twin_widths=WIDTHS):
         lines = []
         for name in MANIFEST:
             for width in WIDTHS:
@@ -23,7 +23,7 @@ class VerdictTests(unittest.TestCase):
                                 factor = 1.0
                                 if arm in ("demand", "twin"):
                                     factor = one_ratio if width == 1 else ratio
-                                    if twin is not None and arm == "twin": factor *= twin
+                                    if twin is not None and arm == "twin" and width in twin_widths: factor *= twin
                                 value = int(1000000000 * factor)
                                 lines.append(f"{name}\t{arm}\t{width}\t{round_id}\t{attempt}\t{sample}\t{value}\t{value}\t1\n")
         self.path.write_text("".join(lines))
@@ -45,6 +45,11 @@ class VerdictTests(unittest.TestCase):
         self.assertTrue(any(r["width"] == 1 and r["status"] == "fail" for r in summarize(self.path, self.inspection)))
         self.write(ratio=1.3, twin=1.05, attempts=(1, 2))
         self.assertEqual({r["status"] for r in summarize(self.path, self.inspection)}, {"inconclusive"})
+
+    def test_a_noisy_width_leaves_the_other_widths_verdicts(self):
+        self.write(ratio=1.3, twin=1.05, attempts=(1, 2), twin_widths=(1,))
+        verdicts = {r["width"]: r["status"] for r in summarize(self.path, self.inspection) if r["workload"] == "small_split"}
+        self.assertEqual(verdicts, {1: "inconclusive", 4: "fail", 8: "fail"})
 
     def test_missing_and_duplicate_rows_are_errors(self):
         self.write()
