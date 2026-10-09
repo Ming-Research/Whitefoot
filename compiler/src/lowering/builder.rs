@@ -10,6 +10,7 @@ mod demand;
 mod loops;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
+pub(crate) use demand::demand_minimum_span;
 mod probe;
 mod ranges;
 mod results;

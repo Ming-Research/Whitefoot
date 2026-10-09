@@ -204,3 +204,27 @@ repeat the first run's: `fir` 1.088 and 1.098, `large_helper` 1.064 and
 1.065, at four and eight workers; `recursion`, `hot_helper`, `spine` and
 `mandelbrot` within 2.5 percent; `records` 1.016 and 1.007 where the first
 run measured 1.077 and 1.072.
+
+## The second change, fixed before it measures
+
+The owner chose to change the candidate again and rerun experiment 1 under
+the same rule (status board, 2026-10-09); a failure goes, with everything
+above, to a stronger model for a plan.
+
+Change: the call site of a slice driver compares the whole range with the
+site's minimum span, a constant there because the site's weight is static,
+and calls the chunk directly when the range is smaller. Only a range worth
+handing out enters the driver, so a tiny range pays one comparison and no
+driver entry, saved registers or division.
+
+Inspection of `fir` before the rerun, from the first rerun's images
+(`fir.o.s`): one worker runs the sequential clone, whose inner multiply-add
+loop is compact and whose outer loop is unrolled by two. Four and eight
+workers run the chunk `wf__par_chunk_filter.1`, which receives the loop's
+bounds and captures as parameters; LLVM unrolls its inner loop by four into
+one serial chain of dependent adds with more index arithmetic. The chunk is
+the same in today's `--par` image, where the parallel speedup hides it. So the
+6 to 10 percent on `fir`, and plausibly on `large_helper`, is the chunk's code
+generation, not demand bookkeeping; this change does not address it. Expected
+from the change: `small_split` within its bound at four and eight workers;
+`fir` and `large_helper` unchanged.

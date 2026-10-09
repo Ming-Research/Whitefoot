@@ -14,6 +14,13 @@ const SLICE_NANOS: u64 = 5_000;
 const SLICE_WORK: u64 = SLICE_NANOS / NANOS_PER_WEIGHT_UNIT;
 const WORK_UNIT: u64 = super::call_grain::CALL_OFFER_WORK_UNIT;
 
+/// The fewest iterations of a site of this static weight worth handing out:
+/// the driver tests a remaining range against it, and the call site against
+/// the whole range before it enters the driver at all.
+pub(crate) const fn demand_minimum_span(weight: u64) -> u64 {
+    (WORK_UNIT - 1) / weight + 1
+}
+
 impl IrBuilder<'_> {
     pub(super) fn build_demand_driver(
         &self,

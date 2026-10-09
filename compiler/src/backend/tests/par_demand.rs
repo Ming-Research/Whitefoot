@@ -53,6 +53,43 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
 }
 
 #[test]
+fn a_range_below_the_minimum_span_calls_the_chunk_without_entering_the_driver() {
+    let module = emit_lowered(SMALL.as_bytes(), DEMAND);
+    let caller = function_body(&module, "@wf_dynamic");
+    let mut blocks = vec![String::new()];
+    for line in caller.lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            blocks.push(String::new());
+        }
+        blocks.last_mut().expect("a block").push_str(line);
+        blocks.last_mut().expect("a block").push('\n');
+    }
+    let small = blocks
+        .iter()
+        .find(|block| block.starts_with("par.small.v"))
+        .unwrap_or_else(|| panic!("the caller tests the range first: {caller}"));
+    assert!(small.contains("@wf__par_chunk_"), "{caller}");
+    assert!(!small.contains("@wf__par_slice_"), "{caller}");
+    let slice = blocks
+        .iter()
+        .find(|block| block.starts_with("par.slice.v"))
+        .unwrap_or_else(|| panic!("a large range still enters the driver: {caller}"));
+    assert!(slice.contains("@wf__par_slice_"), "{caller}");
+    // The comparison's right operand is an integer literal: the site's
+    // weight is static, so no division is left for run time.
+    assert!(
+        caller.lines().any(|line| {
+            line.contains(" = icmp ult i64 ")
+                && line
+                    .rsplit(", ")
+                    .next()
+                    .is_some_and(|operand| operand.trim().parse::<u64>().is_ok())
+        }),
+        "the minimum span is a folded constant: {caller}"
+    );
+}
+
+#[test]
 fn a_slice_driver_reads_the_request_word_only_for_a_range_worth_handing_out() {
     let module = emit_lowered(SMALL.as_bytes(), DEMAND);
     let driver = module

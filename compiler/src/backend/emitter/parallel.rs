@@ -912,8 +912,7 @@ impl FunctionEmitter<'_, '_> {
             return self.emit_split_call(result, abi.result(), &callee, arguments);
         }
         if self.program.par_demand && split.indexed.is_empty() {
-            arguments.push(format!("i64 {}", split.weight));
-            return self.emit_split_call(result, abi.result(), &callee, arguments);
+            return self.emit_demand_split(result, abi.result(), split, &callee, arguments);
         }
 
         // The span, computed so an inverted range asks for nothing rather than
@@ -1089,6 +1088,101 @@ impl FunctionEmitter<'_, '_> {
         }
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(result)
+    }
+
+    /// A demand site whose whole range is below its minimum span calls the
+    /// chunk directly; only a range worth handing out enters the slice driver.
+    /// The weight is the site's static price, so the minimum span is a
+    /// constant here and a tiny range pays one comparison, not the driver's
+    /// entry. The chunk takes the driver's parameters less the weight.
+    fn emit_demand_split(
+        &mut self,
+        result: IrValueId,
+        result_abi: ResultAbi,
+        split: &LoopSplitSite<'_>,
+        driver: &str,
+        arguments: Vec<String>,
+    ) -> Result<(), BackendFailure> {
+        let chunk_function = self
+            .program
+            .functions()
+            .get(split.chunk as usize)
+            .ok_or(BackendFailure::InvalidIr)?;
+        let chunk = self.callee_symbol(split.chunk, chunk_function.name());
+        let minimum_span = crate::lowering::demand_minimum_span(split.weight);
+        let ordinal = result.ordinal();
+        let (small, slice, join) = (
+            format!("par.small.v{ordinal}"),
+            format!("par.slice.v{ordinal}"),
+            format!("par.sliced.v{ordinal}"),
+        );
+        let width = format!("%{}", self.next_temporary()?);
+        let ascending = format!("%{}", self.next_temporary()?);
+        let span = format!("%{}", self.next_temporary()?);
+        let tiny = format!("%{}", self.next_temporary()?);
+        let lower = self.value_name(split.lower);
+        let upper = self.value_name(split.upper);
+        writeln!(
+            self.output,
+            "  {width} = sub i64 {upper}, {lower}\n  \
+             {ascending} = icmp ugt i64 {upper}, {lower}\n  \
+             {span} = select i1 {ascending}, i64 {width}, i64 0\n  \
+             {tiny} = icmp ult i64 {span}, {minimum_span}\n  \
+             br i1 {tiny}, label %{small}, label %{slice}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        let result_type = self.output.type_name(self.program, result_abi.ty())?;
+        let destination = if result_abi.uses_destination() {
+            Some(self.value_place(result)?)
+        } else {
+            None
+        };
+        let mut driver_arguments = arguments.clone();
+        driver_arguments.push(format!("i64 {}", split.weight));
+        let mut values = Vec::new();
+        for (label, callee, mut arguments) in [
+            (&small, chunk.as_str(), arguments),
+            (&slice, driver, driver_arguments),
+        ] {
+            self.output.open_block(label.clone());
+            self.output.symbol(callee.to_string());
+            if let Some(destination) = &destination {
+                arguments.insert(0, format!("ptr {destination}"));
+                writeln!(
+                    self.output,
+                    "  call void @{callee}({})\n  br label %{join}",
+                    arguments.join(", ")
+                )
+            } else {
+                let value = format!("%{}", self.next_temporary()?);
+                let written = writeln!(
+                    self.output,
+                    "  {value} = call {result_type} @{callee}({})\n  br label %{join}",
+                    arguments.join(", ")
+                );
+                values.push(value);
+                written
+            }
+            .map_err(|_| BackendFailure::TextEmission)?;
+        }
+        self.output.open_block(join.clone());
+        match (&destination, values.as_slice()) {
+            (None, [near, far]) => writeln!(
+                self.output,
+                "  {} = phi {result_type} [ {near}, %{small} ], [ {far}, %{slice} ]",
+                value_name(result)
+            ),
+            // A memory-only result stays in its destination; any other
+            // destination result is read back as emit_split_call does.
+            (Some(destination), []) if !self.is_memory_only(result_abi.ty())? => writeln!(
+                self.output,
+                "  {} = load {result_type}, ptr {destination}",
+                value_name(result)
+            ),
+            (Some(_), []) => Ok(()),
+            _ => return Err(BackendFailure::InvalidIr),
+        }
+        .map_err(|_| BackendFailure::TextEmission)
     }
 
     fn emit_split_call(
