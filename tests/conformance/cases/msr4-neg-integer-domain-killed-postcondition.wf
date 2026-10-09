@@ -25,7 +25,6 @@ fn walk(stack: &Box<Array<u64>>, fp0: u64) -> result: u64 writes(stack) contract
       return remaining;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

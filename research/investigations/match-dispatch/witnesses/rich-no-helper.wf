@@ -145,5 +145,4 @@ fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u64>>, memory: &Box<Array<u64>>,
       }
     }
   }
-  return 0_u64;
 }

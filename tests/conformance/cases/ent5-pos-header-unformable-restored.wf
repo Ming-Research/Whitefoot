@@ -10,7 +10,6 @@ fn probe(table: &Array<Slots<u8, 2>, 2>, flag: Bool) -> result: unit pure {
     let marker = 0_u8;
     set at = 0_u64;
   }
-  return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

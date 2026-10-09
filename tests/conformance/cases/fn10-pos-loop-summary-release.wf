@@ -24,7 +24,6 @@ fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
     set done = True();
     set cursor = &owner.inner;
   }
-  return 0_u64;
 }
 
 fn main() -> status: ExitStatus pure {

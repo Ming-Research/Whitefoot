@@ -70,7 +70,6 @@ fn run(code: &Box<Slots<Op>>, start: u64, seed: u64, steps: u64) -> r: RESULT re
       }
     }
   }
-  return FAILED;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -386,7 +385,6 @@ fn run(code: &Box<Slots<Op>>, start: u64, seed: u64, steps: u64) -> r: u64 reads
       }
     }
   }
-  return 0_u64;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -647,7 +645,6 @@ fn run(steps: u64, first: Parity) -> r: u64 pure {
       }
     }
   }
-  return acc;
 }
 
 fn main() -> status: ExitStatus pure {
@@ -762,7 +759,6 @@ fn run({parameters}, first: Parity) -> r: u64 pure {{
       }}
     }}
   }}
-  return p29;
 }}
 
 fn main() -> status: ExitStatus pure {{
@@ -927,7 +923,6 @@ fn NAME(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, start: u64) -> r: u64 rea
       }
     }
   }
-  return 0_u64;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -1299,7 +1294,6 @@ fn run(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, start: u64, seed: u64, ste
       }
     }
   }
-  return Outcome::Failed();
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -1473,7 +1467,6 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
       }
     }
   }
-  return 0_u32;
 }
 
 fn make_add() -> result: Cell pure {
@@ -1701,7 +1694,6 @@ fn walk(op: &Outer, count: u64) -> result: u64 reads(op) {
       }
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.106: a break-free loop has no normal successor
+
+Rules: changed FN-1, GIVE-1, ENT-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: FN-1 gives an ordinary `loop_stmt` an edge to its normal successor exactly when some `break_stmt` resolves to it, a labeled break and a break in a value initializer's arm or branch included, instead of giving every ordinary loop that edge; a call with a normal result edge, not a loop, is what fails the return requirement, and counted loops keep both header edges. GIVE-1 counts an arm or branch ending in a `loop_stmt` without that edge as delivering by divergence and still rejects an empty delivery set. ENT-5 defers the loop continuation's reachability to FN-1 and classifies continuing kills by the path condition alone, removing the sentence that classified kills inside nested loops by their location. Selection ground: an interpreter written as `loop { match }` whose arms only continue or return otherwise had to end with an unreachable `return`, a source path with no execution.
+
 ## 2026-10-08 v0.105: memory statistics
 
 Rules: changed PRE-2

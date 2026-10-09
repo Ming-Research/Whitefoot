@@ -1,0 +1,10 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let x = 0_u64;
+  loop (
+    invariant stable: x == 0_u64
+  ) {
+    loop {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}

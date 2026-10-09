@@ -44,7 +44,6 @@ fn choose_stride(vertices: own u64, ready: own u64) -> result: own u64 pure cont
     }
     set parts = doubled;
   }
-  return 1_u64;
 }
 
 fn route_frontier(input: &[u64], links: &[u64], next: &[u64], buckets: &[u64], first: own u64, origin: own u64, capacity: own u64, stride: own u64, vertices: own u64) -> result: own unit reads(input), reads(links), writes(next), writes(buckets) contract {
@@ -113,7 +112,6 @@ fn collect_bucket(input: &[u64], next: &[u64], first: own u64, visited: &[u64], 
     }
     set cursor = deref(next)[cursor];
   }
-  return head, count;
 }
 
 fn collect_owner(input: &[u64], next: &[u64], buckets: &[u64], visited: &[u64], links: &[u64], destinations: own u64, owner: own u64, origin: own u64, level: own u64, unseen: own u64) -> result: own Discovery reads(input), reads(next), reads(buckets), writes(visited), writes(links) contract {
@@ -146,7 +144,6 @@ fn collect_owner(input: &[u64], next: &[u64], buckets: &[u64], visited: &[u64], 
     invariant following_cell: next_at < cells;
     set at = next_at;
   }
-  return Discovery(head: head, count: count);
 }
 
 fn outbox_level(input: &[u64], messages: &[u64], visited: &[u64], links: &[u64], previous: &[u64], following: &[u64], vertices: own u64, source_stride: own u64, ready: own u64, level: own u64) -> (next_stride: own u64, count: own u64) reads(input), reads(previous), writes(messages), writes(visited), writes(links), writes(following) contract {

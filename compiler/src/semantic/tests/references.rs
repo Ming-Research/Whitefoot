@@ -2086,7 +2086,6 @@ fn a_loop_local_reference_cannot_escape_on_a_give_edge() {
       let local = 9_u64;
       give &local;
     }
-    give &fallback;
   } else {
     give &fallback;
   }
