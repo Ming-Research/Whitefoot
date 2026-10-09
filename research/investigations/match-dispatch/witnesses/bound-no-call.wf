@@ -21,5 +21,4 @@ fn walk(stack: &Box<Array<u64>>, fp0: u64, k: u64) -> r: u64 writes(stack.inner)
       return room;
     }
   }
-  return 0_u64;
 }

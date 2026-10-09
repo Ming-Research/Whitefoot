@@ -6,5 +6,4 @@ fn main() -> status: std::process::ExitStatus pure {
   loop {
     continue @ended;
   }
-  return std::process::exit_status(code: 0_u8);
 }

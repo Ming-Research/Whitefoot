@@ -582,6 +582,47 @@ fn function_control_is_checked_and_main_has_an_ordinary_signature() {
     );
 }
 
+/// Conformance records the rule; this pins its two diagnostic kinds and the
+/// complete source extent of the newly unreachable statement.
+#[test]
+fn break_free_loop_reachability_reports_the_statement_or_function_exit() {
+    let source = include_bytes!(
+        "../../../tests/conformance/cases/fn1-neg-statement-after-break-free-loop.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("the trailing return must be unreachable: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn1);
+        assert_eq!(*issue.kind(), SemanticIssueKind::UnreachableStatement);
+        let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        let start = usize::try_from(coordinate.start().value()).expect("source offset fits usize");
+        let end = usize::try_from(coordinate.end().value()).expect("source offset fits usize");
+        assert_eq!(
+            &source[start..end],
+            b"return std::process::exit_status(code: 1_u8);"
+        );
+    });
+    for source in [
+        include_bytes!("../../../tests/conformance/cases/fn1-neg-break-loop-fallthrough.wf")
+            .as_slice(),
+        include_bytes!("../../../tests/conformance/cases/fn1-neg-enclosing-break-fallthrough.wf")
+            .as_slice(),
+        include_bytes!("../../../tests/conformance/cases/fn1-neg-counted-return-fallthrough.wf")
+            .as_slice(),
+        include_bytes!(
+            "../../../tests/conformance/cases/fn1-neg-break-in-value-branch-fallthrough.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_rule(
+            source,
+            SemanticRule::Fn1,
+            SemanticIssueKind::FunctionFallthrough,
+        );
+    }
+}
+
 /// [OWN-11] the per-iteration judgment, which is [LIV-1]'s liveness agreement
 /// read at a loop head.
 ///
@@ -636,11 +677,11 @@ fn main() -> status: std::process::ExitStatus pure {
         },
     );
     with_semantics(
-        b"fn main() -> status: std::process::ExitStatus pure {\n  loop @forever {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  loop @forever {\n  }\n}\n",
         |outcome| {
             assert!(
                 matches!(outcome, SemanticOutcome::Complete(_)),
-                "a break-free loop has a contradictory continuation rather than an unsupported shape: {outcome:?}"
+                "a break-free loop has no normal successor: {outcome:?}"
             );
         },
     );

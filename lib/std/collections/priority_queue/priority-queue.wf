@@ -88,7 +88,6 @@ fn priority_queue_sift_rise_indexed<interface PriorityOrder<T, E>, P, fn placed(
     placed(env: position_env, value: &queue^.storage.inner[at], index: at);
     set at = parent;
   }
-  return unit;
 }
 
 fn priority_queue_sift_rise<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, count: u64, env: &E) -> result: unit reads(env), writes(queue.storage) contract {
@@ -158,7 +157,6 @@ fn priority_queue_sift_sink_indexed<interface PriorityOrder<T, E>, P, fn placed(
     placed(env: position_env, value: &queue^.storage.inner[best], index: best);
     set at = best;
   }
-  return unit;
 }
 
 fn priority_queue_sift_sink<interface PriorityOrder<T, E>, const ceiling: u64>(queue: &PriorityQueue<T, ceiling>, start: u64, count: u64, env: &E) -> result: unit reads(env), writes(queue.storage) contract {

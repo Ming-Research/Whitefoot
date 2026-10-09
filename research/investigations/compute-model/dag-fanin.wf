@@ -490,7 +490,6 @@ fn runtime_owner(costs: &[u64], successors: &[u64], previous_messages: &[RoutedN
     invariant following_head: following < cells;
     set at = following;
   }
-  return sent;
 }
 
 fn runtime_tree(costs: &[u64], successors: &[u64], previous_messages: &[RoutedNotice], previous_heads: &[u64], initial: &[u64], state: &[RuntimeDagState], output: &[TaskCell], messages: &[RoutedNotice], heads: &[u64], reports: &[u64], first_owner: u64, owner_count: u64, origin: u64, stride: u64, round: u64, seed: u64) -> result: unit reads(costs), reads(successors), reads(previous_messages), reads(previous_heads), reads(initial), writes(state), writes(output), writes(messages), writes(heads), writes(reports) contract {

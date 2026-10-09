@@ -1321,9 +1321,8 @@ pub enum SemanticIssueKind {
     InvalidPropagation,
     /// `give` is absent, misplaced, duplicated, or followed by a statement.
     InvalidGive,
-    /// [GIVE-1] every arm or branch of a value initializer leaves by `return`
-    /// or `break`, so its delivery set is empty and no value reaches the
-    /// binding.
+    /// [GIVE-1] no arm or branch of a value initializer supplies a value,
+    /// including when all branches diverge, so the delivery set is empty.
     EmptyDeliverySet {
         /// The binding no value reaches, as the source spells it.
         binding: String,

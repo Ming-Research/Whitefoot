@@ -11,13 +11,20 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-08 v0.106: address-stable paged storage
+## 2026-10-08 v0.107: address-stable paged storage
 
 Rules: changed GRAM-3, GRAM-5, GIVE-1, TYPE-2, TYPE-6, TYPE-7, TYPE-8, TYPE-9, TYPE-10, OWN-1, OWN-7, REF-1, REF-4, PROV-6, STOR-1, STOR-3, STOR-6, STOR-8, WIN-1, WIN-2, OP-4, OP-9, OP-10, OP-13, OP-14, OP-15, EFF-1, EFF-5, PAR-2, PRE-1, ENT-2, MSR-1, MSR-2, CALL-3, INV-1, RANGE-1
 
 Owner-approved: In the session of 2026-10-06 and 2026-10-07, written in Chinese, after the design rounds on Snowghost's nested access concluded that the root problem is storage: "Q122, do it all at once" (translated), selecting a built-in `Paged<T>` with Snowghost's requirements R1 to R6; after the cards that presented the page length fixed by the language stride ceiling as Q135 and the Paged specification and design-tree text as Q136: "135 and 136 approved" (translated); after the card that presented the header-first cell as Q147: "approve them all" (translated); on the status board on 2026-10-08, after the card that presented judging the C3 criterion on the like-for-like Snowghost port, re-approving the header-first cell and not adopting the X1/X2 allocation experiments: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: `Paged<T>` is a fifth storage shape, placed only in `Box` content: a runtime-capacity window whose slots live in fixed pages of B elements, B the largest power of two with B times the language stride ceiling at most 4096, so growth (`grow_paged`) copies directory words and never moves an element, and `p[i]` is one ordinary index step with the bound `i < p.len` and the proof model of `Slots` (exact places, index separation, `apart` certificates, PAR-2 element families). `&p[lo..hi]` forms the parameter-only reference kind `&Run<T>`, which may cross pages and is never a `&[T]`; `p.pages.len` and `&p.pages[k]` give each page as a contiguous `&[T]` with a captured initialized extent. Construction, back placement and removal, `free_empty`, release order, checked allocation sizes and the no-heap rule extend to the shape; ENT-2's proof paths cover page selectors with per-formation identity. The selection ground is Snowghost's need for growable storage whose published slots never move, after returned references and visitors were rejected (research/investigations/paged-storage/DESIGN.md), and the C3 attribution, which found the like-for-like port's whole layout stage within noise of the hand-written pages on the i9-14900K. Paged roots for indexed accumulators remain deferred.
+## 2026-10-09 v0.106: a break-free loop has no normal successor
+
+Rules: changed FN-1, GIVE-1, ENT-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: FN-1 gives an ordinary `loop_stmt` an edge to its normal successor exactly when some `break_stmt` resolves to it, a labeled break and a break in a value initializer's arm or branch included, instead of giving every ordinary loop that edge; a call with a normal result edge, not a loop, is what fails the return requirement, and counted loops keep both header edges. GIVE-1 counts an arm or branch ending in a `loop_stmt` without that edge as delivering by divergence and still rejects an empty delivery set. ENT-5 defers the loop continuation's reachability to FN-1 and classifies continuing kills by the path condition alone, removing the sentence that classified kills inside nested loops by their location. Selection ground: an interpreter written as `loop { match }` whose arms only continue or return otherwise had to end with an unreachable `return`, a source path with no execution.
 
 ## 2026-10-08 v0.105: memory statistics
 

@@ -32,6 +32,7 @@ impl IrBuilder<'_> {
         id: CheckedLoopId,
         body: &[CheckedStatement],
         backedge_drops: &[CheckedDrop],
+        continues: bool,
         give_target: Option<GiveTarget>,
     ) -> Result<(), LoweringFailure> {
         let base_bindings = self.bindings.clone();
@@ -90,7 +91,11 @@ impl IrBuilder<'_> {
 
         self.current = Some(exit);
         self.bindings = base_bindings;
-        self.bind_parameters(&carried_bindings, &exit_parameters)
+        self.bind_parameters(&carried_bindings, &exit_parameters)?;
+        if !continues {
+            self.terminate(IrTerminator::Unreachable)?;
+        }
+        Ok(())
     }
 
     /// Lowers one counted `for`, either as the block graph below or — when

@@ -1,0 +1,10 @@
+fn choose(flag: Bool) -> result: u64 pure {
+  let selected = if flag {
+    loop {
+      continue;
+    }
+  } else {
+    give 1_u64;
+  }
+  return selected;
+}

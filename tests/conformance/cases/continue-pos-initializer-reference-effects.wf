@@ -11,5 +11,4 @@ fn probe(first: &u64, second: &u64, flag: Bool) -> result: unit reads(first), re
     }
     return unit;
   }
-  return unit;
 }

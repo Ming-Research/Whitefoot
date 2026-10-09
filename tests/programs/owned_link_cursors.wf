@@ -30,7 +30,6 @@ fn sum(head: &Option<Box<Link>>) -> result: u64 reads(head) {
       }
     }
   }
-  return total;
 }
 
 fn without_first(head: Option<Box<Link>>) -> result: Option<Box<Link>> pure {
@@ -63,7 +62,6 @@ fn remove_even(head: &Option<Box<Link>>) -> result: unit writes(head) {
       }
     }
   }
-  return unit;
 }
 
 fn raise_values(head: &Option<Box<Link>>) -> result: unit writes(head) {
@@ -79,7 +77,6 @@ fn raise_values(head: &Option<Box<Link>>) -> result: unit writes(head) {
       }
     }
   }
-  return unit;
 }
 
 enum Tree {
@@ -119,7 +116,6 @@ fn edge(root: &Tree, right: Bool) -> result: u64 reads(root) {
       }
     }
   }
-  return 0_u64;
 }
 
 fn repeated_sum(head: &Option<Box<Link>>) -> result: u64 reads(head) {
