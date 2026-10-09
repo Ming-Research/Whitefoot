@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Offset disequalities, invariant L0 facts and origin transport
+
+Nodes: language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge/origin-transport
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve checker completion (#286)'s specification changes and the design decisions of the automatic-facts and origin-transport nodes" with "agreed" (translated). The choices it records were the owner's earlier: offset disequalities and invariant difference bounds in L0 on the status board item for Q148; accepting that three explicit certificates become PRF-1 redundancy rejects ("choose A", status board, 2026-10-08, translated); and query-local origin equivalence in the session of 2026-10-08 ("Q1, Q2, Q3 agreed", translated).
+
+Summary: L0 stores offset disequalities and tightens a bound at the excluded constant in either orientation, with the same support, snapshot and join judgments as zero-offset ones; joins keep ENT-5's finite disequality candidates rather than every common derivable exclusion, deferred until a program needs it. A proved invariant's exact difference bounds become ordinary L0 facts, so an equality-sentinel loop proves its increment; three-term and scaled conclusions stay affine premises. A goal's disposition identifies value trees whose currently valid origin expansions agree, in a finite query view built from the live definition links with ordinary kills and join intersection, publishing no flow fact. Keeping constant disequalities out of L0, a branch-entry special case, expanding only the submitted goal and retaining killed equivalences were refused.
+
 ## 2026-10-08 Overlap groups order a release before borrows of the storage it frees
 
 Nodes: compiler/parallel-lowering
