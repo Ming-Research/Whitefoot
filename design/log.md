@@ -12,6 +12,13 @@ Nodes: language/ownership/range-reference, language/checks-and-proofs/proof-iden
 Owner-approved: On the status board on 2026-10-09, written in Chinese: after Snowghost's request that `s[i].len` and `s[i][j]` be admitted and the card asking how far the direct forms should extend, recommended option A, reads and writes for `Segments` segments and `Paged` pages alike: "choose A" (translated); then, after the card that presented the OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2 and ENT-3 changes, the two design decisions and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: Run-selecting places serve directly as bases of their length read and of element subscripts because they name exactly the place their borrow forms, so they add no proof or permission mechanism, instead of requiring a borrow before every length read or element access. Direct page selections and nonterminal page steps take index-step proof identity because they capture no extent and length writes kill their terms, while a page-reference borrow keeps per-formation identity because its captured extent survives growth.
+## 2026-10-09 No merging or reordering of waiting calls
+
+Nodes: language/effects
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated).
+
+Summary: The merge-and-reorder licence of a `pure` row covers only calls that do not wait, because a waiting function's shared-object changes take effect in the execution's order and appear in no row; redefining `pure` and a backend-only exclusion were refused.
 
 ## 2026-10-09 Scientific float spelling
 

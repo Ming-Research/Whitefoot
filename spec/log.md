@@ -11,7 +11,7 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.116: segment and page selectors as direct bases
+## 2026-10-09 v0.117: segment and page selectors as direct bases
 
 Rules: changed OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2, ENT-3
 
@@ -19,6 +19,13 @@ Owner-approved: On the status board on 2026-10-09, written in Chinese: after Sno
 
 Summary: A run-selecting place, a segment subscript `s[i]` of a `Segments` or a page subscript `p.pages[k]` of a `Paged`, may be used without `&` as the base of its `len` read and of a further element subscript, whose element place is an ordinary element place; it denotes exactly the place its borrow resolves to, with the same bounds, effects, overlap and parallel permission, and every other use of the run-selecting place stays an OP-4 error. A page step that ends a page-reference borrow keeps per-formation proof identity because its extent is captured at formation; segment steps, direct page selections and every page step followed by a further step compare as index steps because they capture nothing and `p.len` writes kill their length terms. Forming `&p.pages[k]` publishes that its `len` equals the direct page length in the formation's entry state. The selection ground is the natural form Snowghost writes for its grid splice, previously refused in favor of a borrow before every length read or element access.
 
+## 2026-10-09 v0.116: no merging or reordering of waiting calls
+
+Rules: changed EFF-3
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated): EFF-3's licence applies only to calls that do not wait.
+
+Summary: EFF-3 licensed deduplicating and reordering any `pure`, non-allocating call with equal arguments, while a `pure waits` function may change shared objects whose changes take effect in the execution's order (WAIT-2, SHARE-3) and appear in no row (SHARE-2); the two rules conflicted with no stated priority. The licence now excludes waiting calls. No compiler behaviour changes today, since the backend derives no function attributes from rows; the rule closes the hazard before it does. Selection ground: found while answering the owner's question about Shared and effect rows on the relaxed-fields research (#301).
 ## 2026-10-09 v0.115: scientific float spelling
 
 Rules: changed FORM-5
