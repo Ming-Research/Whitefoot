@@ -1014,20 +1014,21 @@ fn direct_run_measures_judge_selectors_in_requirements_and_invariants() {
         for in_requirement in [true, false] {
             for bound in ["<", "<="] {
                 let (requirement, invariant) = if in_requirement {
-                    (format!("requires 0_u64 <= {selector}.len;"), String::new())
+                    (
+                        format!("  requires 0_u64 <= {selector}.len;\n"),
+                        String::new(),
+                    )
                 } else {
                     (
                         String::new(),
-                        format!("invariant nonnegative: 0_u64 <= {selector}.len;"),
+                        format!("  invariant nonnegative: 0_u64 <= {selector}.len;\n"),
                     )
                 };
                 let source = format!(
                     r#"fn inspect(values: &{storage}, item: u64) -> result: unit reads(values) contract {{
   requires item {bound} {outer_bound};
-  {requirement}
-}} {{
-  {invariant}
-  return unit;
+{requirement}}} {{
+{invariant}  return unit;
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{

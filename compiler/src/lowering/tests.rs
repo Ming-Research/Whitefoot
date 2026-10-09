@@ -3105,7 +3105,8 @@ fn main() -> status: std::process::ExitStatus pure {{
         );
         with_ir(source.as_bytes(), |program| {
             let addresses = |name| {
-                let definitions = function(program, name)
+                let helper = function(program, name);
+                let definitions = helper
                     .blocks()
                     .iter()
                     .flat_map(|block| block.instructions())
@@ -3116,8 +3117,38 @@ fn main() -> status: std::process::ExitStatus pure {{
                         _ => None,
                     })
                     .collect::<std::collections::HashMap<_, _>>();
+                // The borrowed form's early-return guard carries `part` and
+                // the source parameters into a join through block arguments.
+                // These are SSA copies, not Define instructions. Follow them
+                // for both the slice producer and its address inputs.
+                let mut forwarded = std::collections::HashMap::new();
+                for block in helper.blocks() {
+                    if let IrTerminator::Jump {
+                        target, arguments, ..
+                    } = block.terminator()
+                    {
+                        let parameters = helper.blocks()[target.index()].parameters();
+                        assert_eq!(parameters.len(), arguments.len());
+                        for ((parameter, _), argument) in parameters.iter().zip(arguments) {
+                            if let Some(previous) = forwarded.insert(*parameter, *argument) {
+                                assert_eq!(
+                                    previous, *argument,
+                                    "{name}: incoming arguments must agree"
+                                );
+                            }
+                        }
+                    }
+                }
+                let original = |mut value| {
+                    let mut seen = std::collections::HashSet::new();
+                    while let Some(argument) = forwarded.get(&value) {
+                        assert!(seen.insert(value), "{name}: cyclic block arguments");
+                        value = *argument;
+                    }
+                    value
+                };
                 let mut result = Vec::new();
-                for instruction in function(program, name)
+                for instruction in helper
                     .blocks()
                     .iter()
                     .flat_map(|block| block.instructions())
@@ -3130,7 +3161,10 @@ fn main() -> status: std::process::ExitStatus pure {{
                         IrInstruction::StoreSlice { slice, index, .. } => (slice, index, true),
                         _ => continue,
                     };
-                    let (owner, selected) = match definitions.get(slice).expect("slice producer") {
+                    let (owner, selected) = match definitions
+                        .get(&original(*slice))
+                        .expect("slice producer after resolving block arguments")
+                    {
                         IrOperation::SegmentSlice { segments, index } if selection == "segment" => {
                             (*segments, *index)
                         }
@@ -3142,10 +3176,10 @@ fn main() -> status: std::process::ExitStatus pure {{
                     // All three inputs are the unchanged helper parameters:
                     // owner, selected run and offset within that run.
                     let parameter = |value| {
-                        function(program, name)
+                        helper
                             .parameters()
                             .iter()
-                            .position(|(input, _)| *input == value)
+                            .position(|(input, _)| *input == original(value))
                             .expect("unchanged source parameter")
                     };
                     result.push((
@@ -3163,6 +3197,11 @@ fn main() -> status: std::process::ExitStatus pure {{
                 direct.len(),
                 2,
                 "read and write element addresses: {direct:?}"
+            );
+            assert_eq!(
+                direct,
+                vec![(0, 1, 2, false), (0, 1, 2, true)],
+                "{selection}: exactly one read and one write at values[item][slot]"
             );
             assert_eq!(
                 direct, borrowed,
