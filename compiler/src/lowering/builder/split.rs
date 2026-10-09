@@ -194,6 +194,14 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
+    /// A run and the adjacent-pair recovery can reach the same boundary.
+    /// Report that source conflict once, also across physical instances.
+    pub(super) fn note_storage_conflict(&mut self, line: String) {
+        if !self.ledger.contains(&line) {
+            self.ledger.push(line);
+        }
+    }
+
     pub(crate) fn new(base: u32) -> Self {
         Self {
             base,

@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 The release/borrow group boundary uses proved separations
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request "approve adding 'with the same proved separations used by the parallel permission' to the parallel-lowering decision that keeps a released place and a borrowed place out of one overlap group" with "agree" (translated); earlier the same day, on Snowghost's card handing the owning-element serialization to Whitefoot: "choose A" (translated).
+
+Summary: The overlap-group boundary that keeps a call releasing storage apart from a call borrowing it compares released and borrowed places with the separations the permission judgment proved for that ordered pair, because the unproved oracle it used serialized sibling calls on proved-disjoint ranges of an owning-element run (Snowghost's layout lost its 4-thread parallelism between releases 631d3ff and b2209fd); unknown roots and unproved overlap still split the group, and every member's borrowed and released places now come from the same statements as its footprint, which closes conditional-call and call-rooted-match members that recorded none.
 ## 2026-10-09 Guards observe cancellation through read-only shared handles
 
 Nodes: language/waiting/shared-objects, language/system-interface/context-cancellation, compiler/waiting-contexts, compiler/waiting-contexts/state-locks
