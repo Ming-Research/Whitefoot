@@ -85,6 +85,7 @@ pub(super) enum DeferredAnswer {
 pub(super) struct Walker<'program> {
     pub(super) functions: &'program [&'program CheckedFunction],
     nominals: &'program [CheckedNominal],
+    elements: &'program [CheckedType],
     pub(super) function: &'program CheckedFunction,
     constants: &'program [super::super::model::CheckedConstant],
     scope: JudgmentScope,
@@ -182,9 +183,11 @@ fn literal(left: Linear, relation: Relation, right: Linear) -> Literal {
 }
 
 impl<'program> Walker<'program> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         functions: &'program [&'program CheckedFunction],
         nominals: &'program [CheckedNominal],
+        elements: &'program [CheckedType],
         function: &'program CheckedFunction,
         deferred: Vec<(usize, DeferredAnswer)>,
         constants: &'program [super::super::model::CheckedConstant],
@@ -194,6 +197,7 @@ impl<'program> Walker<'program> {
         Self {
             functions,
             nominals,
+            elements,
             function,
             deferred,
             reachability: BTreeMap::new(),
@@ -1729,7 +1733,7 @@ impl<'program> Walker<'program> {
                     self.unplaced(Some(container), write, write);
                 }
             }
-            View::Unknown => self.unplaced(None, write, write),
+            View::Scalar(_) | View::Unknown => self.unplaced(None, write, write),
         }
     }
 
@@ -2178,6 +2182,7 @@ impl<'program> Walker<'program> {
                         _ => None,
                     };
                     state.expose(&mut self.world, binding, ty);
+                    return Value::Ref(View::Scalar(binding));
                 }
                 Value::Ref(self.view_of(state, root.root, &root.path))
             }
@@ -2605,7 +2610,7 @@ impl<'program> Walker<'program> {
                     );
                 }
                 View::Place(location) => state.havoc_location(&mut self.world, &location),
-                View::Unknown => state.havoc_everything(&mut self.world),
+                View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
             }
         }
         let value = match result {
@@ -3554,7 +3559,9 @@ impl<'program> Walker<'program> {
                             [value],
                         ) => term(walker, state, value, function, values),
                         (
-                            GoalOperation::ContainerMeasure { measure, .. },
+                            GoalOperation::ArrayMeasure { measure, .. }
+                            | GoalOperation::BufferMeasure { measure, .. }
+                            | GoalOperation::ContainerMeasure { measure, .. },
                             [
                                 GoalExpression::Datum(GoalDatum::Parameter {
                                     ordinal,
@@ -3571,49 +3578,71 @@ impl<'program> Walker<'program> {
                                 projections,
                                 *ty,
                             )?;
-                            match value {
-                                Value::Ref(View::Run { length, .. })
-                                    if *measure == CheckedMeasure::Length =>
-                                {
-                                    Some(length)
-                                }
+                            let target = match value {
+                                Value::Ref(View::Run {
+                                    container,
+                                    prefix,
+                                    offset,
+                                    length,
+                                }) => Target::Run {
+                                    container,
+                                    prefix,
+                                    offset,
+                                    length,
+                                },
                                 Value::Ref(View::Element {
                                     container,
                                     indices,
-                                    projection: Some(mut projection),
-                                }) => {
-                                    projection.push(CheckedRangeProjection::Measure(*measure));
-                                    let version = state.version(&mut walker.world, container);
-                                    Some(walker.world.read(
-                                        version,
-                                        indices,
-                                        projection,
-                                        Some(IntegerType::U64),
-                                    ))
-                                }
+                                    projection,
+                                }) => Target::Element {
+                                    container,
+                                    indices,
+                                    projection,
+                                },
                                 Value::Owned(location) | Value::Ref(View::Place(location)) => {
-                                    if let CheckedType::Array { length, .. } = ty
-                                        && *measure != CheckedMeasure::Head
-                                    {
-                                        return length
-                                            .value()
-                                            .map(|v| Linear::constant(i128::from(v)));
-                                    }
-                                    let arity = if matches!(ty, CheckedType::Segments { .. }) {
-                                        2
-                                    } else {
-                                        1
-                                    };
-                                    let container =
-                                        state.container(&mut walker.world, location, arity)?;
-                                    Some(walker.world.measure(
-                                        container,
-                                        state.generation(container),
-                                        *measure,
-                                    ))
+                                    Target::Location(location)
                                 }
-                                _ => None,
-                            }
+                                _ => return None,
+                            };
+                            walker.target_measure(state, &target, *ty, *measure)
+                        }
+                        (
+                            GoalOperation::ArrayIndex { .. }
+                            | GoalOperation::BufferIndex { .. }
+                            | GoalOperation::RunIndex { .. },
+                            [
+                                GoalExpression::Datum(GoalDatum::Parameter {
+                                    ordinal,
+                                    projections,
+                                    ty,
+                                }),
+                                index,
+                            ],
+                        ) => {
+                            let value = walker.goal_parameter(
+                                state,
+                                function,
+                                values,
+                                *ordinal as usize,
+                                projections,
+                                *ty,
+                            )?;
+                            let index = term(walker, state, index, function, values)?;
+                            let Value::Ref(View::Element {
+                                container,
+                                indices,
+                                projection: Some(projection),
+                            }) = walker.goal_subscript(state, value, *ty, index)?
+                            else {
+                                return None;
+                            };
+                            let version = state.version(&mut walker.world, container);
+                            Some(walker.world.read(
+                                version,
+                                indices,
+                                projection,
+                                integer_type(expression.ty()),
+                            ))
                         }
                         _ => None,
                     }

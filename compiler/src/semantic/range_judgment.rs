@@ -233,6 +233,7 @@ pub(crate) fn judge_program(
             let mut walker = walk::Walker::new(
                 functions,
                 nominals,
+                elements,
                 function,
                 deferred_records(function, functions, nominals, elements),
                 constants,

@@ -329,7 +329,7 @@ fn nonlinear_exact_result_stays_unproved() {
 #[test]
 fn a_false_boolean_requirement_keeps_fn8_when_only_array_filled_participates() {
     check(
-        "fn need(flag: Bool) -> result: unit pure contract {\n  requires flag;\n} {\n  return unit;\n}\n\nfn probe() -> result: unit pure {\n  let xs = array_filled::<u64, 1>(value: 0_u64);\n  need(flag: False());\n  return unit;\n}",
+        "fn need(flag: Bool) -> result: unit pure contract {\n  requires flag;\n} {\n  return unit;\n}\n\nfn probe() -> result: unit pure {\n  let xs = array_filled::<u64, 1>(value: 0_u64);\n  let flag = False();\n  need(flag: flag);\n  return unit;\n}",
         Some(SemanticRule::Fn8),
     );
 }
@@ -425,6 +425,114 @@ fn a_reference_requirement_preserves_the_actuals_binding_mode() {
         ),
         None,
     );
+}
+
+#[test]
+fn borrowed_scalar_requirements_read_the_current_value() {
+    // The borrow exposes value before the call. A later unplaced write must
+    // forget it, while an ordinary assignment supplies the new current value.
+    for (update, expected) in [
+        ("  set value = xs^[0_u64];", None),
+        ("  set value = 4_u64;", Some(SemanticRule::Fn8)),
+        ("  overwrite(value: &value);", Some(SemanticRule::Fn8)),
+    ] {
+        check(
+            &format!(
+                "fn need(value: &u64) -> result: unit pure contract {{
+  requires value^ < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn overwrite(value: &u64) -> result: unit writes(value) {{
+  set value^ = 4_u64;
+  return unit;
+}}
+
+fn probe(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
+  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+}} {{
+  let value = xs^[0_u64];
+  need(value: &value);
+{update}
+  need(value: &value);
+  return unit;
+}}"
+            ),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn substituted_requirement_elements_keep_their_projection_paths() {
+    // Exercise indexed measures, nested subscripts, and Box contents
+    // after substituting an element reference for the formal. The boundary
+    // twin must be FN-8, not a lost translation or an assumed requirement.
+    for (parameter, actual, suffix, fact) in [
+        ("Array<Slots<u8, 8>, 1>", "xs", "[0_u64].len", "xs^[k].len"),
+        ("[Slots<u8, 8>]", "xs", "[0_u64].len", "xs^[k].len"),
+        (
+            "Array<Array<Slots<u8, 8>, 1>, 1>",
+            "xs",
+            "[0_u64][0_u64].len",
+            "xs^[k][0_u64].len",
+        ),
+        ("Box<u64>", "&xs^[0_u64]", ".inner", "xs^[k].inner"),
+    ] {
+        let storage = match parameter {
+            "Box<u64>" => "Array<Box<u64>, 1>",
+            _ => parameter,
+        };
+        let bound = if parameter == "[Slots<u8, 8>]" {
+            "  requires 0_u64 < value^.len;\n"
+        } else {
+            ""
+        };
+        let caller_bound = bound.replace("value^", "xs^");
+        for (value, expected) in [(0, None), (4, Some(SemanticRule::Fn8))] {
+            check(
+                &format!(
+                    "fn need(value: &{parameter}) -> result: unit pure contract {{
+{bound}  requires value^{suffix} < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn probe(xs: &{storage}) -> result: unit pure contract {{
+{caller_bound}  requires forall known(k in 0_u64..xs^.len): {fact} == {value}_u64;
+}} {{
+  need(value: {actual});
+  return unit;
+}}"
+                ),
+                expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn substituted_requirement_measures_use_the_selected_storage() {
+    for (value, expected) in [(1, None), (0, Some(SemanticRule::Fn8))] {
+        check(
+            &format!(
+                "fn need(values: &Array<u64, 1>, limit: u64) -> result: unit pure contract {{
+  requires values^.len <= limit;
+}} {{
+  return unit;
+}}
+
+fn probe(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
+  requires forall known(k in 0_u64..xs^.len): xs^[k] == {value}_u64;
+}} {{
+  need(values: xs, limit: xs^[0_u64]);
+  return unit;
+}}"
+            ),
+            expected,
+        );
+    }
 }
 
 #[test]

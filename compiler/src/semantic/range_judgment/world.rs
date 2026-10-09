@@ -460,6 +460,8 @@ pub(super) fn negated(literal: &Literal) -> Literal {
 /// What a reference names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum View {
+    /// An exposed scalar: read its current binding value, never a borrow-time snapshot.
+    Scalar(BindingId),
     /// A run: element `k` is the container's element at `prefix ++ [offset + k]`.
     Run {
         container: ContainerId,

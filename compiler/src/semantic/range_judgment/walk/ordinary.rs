@@ -20,8 +20,27 @@ impl Walker<'_> {
     ) -> Option<Value> {
         use super::super::super::goal::GoalProjection;
         use super::super::super::places::CapturedTerm;
+        let parameter = function.parameters.get(ordinal)?;
         let mut value = values.get(ordinal)?.clone();
-        let mut selected_type = Some(function.parameters.get(ordinal)?.ty);
+        let mut selected_type = parameter.ty;
+        let mut range_referent = parameter.mode.is_range();
+        // Only the formal reference's first dereference selects the actual
+        // referent. Later dereferences select Box contents below that place.
+        let projections = if parameter.mode.is_reference() {
+            if let Some(rest) = projections.strip_prefix(&[GoalProjection::Deref]) {
+                value = match value {
+                    Value::Ref(View::Scalar(binding)) => state.values.get(&binding)?.clone(),
+                    Value::Ref(View::Place(location)) => Value::Owned(state.resolve(&location)),
+                    value @ Value::Ref(View::Run { .. } | View::Element { .. }) => value,
+                    _ => return None,
+                };
+                rest
+            } else {
+                projections
+            }
+        } else {
+            projections
+        };
         for projection in projections {
             let index = match projection {
                 GoalProjection::FormalSubscript { ordinal } => {
@@ -58,84 +77,105 @@ impl Walker<'_> {
                 _ => None,
             };
             if let Some(index) = index {
-                value = match value {
-                    Value::Ref(View::Run {
-                        container,
-                        mut prefix,
-                        offset,
-                        ..
-                    }) => {
-                        prefix.push(offset.plus(&index)?);
-                        Value::Ref(View::Element {
-                            container,
-                            indices: prefix,
-                            projection: Some(Vec::new()),
-                        })
-                    }
-                    Value::Owned(location) => {
-                        let segments = matches!(selected_type, Some(CheckedType::Segments { .. }));
-                        let container = state.container(
-                            &mut self.world,
-                            location,
-                            if segments { 2 } else { 1 },
-                        )?;
-                        if segments {
-                            let length = self.world.segment_length(
-                                container,
-                                state.generation(container),
-                                index.clone(),
-                            );
-                            Value::Ref(View::Run {
-                                container,
-                                prefix: vec![index],
-                                offset: Linear::constant(0),
-                                length,
-                            })
-                        } else {
-                            Value::Ref(View::Element {
-                                container,
-                                indices: vec![index],
-                                projection: Some(Vec::new()),
-                            })
+                value = self.goal_subscript(state, value, selected_type, index)?;
+                selected_type = if range_referent {
+                    range_referent = false;
+                    selected_type
+                } else {
+                    match selected_type {
+                        CheckedType::Segments { element } => CheckedType::Buffer { element },
+                        CheckedType::Array { element, .. }
+                        | CheckedType::Buffer { element }
+                        | CheckedType::Window { element, .. } => {
+                            *self.elements.get(element.0 as usize)?
                         }
+                        _ => return None,
                     }
-                    _ => return None,
                 };
-                selected_type = None;
                 continue;
             }
-            if matches!(projection, GoalProjection::Field(_)) {
-                selected_type = None;
-            }
-            value = match (value, projection) {
-                (Value::Ref(View::Place(location)), GoalProjection::Deref) => {
-                    Value::Owned(state.resolve(&location))
+            let (step, projected) = match (projection, selected_type) {
+                (GoalProjection::Deref, CheckedType::Nominal(nominal)) => {
+                    let CheckedNominalKind::Box { referent, .. } =
+                        self.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    (Step::BoxContent, referent)
                 }
-                (
-                    value @ Value::Ref(View::Run { .. } | View::Element { .. }),
-                    GoalProjection::Deref,
-                ) => value,
+                (GoalProjection::Field(field), CheckedType::Nominal(nominal)) => {
+                    let CheckedNominalKind::Struct { fields } =
+                        &self.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    (Step::Field(*field), fields.get(*field as usize)?.ty)
+                }
+                (GoalProjection::Payload { variant, field }, CheckedType::Nominal(nominal)) => {
+                    let CheckedNominalKind::Enum { variants } =
+                        &self.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    let ty = variants
+                        .iter()
+                        .find(|item| item.tag == *variant)?
+                        .fields
+                        .get(*field as usize)?
+                        .ty;
+                    (
+                        Step::Payload {
+                            variant: *variant,
+                            field: *field,
+                            variants: variants.len() as u32,
+                        },
+                        ty,
+                    )
+                }
+                _ => return None,
+            };
+            selected_type = projected;
+            value = match (value, step) {
                 (
                     Value::Ref(View::Element {
                         container,
                         indices,
                         projection: Some(mut projection),
                     }),
-                    GoalProjection::Field(field),
+                    step,
                 ) => {
-                    projection.push(CheckedRangeProjection::Field(*field));
+                    projection.push(match step {
+                        Step::Field(field) => CheckedRangeProjection::Field(field),
+                        Step::BoxContent => CheckedRangeProjection::BoxContent,
+                        Step::Payload {
+                            variant,
+                            field,
+                            variants,
+                        } => CheckedRangeProjection::Payload {
+                            variant,
+                            field,
+                            variants,
+                        },
+                        _ => return None,
+                    });
                     Value::Ref(View::Element {
                         container,
                         indices,
                         projection: Some(projection),
                     })
                 }
-                (Value::Owned(location), GoalProjection::Field(field)) => {
-                    Value::Owned(location.child(Step::Field(*field)))
-                }
-                (Value::Struct(fields), GoalProjection::Field(field)) => {
-                    fields.get(*field as usize)?.clone()
-                }
+                (Value::Owned(location), step) => Value::Owned(location.child(step)),
+                (Value::Struct(fields), Step::Field(field)) => fields.get(field as usize)?.clone(),
+                (
+                    Value::Variant {
+                        variant, fields, ..
+                    },
+                    Step::Payload {
+                        variant: selected,
+                        field,
+                        ..
+                    },
+                ) if variant == selected => fields.get(field as usize)?.clone(),
                 _ => return None,
             };
         }
@@ -161,6 +201,70 @@ impl Walker<'_> {
             }
             (value, _) => Some(value),
         }
+    }
+
+    /// Both template encodings of a subscript select the same current element.
+    pub(super) fn goal_subscript(
+        &mut self,
+        state: &mut State,
+        value: Value,
+        ty: CheckedType,
+        index: Linear,
+    ) -> Option<Value> {
+        Some(match value {
+            Value::Ref(View::Run {
+                container,
+                mut prefix,
+                offset,
+                ..
+            }) => {
+                prefix.push(offset.plus(&index)?);
+                Value::Ref(View::Element {
+                    container,
+                    indices: prefix,
+                    projection: Some(Vec::new()),
+                })
+            }
+            Value::Ref(View::Element {
+                container,
+                mut indices,
+                projection: Some(mut projection),
+            }) => {
+                projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                indices.push(index);
+                Value::Ref(View::Element {
+                    container,
+                    indices,
+                    projection: Some(projection),
+                })
+            }
+            Value::Owned(location) | Value::Ref(View::Place(location)) => {
+                let segments = matches!(ty, CheckedType::Segments { .. });
+                let location = state.resolve(&location);
+                let container =
+                    state.container(&mut self.world, location, if segments { 2 } else { 1 })?;
+                if segments {
+                    let length = self.world.segment_length(
+                        container,
+                        state.generation(container),
+                        index.clone(),
+                    );
+                    Value::Ref(View::Run {
+                        container,
+                        prefix: vec![index],
+                        offset: Linear::constant(0),
+                        length,
+                    })
+                } else {
+                    Value::Ref(View::Element {
+                        container,
+                        indices: vec![index],
+                        projection: Some(Vec::new()),
+                    })
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// RANGE-2 has already selected comparisons and their conjunctions.
