@@ -764,6 +764,38 @@ rarely insert at the same place.
   negative cases and the full gate in CI. The rule derivation and code path
   were inspected; no local execution was performed for this investigation.
 
+- **Track potentially aliased atomic targets in the range judgment.** TYPE-11
+  range type invariants are available inside a single-target atomic block,
+  but two same-state targets may name the same shared object [SHARE-2].
+  Giving them independent versions would retain a false entry fact: with
+  an all-zero invariant, `set a^.cells[0_u64] = 1_u64; need(z: b);` can
+  violate `need`'s implicit requirement when a and b alias, even if a is
+  restored before leaving. The range walk reports `RangeAtomicAliases`
+  as an unsupported compiler capability for such blocks. Change: carry
+  the pairwise target alias relation into version definitions and forgetting,
+  including the aliased and distinct cases, without claiming either case as
+  an unconditional fact. Validate writes, intervening calls, guards and every
+  leaving edge for both cases, including a read-only multi-target block.
+  Reopen when a range-invariant consumer needs multiple possibly aliased
+  targets; the current single-target consumer does not require this support.
+
+- **Validate the range-invariant loop writer against fixed instantiation.**
+  The new `finish_sequence` unit fixture appends pending block IDs and sets
+  their entry slots, with one range invariant describing the processed
+  prefix. Its pending inverse is an entry fact. The backedge's slot/owner
+  query may contain `pending[k]` through the write definition but obtain
+  `pending[j]` only from the prefix instance; RANGE-3 step 1 forbids those
+  instance reads from forming another pending-inverse instance. This may
+  prevent preservation after the loop header forgets written slot fields.
+  No execution has tested that concern. Adding a pending-bound guard is
+  not an established repair: it also needs proof at the final implicit
+  postcondition, where the pending read may again appear only in an instance.
+  Reopen immediately on CI's result for
+  `finish_sequence_uses_one_range_invariant_over_the_processed_prefix`;
+  inspect the exact open conclusion and ground reads. If the fixed rule
+  cannot close the requested writer, present the minimal derivation gap to
+  the owner before changing the rule or replacing the requested fixture.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**

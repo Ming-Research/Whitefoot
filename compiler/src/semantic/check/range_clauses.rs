@@ -582,7 +582,11 @@ impl Checker<'_, '_> {
                 capacity,
             } => (
                 node,
-                SemanticRule::Range3,
+                if matches!(*site, "a construction" | "an atomic leaving edge") {
+                    SemanticRule::Type11
+                } else {
+                    SemanticRule::Range3
+                },
                 SemanticIssueKind::UndischargedRangeFact {
                     fact: fact.clone(),
                     site,
@@ -1122,6 +1126,7 @@ impl Checker<'_, '_> {
                                         CheckedRangeShape::Segments,
                                         vec![index_term, element_index],
                                         element,
+                                        bindings,
                                         names,
                                     )
                                 }
@@ -1165,6 +1170,7 @@ impl Checker<'_, '_> {
                         CheckedRangeShape::Run,
                         vec![index_term],
                         element,
+                        bindings,
                         names,
                     );
                 }
@@ -1239,24 +1245,24 @@ impl Checker<'_, '_> {
             }
         } else if let CheckedType::Nominal(nominal) = value
             && let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind
-                && let Some((ordinal, field)) = fields
-                    .iter()
-                    .enumerate()
-                    .find(|(_, field)| field.name == name)
-                {
-                    let ty = field.ty;
-                    self.types.reject_inaccessible_field(
-                        context.check_context,
-                        nominal,
-                        None,
-                        ordinal,
-                        name,
-                        suffix,
-                    )?;
-                    let ordinal = u32::try_from(ordinal)
-                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                    return Ok((CheckedRangeStep::Field(ordinal), ty));
-                }
+            && let Some((ordinal, field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == name)
+        {
+            let ty = field.ty;
+            self.types.reject_inaccessible_field(
+                context.check_context,
+                nominal,
+                None,
+                ordinal,
+                name,
+                suffix,
+            )?;
+            let ordinal =
+                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            return Ok((CheckedRangeStep::Field(ordinal), ty));
+        }
         self.invalid_range(
             SemanticRule::Range1,
             suffix,
@@ -1273,14 +1279,43 @@ impl Checker<'_, '_> {
         suffixes: &[NodeId],
         place: CheckedRangePlace,
         shape: CheckedRangeShape,
-        indices: Vec<CheckedRangeTerm>,
+        mut indices: Vec<CheckedRangeTerm>,
         mut selected: CheckedType,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<CheckedRangeTerm, CheckStop> {
         let mut projection = Vec::new();
         let mut position = 0;
         while position < suffixes.len() {
             let suffix = suffixes[position];
+            if let PlaceSuffix::Index { offset } =
+                self.types.declarations.tree.place_suffix(suffix)?
+            {
+                let element = match selected {
+                    CheckedType::Array { element, .. }
+                    | CheckedType::Window { element, .. }
+                    | CheckedType::Buffer { element }
+                    | CheckedType::Segments { element } => element,
+                    _ => {
+                        return self.invalid_range(
+                            SemanticRule::Range1,
+                            suffix,
+                            "a range term subscripts a value that is not indexable",
+                            "subscript an array, a slots window or a segments value",
+                        );
+                    }
+                };
+                let index = self.range_atom(context, offset, bindings, names)?;
+                projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                indices.push(index);
+                selected = if matches!(selected, CheckedType::Segments { .. }) {
+                    CheckedType::Buffer { element }
+                } else {
+                    self.types.element_type(element)?
+                };
+                position += 1;
+                continue;
+            }
             if !matches!(
                 self.types.declarations.tree.place_suffix(suffix)?,
                 PlaceSuffix::Member(_)
@@ -1294,67 +1329,67 @@ impl Checker<'_, '_> {
             }
             let name = self.member_name(suffix)?;
             if let CheckedType::Nominal(nominal) = selected
-                && let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind {
-                    let PlaceSuffix::Member(member) =
-                        self.types.declarations.tree.place_suffix(suffix)?
-                    else {
-                        unreachable!()
-                    };
-                    if member.variant.is_none() {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            suffix,
-                            "a range payload needs its variant",
-                            "select `.Variant.field`",
-                        );
-                    }
-                    let variant_name = self
-                        .types
-                        .declarations
-                        .deferred_use_at(suffix, crate::DeferredUseRole::PayloadVariant)?
-                        .spelling();
-                    let count = variants.len() as u32;
-                    let Some(variant) =
-                        variants.iter().find(|variant| variant.name == variant_name)
-                    else {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            suffix,
-                            "a range payload selects an undeclared variant",
-                            "select a declared variant and its field",
-                        );
-                    };
-                    let tag = variant.tag;
-                    let Some((ordinal, field)) = variant
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, field)| field.name == name)
-                    else {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            suffix,
-                            "a range payload selects an undeclared field",
-                            "select a field of this variant",
-                        );
-                    };
-                    selected = field.ty;
-                    self.types.reject_inaccessible_field(
-                        context.check_context,
-                        nominal,
-                        Some(tag as usize),
-                        ordinal,
-                        &name,
+                && let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind
+            {
+                let PlaceSuffix::Member(member) =
+                    self.types.declarations.tree.place_suffix(suffix)?
+                else {
+                    unreachable!()
+                };
+                if member.variant.is_none() {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
                         suffix,
-                    )?;
-                    projection.push(CheckedRangeProjection::Payload {
-                        variant: tag,
-                        field: ordinal as u32,
-                        variants: count,
-                    });
-                    position += 1;
-                    continue;
+                        "a range payload needs its variant",
+                        "select `.Variant.field`",
+                    );
                 }
+                let variant_name = self
+                    .types
+                    .declarations
+                    .deferred_use_at(suffix, crate::DeferredUseRole::PayloadVariant)?
+                    .spelling();
+                let count = variants.len() as u32;
+                let Some(variant) = variants.iter().find(|variant| variant.name == variant_name)
+                else {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
+                        suffix,
+                        "a range payload selects an undeclared variant",
+                        "select a declared variant and its field",
+                    );
+                };
+                let tag = variant.tag;
+                let Some((ordinal, field)) = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+                else {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
+                        suffix,
+                        "a range payload selects an undeclared field",
+                        "select a field of this variant",
+                    );
+                };
+                selected = field.ty;
+                self.types.reject_inaccessible_field(
+                    context.check_context,
+                    nominal,
+                    Some(tag as usize),
+                    ordinal,
+                    &name,
+                    suffix,
+                )?;
+                projection.push(CheckedRangeProjection::Payload {
+                    variant: tag,
+                    field: ordinal as u32,
+                    variants: count,
+                });
+                position += 1;
+                continue;
+            }
             if matches!(self.types.declarations.tree.place_suffix(suffix)?, PlaceSuffix::Member(member) if member.variant.is_some())
             {
                 return self.invalid_range(

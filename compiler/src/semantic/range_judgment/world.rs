@@ -90,6 +90,9 @@ pub(super) struct Container {
 pub(super) enum VersionDef {
     /// The contents the container held when the judgment first saw it.
     Initial,
+    /// A collection reached below an aggregate copy. Its elements and initial
+    /// descriptor retain the immutable source definition captured by the copy.
+    Copied { source: ReadSource, arity: usize },
     /// Contents nothing here describes.
     Fresh,
     /// A located write, with the scalar projections of its value that the
@@ -160,6 +163,10 @@ pub(super) struct World {
     container_index: HashMap<Location, ContainerId>,
     pub(super) versions: Vec<Version>,
     initial: HashMap<ContainerId, VersionId>,
+    copies: HashMap<(ContainerId, ReadSource), (VersionId, u32)>,
+    descriptor_copies: HashMap<(ContainerId, u32), ReadSource>,
+    /// Descriptor generations selected by a join, indexed lazily by measure.
+    descriptor_joins: HashMap<(ContainerId, u32), (JoinId, Vec<u32>)>,
     /// Each join's arms: the literals each arm added since the fork.
     pub(super) joins: Vec<Vec<Vec<Literal>>>,
     next_origin: u32,
@@ -226,7 +233,32 @@ impl World {
         if let Some(atom) = self.measures.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(AtomDef::Measure, Some(IntegerType::U64));
+        if let Some(source) = self
+            .descriptor_copies
+            .get(&(container, generation))
+            .cloned()
+        {
+            let mut projection = source.projection;
+            projection.push(CheckedRangeProjection::Measure(measure));
+            return self.read(
+                source.version,
+                source.indices,
+                projection,
+                Some(IntegerType::U64),
+            );
+        }
+        let def = if let Some((join, generations)) =
+            self.descriptor_joins.get(&(container, generation)).cloned()
+        {
+            let values = generations
+                .into_iter()
+                .map(|generation| self.measure(container, generation, measure))
+                .collect();
+            AtomDef::Joined { join, values }
+        } else {
+            AtomDef::Measure
+        };
+        let atom = self.push(def, Some(IntegerType::U64));
         self.measures.insert(key, atom);
         Linear::atom(atom)
     }
@@ -241,14 +273,34 @@ impl World {
         if let Some(atom) = self.segment_lengths.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(
+        if let Some(source) = self
+            .descriptor_copies
+            .get(&(container, generation))
+            .cloned()
+        {
+            let mut projection = source.projection;
+            projection.push(CheckedRangeProjection::Index(source.indices.len() as u32));
+            projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+            let mut indices = source.indices;
+            indices.push(row);
+            return self.read(source.version, indices, projection, Some(IntegerType::U64));
+        }
+        let def = if let Some((join, generations)) =
+            self.descriptor_joins.get(&(container, generation)).cloned()
+        {
+            let values = generations
+                .into_iter()
+                .map(|generation| self.segment_length(container, generation, row.clone()))
+                .collect();
+            AtomDef::Joined { join, values }
+        } else {
             AtomDef::SegmentLength {
                 container,
                 generation,
                 row,
-            },
-            Some(IntegerType::U64),
-        );
+            }
+        };
+        let atom = self.push(def, Some(IntegerType::U64));
         self.segment_lengths.insert(key, atom);
         Linear::atom(atom)
     }
@@ -291,6 +343,22 @@ impl World {
         let version = self.new_version(VersionDef::Initial);
         self.initial.insert(container, version);
         version
+    }
+
+    fn copied_container(&mut self, container: ContainerId, source: ReadSource) -> (VersionId, u32) {
+        let key = (container, source.clone());
+        if let Some(snapshot) = self.copies.get(&key) {
+            return *snapshot;
+        }
+        let version = self.new_version(VersionDef::Copied {
+            source: source.clone(),
+            arity: self.containers[container as usize].arity,
+        });
+        let generation = self.new_generation();
+        self.descriptor_copies
+            .insert((container, generation), source);
+        self.copies.insert(key, (version, generation));
+        (version, generation)
     }
 
     pub(super) fn new_version(&mut self, def: VersionDef) -> VersionId {
@@ -431,7 +499,7 @@ pub(super) enum Value {
 }
 
 /// Immutable contents captured by an aggregate read.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct ReadSource {
     pub(super) version: VersionId,
     pub(super) indices: Vec<Linear>,
@@ -442,6 +510,12 @@ pub(super) struct ReadSource {
 pub(super) enum Stored {
     Int(Linear),
     Read(ReadSource),
+    Collection {
+        container: ContainerId,
+        version: VersionId,
+        generation: u32,
+        arity: usize,
+    },
     Unknown,
 }
 
@@ -480,6 +554,47 @@ pub(super) struct State {
 }
 
 impl State {
+    /// Materializes a collection only when first reached, retaining a copied
+    /// ancestor's immutable contents even if no collection at that path was
+    /// named before the copy.
+    pub(super) fn container(
+        &mut self,
+        world: &mut World,
+        location: Location,
+        arity: usize,
+    ) -> Option<ContainerId> {
+        let location = self.resolve(&location);
+        let container = world.container(location, arity)?;
+        let (version, generation) = self.snapshot_container(world, container);
+        self.versions.insert(container, version);
+        self.generations.insert(container, generation);
+        Some(container)
+    }
+
+    /// The snapshot belongs to this path: another arm may have forgotten
+    /// this location before either arm first materializes the collection.
+    pub(super) fn snapshot_container(
+        &self,
+        world: &mut World,
+        container: ContainerId,
+    ) -> (VersionId, u32) {
+        if let Some(version) = self.versions.get(&container) {
+            return (*version, self.generation(container));
+        }
+        let location = self.resolve(&world.containers[container as usize].location);
+        if let Some(source) = self.read_source(&location) {
+            let (version, generation) = world.copied_container(container, source);
+            return (
+                version,
+                self.generations
+                    .get(&container)
+                    .copied()
+                    .unwrap_or(generation),
+            );
+        }
+        (world.initial_version(container), self.generation(container))
+    }
+
     /// Nearest stored definition wins, including a write that shadows a
     /// source definition at an ancestor. An alias is resolved before lookup.
     pub(super) fn read_source(&self, location: &Location) -> Option<ReadSource> {
@@ -515,10 +630,7 @@ impl State {
     }
 
     pub(super) fn version(&self, world: &mut World, container: ContainerId) -> VersionId {
-        match self.versions.get(&container) {
-            Some(version) => *version,
-            None => world.initial_version(container),
-        }
+        self.snapshot_container(world, container).0
     }
 
     pub(super) fn generation(&self, container: ContainerId) -> u32 {
@@ -708,6 +820,19 @@ pub(super) fn join_states(
     if arms.len() <= 1 {
         return arms.pop().map(|state| (state, None));
     }
+    // A container discovered in only one arm still has the other arm's
+    // source or unknown contents, never the discovering arm's initial image.
+    let materialized: BTreeSet<_> = arms
+        .iter()
+        .flat_map(|arm| arm.versions.keys().copied())
+        .collect();
+    for arm in &mut arms {
+        for container in &materialized {
+            let (version, generation) = arm.snapshot_container(world, *container);
+            arm.versions.insert(*container, version);
+            arm.generations.insert(*container, generation);
+        }
+    }
     let deltas: Vec<Vec<Literal>> = arms
         .iter()
         .map(|arm| arm.conds.get(fork_conds..).unwrap_or_default().to_vec())
@@ -791,7 +916,11 @@ pub(super) fn join_states(
         let generation = if generations.iter().all(|value| *value == generations[0]) {
             generations[0]
         } else {
-            world.new_generation()
+            let generation = world.new_generation();
+            world
+                .descriptor_joins
+                .insert((container, generation), (join, generations));
+            generation
         };
         out.generations.insert(container, generation);
     }
@@ -1001,9 +1130,19 @@ pub(super) fn stored_projections(
                 };
                 let length = path.len();
                 path.extend(suffix);
+                let (version, generation) = state.snapshot_container(world, container);
+                values.insert(
+                    path.clone(),
+                    Stored::Collection {
+                        container,
+                        version,
+                        generation,
+                        arity: world.containers[container as usize].arity,
+                    },
+                );
                 for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
                     path.push(CheckedRangeProjection::Measure(measure));
-                    let value = world.measure(container, state.generation(container), measure);
+                    let value = world.measure(container, generation, measure);
                     values.insert(path.clone(), Stored::Int(value));
                     path.pop();
                 }
@@ -1026,4 +1165,21 @@ fn snapshot_version(
         projection: Vec::new(),
         values,
     })
+}
+
+/// Retarget absolute tuple positions when a copied projection acquires a prefix.
+pub(super) fn shift_projection(
+    projection: &[CheckedRangeProjection],
+    from: usize,
+    to: usize,
+) -> Vec<CheckedRangeProjection> {
+    projection
+        .iter()
+        .map(|step| match step {
+            CheckedRangeProjection::Index(position) => {
+                CheckedRangeProjection::Index((*position as usize - from + to) as u32)
+            }
+            other => *other,
+        })
+        .collect()
 }

@@ -48,6 +48,12 @@ pub(super) enum PlaceView {
         generation: u32,
         rows: Linear,
     },
+    /// An indexable value below an outer container element.
+    Element {
+        version: VersionId,
+        indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+    },
     /// A place the judgment cannot view.
     Unknown,
 }
@@ -106,22 +112,55 @@ impl Former<'_> {
                     (PlaceView::Segments { rows, .. }, CheckedMeasure::Length) => {
                         Some(rows.clone())
                     }
+                    (
+                        PlaceView::Element {
+                            version,
+                            indices,
+                            projection,
+                        },
+                        measure,
+                    ) => {
+                        let mut path = projection.clone();
+                        path.push(CheckedRangeProjection::Measure(*measure));
+                        Some(self.world.read(
+                            *version,
+                            indices.clone(),
+                            path,
+                            Some(super::super::model::IntegerType::U64),
+                        ))
+                    }
                     _ => None,
                 }
             }
             CheckedRangeTerm::SegmentLength { place, segment } => {
                 let row = self.term(segment)?;
-                let PlaceView::Segments {
-                    container,
-                    generation,
-                    rows,
-                    ..
-                } = self.frame.places.get(place)?.clone()
-                else {
-                    return None;
-                };
-                self.within(&row, &rows);
-                Some(self.world.segment_length(container, generation, row))
+                match self.frame.places.get(place)?.clone() {
+                    PlaceView::Segments {
+                        container,
+                        generation,
+                        rows,
+                        ..
+                    } => {
+                        self.within(&row, &rows);
+                        Some(self.world.segment_length(container, generation, row))
+                    }
+                    PlaceView::Element {
+                        version,
+                        mut indices,
+                        mut projection,
+                    } => {
+                        projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                        indices.push(row);
+                        projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                        Some(self.projected_read(
+                            version,
+                            indices,
+                            &projection,
+                            super::super::model::IntegerType::U64,
+                        ))
+                    }
+                    _ => None,
+                }
             }
             CheckedRangeTerm::Read {
                 place,
@@ -145,13 +184,14 @@ impl Former<'_> {
                         },
                         CheckedRangeShape::Run,
                     ) => {
-                        let [index] = values.as_slice() else {
-                            return None;
-                        };
+                        let index = values.first()?;
                         self.within(index, &length);
+                        let projection =
+                            super::world::shift_projection(projection, 0, prefix.len());
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
-                        Some(self.projected_read(version, selected, projection, *element))
+                        selected.extend_from_slice(&values[1..]);
+                        Some(self.projected_read(version, selected, &projection, *element))
                     }
                     (
                         PlaceView::Segments {
@@ -162,15 +202,35 @@ impl Former<'_> {
                         },
                         CheckedRangeShape::Segments,
                     ) => {
-                        let [row, index] = values.as_slice() else {
-                            return None;
-                        };
+                        let row = values.first()?;
+                        let index = values.get(1)?;
                         self.within(row, &rows);
                         let length = self
                             .world
                             .segment_length(container, generation, row.clone());
                         self.within(index, &length);
                         Some(self.projected_read(version, values, projection, *element))
+                    }
+                    (
+                        PlaceView::Element {
+                            version,
+                            indices: prefix,
+                            projection: mut path,
+                        },
+                        _,
+                    ) => {
+                        let base = prefix.len();
+                        let count = match shape {
+                            CheckedRangeShape::Run => 1,
+                            CheckedRangeShape::Segments => 2,
+                        };
+                        for position in 0..count {
+                            path.push(CheckedRangeProjection::Index((base + position) as u32));
+                        }
+                        path.extend(super::world::shift_projection(projection, 0, base));
+                        let mut indices = prefix;
+                        indices.extend(values);
+                        Some(self.projected_read(version, indices, &path, *element))
                     }
                     _ => None,
                 }
@@ -192,14 +252,36 @@ impl Former<'_> {
         projection: &[CheckedRangeProjection],
         element: super::super::model::IntegerType,
     ) -> Linear {
+        let mut depth = projection
+            .iter()
+            .find_map(|step| match step {
+                CheckedRangeProjection::Index(position) => Some(*position as usize),
+                _ => None,
+            })
+            .unwrap_or(indices.len());
         for (at, step) in projection.iter().enumerate() {
+            if let CheckedRangeProjection::Index(position) = step {
+                let position = *position as usize;
+                let mut length_path = projection[..at].to_vec();
+                length_path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                let length = self.world.read(
+                    version,
+                    indices[..position].to_vec(),
+                    length_path,
+                    Some(super::super::model::IntegerType::U64),
+                );
+                self.within(&indices[position], &length);
+                depth = position + 1;
+            }
             if let CheckedRangeProjection::Payload {
                 variant, variants, ..
             } = step
             {
                 let mut tag_path = projection[..at].to_vec();
                 tag_path.push(CheckedRangeProjection::Tag(*variants));
-                let tag = self.world.read(version, indices.clone(), tag_path, None);
+                let tag = self
+                    .world
+                    .read(version, indices[..depth].to_vec(), tag_path, None);
                 self.bounds.push(Literal::new(
                     tag,
                     Relation::Equal,
@@ -280,6 +362,7 @@ pub(super) fn form(
 /// One read of a clause whose indices name bound variables directly.
 struct Trigger {
     place: CheckedRangePlace,
+    shape: CheckedRangeShape,
     /// Per index position: the bound variable it names, or `None`.
     positions: Vec<Option<u32>>,
     projection: Vec<CheckedRangeProjection>,
@@ -289,6 +372,7 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
     match term {
         CheckedRangeTerm::Read {
             place,
+            shape,
             indices,
             projection,
             ..
@@ -303,6 +387,7 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
             if positions.iter().any(Option::is_some) {
                 out.push(Trigger {
                     place: place.clone(),
+                    shape: *shape,
                     positions,
                     projection: projection.clone(),
                 });
@@ -379,6 +464,10 @@ pub(super) fn judge(
     for fact_id in active {
         let fact = &facts[*fact_id as usize];
         let mut triggers = Vec::new();
+        for binder in &fact.clause.binders {
+            collect_triggers(&binder.start, &mut triggers);
+            collect_triggers(&binder.end, &mut triggers);
+        }
         for relation in fact.clause.relations() {
             collect_triggers(&relation.left, &mut triggers);
             collect_triggers(&relation.right, &mut triggers);
@@ -390,7 +479,35 @@ pub(super) fn judge(
                 continue;
             };
             for (version, indices, projection) in &ground {
-                if trigger.projection == *projection {
+                let expected = match view {
+                    PlaceView::Run { prefix, .. } => {
+                        super::world::shift_projection(&trigger.projection, 0, prefix.len())
+                    }
+                    PlaceView::Element {
+                        indices: prefix,
+                        projection,
+                        ..
+                    } => {
+                        let mut path = projection.clone();
+                        let count = match trigger.shape {
+                            CheckedRangeShape::Run => 1,
+                            CheckedRangeShape::Segments => 2,
+                        };
+                        for position in 0..count {
+                            path.push(CheckedRangeProjection::Index(
+                                (prefix.len() + position) as u32,
+                            ));
+                        }
+                        path.extend(super::world::shift_projection(
+                            &trigger.projection,
+                            0,
+                            prefix.len(),
+                        ));
+                        path
+                    }
+                    _ => trigger.projection.clone(),
+                };
+                if expected == *projection {
                     match_trigger(view, trigger, *version, indices, &mut candidates);
                 }
             }
@@ -470,6 +587,9 @@ fn match_trigger(
             ..
         } => (*version, prefix.as_slice(), Some(offset)),
         PlaceView::Segments { version, .. } => (*version, &[][..], None),
+        PlaceView::Element {
+            version, indices, ..
+        } => (*version, indices.as_slice(), None),
         PlaceView::Unknown => return,
     };
     if view_version != version || indices.len() != prefix.len() + trigger.positions.len() {
@@ -485,7 +605,7 @@ fn match_trigger(
         let index = &indices[prefix.len() + position];
         let value = match offset {
             // The last position of a run view is relative to its offset.
-            Some(offset) if position + 1 == trigger.positions.len() => index.minus(offset),
+            Some(offset) if position == 0 => index.minus(offset),
             _ => Some(index.clone()),
         };
         if let (Some(value), Some(set)) = (value, candidates.get_mut(*binder as usize)) {
@@ -552,6 +672,28 @@ fn expand(
                 }
                 match world.versions[version as usize].def.clone() {
                     VersionDef::Initial | VersionDef::Fresh => {}
+                    VersionDef::Copied { source, arity } => {
+                        let mut path = source.projection;
+                        path.extend((0..arity).map(|position| {
+                            CheckedRangeProjection::Index((source.indices.len() + position) as u32)
+                        }));
+                        path.extend(super::world::shift_projection(
+                            &projection,
+                            0,
+                            source.indices.len(),
+                        ));
+                        let selected = world.read(
+                            source.version,
+                            source.indices.into_iter().chain(indices).collect(),
+                            path,
+                            ty,
+                        );
+                        alternatives.push(vec![Literal::new(
+                            value.clone(),
+                            Relation::Equal,
+                            selected,
+                        )]);
+                    }
                     VersionDef::Forget {
                         previous,
                         projections,
@@ -594,15 +736,73 @@ fn expand(
                                         Stored::Int(value) if length == relative.len() => {
                                             Some(value.clone())
                                         }
+                                        Stored::Collection {
+                                            container,
+                                            version,
+                                            generation,
+                                            arity,
+                                        } => {
+                                            let suffix = &relative[length..];
+                                            match suffix {
+                                                [CheckedRangeProjection::Measure(measure)] => {
+                                                    Some(world.measure(
+                                                        *container,
+                                                        *generation,
+                                                        *measure,
+                                                    ))
+                                                }
+                                                [
+                                                    CheckedRangeProjection::Index(at),
+                                                    CheckedRangeProjection::Measure(
+                                                        CheckedMeasure::Length,
+                                                    ),
+                                                ] if *arity == 2 => Some(world.segment_length(
+                                                    *container,
+                                                    *generation,
+                                                    indices[*at as usize].clone(),
+                                                )),
+                                                [CheckedRangeProjection::Index(at), ..]
+                                                    if suffix.len() >= *arity =>
+                                                {
+                                                    let at = *at as usize;
+                                                    Some(world.read(
+                                                        *version,
+                                                        indices[at..].to_vec(),
+                                                        super::world::shift_projection(
+                                                            &suffix[*arity..],
+                                                            at,
+                                                            0,
+                                                        ),
+                                                        ty,
+                                                    ))
+                                                }
+                                                _ => None,
+                                            }
+                                        }
                                         Stored::Read(source) => {
                                             let mut path = source.projection.clone();
-                                            path.extend_from_slice(&relative[length..]);
-                                            Some(world.read(
-                                                source.version,
-                                                source.indices.clone(),
-                                                path,
-                                                ty,
-                                            ))
+                                            path.extend(super::world::shift_projection(
+                                                &relative[length..],
+                                                written.len(),
+                                                source.indices.len(),
+                                            ));
+                                            Some(
+                                                world.read(
+                                                    source.version,
+                                                    source
+                                                        .indices
+                                                        .iter()
+                                                        .cloned()
+                                                        .chain(
+                                                            indices[written.len()..]
+                                                                .iter()
+                                                                .cloned(),
+                                                        )
+                                                        .collect(),
+                                                    path,
+                                                    ty,
+                                                ),
+                                            )
                                         }
                                         _ => None,
                                     };

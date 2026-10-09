@@ -215,6 +215,21 @@ impl Checker<'_, '_> {
                 self.body
                     .record_reference_origins(binding, &reference.paths);
             }
+            if let CheckedType::Nominal(nominal) = state
+                && let Some(clauses) = self.types.range_type_invariants.get(&nominal)
+            {
+                self.body
+                    .range_facts
+                    .atomics
+                    .entry(node_path.clone())
+                    .or_default()
+                    .extend(clauses.iter().map(|clause| {
+                        clause.with_subject(
+                            crate::semantic::range_facts::CheckedRangeRoot::Binding(binding),
+                            true,
+                        )
+                    }));
+            }
             let invariants = self.atomic_invariants(state, binding);
             targets.push(CheckedTarget {
                 lock_order: self.types.atomic_type_order(state)?,
@@ -238,6 +253,12 @@ impl Checker<'_, '_> {
                 if self.types.types_unify(target.state, other.state)? {
                     aliases.push(other.binding);
                 }
+            }
+            if aliases.len() > 1 {
+                self.body
+                    .range_facts
+                    .atomic_aliases
+                    .insert(node_path.clone());
             }
             let reference = block_bindings
                 .get_mut(&declaration.id())

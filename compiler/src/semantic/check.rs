@@ -13,6 +13,7 @@ mod nominals;
 mod obligations;
 pub(crate) mod publication;
 mod range_clauses;
+mod range_type_invariants;
 mod receipts;
 mod references;
 mod repairs;
@@ -570,6 +571,7 @@ struct TypeContext<'unit> {
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
+    range_type_invariants: HashMap<NominalId, Vec<super::range_facts::CheckedRangeClause>>,
     /// [EFF-2] the paths each checked body writes, by function. A row may
     /// declare a wider path than any of these; a repair that offers to
     /// narrow a row reads them to know what the narrowed row still covers
@@ -1783,6 +1785,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &postcondition_selectors,
             &parameter_bindings,
         )?;
+        self.append_range_type_invariant_contracts(check_context, signature, &parameters)?;
         postcondition_selectors = self
             .types
             .declarations
@@ -3787,6 +3790,7 @@ impl<'unit> TypeContext<'unit> {
             derived_consts: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
+            range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),
             functions_by_declaration: Default::default(),

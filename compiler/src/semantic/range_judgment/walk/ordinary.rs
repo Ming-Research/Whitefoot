@@ -74,9 +74,11 @@ impl Walker<'_> {
                     }
                     Value::Owned(location) => {
                         let segments = matches!(selected_type, Some(CheckedType::Segments { .. }));
-                        let container = self
-                            .world
-                            .container(state.resolve(&location), if segments { 2 } else { 1 })?;
+                        let container = state.container(
+                            &mut self.world,
+                            location,
+                            if segments { 2 } else { 1 },
+                        )?;
                         if segments {
                             let length = self.world.segment_length(
                                 container,
@@ -272,7 +274,7 @@ impl Walker<'_> {
                 } else {
                     1
                 };
-                let container = self.world.container(location, arity)?;
+                let container = state.container(&mut self.world, location, arity)?;
                 Some(self.world.measure(
                     container,
                     state.generation(container),

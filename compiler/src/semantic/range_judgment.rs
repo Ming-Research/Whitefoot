@@ -11,7 +11,9 @@
 //! certificate that holds is retained for the counted permission judgment
 //! [PAR-2]; it grants nothing by itself.
 
+mod constants;
 mod facts;
+pub(crate) use constants::judge as judge_constant_invariant;
 mod solver;
 mod walk;
 mod world;
@@ -47,7 +49,8 @@ pub(crate) enum RangeIssue {
     /// rejection: the derivation left the checker's `i128` arithmetic,
     /// where the specified arithmetic is exact [RANGE-3], or a loop nest was
     /// deeper, or a header's written set took more walks to settle, than the
-    /// checker follows, where RANGE-2 forgets only what the body can write.
+    /// checker follows, where RANGE-2 forgets only what the body can write; or
+    /// atomic targets may alias and the walk cannot represent that relation.
     Unsupported {
         node: NodePath,
         feature: super::UnsupportedSemanticFeature,

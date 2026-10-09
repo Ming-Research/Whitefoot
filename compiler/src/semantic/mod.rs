@@ -1477,6 +1477,9 @@ pub enum UnsupportedSemanticFeature {
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
+    /// A range walk through atomic targets that may name the same shared object.
+    /// The checker does not yet version these targets with their alias relation.
+    RangeAtomicAliases,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

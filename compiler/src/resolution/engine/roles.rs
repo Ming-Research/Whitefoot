@@ -275,16 +275,18 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
-        // [TYPE-11] a type invariant's two direct IDENTs are its name and
-        // its binder, in that order; its relation's names are children.
+        // An affine invariant declares its name and binder here; a range
+        // invariant's child range clause declares the name.
         Production::TypeInvariant => {
-            let [name, binder] = names.as_slice() else {
-                return Err(ResolutionCompilerFailure::InvalidRoleShape);
+            let declarations: Vec<_> = match names.as_slice() {
+                [name, binder] => vec![
+                    (*name, DeclarationRole::TypeInvariantName),
+                    (*binder, DeclarationRole::InvariantBinder),
+                ],
+                [binder] => vec![(*binder, DeclarationRole::InvariantBinder)],
+                _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
             };
-            for (index, role) in [
-                (*name, DeclarationRole::TypeInvariantName),
-                (*binder, DeclarationRole::InvariantBinder),
-            ] {
+            for (index, role) in declarations {
                 if name_predicate(classified, index) != Some(TerminalPredicate::Identifier) {
                     return Err(ResolutionCompilerFailure::InvalidRoleShape);
                 }
