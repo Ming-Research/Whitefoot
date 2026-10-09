@@ -121,10 +121,22 @@ impl<'unit> Checker<'_, 'unit> {
             let mut names = Vec::with_capacity(invariants.len());
             let mut formed = Vec::with_capacity(invariants.len());
             for invariant in invariants {
+                let range = self
+                    .types
+                    .declarations
+                    .tree
+                    .first_child_with(invariant, Production::RangeClause)?;
                 let name = self
                     .types
                     .declarations
-                    .declaration_at(invariant, DeclarationRole::TypeInvariantName)?
+                    .declaration_at(
+                        range.unwrap_or(invariant),
+                        if range.is_some() {
+                            DeclarationRole::RangeFact
+                        } else {
+                            DeclarationRole::TypeInvariantName
+                        },
+                    )?
                     .spelling()
                     .to_owned();
                 if names.contains(&name) {
@@ -138,6 +150,21 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
                 names.push(name.clone());
+                if let Some(range) = range {
+                    let clause = self.form_range_type_invariant(
+                        check_context,
+                        template.declaration,
+                        invariant,
+                        range,
+                        nominal,
+                    )?;
+                    self.types
+                        .range_type_invariants
+                        .entry(nominal)
+                        .or_default()
+                        .push(clause);
+                    continue;
+                }
                 formed.push(self.form_type_invariant(
                     check_context,
                     template.declaration,
@@ -491,16 +518,25 @@ impl<'unit> Checker<'_, 'unit> {
     /// [TYPE-11] each type invariant a construction of `nominal` owes, over
     /// its field operands' pre-construction images, and those images.
     pub(super) fn construction_invariants(
-        &self,
+        &mut self,
         context: FunctionContext<'_, '_>,
         carrier: &NodePath,
         nominal: NominalId,
         operands: &[(NodeId, CheckedType, TypedExpression)],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(Vec<CheckedCallRequirement>, Vec<GoalExpression>), CheckStop> {
+        if let Some(clauses) = self.types.range_type_invariants.get(&nominal) {
+            self.body
+                .range_facts
+                .constructions
+                .insert(carrier.clone(), clauses.clone());
+        }
         let Some(templates) = self.types.type_invariants.get(&nominal) else {
             return Ok((Vec::new(), Vec::new()));
         };
+        if templates.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
         let FunctionContext {
             check_context,
             function,
@@ -637,6 +673,21 @@ impl Checker<'_, '_> {
         else {
             return Ok(());
         };
+        for clause in self
+            .types
+            .range_type_invariants
+            .get(nominal)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(issue) = crate::semantic::range_judgment::judge_constant_invariant(
+                clause,
+                value,
+                self.types.declarations.tree.path(node)?,
+            ) {
+                return Err(self.range_issue(&issue));
+            }
+        }
         for invariant in self
             .types
             .type_invariants

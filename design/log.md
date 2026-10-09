@@ -12,6 +12,13 @@ Nodes: compiler/parallel-lowering
 Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request "approve adding 'with the same proved separations used by the parallel permission' to the parallel-lowering decision that keeps a released place and a borrowed place out of one overlap group" with "agree" (translated); earlier the same day, on Snowghost's card handing the owning-element serialization to Whitefoot: "choose A" (translated).
 
 Summary: The overlap-group boundary that keeps a call releasing storage apart from a call borrowing it compares released and borrowed places with the separations the permission judgment proved for that ordered pair, because the unproved oracle it used serialized sibling calls on proved-disjoint ranges of an owning-element run (Snowghost's layout lost its 4-thread parallelism between releases 631d3ff and b2209fd); unknown roots and unproved overlap still split the group, and every member's borrowed and released places now come from the same statements as its footprint, which closes conditional-call and call-rooted-match members that recorded none.
+## 2026-10-09 Range facts below elements, route A and range type invariants
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated), covering the choices the owner made on the status board on 2026-10-08 and 2026-10-09 that the specification log entry for v0.112 lists.
+
+Summary: Range facts read integer values below an element, a range type invariant replaces the decision that live storage carries no range fact across passes, ordinary obligations whose goals are range-term comparisons are proved by the range judgment while every other undischarged obligation keeps its ordinary verdict, `place_back`/`take_back` are placed writes, a computed give delivers its relations, instantiation runs two rounds, possibly aliased atomic targets that would establish a range type invariant are an unsupported capability for now, and a counted-element repair offers its range alternatives per row; grounds and measurements are in the range-field-terms, ordinary-range-obligations and range-type-invariants investigations.
 ## 2026-10-09 Selected call results produced in place and read-through snapshots
 
 Nodes: compiler/storage-placement

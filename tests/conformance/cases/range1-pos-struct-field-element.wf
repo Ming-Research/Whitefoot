@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Entry {
+  slot: u64;
+  weight: u64;
+}
+
+fn need_small(rows: &[Entry]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].slot <= 7_u64;
+} {
+  doc "Owes nothing; its requirement names a field of each element.";
+  return unit;
+}
+
+fn forward(rows: &[Entry]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].slot <= 7_u64;
+} {
+  doc "The held fact over the field instantiates at every index and discharges the callee's requirement.";
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
