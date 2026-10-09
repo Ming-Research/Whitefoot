@@ -228,3 +228,24 @@ the same in today's `--par` image, where the parallel speedup hides it. So the
 generation, not demand bookkeeping; this change does not address it. Expected
 from the change: `small_split` within its bound at four and eight workers;
 `fir` and `large_helper` unchanged.
+
+## Results of the second rerun
+
+Run: [compute-bench 37995973324](https://github.com/Ming-Research/Whitefoot/actions/runs/37995973324),
+`claude/par-demand` at 122afdc1d, i9-14900K, 10 interleaved rounds,
+2026-10-09, same rule.
+
+`small_split` fell from 3.24 to 1.126 at four workers and 1.123 at eight,
+still above the 1.02 bound, but its twin spreads (8.0 and 13.6 percent) make
+both cells decide nothing. `large_helper` fails at four workers: 1.065, rerun
+1.061, spreads 1.1 and 0.8 percent; at eight 1.063, rerun 1.064 with a 5.6
+percent rerun spread, so that width decides nothing. `fir` 1.079 and 1.091
+(spreads 5.9 percent), `spine` 1.034 and 1.035, `mandelbrot` 1.014 and 1.013,
+`records` 1.006 and 1.021; the group-call checks on `recursion` and
+`hot_helper` stay within 1 percent.
+
+So experiment 1 fails on `large_helper`, the slice-driver attribution, as
+the pre-rerun inspection of `fir` predicted; the call-site comparison removed
+most of `small_split`'s cost, whose remaining 12 percent is noise-bound here.
+Following the owner's instruction for a failure of this round, the whole
+record above goes to a stronger model for a plan.
