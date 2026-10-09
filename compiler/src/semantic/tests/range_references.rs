@@ -1115,8 +1115,9 @@ fn direct_page_length_fact_dies_after_place_back() {
     );
 }
 
-/// [ENT-2, REF-4] an append preserves a borrow's captured length, while a
-/// later direct read of the same page cannot inherit that captured value.
+/// [ENT-2, REF-4] a guard on the formed borrow's own length establishes the
+/// captured-length fact that survives append; no equality with a direct page
+/// length is assumed. A later direct read cannot inherit that captured value.
 #[test]
 fn borrowed_page_length_survives_append_without_identifying_a_later_direct_read() {
     assert_accepts(include_bytes!(
