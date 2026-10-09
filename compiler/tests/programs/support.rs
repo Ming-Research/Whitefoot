@@ -132,7 +132,9 @@ fn link_module_with_driver_arguments(
             .arg("-x")
             .arg("none");
     }
-    let needs_heap = llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(");
+    let needs_heap = llvm.contains("@wf__heap_take(")
+        || llvm.contains("@wf__heap_give(")
+        || llvm.contains("@wf__heap_retake(");
     let (sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let compilation = run_command(

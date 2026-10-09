@@ -593,6 +593,15 @@ fn emit_module(
     // emitted references, including cleanup helpers and parallel thunks,
     // rather than resource types: Shared storage comes from the runtime pool.
     for signature in [
+        Signature::new(
+            "wf__heap_retake",
+            "ptr",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+            ],
+        ),
         Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
         Signature::new(
             "wf__heap_give",

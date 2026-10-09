@@ -899,7 +899,10 @@ fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     compiled.extend(["ordinary_values.c", "ordinary_values.ll"]);
     // The allocator unit is a dependency of emitted storage alone. The
     // reading and all counter storage stay in the unconditional library.
-    if llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(") {
+    if llvm.contains("@wf__heap_take(")
+        || llvm.contains("@wf__heap_give(")
+        || llvm.contains("@wf__heap_retake(")
+    {
         compiled.push("heap.c");
     }
     {
@@ -1860,6 +1863,7 @@ mod tests {
         assert!(staged.iter().any(|unit| unit.relative_path == "heap.c"));
         for dependency in [
             "declare ptr @wf__heap_take(i64)",
+            "declare ptr @wf__heap_retake(ptr, i64, i64)",
             "declare void @wf__heap_give(ptr, i64)",
         ] {
             let (_, with_heap) = runtime_units(dependency);
@@ -1898,7 +1902,14 @@ mod tests {
         assert!(module.contains("call ptr @wf__shared_new("));
         assert!(module.contains("call i32 @wf__shared_release("));
         assert!(module.contains("call void @wf__shared_free("));
-        for symbol in ["@wf__heap_take", "@wf__heap_give", "@malloc", "@free"] {
+        for symbol in [
+            "@wf__heap_take",
+            "@wf__heap_retake",
+            "@wf__heap_give",
+            "@malloc",
+            "@realloc",
+            "@free",
+        ] {
             assert!(
                 !module.contains(symbol),
                 "unexpected allocator reference: {symbol}"
