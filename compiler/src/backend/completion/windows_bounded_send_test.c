@@ -152,8 +152,8 @@ static void bounded_send(int cancelled) {
     await_helper_claim();
     drain_prefix(peer, prefill);
     /* Give the helper's 50 ms poll time to see the space and send. A bounded
-     * send that took the space is done by now; a blocking one is still
-     * waiting for the peer, which reads nothing more until the call ends. */
+     * send that took the space is done by now; the peer reads nothing more
+     * until the call ends. */
     uint64_t settle = wf_file_monotonic_ns() + UINT64_C(300000000);
     while (wf_bridge_record_state(&operation()->record) != WF_COMPLETION_DONE
            && wf_file_monotonic_ns() < settle)
