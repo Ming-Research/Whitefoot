@@ -1696,6 +1696,21 @@ impl Reasoning<'_, '_, '_> {
                 .then(|| self.goal_operand(actual))
                 .flatten();
         }
+        if mode.is_range() && projections.is_empty() && measure == Some(CheckedMeasure::Length) {
+            // [REF-4, ENT-3.S12] the actual names either a range holder or
+            // an inline formation's captured path. Both read the range's
+            // length, not a measure of its element type or source storage.
+            let GoalExpression::Datum(datum) = actual else {
+                return None;
+            };
+            let path = self.input.goal_place_path(datum)?;
+            return Some(self.place_measure_term(
+                CheckedMeasure::Length,
+                path,
+                MeasuredKind::Range,
+                None,
+            ));
+        }
         let (root, projections) = self.input.call_parameter_place(actual, projections)?;
         if let Some(measure) = measure {
             // [TYPE-8, REF-4] the callee's own parameter kind supplies the

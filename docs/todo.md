@@ -2284,22 +2284,6 @@ rarely insert at the same place.
   workers. Reopen when a measured program's per-item allocations sit on a
   parallel loop's critical path.
 
-- **An inline range argument does not carry its length into a
-  postcondition.** `box_segments_filled`'s record ensures
-  `result.inner.len == lengths^.len`. When the argument is a binding,
-  `let run = &a.inner[0_u64..3_u64];`, the caller learns the segment count
-  3; when the same range is formed at the argument,
-  `lengths: &a.inner[0_u64..3_u64]`, `&segments.inner[2_u64]` stays
-  unproved, so writers must bind the range first
-  (`tests/conformance/cases/fn9-pos-segments-count-postcondition.wf` binds
-  it).
-  The formation's endpoint images are recorded under its capture, but the
-  clause instantiation reads the argument's length only through a bound
-  holder. Change: instantiate a range argument's `len` from the
-  formation's captured length as a binding's is. Validate with the inline
-  form of that case discharging the bound. Reopen with the next change to
-  call-site clause instantiation.
-
 - **An effect-row path through a segment is typed as the whole run.** The
   effect-row resolver (`container_element_type` in
   `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
