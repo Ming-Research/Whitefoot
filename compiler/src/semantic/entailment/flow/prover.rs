@@ -267,13 +267,14 @@ impl Vocabulary {
 impl Reasoning<'_, '_, '_> {
     /// The one former of every [MSR-1] measure term.
     ///
-    /// Every measure of one place is formed together, because [MSR-2]'s
-    /// standing facts relate them to each other: the value the table fixes
-    /// for a cell, the equality of a table cell to another measure, and the
+    /// Length, capacity and head terms of one place are formed together,
+    /// because [MSR-2]'s standing facts relate them to each other: the value
+    /// the table fixes for a cell, its equality to another measure, and the
     /// orderings `P.len <= P.cap` and `P.head <= P.cap`. A site that
     /// names only one measure still needs the others to exist for those
-    /// facts to have terms to relate, and all three have empty support beyond
-    /// P's own, so forming them together costs nothing a program can observe.
+    /// facts to have terms to relate. The place's [MSR-1] table row decides
+    /// which measures exist: `pages` is formed alongside them only on the
+    /// `Paged` row, because an unrelated atom enlarges every affine search.
     pub(super) fn measure_term(
         &mut self,
         measure: CheckedMeasure,
@@ -291,8 +292,12 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Head,
             CheckedMeasure::Pages,
         ] {
+            let cell = cell_measure.cell(measured);
+            if cell_measure == CheckedMeasure::Pages && cell == MeasureCell::Absent {
+                continue;
+            }
             let term = self.vocabulary.intern_measure(cell_measure, &path);
-            let bound = match cell_measure.cell(measured) {
+            let bound = match cell {
                 MeasureCell::ExactConstant(value) => {
                     Some(MeasureBound::Constant(i128::from(value)))
                 }
