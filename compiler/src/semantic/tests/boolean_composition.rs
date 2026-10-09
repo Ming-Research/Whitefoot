@@ -108,7 +108,7 @@ fn assert_binding_members(
 }
 
 /// Asserts one member is a comparison goal whose retained projection is the
-/// exact normalized bound `place - constant <= bound` in operand order.
+/// exact normalized bound `place - Z <= constant + bound` in operand order.
 fn assert_comparison_member(
     summary: &FunctionEntailment,
     member: (super::super::entailment::GoalId, GoalSign),
@@ -145,14 +145,10 @@ fn assert_comparison_member(
     );
     assert_eq!(
         summary.inventory.terms[right.0 as usize],
-        // A written zero is the zero term: one term per mathematical value.
-        if constant == 0 {
-            TermKind::Zero
-        } else {
-            TermKind::Constant(constant)
-        }
+        // [ENT-2] folds every constant operand through Z, not just zero.
+        TermKind::Zero
     );
-    assert_eq!(*held, bound);
+    assert_eq!(*held, constant + bound);
 }
 
 /// S1: a true `band` guard publishes both positive conjuncts, so both guarded
@@ -222,16 +218,20 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(entry.members.len(), 2);
     // -symbol < 0: projection symbol - 0 <= -1, negated at activation.
     assert_comparison_member(&summary, entry.members[0], GoalSign::Negative, 0, -1);
-    // -symbol >= 4: projection normalizes ge by operand swap, 4 - symbol <= 0.
+    // [ENT-2] swaps ge and folds 4: Z - symbol <= -4 before negation.
     let above = &summary.inventory.goals[entry.members[1].0.0 as usize];
-    let Some(Relation::Bound { left, bound, .. }) = &above.projection else {
+    let Some(Relation::Bound { left, right, bound }) = &above.projection else {
         panic!("the ige member must retain its projection: {above:?}");
     };
     assert_eq!(
         summary.inventory.terms[left.0 as usize],
-        TermKind::Constant(4)
+        TermKind::Zero
     );
-    assert_eq!(*bound, 0);
+    assert!(matches!(
+        summary.inventory.terms[right.0 as usize],
+        TermKind::Place(..)
+    ));
+    assert_eq!(*bound, -4);
     // The ruled flip, now live: this is the shape the 2026-08-09 decision
     // disposed. The protected corpus case records the corresponding current
     // expectation independently.

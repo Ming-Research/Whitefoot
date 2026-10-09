@@ -67,6 +67,364 @@ use super::{
 /// output, so a difference anywhere in the tree is a difference in the bytes.
 const OVERLAPPING_FOLD: &[u8] = include_bytes!("../../../../tests/programs/parallel/tree.wf");
 
+const CONDITIONAL_CALL_PAIR: &str = r#"fn fill(v: &[u64]) -> result: unit writes(v) {
+  let n = v^.len;
+  if n > 0_u64 {
+    set v^[0_u64] = 7_u64;
+  }
+  return unit;
+}
+
+fn both(a: &[u64], b: &[u64], go: Bool) -> result: unit writes(a), writes(b) {
+  if go {
+    fill(v: a);
+  }
+  fill(v: b);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cells = array_filled::<u64, 2>(value: 0_u64);
+  let a = &cells[0_u64..1_u64];
+  let b = &cells[1_u64..2_u64];
+  let go = True();
+  both(a: a, b: b, go: go);
+  if cells[0_u64] == 7_u64 {
+    if cells[1_u64] == 7_u64 {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+#[test]
+fn conditional_call_is_published_and_preserves_both_outcomes() {
+    for go in [true, false] {
+        let source = if go {
+            CONDITIONAL_CALL_PAIR.to_owned()
+        } else {
+            CONDITIONAL_CALL_PAIR
+                .replace("let go = True()", "let go = False()")
+                .replace("cells[0_u64] == 7_u64", "cells[0_u64] == 0_u64")
+        };
+        let module = emit_with_overlap(source.as_bytes());
+        let both = function_body(&module, "@wf_both");
+        assert!(both.contains("call void @wf__par_publish("), "{both}");
+        let guard = function_body(&module, "@wf__par_cond_both.0");
+        assert!(guard.contains("call i8 @wf_fill("), "{guard}");
+        assert!(
+            guard.contains("br i1") || guard.contains("switch i1"),
+            "{guard}"
+        );
+        let reference = compile_and_run(&emit(source.as_bytes()));
+        assert_eq!(reference.status.code(), Some(0));
+        let directory = test_directory();
+        let counted = CountedProgram::link(&module, &directory);
+        for workers in ["4", "1"] {
+            let (grants, output) = counted.run(Some(workers));
+            assert_eq!(
+                output.status.code(),
+                reference.status.code(),
+                "go={go}, workers={workers}"
+            );
+            assert_eq!(output.stdout, reference.stdout);
+            if go && workers == "4" {
+                assert!(
+                    grants > 0,
+                    "the conditional member must actually be offered"
+                );
+            }
+        }
+        std::fs::remove_dir_all(directory).expect("remove conditional-call executable");
+    }
+}
+
+#[test]
+fn conditional_call_without_an_adjacent_call_keeps_ordinary_lowering() {
+    let source = br#"fn fill(v: &u64) -> result: unit writes(v) {
+  set v^ = 7_u64;
+  return unit;
+}
+
+fn both(a: &u64, go: Bool, n: u64) -> result: u64 writes(a) {
+  let after = n +wrap 1_u64;
+  if go {
+    fill(v: a);
+  }
+  return after;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let ordinary = emit(source);
+    let parallel = emit_with_overlap(source);
+    assert!(!parallel.contains("_par_cond_"));
+    assert_eq!(parallel, ordinary);
+}
+
+#[test]
+fn conditional_call_inside_atomic_keeps_ordinary_lowering() {
+    let source = br#"fn fill(v: &u64) -> result: unit writes(v) {
+  set v^ = 7_u64;
+  return unit;
+}
+
+fn both(held: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
+  atomic state = &held {
+    if go {
+      fill(v: state);
+    }
+    fill(v: out);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let ledger = super::compile_permission_ledger(source);
+    assert!(
+        ledger.iter().any(|line| line.starts_with("PAR permitted")
+            && line.contains("pair(a conditional call, fill)")),
+        "the pair inside the atomic body is permitted, so only the atomic exclusion keeps the branch: {ledger:?}"
+    );
+    let ordinary = emit(source);
+    let parallel = emit_with_overlap(source);
+    assert!(!parallel.contains("_par_cond_"));
+    let both = function_body(&parallel, "@wf_both");
+    assert!(
+        both.contains("br i1") || both.contains("switch i1"),
+        "{both}"
+    );
+    assert!(both.contains("call i8 @wf_fill("), "{both}");
+    assert_eq!(parallel, ordinary);
+}
+
+#[test]
+fn conditional_call_grain_omits_a_tiny_guard() {
+    let (module, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new(
+            "test.wf",
+            CONDITIONAL_CALL_PAIR.as_bytes(),
+        )],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("conditional calls compile with call grain");
+    let module = module.into_string();
+    assert!(!function_body(&module, "@wf_both").contains("@wf__par_publish("));
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.contains("omitted offer of _par_cond_both.0")),
+        "{ledger:?}"
+    );
+}
+
+#[test]
+fn conditional_call_false_arm_transports_copy_and_reference_arguments() {
+    let source = br#"const seed: u64 = 3_u64;
+
+struct Record {
+  value: u64;
+}
+
+fn record(out: &u64, field: u64, deref: u64, reference: &u64, literal: u64, named: u64, snapshot: Record) -> result: u64 reads(reference), writes(out) {
+  let first = field +wrap deref;
+  let second = reference^ +wrap literal;
+  let third = named +wrap snapshot.value;
+  let partial = first +wrap second;
+  set out^ = partial +wrap third;
+  return 1_u64;
+}
+
+fn touch(out: &u64) -> result: unit writes(out) {
+  set out^ = 9_u64;
+  return unit;
+}
+
+fn both(a: &u64, b: &u64, input: &Record, snapshot: Record, go: Bool) -> result: unit reads(input), writes(a), writes(b) {
+  let reference = &input^.value;
+  if go {
+  } else {
+    record(out: a, field: snapshot.value, deref: reference^, reference: &input^.value, literal: 2_u64, named: seed, snapshot: snapshot);
+  }
+  touch(out: b);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = 0_u64;
+  let b = 0_u64;
+  let input = Record(value: 4_u64);
+  let snapshot = Record(value: 5_u64);
+  let go = False();
+  both(a: &a, b: &b, input: &input, snapshot: snapshot, go: go);
+  if a == 23_u64 {
+    if b == 9_u64 {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let module = emit_with_overlap(source);
+    assert!(function_body(&module, "@wf_both").contains("call void @wf__par_publish("));
+    let guard = function_body(&module, "@wf__par_cond_both.0");
+    assert!(guard.contains("i1 0, label %bb1"), "{guard}");
+    assert!(guard.contains("call i64 @wf_record("), "{guard}");
+    let directory = test_directory();
+    let counted = CountedProgram::link(&module, &directory);
+    for workers in ["4", "1"] {
+        let (_, output) = counted.run(Some(workers));
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+    std::fs::remove_dir_all(directory).expect("remove copy-argument executable");
+}
+
+#[test]
+fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
+    let cases = [
+        (
+            "indexed argument",
+            "fn sink(x: u64) -> result: unit pure {\n  return unit;\n}\n\n",
+            "  let n = a^.len;\n  if n > 0_u64 {\n    sink(x: a^[0_u64]);\n  }",
+            Some("a match statement"),
+        ),
+        (
+            "two statements",
+            "",
+            "  if go {\n    fill(v: a);\n    fill(v: a);\n  }",
+            None,
+        ),
+        (
+            "both arms act",
+            "",
+            "  if go {\n    fill(v: a);\n  } else {\n    fill(v: a);\n  }",
+            None,
+        ),
+        (
+            "else if",
+            "",
+            "  if go {\n    fill(v: a);\n  } else if go {\n    fill(v: a);\n  }",
+            None,
+        ),
+        (
+            "condition conflict",
+            "",
+            "  let n = b^.len;\n  if n > 0_u64 {\n    if b^[0_u64] == 0_u64 {\n      fill(v: a);\n    }\n    fill(v: b);\n  }",
+            Some("a conditional call"),
+        ),
+        (
+            "discard requires release",
+            "fn fresh() -> result: Box<u64> pure {\n  let cell = box_new::<u64>(value: 1_u64);\n  return move cell;\n}\n\n",
+            "  if go {\n    fresh();\n  }",
+            Some("a match statement"),
+        ),
+    ];
+    for (name, prelude, replacement, label) in cases {
+        let source = format!(
+            "{prelude}{}",
+            CONDITIONAL_CALL_PAIR.replace("  if go {\n    fill(v: a);\n  }", replacement)
+        );
+        let source = match name {
+            "indexed argument" => source.replace("writes(a), writes(b)", "reads(a), writes(b)"),
+            "discard requires release" => source.replace("writes(a), writes(b)", "writes(b)"),
+            _ => source,
+        };
+        let (module, ledger) = crate::compile_with_permission_ledger(
+            &[crate::SourceInput::new("test.wf", source.as_bytes())],
+            crate::CompilerLimits::default(),
+            crate::OverlapLowering::On,
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        assert!(!module.into_string().contains("_par_cond_"), "{name}");
+        if let Some(label) = label {
+            let denial = ledger
+                .iter()
+                .find(|line| {
+                    line.starts_with("PAR denied") && line.contains(&format!("pair({label}, fill)"))
+                })
+                .unwrap_or_else(|| panic!("{name}: {ledger:?}"));
+            if name == "condition conflict" {
+                assert!(
+                    denial.contains("condition 1: the operand read of s1 overlaps the write of s2"),
+                    "{denial}"
+                );
+            }
+        } else {
+            assert!(
+                !ledger
+                    .iter()
+                    .any(|line| line.contains("pair(a match statement, fill)")),
+                "{name}: {ledger:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn conditional_call_recursion_keeps_its_offer_and_budget_family() {
+    let source = br#"fn walk(t: &[u64]) -> result: unit writes(t) {
+  let n = t^.len;
+  if n > 1_u64 {
+    let m = n / 2_u64;
+    let left = &t^[0_u64..m];
+    let right = &t^[m..n];
+    if m > 0_u64 {
+      walk(t: left);
+    }
+    walk(t: right);
+    return unit;
+  }
+  if n == 1_u64 {
+    set t^[0_u64] = 9_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cells = array_filled::<u64, 4>(value: 0_u64);
+  let whole = &cells[0_u64..4_u64];
+  walk(t: whole);
+  let first = cells[0_u64] +wrap cells[1_u64];
+  let second = cells[2_u64] +wrap cells[3_u64];
+  let total = first +wrap second;
+  if total == 36_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let module = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
+    assert!(
+        module.contains("@wf__par_budget_walk("),
+        "{:?}",
+        super::compile_permission_ledger(source)
+    );
+    assert!(module.contains("@wf__par_budget__par_cond_walk.0("));
+    assert!(function_body(&module, "@wf__par_budget_walk").contains("call void @wf__par_publish("));
+    assert!(module.contains("@wf__par_seq__par_cond_walk.0("));
+    let directory = test_directory();
+    let counted = CountedProgram::link(&module, &directory);
+    for workers in ["4", "1"] {
+        let (grants, output) = counted.run(Some(workers));
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "workers={workers}: {output:?}"
+        );
+        if workers == "4" {
+            assert!(grants > 0);
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("remove guarded recursion executable");
+}
+
 fn fold_module(parallel: bool) -> String {
     use std::sync::OnceLock;
     static PLAIN: OnceLock<String> = OnceLock::new();
@@ -977,26 +1335,51 @@ fn machine_frames_preserve_clone_cost_and_bound_offer_overhead() {
     std::fs::remove_dir_all(&overlapped_directory).expect("remove the test directory");
 }
 
-/// The lane's frame is the lane's: asking for overlap adds no stack slot to
-/// any function.
+/// The lane's frame is the lane's: actualizing calls adds no allocation beyond
+/// each function's ordinary planned roots.
 ///
 /// This is the whole resource bound of the hand-out. An earlier lowering put
 /// the frame in the calling function's entry block, so every activation of an
 /// eligible recursive function carried the slot and its argument spills
 /// whether or not a lane was ever granted, and a `--par` build reached about a
 /// quarter of the sequential build's recursion depth before dying on a bare
-/// SIGSEGV. The comparison is against the default compilation of the same
-/// source, so it measures the lowering rather than the program.
+/// SIGSEGV. The ordinary frame plan precedes call actualization, so a lane
+/// frame or argument spill added by the hand-out cannot enter the expectation.
 ///
-/// The count is taken over the *overlapped* world alone. A `--par` module
-/// carries a second lowering of the eligible closure, and counting both copies
-/// against one reference would compare a doubled module with a single one — a
-/// failure that says nothing about whether a hand-out costs a slot. What the
-/// clone costs is a separate and stronger question, answered by
-/// `the_sequential_clone_is_the_sequential_lowering`: it is the sequential
-/// lowering byte for byte, so its slots are the sequential build's slots.
+/// A module-wide alloca count cannot express this bound: overlap disables
+/// ordinary storage coalescing. In this fixture, `main`'s two `ExitStatus`
+/// results retain separate roots instead of sharing the caller's destination.
+/// They used to be fields of one frame alloca; independent allocations expose
+/// them as two more instructions. Neither is a lane frame. Compare complete
+/// allocation inventories per function with each world's plan, retaining the
+/// sequential module's bootstrap allocations and excluding sequential clones.
+/// Clone cost and machine spills have their own neighboring tests.
 #[test]
 fn handing_a_call_out_adds_no_stack_slot() {
+    use std::collections::BTreeMap;
+
+    fn roots(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|line| line.contains(" = alloca "))
+            .map(|line| line.trim().to_owned())
+            .collect()
+    }
+
+    fn allocations(module: &str) -> BTreeMap<String, Vec<String>> {
+        module
+            .lines()
+            .filter(|line| line.starts_with("define "))
+            .map(|line| {
+                let (_, tail) = line.split_once(" @").expect("a definition has a symbol");
+                let (name, _) = tail.split_once('(').expect("a definition has parameters");
+                let symbol = format!("@{name}");
+                let slots = roots(function_body(module, &symbol));
+                (symbol, slots)
+            })
+            .filter(|(_, slots)| !slots.is_empty())
+            .collect()
+    }
+
     let sequential = fold_module(false);
     let overlapped = fold_module(true);
     assert!(
@@ -1005,14 +1388,50 @@ fn handing_a_call_out_adds_no_stack_slot() {
     );
     let actualized = without_clones(&overlapped);
     assert!(
-        actualized.contains("@wf__par_publish"),
+        actualized.contains("call void @wf__par_publish("),
         "removing the clones must leave the overlapped world:\n{actualized}"
     );
-    assert_eq!(
-        actualized.matches("= alloca ").count(),
-        sequential.matches("= alloca ").count(),
-        "handing calls out must add no stack slot:\n{actualized}"
+    let mut expected = allocations(&sequential);
+    with_parallel_ir(OVERLAPPING_FOLD, |program| {
+        let target = TargetLayout::host().expect("supported test target");
+        for function in program.functions() {
+            if function.blocks().is_empty() {
+                continue;
+            }
+            let symbol = format!("@wf_{}", function.name());
+            let budget = format!("@wf__par_budget_{}", function.name());
+            let prelude = crate::backend::emitter::ordinary_frame_prelude_for_test(
+                program, target, function,
+            )
+            .expect("the ordinary roots must have a target layout");
+            expected.remove(&symbol);
+            // A budgeted function's ordinary symbol is a slot-free wrapper;
+            // the variant owns the same source roots, with an SSA budget.
+            let body = if actualized.contains(&format!(" {budget}(")) {
+                budget
+            } else {
+                symbol
+            };
+            let slots = roots(&prelude);
+            if !slots.is_empty() {
+                expected.insert(body, slots);
+            }
+        }
+    });
+    let actual = allocations(&actualized);
+    assert_eq!(actual, expected, "a hand-out must add no unplanned root");
+
+    // Keep the observation sensitive to a caller-owned lane frame even when
+    // its function already owns ordinary roots and makes actual hand-outs.
+    let main = function_body(&actualized, "@wf_main");
+    assert!(main.contains("call void @wf__par_publish("));
+    let with_lane = main.replacen(
+        "  %wf.slot.0 = alloca",
+        "  %unexpected.lane = alloca [256 x i8], align 16\n  %wf.slot.0 = alloca",
+        1,
     );
+    let with_caller_frame = actualized.replacen(main, &with_lane, 1);
+    assert_ne!(allocations(&with_caller_frame), expected);
 }
 
 /// The sequential clone is the sequential lowering: not similar to it, the

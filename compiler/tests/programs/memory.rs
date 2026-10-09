@@ -1,7 +1,12 @@
 use super::support::{build_program, compile_program};
 
 #[test]
-fn heap_reading_tracks_a_box_and_grown_cell_and_returns_to_its_initial_bound() {
+fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
+    // PRE-2: the map's two waves distinguish newly carved and reused nodes.
+    // A presized table avoids moves masking node deltas: on the unfixed
+    // runtime insertion contributes zero bytes and exits with status 8.
+    // Status 9 independently catches missing host-mapped cell accounting;
+    // 11 catches retained free nodes, and 14 catches drain/drop imbalance.
     let program = build_program(&compile_program("memory_statistics.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");

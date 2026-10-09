@@ -466,6 +466,27 @@ every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
 
+**The candidate's images, back to 10 s.** `performance-candidate-images`
+builds the five formal kernels with the candidate compiler right after the
+two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
+first attempts, at 10.6 to 21.3 s, while every re-run passed at 2.2 to 5.5 s,
+the paired comparison passed every time, and the identical baseline stage
+right after it took about 2 s; the owner raised the budget to 20 s on
+2026-10-09. A temporary workflow (run 37890815236, twelve hosted jobs after
+the same two compiler builds) then timed the image build twice per job after
+three preparations: with none the first build took 4.3 to 28.7 s, after a
+`sync` (itself 0.0 to 0.5 s) 2.8 to 16.6 s, and after a one-file clang
+warm-up (itself 2.7 to 8.8 s) 4.9 to 12.8 s, while the second build took 2.0
+to 3.4 s in every job. The first build's extra cost is therefore neither
+writeback nor clang's start alone; the likeliest reading is the native
+toolchain's first use paging in from a cold disk, an inference the
+experiment does not measure, and it did not find which construction phase
+owns the delay or whether a smaller preparation would suffice. A whole build
+was sufficient in every sampled job, so `compute-regression.yml` builds the
+images once, untimed, before the timed stages; the stage then took 2.7 s in
+run 37892608427, and its budget returns to the 10-s floor (PR #300). The
+first-use cost now falls in the untimed warm-up and no budget covers it.
+
 **The placement control's two stages, 10 s and 45 s.** The code-placement
 change (PR #252) added `performance-shifted-images`, which links the
 candidate's images again behind 32 bytes of padding, and
