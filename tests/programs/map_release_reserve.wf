@@ -56,6 +56,9 @@ fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
   let name = array_filled::<u8, 8>(value: 0_u8);
   let small = shared_map_new::<u64>(capacity: 0_u64);
   let small_next = 0_u64;

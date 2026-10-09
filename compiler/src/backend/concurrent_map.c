@@ -2434,10 +2434,11 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
      * (wf_cmap_release_reserve) needs no statement: it takes the map's own
      * lock, which the exchange below holds on both maps, lower address
      * first, so that a reserve moves with its map or is released, never
-     * both. */
+     * both. A map swapped with itself is locked once. */
     wf_cmap *first = (uintptr_t)a < (uintptr_t)b ? a : b;
     lock_map(first);
-    lock_map(first == a ? b : a);
+    if (b != a)
+        lock_map(first == a ? b : a);
     table *current = atomic_load_explicit(&a->current, memory_order_relaxed);
     atomic_store_explicit(&a->current, atomic_load_explicit(&b->current, memory_order_relaxed),
                           memory_order_relaxed);
@@ -2463,7 +2464,8 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
     a->generation += 1;
     b->generation += 1;
     unlock_map(a);
-    unlock_map(b);
+    if (b != a)
+        unlock_map(b);
     /* Published before either map is handed to another statement. */
     atomic_thread_fence(memory_order_seq_cst);
 }

@@ -2864,6 +2864,12 @@ static void maps_swap(void) {
         fail("a swap moved a map's watches (kept, moved)", swap_map->watch.count, other->watch.count);
     swap_map->watch.count = 0;
     wf_cmap_destroy(other);
+    /* A map swapped with itself keeps its entries */
+    put_counted(swap_map, 0, 7, 70);
+    wf_cmap_swap(swap_map, swap_map, VALUE_TAG);
+    if (wf_cmap_count(swap_map) != 1 || counted_value(swap_map, 7) != 70)
+        fail("a map swapped with itself lost its entries (count, value)", wf_cmap_count(swap_map),
+             counted_value(swap_map, 7));
     wf_cmap_destroy(swap_map);
 }
 
