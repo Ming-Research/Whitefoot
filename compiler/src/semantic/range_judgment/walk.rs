@@ -830,7 +830,15 @@ impl<'program> Walker<'program> {
                 continues,
                 ..
             } => {
-                if self.function.range_facts.atomic_aliases.contains(node_path) {
+                let aliases = self.function.range_facts.atomic_aliases.contains(node_path);
+                if aliases
+                    && self
+                        .function
+                        .range_facts
+                        .atomics
+                        .get(node_path)
+                        .is_some_and(|clauses| !clauses.is_empty())
+                {
                     self.issues.push(RangeIssue::Unsupported {
                         node: node_path.clone(),
                         feature: super::super::UnsupportedSemanticFeature::RangeAtomicAliases,
@@ -847,12 +855,14 @@ impl<'program> Walker<'program> {
                 state.havoc_everything(&mut self.world);
                 self.unplaced(None, true, true);
                 for target in targets {
-                    state.values.insert(
-                        target.binding,
-                        Value::Ref(View::Place(Location::root(Origin::Constructed(
-                            self.world.new_origin(),
-                        )))),
-                    );
+                    // Possibly aliased targets retain the unplaced-write
+                    // treatment: a write must forget what another target read.
+                    let view = if aliases {
+                        View::Unknown
+                    } else {
+                        View::Place(Location::root(Origin::Constructed(self.world.new_origin())))
+                    };
+                    state.values.insert(target.binding, Value::Ref(view));
                 }
                 self.enter_atomic(&mut state, node_path);
                 if let Some(guard) = guard {
@@ -1396,10 +1406,11 @@ impl<'program> Walker<'program> {
         root: PlaceRoot,
         path: &[CheckedPlaceStep],
     ) -> Target {
-        let PlaceRoot::Binding(binding) = root else {
-            return Target::Unknown;
+        let value = match root {
+            PlaceRoot::Binding(binding) => state.values.get(&binding).cloned(),
+            PlaceRoot::Constant(_) => None,
         };
-        let mut target = match state.values.get(&binding).cloned() {
+        let mut target = match value {
             Some(Value::Owned(location)) => Target::Location(location),
             Some(Value::Ref(View::Place(location))) => Target::Location(location),
             Some(Value::Ref(View::Run {
@@ -1424,6 +1435,8 @@ impl<'program> Walker<'program> {
             },
             _ => Target::Unknown,
         };
+        // Even an unmodelled root has evaluated offsets and typed bounds.
+        // A constant array's fixed length, for example, needs no storage view.
         for step in path {
             let evaluated = if let CheckedPlaceStep::Subscript(subscript) = step {
                 let index = self.int(state, &subscript.offset);

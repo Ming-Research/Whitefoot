@@ -510,6 +510,50 @@ fn an_atomic_guard_is_a_premise_at_its_leaving_edge() {
 }
 
 #[test]
+fn a_callee_postcondition_does_not_make_plain_atomic_aliases_unsupported() {
+    check(
+        "fn update(first: Shared<u64>, second: Shared<u64>) -> result: unit pure waits {
+  let filled = array_filled::<u64, 1>(value: 0_u64);
+  atomic a = &first, b = &second {
+    set a^ = filled[0_u64];
+    set b^ = 1_u64;
+  }
+  return unit;
+}
+",
+        None,
+    );
+}
+
+#[test]
+fn a_write_through_an_atomic_alias_cannot_leave_an_ordinary_range_goal_proved() {
+    let source = format!(
+        "fn need(x: u64) -> result: unit pure contract {{
+  requires x < 2_u64;
+}} {{
+  return unit;
+}}
+
+fn update(first: Shared<u64>, second: Shared<u64>) -> result: unit pure waits {{
+  let filled = array_filled::<u64, 1>(value: 0_u64);
+  atomic a = &first, b = &second {{
+    set a^ = 1_u64;
+    set b^ = 2_u64;
+    need(x: a^);
+  }}
+  return unit;
+}}
+{MAIN}"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected the alias write to invalidate a^, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8, "{issue:?}");
+    });
+}
+
+#[test]
 fn possibly_aliased_atomic_targets_are_explicitly_unsupported() {
     let source = format!(
         "{ZEROES}fn need(z: &Zeroes) -> result: unit pure {{

@@ -2544,13 +2544,31 @@ fn an_unproved_ordinary_goal_precedes_another_functions_capability_gap() {
     }
 }
 
+#[test]
+fn deferred_constant_array_bounds_visit_their_offsets() {
+    for (index, verdict) in [(0, None), (1, Some(SemanticRule::Op4))] {
+        let source = field_range_program(&format!(
+            "const values: Array<u8, 1> =[0_u8];
+
+fn probe() -> result: u8 pure {{
+  let indices = array_filled::<u64, 1>(value: {index}_u64);
+  return values[indices[0_u64]];
+}}
+"
+        ));
+        field_range_verdict(&source, verdict);
+    }
+}
+
 /// Ordinary entailment leaves the dead arm's bounds/conversion open; the
 /// range state knows the constructed variant and excludes that arm.
 #[test]
 fn deferred_obligations_in_an_excluded_variant_arm_hold_vacuously() {
-    for operation in ["xs^[i]", "cvt::<u64, f32>(i)"] {
+    // EFF-2 counts the read syntactically, even in the excluded arm; the
+    // conversion reads no formal storage and therefore exhibits pure.
+    for (operation, row) in [("xs^[i]", "reads(xs)"), ("cvt::<u64, f32>(i)", "pure")] {
         let source = field_range_program(&format!(
-            "enum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let route = Route::Live();\n  match route {{\n    Live() => {{\n    }}\n    Dead() => {{\n      let value = {operation};\n    }}\n  }}\n  return unit;\n}}\n"
+            "enum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(xs: &[u64], i: u64) -> result: unit {row} contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let route = Route::Live();\n  match route {{\n    Live() => {{\n    }}\n    Dead() => {{\n      let value = {operation};\n    }}\n  }}\n  return unit;\n}}\n"
         ));
         field_range_verdict(&source, None);
     }
