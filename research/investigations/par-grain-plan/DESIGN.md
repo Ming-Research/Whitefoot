@@ -370,6 +370,14 @@ file's header says what it was given). This section compares the three:
   6.4x H2 asks), H2 measured against a realizable reference schedule rather
   than the work-over-span bound.
 
+### The owner's ruling and what remains
+
+On the status board on 2026-10-09 the owner chose B, demand-driven hand-out
+with static prices only as advice ("choose B", translated). The stages
+become: the suite and baseline (started), a first experiment, loops and
+calls, recursion, threads and topology, and the single decision pass, in
+that order of dependence; the three questions below are separate cards.
+
 ### What remains for the owner to decide
 
 1. **How "worth handing out" is learned**: a runtime clock (Fable; strongest
