@@ -345,7 +345,8 @@ All five extensions are on PR #290's branch with the specification at v0.106
 and the approval logged in spec/log.md and design/log.md. Source acceptance,
 intended denials, IR validity and native values are established by that PR's
 gate run on its merged head; nothing was built or run locally. Snowghost's
-recount of its 32 candidate loops with these forms is still to be measured.
+recount of its 32 candidate loops with these forms is recorded under
+[Copied cells and helper calls](#copied-cells-and-helper-calls).
 
 The two paragraphs below record the implementation-time review of the
 uncommitted extensions 3 and 4, before they were committed.
@@ -368,3 +369,77 @@ these fixes and found no remaining issue within scope. These expected counts
 are test assertions, not observed results. Typechecking, ordinary WF checking,
 LLVM validation, native observations and full safety qualification remain
 unverified. No additional architecture decision was required.
+
+## Copied cells and helper calls
+
+### Recount after the extensions
+
+Snowghost-wf recounted the same 32 loops with release `wf-64c0f956df63`
+(main `64c0f956d`, v0.107): 11 permitted as written and 11 with local helper
+narrowing, against 0 and 0 before the extensions. The permission criterion
+(at least 16) still fails, five short. The per-site record is Snowghost-wf
+revision `5b8e728`,
+`research/investigations/storage-layout/par-classification/g-indexed-290.md`
+(report run 37887019421, gate run 37888369049). By first denial, the 21
+remaining sites are:
+
+- four copied-cell chains, `let old = R[e]; let next = old op x; set R[e] =
+  next;`, two in `set_coverage_bits`, one in `mark_lookups` and one in
+  `sort_run`, while the one-step `let next = R[e] op x;` is admitted;
+- two loops whose updates happen inside a helper reached through a whole-root
+  reference argument, `build_filters` calling `set_coverage_bits` and
+  `collect_stage` calling `mark_lookups`; the helpers' own updates are the
+  copied-cell chains above;
+- fifteen sites that are not indexed reductions under the fixed operation
+  set: whole-record get/put (5), a hidden-dominates-maximum selection (3), a
+  key-and-payload winner (3), a check of the existing cell before writing
+  (1), a scalar constant mark with an error exit (1), an exact `+` with a
+  guard and error exits (1) and a `NodeId` record overwrite (1).
+
+### Selected direction
+
+The owner selected both remaining forms on the status board (card
+`paged-274-recount`, option A, 2026-10-09), following the earlier selection
+to design helper-call updates if the extensions stayed below 16:
+
+1. **Copied cell.** The accumulator operand of an operation update may be a
+   fresh immutable single-use copy of the same cell, `let c = R[e]`, made
+   earlier in the same block. The copy observes the cell exactly where the
+   direct operand would, and no statement between them may touch the root,
+   so the update computes the same value as the admitted direct form.
+2. **Helper calls.** A call is an update of an indexed family when its
+   reference argument reaches the root and the callee's whole body treats
+   that parameter as PAR-2 treats an indexed accumulator: every occurrence is
+   a measure read or an update of a family below it, with one fixed kind per
+   family. The callee's net effect on the root is then a multiset of cell
+   contributions under one associative, commutative operation (or a set of
+   cells receiving one constant), independent of the root's contents, so
+   iterations may still be recombined in any order. A callee summary may rely
+   on its own call-form updates only through an acyclic chain of callees.
+
+The fifteen other sites need user-defined associative operations, selection
+with payload, or reads of partial results; they stay outside this rule.
+
+### Lowering
+
+A call passes a reference, so its callee indexes a private copy by the
+root's own logical indices and may read its measures. For a family that some
+call in the loop updates, each leaf's private storage is therefore a block
+with the root's storage shape and element stride, carrying the root's
+measures, with identity in the family's cells; the leaf passes a reference to
+its own block. A constant mark fills its cells with a sentinel that differs
+from the constant (the constant with its lowest bit inverted), since the
+callee writes only the constant there; the join stores the constant where a
+leaf's cell holds it. Families no call updates keep the dense private slabs.
+
+### Criterion
+
+Recorded before implementation: with both forms, Snowghost's recount of the
+same 32 loops admits at least 16 as written or with local helper narrowing.
+The first-denial classification predicts 17 (the four copied-cell loops and
+the two helper-call loops); fewer than 16 rejects this extension as
+insufficient for the criterion, and a site denied for a condition hidden
+behind its first denial is reported with that condition. Performance of the
+call form is not claimed; the indexed timing comparison above measured the
+direct form only.
+
