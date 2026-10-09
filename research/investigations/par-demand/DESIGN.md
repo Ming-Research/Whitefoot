@@ -176,3 +176,31 @@ Expected if the change works: `small_split` at four and eight workers within
 its bound, as at one worker. If it stays above its bound after a rerun, the
 cost is not the request word's read and the attribution goes back to the
 owner.
+
+## Results of the rerun
+
+Run: [compute-bench 37990848736](https://github.com/Ming-Research/Whitefoot/actions/runs/37990848736),
+`claude/par-demand` at 8a404f827, i9-14900K, 10 interleaved rounds,
+2026-10-09, under the per-width rule above.
+
+`small_split` still fails: 3.239 at four workers (rerun 3.240, spreads 1.4
+and 1.2 percent), 3.243 at eight (spread 2.1 percent, so that width decides
+nothing), against 1.000 at one. Moving the request-word read behind the span
+test removed about 0.7 of the first run's 3.9; the rest is not the read.
+
+Inspection of the candidate image's optimized code
+(`demand/small_split.o.s`): at one worker the adapter selects the sequential
+world, so the one-worker cell runs the sequential clone and says nothing
+about the driver. At four and eight workers each three-iteration `mark` call
+is an out-of-line call of `wf__par_slice_mark.0`, which saves six registers
+and divides twice by the site's weight (7), passed as an argument, before the
+span test skips the request word and the chunk's three stores run inline. The
+remaining cost is that per-call driver setup on a range far below the minimum
+span: the attribution the rule names pruning, since the literal pruning does
+not reach a runtime extent.
+
+The other cells decide nothing under the 2 percent rule, but their medians
+repeat the first run's: `fir` 1.088 and 1.098, `large_helper` 1.064 and
+1.065, at four and eight workers; `recursion`, `hot_helper`, `spine` and
+`mandelbrot` within 2.5 percent; `records` 1.016 and 1.007 where the first
+run measured 1.077 and 1.072.
