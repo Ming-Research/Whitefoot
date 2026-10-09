@@ -2453,16 +2453,15 @@ rarely insert at the same place.
   validate cross-page cell updates, unchanged length and private-copy
   recombination against sequential execution in CI.
 
-- **Constant idempotent indexed marks remain deferred.** A repeated
-  `set flags[e] = True();` cannot use the indexed accumulator family, so
-  coverage-mark loops with colliding indices remain sequential. Proposed
-  change: select a rule admitting constant idempotent stores, potentially by
-  normalizing this form to Boolean OR with a proved-true contribution;
-  neither that normalization nor other constant stores are admitted now.
-  Validate a positive colliding mark, false and nonconstant stores, mixed
-  operations and reads of partial marks, plus sequential/parallel equality.
-  Reopen when a real coverage-mark loop needs permission after the explicit
-  indexed operations have been implemented and qualified.
+- **Qualify the indexed mark and record-field extension.** The authorized
+  family-kind and cell-projection interface now has an implementation and
+  maintained fixtures, but the owner prohibited execution in this worktree.
+  [The implementation record](../research/investigations/indexed-reductions/DESIGN.md#interface-boundary-constant-marks-and-record-fields)
+  identifies the tests and remaining evidence. Reopen in the integrating CI
+  run: establish ordinary source acceptance, intended permission denials,
+  generated IR validity, dense masks and field slabs, nested/zero-budget
+  execution, and allocation failure cleanup before the downstream recount.
+  No performance or recovered-site-count claim follows from source inspection.
 
 ## Platforms and host interfaces
 

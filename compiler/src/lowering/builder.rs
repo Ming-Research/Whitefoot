@@ -747,8 +747,8 @@ struct IrBuilder<'program> {
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
-    /// Root prefixes redirected into this leaf's private range.
-    indexed_roots: Vec<(crate::semantic::CheckedContainerRoot, IrValueId)>,
+    /// Indexed families, their current ranges, and source/private storage modes.
+    indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -1928,18 +1928,15 @@ impl<'program> IrBuilder<'program> {
                         .copied()
                         .map(crate::semantic::CheckedPlaceStep::Field)
                         .collect::<Vec<_>>();
-                    if let Some(slice) = self
-                        .indexed_slice(crate::semantic::CheckedPlaceRoot::Binding(*binding), &path)
-                    {
+                    if let Some(family) = self.indexed_family(
+                        crate::semantic::CheckedPlaceRoot::Binding(*binding),
+                        &path,
+                        &[],
+                    ) {
                         let offset = self.expression(offset)?;
-                        return self.define(
-                            lower_type(self.erasure, *element_type)?,
-                            IrOperation::SliceIndex {
-                                slice,
-                                offset,
-                                target_domain: (*target_domain).into(),
-                            },
-                        );
+                        let address =
+                            self.indexed_address(family, offset, (*target_domain).into())?;
+                        return self.load_storage_value(address);
                     }
                 }
                 let (root, ty) = self.array_root(root)?;

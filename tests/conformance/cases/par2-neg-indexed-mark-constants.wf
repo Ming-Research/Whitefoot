@@ -1,0 +1,14 @@
+fn reduce() -> result: u8 pure {
+  doc "Different constant values cannot share one mark family.";
+  let cells = array_filled::<u8, 4>(value: 9_u8);
+  for (i in 0_u64..4_u64) {
+    set cells[0_u64] = 1_u8;
+    set cells[1_u64] = 0_u8;
+  }
+  return cells[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = reduce();
+  return std::process::exit_status(code: 0_u8);
+}

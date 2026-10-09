@@ -1377,13 +1377,15 @@ fn validate_target_obligation(
         IrOperation::BufferIndex { target_domain, .. }
         | IrOperation::SliceIndex { target_domain, .. }
         | IrOperation::SliceAddress { target_domain, .. }
+        | IrOperation::IndexedAddress { target_domain, .. }
             if *target_domain == IrTargetDomainObligation::ElementAddress => {}
         IrOperation::ArrayFill { .. }
         | IrOperation::BufferFill { .. }
         | IrOperation::ArrayIndex { .. }
         | IrOperation::BufferIndex { .. }
         | IrOperation::SliceIndex { .. }
-        | IrOperation::SliceAddress { .. } => {
+        | IrOperation::SliceAddress { .. }
+        | IrOperation::IndexedAddress { .. } => {
             return Err(TargetLayoutFailure::InvalidIr);
         }
         _ => {}

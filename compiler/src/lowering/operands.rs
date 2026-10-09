@@ -30,6 +30,9 @@ macro_rules! instruction_operands {
             } => {
                 vec![$value(slice), $value(index), $value(value)]
             }
+            IrInstruction::IndexedMark {
+                address, private, ..
+            } => vec![$value(address), $value(private)],
             IrInstruction::Store { address, value, .. } => {
                 vec![$value(address), $value(value)]
             }
@@ -211,7 +214,10 @@ macro_rules! operation_operands {
             IrOperation::WindowBlockNew { capacity, .. } => vec![$value(capacity)],
             IrOperation::WindowGrow { cell, capacity, .. } => vec![$value(cell), $value(capacity)],
             IrOperation::CellFree { value, .. } => vec![$value(value)],
-            IrOperation::SliceRange { slice, start, end } => {
+            IrOperation::SliceRange { slice, start, end }
+            | IrOperation::IndexedRange {
+                slice, start, end, ..
+            } => {
                 vec![$value(slice), $value(start), $value(end)]
             }
             IrOperation::BufferIndex { buffer, offset, .. } => vec![$value(buffer), $value(offset)],
@@ -224,6 +230,12 @@ macro_rules! operation_operands {
                 .into_iter()
                 .chain(needles.$iter().map($value))
                 .collect(),
+            IrOperation::IndexedAddress {
+                slice,
+                offset,
+                private,
+                ..
+            } => vec![$value(slice), $value(offset), $value(private)],
             IrOperation::SliceMeasure { slice } => vec![$value(slice)],
             IrOperation::SliceIndex { slice, offset, .. }
             | IrOperation::SliceAddress { slice, offset, .. } => {

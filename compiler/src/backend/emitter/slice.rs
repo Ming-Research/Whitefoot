@@ -49,6 +49,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         slice: IrValueId,
         start: IrValueId,
         end: IrValueId,
+        private_type: Option<IrType>,
     ) -> Result<(), BackendFailure> {
         if matches!(ty, IrType::Run { .. }) {
             if self.value_type(slice) != Some(ty) {
@@ -76,25 +77,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let descriptor_type = self.output.type_name(self.program, ty)?;
-        let element_type = self.output.type_name(
-            self.program,
+        let element = private_type.unwrap_or(
             self.program
                 .element(element)
                 .ok_or(BackendFailure::InvalidIr)?,
-        )?;
+        );
+        let element_type = self.output.type_name(self.program, element)?;
         let pointer = self.next_temporary()?;
         let adjusted = self.next_temporary()?;
         let length = self.next_temporary()?;
         let partial = self.next_temporary()?;
         let logical_start = self.value_name(start);
-        let address_start = self.element_address_index(
-            self.program
-                .element(element)
-                .ok_or(BackendFailure::InvalidIr)?,
-            &logical_start,
-        )?;
+        let address_start = self.element_address_index(element, &logical_start)?;
         // [REF-4] discharged both domain conjuncts, `lo <= hi` and
-        // `hi <= x.len`, before this descriptor exists, so the adjusted
+        // `hi <= x.len`, before a source descriptor exists. For an indexed
+        // slab the structured splitter halves its checked allocation extent.
+        // In either case the adjusted
         // address stays inside the extent the original descriptor names and
         // carries `inbounds` (compiler/backend-facts). Empty ranges,
         // including one at the end of an allocation, form descriptors

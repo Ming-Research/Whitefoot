@@ -1,0 +1,54 @@
+fn reduce() -> result: u64 pure {
+  doc "A fresh single-use temporary carries exactly one cell update across unrelated work.";
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 5_u64);
+  for (i in 0_u64..8_u64) {
+    let bucket = i % 2_u64;
+    let amount = 1_u64;
+    let updated = cells.inner[bucket] +wrap amount;
+    let unrelated = i +wrap 3_u64;
+    set cells.inner[bucket] = updated;
+  }
+  return cells.inner[0_u64] +wrap cells.inner[3_u64];
+}
+
+fn commuted() -> result: u64 pure {
+  doc "The cell operand may follow the contribution in a temporary initializer.";
+  let cells = array_filled::<u64, 4>(value: 5_u64);
+  for (i in 0_u64..8_u64) {
+    let bucket = i % 2_u64;
+    let updated = 1_u64 +wrap cells[bucket];
+    set cells[bucket] = updated;
+  }
+  return cells[0_u64] +wrap cells[3_u64];
+}
+
+fn boolean_temporary() -> result: Bool pure {
+  doc "A Boolean operation uses the same one-step temporary rule.";
+  let seed = False();
+  let cells = array_filled::<Bool, 4>(value: seed);
+  let enabled = True();
+  for (i in 0_u64..8_u64) {
+    let updated = bor(cells[0_u64], enabled);
+    set cells[0_u64] = updated;
+  }
+  let untouched = bnot(cells[3_u64]);
+  return band(cells[0_u64], untouched);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check the independent expected results.";
+  let direct = reduce();
+  let reversed = commuted();
+  let flags = boolean_temporary();
+  if direct != 14_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if reversed != 14_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let wrong = bnot(flags);
+  if wrong {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
