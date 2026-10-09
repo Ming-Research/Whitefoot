@@ -7,6 +7,7 @@ mod buffers;
 mod call_grain;
 mod contexts;
 mod loops;
+mod parameters;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
 mod probe;
@@ -198,6 +199,12 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
+    // Once every body and cleanup is complete, remove unobserved forwarding
+    // before work estimates and backend storage planning see the graph.
+    // This changes neither source signatures nor instruction definitions.
+    for function in &mut functions {
+        parameters::prune_block_parameters(function, 0, &[])?;
+    }
     let weights = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
@@ -482,7 +489,9 @@ fn lower_function<'program>(
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
-        if parameter.mode == CheckedMode::Reference
+        // Every reference kind, ranges and runs included, keeps the fact that
+        // its declared effects never write through it [CALL-1, REF-4].
+        if parameter.mode.is_reference()
             && !function
                 .declared_state_writes
                 .iter()
