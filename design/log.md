@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 More indexed reduction forms
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-08, written in Chinese, after the card that presented Snowghost's count of 0 of 32 candidate loops permitted by v0.102's indexed reductions and recommended keeping the rule and admitting a len read of the indexed root, a single-assignment temporary, constant marks, integer or Bool fields of record cells and unsigned `+sat`, then recounting: "choose A" (translated), which superseded the earlier "choose A" deferring constant marks; in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Indexed accumulators also admit a len read of the root, one single-use temporary, unsigned `+sat`, constant marks and record-field families, instead of only the spelling `set R[e] = R[e] op x`, which Snowghost's loops did not use. A split carries each family's kind (a reduction with its identity, or a mark with its constant) and its cell projection (element stride and field offset); marks reduce into private Bool masks and store the constant where any leaf marked the cell, and field families reduce into dense private slabs combined into each record's field, all slabs counted through the heap wrappers.
 ## 2026-10-09 A break-free loop has no normal successor
 
 Nodes: language/loop-completion, compiler/checker-facts

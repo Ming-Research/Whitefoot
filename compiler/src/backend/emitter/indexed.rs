@@ -1,9 +1,10 @@
-//! Private indexed accumulators for a structured range split. One slab per
-//! root contains the leaves' cells in leaf order. Only this site owns those
+//! Private indexed families for a structured range split. One slab per
+//! family contains the leaves' dense scalar cells or masks in leaf order. Only this site owns those
 //! allocations; chunks borrow disjoint ranges and cannot release them.
 
 use super::parallel::LoopSplitSite;
 use super::*;
+use crate::ir::{IrIndexedFamilyKind, IrIndexedProjection};
 
 pub(super) struct IndexedPrivate {
     pub(super) budget: String,
@@ -110,10 +111,10 @@ impl FunctionEmitter<'_, '_> {
             let Some(IrType::Range { element }) = self.value_type(range) else {
                 return Err(BackendFailure::InvalidIr);
             };
-            if self.program.element(element) != Some(root.element_type) {
+            if self.program.element(element) != Some(root.projection.root_element) {
                 return Err(BackendFailure::InvalidIr);
             }
-            let ty = self.output.type_name(self.program, root.element_type)?;
+            let ty = self.output.type_name(self.program, root.private_type())?;
             let count = self.value_name(split.captures[root.count]);
             let prefix = format!("indexed.{id}.{ordinal}");
             let failed = format!("{prefix}.failed");
@@ -154,7 +155,11 @@ impl FunctionEmitter<'_, '_> {
                 "  %{prefix}.i = phi i64 [ 0, %{init} ], [ %{prefix}.next, %{body} ]\n  %{prefix}.more = icmp ult i64 %{prefix}.i, {total}\n  br i1 %{prefix}.more, label %{body}, label %{done}"
             )?;
             self.output.open_block(body);
-            let identity = constant_operand(root.identity, root.element_type)?;
+            let identity = match root.kind {
+                IrIndexedFamilyKind::Reduce { identity, .. } => identity,
+                IrIndexedFamilyKind::Mark { .. } => IrConstant::Bool(false),
+            };
+            let identity = constant_operand(identity, root.private_type())?;
             writeln!(
                 self.output,
                 "  %{prefix}.cell = getelementptr inbounds {ty}, ptr {pointer}, i64 %{prefix}.i\n  store {ty} {identity}, ptr %{prefix}.cell\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
@@ -202,6 +207,15 @@ impl FunctionEmitter<'_, '_> {
                 ParameterAbi::Value(range_type),
                 &format!("%{prefix}.selected"),
             )?;
+            let original_private = self.value_name(split.captures[spec.private]);
+            writeln!(
+                self.output,
+                "  %{prefix}.is_private = or i1 {active}, {original_private}"
+            )?;
+            arguments[3 + spec.private] = self.value_argument(
+                ParameterAbi::Value(IrType::Bool),
+                &format!("%{prefix}.is_private"),
+            )?;
         }
         Ok(IndexedPrivate {
             budget: selected_budget,
@@ -232,19 +246,16 @@ impl FunctionEmitter<'_, '_> {
             let head = format!("{prefix}.combine.head");
             let body = format!("{prefix}.combine.body");
             let done = format!("{prefix}.free");
-            let ty = self.output.type_name(self.program, spec.element_type)?;
-            let range_ty = self.output.type_name(
-                self.program,
-                self.value_type(split.captures[spec.capture])
-                    .ok_or(BackendFailure::InvalidIr)?,
-            )?;
+            if let IrIndexedFamilyKind::Mark { constant } = spec.kind {
+                self.emit_indexed_mark_finish(split, root, spec, &prefix, constant)?;
+                continue;
+            }
+            let ty = self
+                .output
+                .type_name(self.program, spec.projection.value_type)?;
             writeln!(self.output, "  br label %{entry}")?;
             self.output.open_block(entry.clone());
-            writeln!(
-                self.output,
-                "  %{prefix}.root = extractvalue {range_ty} {}, 0\n  br label %{head}",
-                root.original
-            )?;
+            writeln!(self.output, "  br label %{head}")?;
             self.output.open_block(head.clone());
             // Flat ascending index is leaf-major, cell-minor. Empty roots
             // never enter the body, so the remainder always has nonzero cells.
@@ -256,17 +267,57 @@ impl FunctionEmitter<'_, '_> {
             self.output.open_block(body);
             writeln!(
                 self.output,
-                "  %{prefix}.index = urem i64 %{prefix}.i, {}\n  %{prefix}.to = getelementptr inbounds {ty}, ptr %{prefix}.root, i64 %{prefix}.index\n  %{prefix}.from = getelementptr inbounds {ty}, ptr {}, i64 %{prefix}.i\n  %{prefix}.left = load {ty}, ptr %{prefix}.to\n  %{prefix}.right = load {ty}, ptr %{prefix}.from",
-                root.cells, root.pointer
+                "  %{prefix}.index = urem i64 %{prefix}.i, {}",
+                root.cells
             )?;
-            let opcode = match spec.operation {
+            let destination = self.indexed_pointer(
+                &format!("{prefix}.destination"),
+                (
+                    &root.original,
+                    self.value_type(split.captures[spec.capture])
+                        .ok_or(BackendFailure::InvalidIr)?,
+                ),
+                &format!("%{prefix}.index"),
+                &self.value_name(split.captures[spec.private]),
+                &spec.projection,
+                spec.private_type(),
+            )?;
+            writeln!(
+                self.output,
+                "  %{prefix}.from = getelementptr inbounds {ty}, ptr {}, i64 %{prefix}.i\n  %{prefix}.left = load {ty}, ptr {destination}\n  %{prefix}.right = load {ty}, ptr %{prefix}.from",
+                root.pointer
+            )?;
+            let IrIndexedFamilyKind::Reduce { op, .. } = spec.kind else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let opcode = match op {
                 Ok(IrIntegerOperation::AddWrap) => "add",
                 Ok(IrIntegerOperation::MultiplyWrap) => "mul",
+                Ok(IrIntegerOperation::AddSaturating) => {
+                    let IrType::Integer {
+                        width,
+                        signed: false,
+                    } = spec.projection.value_type
+                    else {
+                        return Err(BackendFailure::InvalidIr);
+                    };
+                    let intrinsic = format!("llvm.uadd.sat.i{width}");
+                    self.intrinsics.insert(IntrinsicDeclaration::Binary {
+                        name: intrinsic.clone(),
+                        ty: ty.clone(),
+                    });
+                    self.output.symbol(&intrinsic);
+                    writeln!(
+                        self.output,
+                        "  %{prefix}.value = call {ty} @{intrinsic}({ty} %{prefix}.left, {ty} %{prefix}.right)"
+                    )?;
+                    ""
+                }
                 Ok(IrIntegerOperation::BitAnd) | Err(IrBooleanOperation::And) => "and",
                 Ok(IrIntegerOperation::BitOr) | Err(IrBooleanOperation::Or) => "or",
                 Ok(IrIntegerOperation::BitXor) | Err(IrBooleanOperation::ExclusiveOr) => "xor",
                 Ok(operation @ (IrIntegerOperation::Minimum | IrIntegerOperation::Maximum)) => {
-                    let IrType::Integer { signed, .. } = spec.element_type else {
+                    let IrType::Integer { signed, .. } = spec.projection.value_type else {
                         return Err(BackendFailure::InvalidIr);
                     };
                     let comparison = match (operation, signed) {
@@ -291,7 +342,7 @@ impl FunctionEmitter<'_, '_> {
             }
             writeln!(
                 self.output,
-                "  store {ty} %{prefix}.value, ptr %{prefix}.to\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
+                "  store {ty} %{prefix}.value, ptr {destination}\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
             )?;
             self.output.open_block(done);
             self.output.symbol("wf__heap_give");
@@ -303,6 +354,163 @@ impl FunctionEmitter<'_, '_> {
         }
         writeln!(self.output, "  br label %{finished}")?;
         self.output.open_block(finished);
+        Ok(())
+    }
+    /// Both layouts are compiler-owned: select the byte stride and field
+    /// offset before forming an inbounds pointer, never form an out-of-range
+    /// source-layout pointer into a dense slab even on an untaken path.
+    pub(super) fn indexed_pointer(
+        &mut self,
+        prefix: &str,
+        range: (&str, IrType),
+        index: &str,
+        private: &str,
+        projection: &IrIndexedProjection,
+        private_type: IrType,
+    ) -> Result<String, BackendFailure> {
+        let (range, range_type) = range;
+        let root_ty = self
+            .output
+            .type_name(self.program, projection.root_element)?;
+        let dense_ty = self.output.type_name(self.program, private_type)?;
+        let range_ty = self.output.type_name(self.program, range_type)?;
+        let mut ty = projection.root_element;
+        let mut indices = String::new();
+        for field in &projection.fields {
+            let IrType::Nominal(nominal) = ty else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let IrNominalKind::Struct { fields } = &self
+                .program
+                .nominal(nominal)
+                .ok_or(BackendFailure::InvalidIr)?
+                .kind
+            else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            ty = fields
+                .get(*field as usize)
+                .ok_or(BackendFailure::InvalidIr)?
+                .ty;
+            write!(indices, ", i32 {field}")?;
+        }
+        if ty != projection.value_type {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let field_offset = if indices.is_empty() {
+            "0".to_owned()
+        } else {
+            format!("ptrtoint (ptr getelementptr ({root_ty}, ptr null, i64 0{indices}) to i64)")
+        };
+        writeln!(
+            self.output,
+            "  %{prefix}.base = extractvalue {range_ty} {range}, 0\n  %{prefix}.stride = select i1 {private}, i64 ptrtoint (ptr getelementptr ({dense_ty}, ptr null, i64 1) to i64), i64 ptrtoint (ptr getelementptr ({root_ty}, ptr null, i64 1) to i64)\n  %{prefix}.field = select i1 {private}, i64 0, i64 {field_offset}\n  %{prefix}.scaled = mul i64 {index}, %{prefix}.stride\n  %{prefix}.offset = add i64 %{prefix}.scaled, %{prefix}.field\n  %{prefix}.address = getelementptr inbounds i8, ptr %{prefix}.base, i64 %{prefix}.offset"
+        )?;
+        Ok(format!("%{prefix}.address"))
+    }
+
+    pub(super) fn emit_indexed_mark(
+        &mut self,
+        address: &str,
+        private: &str,
+        constant: IrConstant,
+        value_type: IrType,
+    ) -> Result<(), BackendFailure> {
+        let prefix = format!("indexed.mark.{}", self.next_temporary()?);
+        let ty = self.output.type_name(self.program, value_type)?;
+        let constant = constant_operand(constant, value_type)?;
+        writeln!(
+            self.output,
+            "  br i1 {private}, label %{prefix}.mask, label %{prefix}.source"
+        )?;
+        self.output.open_block(format!("{prefix}.mask"));
+        writeln!(
+            self.output,
+            "  store i1 true, ptr {address}\n  br label %{prefix}.done"
+        )?;
+        self.output.open_block(format!("{prefix}.source"));
+        writeln!(
+            self.output,
+            "  store {ty} {constant}, ptr {address}\n  br label %{prefix}.done"
+        )?;
+        self.output.open_block(format!("{prefix}.done"));
+        Ok(())
+    }
+
+    fn emit_indexed_mark_finish(
+        &mut self,
+        split: &LoopSplitSite<'_>,
+        root: &PrivateRoot,
+        spec: &crate::ir::IrIndexedReduction,
+        prefix: &str,
+        constant: IrConstant,
+    ) -> Result<(), BackendFailure> {
+        let entry = format!("{prefix}.entry");
+        let head = format!("{prefix}.cells");
+        let leaves = format!("{prefix}.leaves");
+        let scan = format!("{prefix}.scan");
+        let decide = format!("{prefix}.decide");
+        let store = format!("{prefix}.store");
+        let next = format!("{prefix}.next");
+        let done = format!("{prefix}.free");
+        writeln!(self.output, "  br label %{entry}")?;
+        self.output.open_block(entry.clone());
+        writeln!(self.output, "  br label %{head}")?;
+        self.output.open_block(head.clone());
+        writeln!(
+            self.output,
+            "  %{prefix}.cell = phi i64 [ 0, %{entry} ], [ %{prefix}.nextcell, %{next} ]\n  %{prefix}.more = icmp ult i64 %{prefix}.cell, {}\n  br i1 %{prefix}.more, label %{leaves}, label %{done}",
+            root.cells
+        )?;
+        self.output.open_block(leaves.clone());
+        writeln!(
+            self.output,
+            "  %{prefix}.i = phi i64 [ %{prefix}.cell, %{head} ], [ %{prefix}.nextleaf, %{scan} ]\n  %{prefix}.any = phi i1 [ false, %{head} ], [ %{prefix}.merged, %{scan} ]\n  %{prefix}.hasleaf = icmp ult i64 %{prefix}.i, {}\n  br i1 %{prefix}.hasleaf, label %{scan}, label %{decide}",
+            root.total
+        )?;
+        self.output.open_block(scan);
+        writeln!(
+            self.output,
+            "  %{prefix}.from = getelementptr inbounds i1, ptr {}, i64 %{prefix}.i\n  %{prefix}.marked = load i1, ptr %{prefix}.from\n  %{prefix}.merged = or i1 %{prefix}.any, %{prefix}.marked\n  %{prefix}.nextleaf = add i64 %{prefix}.i, {}\n  br label %{leaves}",
+            root.pointer, root.cells
+        )?;
+        self.output.open_block(decide);
+        writeln!(
+            self.output,
+            "  br i1 %{prefix}.any, label %{store}, label %{next}"
+        )?;
+        self.output.open_block(store);
+        let destination = self.indexed_pointer(
+            &format!("{prefix}.destination"),
+            (
+                &root.original,
+                self.value_type(split.captures[spec.capture])
+                    .ok_or(BackendFailure::InvalidIr)?,
+            ),
+            &format!("%{prefix}.cell"),
+            &self.value_name(split.captures[spec.private]),
+            &spec.projection,
+            IrType::Bool,
+        )?;
+        self.emit_indexed_mark(
+            &destination,
+            &self.value_name(split.captures[spec.private]),
+            constant,
+            spec.projection.value_type,
+        )?;
+        writeln!(self.output, "  br label %{next}")?;
+        self.output.open_block(next);
+        writeln!(
+            self.output,
+            "  %{prefix}.nextcell = add i64 %{prefix}.cell, 1\n  br label %{head}"
+        )?;
+        self.output.open_block(done);
+        self.output.symbol("wf__heap_give");
+        writeln!(
+            self.output,
+            "  call void @wf__heap_give(ptr {}, i64 {})",
+            root.pointer, root.bytes
+        )?;
         Ok(())
     }
 }

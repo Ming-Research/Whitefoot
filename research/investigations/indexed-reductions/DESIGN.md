@@ -1,10 +1,12 @@
 # Indexed reductions in counted loops
 
 Status: the owner selected the Proposal, lowering A (private copies combined
-in leaf order), and choice 3 (scalar and indexed accumulators in one body).
-Choice 2 (constant idempotent marks) is deferred. Permission and the private-range
-lowering path merged to main as v0.102 (#274). The Criterion below is
-unchanged; its results are under Results.
+in leaf order) and choice 3 (scalar and indexed accumulators in one body); the
+rule and lowering merged to main as v0.102 (#274), with the Criterion's
+results under Results. Because the merged rule permitted none of Snowghost's
+32 counted sites, the owner selected the further forms in
+[Extensions after the count](#extensions-after-the-count) (PR #290), which
+also admit the constant marks first deferred.
 
 ## Question
 
@@ -137,32 +139,34 @@ Measured after the rule and lowering A merged (main `691ea8106`, v0.102):
 ## Owner selections
 
 1. Lowering strategy: A selected. B and C remain comparison alternatives.
-2. Constant idempotent marks (`set flags[e] = True()`) are deferred;
-   normalizing them to `bor` with a proved-`True` contribution needs a rule
-   about stores that are not written as an operation.
+2. The original choice deferred constant idempotent marks
+   (`set flags[e] = True()`). The owner reopened and selected them in
+   [Extensions after the count](#extensions-after-the-count).
 3. A loop may also carry a scalar accumulator in the same body; the two
    recombine independently.
 
 ## Lowering contract
 
 The primary agent authorized Q1, extending the scalar-only lowering boundary.
-The permission payload retains each checked root place and its fixed operation
-alongside the existing optional scalar. Lowering captures a nonowning range
-and its initialized cell count at loop entry; the IR also carries the element
-type, operation and identity. Their lifetime is structural: the site owns
+The permission payload retains each checked root place, cell projection and
+family kind alongside the existing optional scalar. Lowering captures a
+nonowning range, its source/private mode and its initialized cell count at
+loop entry; the IR carries the projection and the reduction operation/identity
+or mark constant. Their lifetime is structural: the site owns
 private storage until every splitter call joins, and the outlined body only
 borrows its assigned cells. Nested outlined loops transport the enclosing
 private root mappings through their captures.
 
-Each root uses one allocation containing one identity-filled cell range per
-leaf. The recursive splitter halves those ranges with its iteration range.
-After the join, the site visits flat cell offsets in ascending order, which
-is leaf order followed by cell order, combining each private contribution into
-the original cell before freeing the allocation. The scalar seed/result uses
+Each family uses one allocation containing one dense cell range per leaf,
+identity-filled for reductions or false-filled for marks. The recursive
+splitter halves those ranges with its iteration range. After the join,
+reductions visit flat cell offsets in leaf order followed by cell order;
+marks OR each cell's masks in leaf order and conditionally store its constant.
+Both combine into the current destination projection before freeing the slab. The scalar seed/result uses
 its existing independent recombination. A sequential world or zero-budget
 split passes the original root ranges and allocates no private storage.
 
-Pricing charges three traversals of leaves times initialized cells for copy,
+Pricing charges three traversals of each family's leaves times initialized cells for copy,
 fill and combine, conservatively retaining the copy charge although identities
 do not require copying source seeds. Saturating scheduling arithmetic cannot
 turn overflowing overhead into a cheap offer. A split is refused when its
@@ -177,7 +181,7 @@ Indexed frames use the existing needed-capture pruning and selected-target
 layout check. A conservative estimate charges any inline aggregate a whole
 lane slot, so refusing before those checks incorrectly leaves the Slots
 fixture sequential merely because its scope retains the initializer array.
-Pruning retains the indexed ranges and initialized counts consumed by the
+Pruning retains the indexed ranges, storage modes and initialized counts consumed by the
 splitter and allocation site, and remaps their capture positions. A genuinely
 oversized candidate reuses its completed body with indexed ranges rebound to
 the original storage, or the enclosing split's private storage. This restores
@@ -195,3 +199,172 @@ negative maxima, odd wrapping products, untouched cells and an independent
 scalar count against fixed expected values and a sequential build. These
 checks pass in the gate of #274's merged head; the criterion results are under
 Results above. Paged remains deferred until PR #263 lands on main.
+
+## Extensions after the count
+
+### Evidence and selected direction
+
+The owner reports 0 permitted sites out of Snowghost's 32 G-indexed sites
+after the original rule merged in Whitefoot's indexed-reduction change. That
+fails the pre-registered permission criterion of at least 16. The cited
+per-site record is Snowghost-wf branch `research/par-count-274`, revision
+`80345cb`, file
+`research/investigations/storage-layout/par-classification/g-indexed-274.md`.
+That record was not available in this checkout or the inspected local source
+roots; no remote was contacted. The count is owner-supplied evidence, not a
+new compiler run.
+
+The owner selected five extensions, keeping the per-cell order-independence
+argument: root len/cap reads, a one-step immutable single-use temporary,
+constant integer/Bool marks, integer/Bool fields below record elements, and
+unsigned saturating addition for both scalar and indexed accumulators. The
+question for a recount is whether those forms recover at least 16 of the
+same 32 sites without source rewrites beyond local helper narrowing. A lower
+count still rejects the permission criterion. No new count or performance
+claim is made here; the original performance comparison remains required.
+
+### Implemented changes awaiting execution
+
+PAR-2 now admits a measure read of the exact indexed root. Its descriptor is
+unchanged by the permitted writes. The checker separates those occurrences
+from cell reads using the existing measure/place representation. A bound
+check that reads `starts.inner.len` may precede a colliding cell update.
+
+An indexed update can use `let t = R[e] op x; set R[e] = t;`, or the commuted
+initializer, in one block. The checker retains candidate initializers while
+walking ordinary read/write footprints. Any intervening root access or write
+to a place the initializer reads invalidates the candidate. Every commit is
+recorded, including a repeated write to a place already in the retained write
+set. At completion, t must have one runtime use and no writes after initialization;
+forming a reference to t is a use even when it reads no contents.
+The checker admits exactly one step, not a chain. Lowering preserves the
+written let and set; its existing root-to-private-range mapping redirects the
+initializer's read and the set's write together. The diagnostic names an
+invalid update/temporary instead of describing a computed value as a constant
+mark.
+
+Unsigned `+sat` now belongs to the scalar/indexed operation set with identity
+zero. Type checking distinguishes it from signed saturation. The scalar join
+uses the ordinary saturation operation; the indexed join emits the unsigned
+saturating-add intrinsic, rather than wrapping addition. The algebra is
+`min(sum, MAX)` over nonnegative inputs. At i8, `(127 +sat 1) +sat -1` differs
+from `127 +sat (1 +sat -1)`, so signed saturation remains outside the set.
+
+The formal fixtures cover len/cap, direct and commuted temporaries, Bool
+temporaries, temporary duplication/borrowing/rebinding/chaining, intervening root reads
+and repeated writes, index and contribution mutation, and signed versus
+unsigned saturation. The existing indexed wrong-operation fixture now uses
+signed saturation; its unsigned form is a positive under the amended rule.
+Compiler permission assertions consume these fixtures. Backend tests add
+private-range IR assertions and a forced-four-leaf native observer with
+literal expected cell counts, untouched cells, and scalar/indexed u32 sums
+that remain below the maximum in each leaf and saturate only at the join.
+The identity table covers every unsigned width independently of emission.
+
+### Interface boundary: constant marks and record fields
+
+The architecture owner authorized this interface extension in the continuation
+request: family kind `Reduce { op, identity }` or `Mark { constant }`, dense
+private values, and a destination projection with the root's element stride
+and the field's byte offset and type. This supersedes the earlier interface
+stop; no other interface gap has been routed around.
+
+The checker retains the checked root, field ordinals, scalar type and kind.
+An operation remains direct or one immutable single-use temporary. A mark is
+an integer/Bool literal or named constant; equal typed values agree even when
+names differ. Root occurrence counting aggregates the permitted cell operands
+across sibling field families and requires zero cell reads for marks. The
+root-wide policy still denies an extra read of another record field, a
+whole-element write, a root-derived index, differing mark values, and a mark
+mixed with an operation on the same family. An affine sibling field is brought
+under the indexed policy when any family needs reduction, preventing a shared
+write beside private storage.
+
+`IrIndexedReduction` carries the family kind and `IrIndexedProjection`,
+whose root type and field ordinals resolve to byte stride and offset through
+the backend's target layout (LLVM constant GEP expressions). A whole-element
+projection has offset zero. The capture record transports its pointer/count
+and a private-storage Bool; sibling families share the captured initialized
+root length. The dedicated indexed address and range operations prevent an
+ordinary source-element stride from addressing a dense field or mask slab.
+Operand remapping, capture pruning and refused-frame splicing retain that
+mode as well as the range and count. Before forming an inbounds address,
+emission selects the correct stride and offset, avoiding an invalid unused
+source-layout pointer into a smaller private slab.
+
+Each mark leaf writes true to a false-filled mask. After joining, the site
+ORs one cell's masks in leaf order and writes only if any mask was set. An
+outermost store writes the typed constant, including zero; a nested join
+sets the enclosing mask. Reduction fields use identity-filled dense values
+and combine into `root + i * element_stride + field_offset`, or the enclosing
+dense field slab. Source execution and zero budget retain direct source
+writes. Checked allocation sizes, failure release of previously acquired
+slabs and STOR-8 termination remain in the same acquisition path. Pricing
+charges every family's private cells even when their length capture is shared.
+
+The PAR-2 amendment changes only permission and sequential-equivalence
+reasoning, with no grammar or token changes. Before, indexed cells had to be
+whole integer/Bool elements with an operation; after, a fixed field projection
+can be a family and a fixed typed constant can mark it. The owner's explicit
+extension/interface selection supplies the ground; no additional direction
+choice was made. The former deferred Bool-mark conformance witness is renamed
+positive and now checks its result. Five negative permission fixtures retain
+ordinary accepted-source verdicts. Positive fixtures cover equal named and
+literal marks, zero marks, Boolean marks, and two record-field operations.
+
+`tests/programs/parallel/indexed_marks_fields.wf` owns independent literal
+oracles: 262144 contributions over five cells give counts 52436 in cells zero
+through three and 52435 in cell four from a seed of seven; untouched cells
+retain seven. Marks start at nine or false and check every touched/untouched
+cell; a u64 mark changes 987654321 to 123456789 to distinguish destination
+stride and store width from the one-byte mask. Record tags stay 93. The nested
+case expects 262151 in one counter, zero in one marked byte, one marked Bool
+field, an affine-only sibling mark in each outer iteration, and unchanged
+siblings. A separate conformance function gives sibling fields two different
+affine maps. Backend observers force four
+leaves, require allocations and releases, check zero budget, and fail each of
+the two sibling-field slab acquisitions. Lowering assertions pin one shared
+length capture and separate scalar projections. The ordinary program test
+also runs the fixture's sequential and unmodified-runtime parallel builds.
+These are authored execution tests, not executed results in this worktree.
+
+### Found along the way
+
+- Fixed: selecting families per field must also select an affine sibling
+  family when their maps differ or any family needs a private reduction;
+  otherwise a sibling write could escape the indexed root's policy.
+- Fixed: the permission ledger now names constant marks when there are no
+  binary operations, instead of reporting no accumulator.
+- Pending qualification: the existing TODO entry is updated from an interface
+  stop to CI qualification. Paged storage and the downstream recount remain
+  deferred on their previous grounds.
+
+### Verification status
+
+All five extensions are on PR #290's branch with the specification at v0.106
+and the approval logged in spec/log.md and design/log.md. Source acceptance,
+intended denials, IR validity and native values are established by that PR's
+gate run on its merged head; nothing was built or run locally. Snowghost's
+recount of its 32 candidate loops with these forms is still to be measured.
+
+The two paragraphs below record the implementation-time review of the
+uncommitted extensions 3 and 4, before they were committed.
+
+Independent read-only completion review covered the full working-tree diff
+against `64f48f06cdd8d332d05865d75bf4c912fe80429f`, its untracked fixtures,
+and affected consumers using the inherited Codex model (exact runtime model
+identifier unavailable). It considered review groups A, D, C, T and V plus
+G1–G3/DC1–DC4, with no group skipped wholesale, using only git state/diff and
+source inspection. No suites or design-lint statistics were collected.
+
+The review found one missing regression observation: the new selection of an
+affine sibling family and of two different affine field maps had no fixture.
+The native outer loop now marks `rows[outer].affine` beside colliding inner
+updates; its observer requires 22 allocations and 36 leaves, which would
+change if the affine family were omitted. The positive field fixture adds
+`different_maps` with `count[i]` and `enabled[i+1]`, and semantic/lowering
+assertions require both families and their shared count. The reviewer inspected
+these fixes and found no remaining issue within scope. These expected counts
+are test assertions, not observed results. Typechecking, ordinary WF checking,
+LLVM validation, native observations and full safety qualification remain
+unverified. No additional architecture decision was required.
