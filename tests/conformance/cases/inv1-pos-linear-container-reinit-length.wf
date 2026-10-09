@@ -1,0 +1,40 @@
+nodrop struct InterplayToken {
+  value: u8;
+}
+
+fn interplay_drain(window: Slots<InterplayToken, 2>) -> observed: u8 pure contract {
+  requires window.len == 1_u64;
+} {
+  doc "FN-8 supplies the one-element length; OP-10 removes that element, PROV-6 consumes it by whole destructuring, and OP-14 consumes the empty linear window.";
+  let token = take_back(window: &window);
+  let InterplayToken(value: prior) = move token;
+  free_empty(window: move window);
+  return prior;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "PROV-6 makes Slots of nodrop tokens linear. INV-1 proves the MSR-1 length-one header at entry. The body consumes the whole window, constructs a new length-one window and reinitializes the dead binding with SET-1. MSR-3 carries the replacement length, ENT-5 keeps the old image distinct, and the explicit continue owes both INV-1 preservation and OWN-11 liveness agreement. The final drain observes the replacement token.";
+  let run = slots_new::<InterplayToken, 2>();
+  let initial = InterplayToken(value: 7_u8);
+  place_back(window: &run, value: move initial);
+  let done = 0_u8 == 1_u8;
+  loop (
+    invariant occupied: run.len == 1_u64
+  ) {
+    if done {
+      break;
+    }
+    let old_value = interplay_drain(window: move run);
+    let next = slots_new::<InterplayToken, 2>();
+    let replacement = InterplayToken(value: 9_u8);
+    place_back(window: &next, value: move replacement);
+    set run = move next;
+    set done = 0_u8 == 0_u8;
+    continue;
+  }
+  let final_value = interplay_drain(window: move run);
+  if final_value != 9_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
