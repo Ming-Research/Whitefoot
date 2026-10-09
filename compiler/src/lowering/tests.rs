@@ -2400,7 +2400,7 @@ const STORAGE_MATCH_CHECK: &str = r#"enum Arm {
 }
 
 fn check(a: &Bool) -> result: Arm pure {
-  return Active();
+  return Arm::Active();
 }
 "#;
 
