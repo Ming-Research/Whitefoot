@@ -322,15 +322,14 @@ These are authored execution tests, not executed results in this worktree.
 
 ### Verification status
 
-Extensions 1, 2 and 5 are the committed base of this continuation. Extensions
-3 and 4 are uncommitted and unexecuted. The owner prohibits local builds,
-compilation, tests, lint, whitefootc, CI/external services, commits and pushes;
-only edited-file rustfmt and read-only inspection were used. The specification
-title and archives, design/log.md and spec/log.md remain untouched as requested.
-The task is not qualified for merge: a later integrating run must establish
-source acceptance, intended denials, IR validity, native values, mechanical
-design/spec checks and overall safety. The downstream recount and performance
-comparison remain unmeasured.
+All five extensions are on PR #290's branch with the specification at v0.106
+and the approval logged in spec/log.md and design/log.md. Source acceptance,
+intended denials, IR validity and native values are established by that PR's
+gate run on its merged head; nothing was built or run locally. Snowghost's
+recount of its 32 candidate loops with these forms is still to be measured.
+
+The two paragraphs below record the implementation-time review of the
+uncommitted extensions 3 and 4, before they were committed.
 
 Independent read-only completion review covered the full working-tree diff
 against `64f48f06cdd8d332d05865d75bf4c912fe80429f`, its untracked fixtures,
