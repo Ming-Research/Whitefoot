@@ -42,7 +42,9 @@ fn native_link(
         command.arg("-DWF_TEST_STACK_BYTES=1073741824u");
     }
     let llvm = std::fs::read_to_string(module).expect("read emitted module dependencies");
-    let needs_heap = llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(");
+    let needs_heap = llvm.contains("@wf__heap_take(")
+        || llvm.contains("@wf__heap_give(")
+        || llvm.contains("@wf__heap_retake(");
     let (_, objects) = append_runtime_objects(&mut command, directory, None, None, needs_heap);
     if small {
         static FLOOR: OnceLock<Vec<u8>> = OnceLock::new();

@@ -492,6 +492,7 @@ void wf__watch_seen(unsigned moment);
  * are always available without allocator references. Resident observation
  * returns 1 with bytes written, or 0 when the host cannot report it. */
 void *wf__heap_take(uint64_t bytes);
+void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes);
 void wf__heap_give(void *block, uint64_t bytes);
 void wf__heap_change(int64_t change);
 uint64_t wf__heap_in_use(void);
