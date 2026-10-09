@@ -466,6 +466,18 @@ every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
 
+**The candidate's images, 20 s.** `performance-candidate-images` builds the
+five formal kernels with the candidate compiler right after the two cold
+compiler builds. On PRs #278 and #289 it overran its 10-s floor on the first
+attempt of five runs out of seven, at 10.6, 11.9, 19.7, 13.5 and 12.3 s, while
+every re-run passed at 2.2 to 5.5 s and the paired comparison passed every
+time; another PR's run took 14.7 s. The baseline's images, built next, took
+1.6 to 2.2 s. The changes on those PRs touch no part of the kernel build that
+could explain a fourfold first-attempt cost. The owner raised the budget to
+20 s on 2026-10-09 on the status board, which covers the largest overrun
+seen; why the first image build after the compiler builds is slow was not
+measured, and an overrun past 20 s would need that cause found.
+
 **The placement control's two stages, 10 s and 45 s.** The code-placement
 change (PR #252) added `performance-shifted-images`, which links the
 candidate's images again behind 32 bytes of padding, and
