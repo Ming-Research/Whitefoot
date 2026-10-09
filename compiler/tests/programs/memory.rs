@@ -31,6 +31,8 @@ fn owned_element_assignments_release_displaced_boxes_at_commit_and_scope_exit() 
         "reference Slots concrete generic Holder<Payload>",
         "direct Slots struct with nonempty releasing container",
         "reference Slots struct with nonempty releasing container",
+        "direct Paged whole element",
+        "reference Paged payload struct",
     ]
     .iter()
     .enumerate()

@@ -406,6 +406,50 @@ fn filled_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
   return True();
 }
 
+fn replace_paged_reference(values: &Box<Paged<Cell>>, capacity: u64) -> result: Bool writes(values) {
+  doc "Replaces the payload struct of a Paged element through a reference parameter.";
+  if values^.inner.len != 1_u64 {
+    return False();
+  }
+  let contents = make_payload(capacity: capacity);
+  set values^.inner[0_u64].payload = move contents;
+  return True();
+}
+
+fn paged_cells(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool writes(meter) {
+  doc "Checks a whole Paged element replacement and a payload replacement through a reference release the displaced Box.";
+  let pages = box_paged_new::<Cell>(capacity: 1_u64);
+  let initial = make_cell(capacity: capacity);
+  place_back(window: &pages.inner, value: move initial);
+  let held = std::process::heap_in_use(meter: meter);
+  for (iteration in 0_u64..4_u64) {
+    if pages.inner.len != 1_u64 {
+      return False();
+    }
+    if mode == 18_u64 {
+      let replacement = make_cell(capacity: capacity);
+      set pages.inner[0_u64] = move replacement;
+    } else {
+      let replaced = replace_paged_reference(values: &pages, capacity: capacity);
+      let failed = bnot(replaced);
+      if failed {
+        return False();
+      }
+    }
+    let after = std::process::heap_in_use(meter: meter);
+    if after != held {
+      return False();
+    }
+    if pages.inner.len != 1_u64 {
+      return False();
+    }
+    if pages.inner[0_u64].payload.upvals.inner.cap != capacity {
+      return False();
+    }
+  }
+  return True();
+}
+
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Selects one regression per process and checks both commit balance and complete scope release at capacities zero and sixteen.";
   let Inputs(args: arguments, cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
@@ -413,7 +457,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   let mode = std::text::args_count(args: &arguments);
-  if mode > 17_u64 {
+  if mode > 19_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   let baseline = std::process::heap_in_use(meter: &meter);
@@ -435,8 +479,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set balanced = enum_slots(meter: &meter, capacity: capacity, mode: mode);
     } else if mode <= 15_u64 {
       set balanced = holder_slots(meter: &meter, capacity: capacity, mode: mode);
-    } else {
+    } else if mode <= 17_u64 {
       set balanced = filled_slots(meter: &meter, capacity: capacity, mode: mode);
+    } else {
+      set balanced = paged_cells(meter: &meter, capacity: capacity, mode: mode);
     }
     let failed = bnot(balanced);
     if failed {
