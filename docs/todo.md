@@ -2131,6 +2131,22 @@ rarely insert at the same place.
   wait would give it the Linux readiness route's behavior. Reopen when a
   Windows server has to run without the port.
 
+- **Windows helper connects have no demonstrated cancellation bound.**
+  `wf_file_windows_socket_connect` in `completion/file_windows.c` still
+  calls blocking Winsock `connect`; it does not use the bounded polling
+  added for helper accepts and transfers. The helper interruption calls
+  `CancelSynchronousIo`, but whether that ends an outstanding connect is
+  unverified. A pending connection could therefore outlive its cancellation
+  watch or deadline on the native-disabled route, contrary to PRE-2. Validate
+  on Windows CI with a controlled pending connection, firing and deadline
+  cases, and a success race that preserves the connection and handle credit.
+  If interruption does not suffice, use nonblocking connect with bounded
+  readiness and `SO_ERROR`, or cancellable overlapped connect, restoring
+  ordinary socket behavior before publishing success. Deferred from the
+  bounded-send fix because connection establishment has a distinct ownership
+  and completion protocol; reopen with the next Windows cancellation change
+  or before relying on bounded connect without IOCP.
+
 - **A wait on another context on a helper costs a thread.** Once contexts
   run, a stream write on every host, a stream read on every host but Linux
   with its ring, a connect on a host with no ring, and an accept on Windows

@@ -21,7 +21,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let far = instant_after(instant: started, nanoseconds: 10000000000_u64);
   let bound = Some<Instant>(value: far);
   let destination = &bytes[0_u64..1_u64];
-  match read_next(factory: &handles, input: &input, destination: destination, start: 0_u64, end: 1_u64, deadline: bound) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = read_next(factory: &handles, input: &input, destination: destination, start: 0_u64, end: 1_u64, deadline: bound, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: received) => {
       if received != 1_u64 {
         return exit_status(code: 10_u8);

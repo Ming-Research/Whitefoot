@@ -594,7 +594,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   set report.inner[0_u64] = byte;
   let ordinary_source_2 = &report.inner[0_u64..2_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -1332,26 +1335,51 @@ fn machine_frames_preserve_clone_cost_and_bound_offer_overhead() {
     std::fs::remove_dir_all(&overlapped_directory).expect("remove the test directory");
 }
 
-/// The lane's frame is the lane's: asking for overlap adds no stack slot to
-/// any function.
+/// The lane's frame is the lane's: actualizing calls adds no allocation beyond
+/// each function's ordinary planned roots.
 ///
 /// This is the whole resource bound of the hand-out. An earlier lowering put
 /// the frame in the calling function's entry block, so every activation of an
 /// eligible recursive function carried the slot and its argument spills
 /// whether or not a lane was ever granted, and a `--par` build reached about a
 /// quarter of the sequential build's recursion depth before dying on a bare
-/// SIGSEGV. The comparison is against the default compilation of the same
-/// source, so it measures the lowering rather than the program.
+/// SIGSEGV. The ordinary frame plan precedes call actualization, so a lane
+/// frame or argument spill added by the hand-out cannot enter the expectation.
 ///
-/// The count is taken over the *overlapped* world alone. A `--par` module
-/// carries a second lowering of the eligible closure, and counting both copies
-/// against one reference would compare a doubled module with a single one — a
-/// failure that says nothing about whether a hand-out costs a slot. What the
-/// clone costs is a separate and stronger question, answered by
-/// `the_sequential_clone_is_the_sequential_lowering`: it is the sequential
-/// lowering byte for byte, so its slots are the sequential build's slots.
+/// A module-wide alloca count cannot express this bound: overlap disables
+/// ordinary storage coalescing. In this fixture, `main`'s two `ExitStatus`
+/// results retain separate roots instead of sharing the caller's destination.
+/// They used to be fields of one frame alloca; independent allocations expose
+/// them as two more instructions. Neither is a lane frame. Compare complete
+/// allocation inventories per function with each world's plan, retaining the
+/// sequential module's bootstrap allocations and excluding sequential clones.
+/// Clone cost and machine spills have their own neighboring tests.
 #[test]
 fn handing_a_call_out_adds_no_stack_slot() {
+    use std::collections::BTreeMap;
+
+    fn roots(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|line| line.contains(" = alloca "))
+            .map(|line| line.trim().to_owned())
+            .collect()
+    }
+
+    fn allocations(module: &str) -> BTreeMap<String, Vec<String>> {
+        module
+            .lines()
+            .filter(|line| line.starts_with("define "))
+            .map(|line| {
+                let (_, tail) = line.split_once(" @").expect("a definition has a symbol");
+                let (name, _) = tail.split_once('(').expect("a definition has parameters");
+                let symbol = format!("@{name}");
+                let slots = roots(function_body(module, &symbol));
+                (symbol, slots)
+            })
+            .filter(|(_, slots)| !slots.is_empty())
+            .collect()
+    }
+
     let sequential = fold_module(false);
     let overlapped = fold_module(true);
     assert!(
@@ -1360,14 +1388,50 @@ fn handing_a_call_out_adds_no_stack_slot() {
     );
     let actualized = without_clones(&overlapped);
     assert!(
-        actualized.contains("@wf__par_publish"),
+        actualized.contains("call void @wf__par_publish("),
         "removing the clones must leave the overlapped world:\n{actualized}"
     );
-    assert_eq!(
-        actualized.matches("= alloca ").count(),
-        sequential.matches("= alloca ").count(),
-        "handing calls out must add no stack slot:\n{actualized}"
+    let mut expected = allocations(&sequential);
+    with_parallel_ir(OVERLAPPING_FOLD, |program| {
+        let target = TargetLayout::host().expect("supported test target");
+        for function in program.functions() {
+            if function.blocks().is_empty() {
+                continue;
+            }
+            let symbol = format!("@wf_{}", function.name());
+            let budget = format!("@wf__par_budget_{}", function.name());
+            let prelude = crate::backend::emitter::ordinary_frame_prelude_for_test(
+                program, target, function,
+            )
+            .expect("the ordinary roots must have a target layout");
+            expected.remove(&symbol);
+            // A budgeted function's ordinary symbol is a slot-free wrapper;
+            // the variant owns the same source roots, with an SSA budget.
+            let body = if actualized.contains(&format!(" {budget}(")) {
+                budget
+            } else {
+                symbol
+            };
+            let slots = roots(&prelude);
+            if !slots.is_empty() {
+                expected.insert(body, slots);
+            }
+        }
+    });
+    let actual = allocations(&actualized);
+    assert_eq!(actual, expected, "a hand-out must add no unplanned root");
+
+    // Keep the observation sensitive to a caller-owned lane frame even when
+    // its function already owns ordinary roots and makes actual hand-outs.
+    let main = function_body(&actualized, "@wf_main");
+    assert!(main.contains("call void @wf__par_publish("));
+    let with_lane = main.replacen(
+        "  %wf.slot.0 = alloca",
+        "  %unexpected.lane = alloca [256 x i8], align 16\n  %wf.slot.0 = alloca",
+        1,
     );
+    let with_caller_frame = actualized.replacen(main, &with_lane, 1);
+    assert_ne!(allocations(&with_caller_frame), expected);
 }
 
 /// The sequential clone is the sequential lowering: not similar to it, the
@@ -2449,7 +2513,10 @@ fn a_waiting_helper_is_never_handed_out() {
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 88_u8);
   let window = &bytes.inner[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return accepted;
     }

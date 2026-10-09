@@ -61,8 +61,8 @@ done:
 }
 
 declare void @wf_std.process.stop_listen(ptr, ptr, ptr)
-declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr)
-declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr, ptr)
+declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr, ptr)
 declare i32 @wf_std.process.close_stop_listener.start(ptr, ptr, ptr, ptr)
 declare void @wf_std.process.close_stop_listener.finish(ptr, ptr, ptr, ptr)
 
@@ -72,14 +72,14 @@ entry:
   ret void
 }
 
-define void @wf_test_public_stop_next(ptr %result, ptr %factory, ptr %listener, ptr %deadline) {
+define void @wf_test_public_stop_next(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel) {
 entry:
   %operation = alloca [1216 x i8], align 16
-  %state = call i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  %state = call i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   %answered = icmp eq i32 %state, 0
   br i1 %answered, label %done, label %finish
 finish:
-  call void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  call void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   br label %done
 done:
   ret void
