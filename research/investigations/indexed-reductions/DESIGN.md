@@ -443,3 +443,22 @@ behind its first denial is reported with that condition. Performance of the
 call form is not claimed; the indexed timing comparison above measured the
 direct form only.
 
+### Result
+
+**Permission: passes.** Snowghost-wf recounted the same 32 loops with
+experiment release `wf-exp-68fe93be539c` (this branch's checker at
+`68fe93be5`, v0.109 draft; lowering still sequential for call-form families
+at that revision): 17 permitted as written and 17 with local helper
+narrowing, none needing narrowing, against 11 at v0.107 and 0 at v0.102.
+The six new admissions are exactly the predicted ones: the four copied-cell
+loops (`set_coverage_bits` twice, `mark_lookups`, `sort_run`) and the two
+helper-call loops (`build_filters`, `collect_stage`). Five loops changed
+their first denial and stay denied (`grid_place`, `measure_rows` and the
+three `collapse_borders` loops); there is no new denial. One observed
+boundary: a helper that replaces a cell with an arbitrary value
+(`put_i32`'s `set list^.inner[at] = value;`) carries no summary, as the rule
+intends. Record: Snowghost-wf revision `4a9258b`,
+`research/investigations/storage-layout/par-classification/g-indexed-exp68.md`
+(check run 37904741220, report run 37904741267, both on `28f6ae7`). The
+count measures permission only, not runtime overlap or speed.
+
