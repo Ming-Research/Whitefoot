@@ -917,14 +917,6 @@ impl<'unit> Checker<'_, 'unit> {
                 options,
             );
         }
-        if options.explicit_move
-            && let CheckedIndexedPlace::Range(range) = &indexed
-        {
-            for member in &range.resolved.members {
-                self.types
-                    .reject_shared_read_write(place, member, bindings)?;
-            }
-        }
         let element_type = indexed.element_type(self)?;
         let (range_path, selected_type, carried) =
             if matches!(indexed, CheckedIndexedPlace::Range(_)) {
