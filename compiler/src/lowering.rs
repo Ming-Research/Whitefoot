@@ -356,8 +356,9 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`,
-/// the map's four functions `shared_map_new`, `map_count`, `map_scan` and
-/// `map_clear`, and the key set's three [SHARE-1].
+/// the map's five functions `shared_map_new`, `map_count`, `map_scan`,
+/// `map_clear` and `shared_map_release_reserve`, and the key set's three
+/// [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -365,7 +366,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 33] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
     // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
@@ -393,7 +394,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 33] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
-    // [SHARE-1] the shared-object handle's two functions, the map's four
+    // [SHARE-1] the shared-object handle's two functions, the map's five
     // and the key set's three.
     "shared_new",
     "shared_share",
@@ -401,6 +402,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 33] = [
     "map_count",
     "map_scan",
     "map_clear",
+    "shared_map_release_reserve",
     "key_set_new",
     "key_set_insert",
     "key_set_read_key",

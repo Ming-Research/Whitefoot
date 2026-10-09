@@ -20,7 +20,8 @@ typedef struct wf_cmap_user wf_cmap_user;
 
 /* A map sized for capacity keys, or a small default when capacity is zero. */
 wf_cmap *wf_cmap_create(uint64_t capacity);
-/* Frees the map; it has no users left. */
+/* Frees the map and its nodes; it has no users left. The caller must first
+ * drain any slots whose payloads need releasing. */
 void wf_cmap_destroy(wf_cmap *map);
 /* A user of map for the calling thread; NULL when map already has
  * WF_CMAP_MAX_USERS. */
@@ -239,6 +240,12 @@ void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64
                    void (*release)(void *));
 wf_cmap *wf_cmap_take_cleared(wf_cmap *map);
 void wf_cmap_release_cleared(wf_cmap *cleared);
+
+/* Frees the cells the map keeps as its reserve for the next move of their
+ * size and returns their bytes; 0 when it keeps none, or when another thread
+ * holds the map's own lock, a mover or a reclaim, which this does not wait
+ * for. It changes no entry, and any thread may call it without a user. */
+uint64_t wf_cmap_release_reserve(wf_cmap *map);
 
 /* With no users left: the slot of an entry not yet drained, whose value the
  * caller releases before calling again, or NULL once every entry has been. */

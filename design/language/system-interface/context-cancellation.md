@@ -1,0 +1,13 @@
+Decision: Every host wait that takes an optional deadline, and sleep_until, takes an explicit CancelWatch immediately after its deadline (shape S1), with cancel_never for a must-finish wait, because each wait then shows whether a stop can end it, instead of combining the watch with the deadline, setting it on the context or binding it to the resource (owner's board card firn-cancel-shape; [shapes and results](../../../research/investigations/context-cancellation/README.md#results)).
+
+Decision: Cancellation sources and watches are nodrop handles closed explicitly, shares and watches retain the same permanently fireable state independently, and waits borrow their watch until return, because ordinary ownership then keeps every pending wait's state live without reference-count traffic at park, instead of copy watches whose state can disappear while copies remain.
+
+Decision: A firing finds waits on each driver's own intrusive watch list and ends them through the existing deadline cancellation route, because the prototype's eight firn throughput cells were within noise of polling and its observed process stops took about 50 ms instead of about one second, instead of registering each parked wait under a cancellation object's shared lock ([results and their limits](../../../research/investigations/context-cancellation/README.md#results)).
+
+Decision: Cancellation is the payload-free IoError variant Cancelled, carried by ReadFailed for reads, and sleep_until changes its unit result to Result<unit, unit>, whose Ok retains the successful unit result and whose Err reports cancellation, because these outcomes distinguish a fired watch from a reached deadline without introducing a second failure type into time or changing read-stop nesting, instead of reporting a firing as DeadlinePassed as the performance prototype did.
+
+Rejected:
+- S2, one bound value replacing the deadline: rejected because a copy watch naming runtime state needs another lifetime rule when the state is released while copies remain, and it hides the explicit per-wait watch chosen by the owner.
+- S3, a watch set on the context: rejected because ambient cancellation hides the capability from the wait's parameters, needs an escape for a must-finish wait and needs another inheritance rule for spawned contexts.
+- S4, a watch bound into a resource handle: rejected because sleeps have no such handle and mixed cancellable and must-finish use of one resource needs two bindings.
+- Register at park under the source's lock: rejected because each request would pay shared lock and list-update traffic for a firing that happens once at shutdown, whereas the measured find-at-fire path matched polling within noise.
