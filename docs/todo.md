@@ -2299,22 +2299,6 @@ rarely insert at the same place.
   workers. Reopen when a measured program's per-item allocations sit on a
   parallel loop's critical path.
 
-- **An inline range argument does not carry its length into a
-  postcondition.** `box_segments_filled`'s record ensures
-  `result.inner.len == lengths^.len`. When the argument is a binding,
-  `let run = &a.inner[0_u64..3_u64];`, the caller learns the segment count
-  3; when the same range is formed at the argument,
-  `lengths: &a.inner[0_u64..3_u64]`, `&segments.inner[2_u64]` stays
-  unproved, so writers must bind the range first
-  (`tests/conformance/cases/fn9-pos-segments-count-postcondition.wf` binds
-  it).
-  The formation's endpoint images are recorded under its capture, but the
-  clause instantiation reads the argument's length only through a bound
-  holder. Change: instantiate a range argument's `len` from the
-  formation's captured length as a binding's is. Validate with the inline
-  form of that case discharging the bound. Reopen with the next change to
-  call-site clause instantiation.
-
 - **An effect-row path through a segment is typed as the whole run.** The
   effect-row resolver (`container_element_type` in
   `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
@@ -2694,15 +2678,14 @@ rarely insert at the same place.
   writer report shows the normalized form costing a round.
 
 - **Compiler comments cite the retired DIAG-3.** DIAG-3 was the v0.39 runtime
-  claim-trap record, retired with claims in v0.40, yet four comments still
-  cite it: three for words that are now [DIAG-1]'s (byte identity only where
-  selection and encoding are fixed, and the `unproved` or `refuted`
-  disposition) in `compiler/src/driver/pinned_sentences.rs`,
-  `compiler/src/semantic/tests/postconditions.rs` and
+  claim-trap record, retired with claims in v0.40, yet three comments still
+  cite it: two for words that are now [DIAG-1]'s (byte identity only where
+  selection and encoding are fixed) in
+  `compiler/src/driver/pinned_sentences.rs` and
   `compiler/src/semantic/tests/requires.rs`, and one, the module doc of
   `compiler/src/semantic/permission_ledger.rs`, for the retired record
   itself. A reader following the reference finds no rule. Cite DIAG-1 in the
-  first three and drop the ledger's clause; reopen with the next edit of any
+  first two and drop the ledger's clause; reopen with the next edit of any
   of these files.
 
 - **The callee-`ensures` route can name a call whose result no longer
