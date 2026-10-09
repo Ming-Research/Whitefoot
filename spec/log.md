@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.112: guards observe cancellation through read-only shared handles
+
+Rules: changed TYPE-2, TYPE-9, TYPE-11, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, PRE-2
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text (the read-only shared handle `SharedRead<T>`, `cancel_state` returning a read-only view of the cancellation state, and `cancel_fire` becoming a waiting operation that wakes guards) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: `SharedRead<T>` is a retaining read-only handle made from a `Shared<T>` by `shared_read` and shared by `shared_read_share`; it may be an atomic statement's target and its guard may read through it, while writes, whole replacement, `swap` and consuming transfer through it, or through any alias, projection, map selection or call row whose resolved state root it is, are refused (SHARE-2). `cancel_state(watch)` returns `SharedRead<CancelState>` over the watch's cancellation state, whose `fired` stays true after firing and false for `cancel_never`, so a guard such as `bor(ready, fired)` waits until either holds. `cancel_fire` declares `waits`: in atomic order it changes the state from unfired to fired, wakes contexts parked on guards that read it and still ends host waits as v0.110 specifies; firing inside an atomic statement or from a nonwaiting function is refused. The selection ground is firn's stop path, where a guarded wait for the script engine could not be ended by cancellation; a cancellation-specific target and cancellation interrupting a pending statement were rejected for adding host-specific admission or a nonexecuting outcome.
+
+## 2026-10-09 v0.111: releasing a map's reserve
+
+Rules: changed PRE-1, SHARE-1, WAIT-2
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
+
+Summary: PRE-1 adds `fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map)`, last in the declaration preorder so no earlier ordinal moves; it writes its handle as `heap_in_use` writes its meter, since each call may answer differently, and so no guard [SHARE-3] can call it. SHARE-1 says it changes no entry of the map that is the object's state, may release storage the map holds beyond what holding its entries needs, and returns the number of bytes by which that release lowers the heap the program holds, the reading `heap_in_use` reports [PRE-2]; WAIT-2 lists that count among the execution's inputs. Selection ground: firn's maxmemory, which counts a map's reserve in `heap_in_use`, needs to give the reserve back before it evicts keys, and the operation takes the handle so that it needs no hold of the object and blocks no command.
+
 ## 2026-10-09 v0.110: cross-context cancellation of host waits
 
 Rules: changed PRE-2

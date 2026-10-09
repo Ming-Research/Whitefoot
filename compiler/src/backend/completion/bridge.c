@@ -2769,6 +2769,13 @@ void wf__runtime_give(void *block, uint64_t bytes) {
     wf_pool_give(block, wf_pool_granted((size_t)bytes));
 }
 
+uint64_t wf__runtime_granted(uint64_t bytes) {
+    if (bytes > SIZE_MAX) {
+        wf_context_exhausted();
+    }
+    return (uint64_t)wf_pool_granted((size_t)bytes);
+}
+
 void wf__runtime_yield(void) {
     wf_prim_yield();
 }

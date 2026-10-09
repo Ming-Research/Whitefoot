@@ -6,8 +6,8 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
-    // makes each of the five an opaque struct
+    // [PRE-1] writes the five storage shapes first, then the cell. [TYPE-2]
+    // makes each of the six an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -427,6 +427,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
+"#,
+    ),
+    (
+        "prelude/shared_map_release_reserve.wf",
+        PreludeSource::Function,
+        r#"fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map);
 "#,
     ),
 ];
