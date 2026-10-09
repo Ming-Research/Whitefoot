@@ -57,7 +57,7 @@ linux-runtime-tsan              10     -      -
 # comparison
 performance-candidate-compiler  130    -      -
 performance-baseline-compiler   105    -      -
-performance-candidate-images    10     -      -
+performance-candidate-images    20     -      -
 performance-baseline-images     10     -      -
 performance-null                45     -      -
 performance-slow-control        55     -      -
