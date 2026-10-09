@@ -54,6 +54,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -112,9 +115,15 @@ fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writ
   doc "Reads one chunk from the receiving direction and sends it back through the sending direction, holding both directions at once.";
   let outcome = 0_u8;
   let no_deadline = None<std::time::Instant>();
-  match receive_next(receive: receive, destination: scratch, start: 0_u64, end: 64_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = receive_next(receive: receive, destination: scratch, start: 0_u64, end: 64_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: endpoint) => {
-      match send_once(send: send, source: scratch, start: 0_u64, end: endpoint, deadline: no_deadline) {
+      let wait_cancel_2 = std::time::cancel_never();
+      let wait_outcome_2 = send_once(send: send, source: scratch, start: 0_u64, end: endpoint, deadline: no_deadline, cancel: &wait_cancel_2);
+      std::time::close_cancel_watch(watch: move wait_cancel_2);
+      match wait_outcome_2 {
         Ok(value: accepted) => {
         }
         Err(error: problem) => {
@@ -152,7 +161,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let window = &scratch[0_u64..64_u64];
   let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9101_u16);
   let no_deadline = None<std::time::Instant>();
-  match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = tcp_connect(factory: &handles, address: &address, deadline: no_deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match move wait_outcome_3 {
     Ok(value: link) => {
       let outcome = 0_u8;
       set outcome = pump(receive: &link.receive, send: &link.send, scratch: window);

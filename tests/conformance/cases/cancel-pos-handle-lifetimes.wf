@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let source = std::time::cancel_source();
+  let shared = std::time::cancel_share(source: &source);
+  let watch = std::time::cancel_watch(source: &source);
+  std::time::close_cancel_source(source: move source);
+  std::time::cancel_fire(source: &shared);
+  std::time::cancel_fire(source: &shared);
+  std::time::close_cancel_source(source: move shared);
+  std::time::close_cancel_watch(watch: move watch);
+  let never = std::time::cancel_never();
+  std::time::close_cancel_watch(watch: move never);
+  return exit_status(code: 0_u8);
+}

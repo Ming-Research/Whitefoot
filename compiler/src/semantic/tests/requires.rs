@@ -1879,22 +1879,28 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
     let cases = [
-        ("  requires a + b <= limit;", true),
+        ("  requires a + b <= limit;", true, true),
         (
             "  define sum = a + b;\n  define bound = sum <= limit;\n  define permitted = a <= 16_u64;\n  requires band(bound, permitted);",
+            true,
             true,
         ),
         (
             "  define sum = a + b;\n  define overflow = sum > limit;\n  define excluded = a > 16_u64;\n  define either = bor(overflow, excluded);\n  requires bnot(either);",
             true,
+            true,
         ),
         (
             "  define sum = a + b;\n  define bound = sum <= limit;\n  define permitted = a <= 16_u64;\n  requires bor(bound, permitted);",
             false,
+            false,
         ),
-        ("  requires a + b == limit;", false),
+        // [ENT-4.OT] the established equality gains the term view
+        // total == limit after total's definition. It proves the subtraction
+        // through L0, while S4 still publishes no affine equality leaf.
+        ("  requires a + b == limit;", true, false),
     ];
-    for (requirement, accepted) in cases {
+    for (requirement, accepted, affine_image) in cases {
         // Contract definitions precede every requirement in canonical source.
         let source = format!(
             "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n{requirement}\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n}} {{\n  let total = a + b;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -1911,17 +1917,33 @@ fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
                     .find(|f| f.name == "room")
                     .unwrap();
                 super::entailment::validate_derivations(&function.entailment);
-                assert!(
+                assert_eq!(
                     function
                         .entailment
                         .derivations
                         .nodes
                         .iter()
-                        .any(|node| matches!(
+                        .filter(|node| matches!(
                             node,
                             super::super::entailment::DerivationNode::RequirementAffineImage { .. }
                         ))
+                        .count(),
+                    usize::from(affine_image),
+                    "only an established non-L0 ordering leaf supplies an affine image"
                 );
+                if !affine_image {
+                    assert!(function.entailment.derivations.nodes.iter().any(|node| matches!(
+                        node,
+                        super::super::entailment::DerivationNode::OriginProjection {
+                            sign: super::super::entailment::GoalSign::Positive,
+                            relation: super::super::entailment::Relation::Equal {
+                                difference: 0,
+                                ..
+                            },
+                            ..
+                        }
+                    )));
+                }
             } else {
                 let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
                     panic!("an unestablished ordering leaf must remain unavailable: {outcome:?}");

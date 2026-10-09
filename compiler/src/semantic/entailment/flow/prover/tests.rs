@@ -497,6 +497,7 @@ fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() 
                 facts: &facts,
                 affine: &affine,
                 closed: Some(&closed),
+                origin_view: OriginView::Pending,
             };
             let (view, index) = assert_affine_index_matches_rebuild(analyzer, context);
             assert!(
@@ -1058,4 +1059,97 @@ fn finite_lower_component_uses_the_original_right_term_for_step_six() {
         assert_eq!(unknown.disposition, ProofDisposition::Unknown);
         assert!(unknown.derivation.is_none());
     });
+}
+
+// Before the repair, the first request panics while folding MAX + 1.
+// This tests the existing checked-folding policy, not a source verdict.
+#[test]
+fn offset_request_folding_uses_the_existing_checked_constant_domain() {
+    let mut terms = TermTable::new();
+    let one = terms.intern(TermKind::Constant(1));
+    let x = terms.intern(TermKind::Place(
+        ResolvedPlace::binding(BindingId(0)),
+        IntegerType::I64,
+    ));
+    let mut requests = [
+        BoundsRequest {
+            left: Some(x),
+            right: one,
+            bound: i128::MAX,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(one),
+            right: x,
+            bound: i128::MIN,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(x),
+            right: ZERO,
+            bound: i128::MIN,
+            distinct: true,
+        },
+    ];
+    normalize_distinct_requests(&mut requests, &terms);
+    assert!(request_relation(&requests[0]).is_none());
+    assert!(request_relation(&requests[1]).is_none());
+    assert_eq!(
+        request_relation(&requests[2]),
+        Some(Relation::Distinct {
+            left: ZERO,
+            right: x,
+            difference: i128::MAX,
+        })
+    );
+}
+
+// The replacement crosses term ordering without changing the mathematical
+// relation. Previously both transport helpers evaluated -MIN unchecked.
+#[test]
+fn offset_extremes_survive_delivery_and_call_term_replacement() {
+    let first = TermId(1);
+    let second = TermId(2);
+    let replacement = TermId(3);
+    for (offset, reversed) in [
+        (i128::MIN, i128::MAX),
+        (i128::MIN + 1, i128::MAX),
+        (i128::MAX - 1, i128::MIN + 2),
+        (i128::MAX, i128::MIN + 1),
+    ] {
+        for (left, right, expected) in [
+            (
+                first,
+                second,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: reversed,
+                },
+            ),
+            (
+                second,
+                first,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: offset,
+                },
+            ),
+        ] {
+            let relation = Relation::Distinct {
+                left,
+                right,
+                difference: offset,
+            };
+            assert_eq!(
+                sources::substitute_delivery_relation(&relation, first, replacement),
+                expected
+            );
+            assert_eq!(
+                postconditions::replace_relation_term(&relation, first, replacement),
+                expected
+            );
+        }
+    }
 }

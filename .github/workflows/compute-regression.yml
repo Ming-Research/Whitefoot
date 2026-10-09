@@ -152,6 +152,15 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-baseline-compiler \
             cargo build --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml" \
             --locked --profile gate --bin whitefootc
+      # The first image build on a runner took 4 to 29 s where an identical
+      # second build took 2 to 3.4 s, probably the native toolchain's first
+      # use (research/investigations/test-economy/time-budgets.md, the
+      # candidate's images). An untimed build of the same images first kept
+      # that cost out of the timed stages in every sampled job; the cost
+      # itself is not budgeted.
+      - name: Warm the native toolchain
+        if: steps.scope.outputs.measure == 'true'
+        run: make -s -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-warmup" > /dev/null
       - name: Construct candidate and baseline native images
         if: steps.scope.outputs.measure == 'true'
         run: |

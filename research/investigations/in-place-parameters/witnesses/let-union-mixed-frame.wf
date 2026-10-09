@@ -1,0 +1,156 @@
+alias LmxExit = std::process::ExitStatus;
+alias lmx_exit = std::process::exit_status;
+
+enum LmxValue {
+  LmxNil();
+  LmxNumber(x: u64);
+  LmxHandle(h: u32);
+  LmxOther(k: u32);
+}
+
+struct LmxRow {
+  dest: u64;
+  padding: Array<u64, 16>;
+  comparator: LmxValue;
+}
+
+struct LmxMarker {
+  token: u32;
+}
+
+struct LmxBig {
+  inner: Array<LmxRow, 2>;
+  plan: u64;
+}
+
+fn lmx_num(v: LmxValue) -> result: u64 pure {
+  let answer = 0_u64;
+  match v {
+    LmxNil() => {
+    }
+    LmxNumber(x: captured) => {
+      set answer = captured;
+    }
+    LmxHandle(..) => {
+    }
+    LmxOther(..) => {
+    }
+  }
+  return answer;
+}
+
+fn lmx_nil(v: LmxValue) -> result: Bool pure {
+  let answer = False();
+  match v {
+    LmxNil() => {
+      set answer = True();
+    }
+    LmxNumber(..) => {
+    }
+    LmxHandle(..) => {
+    }
+    LmxOther(..) => {
+    }
+  }
+  return answer;
+}
+
+fn lmx_slow(big: &LmxBig, dest: u64, f: LmxValue, a: LmxValue, b: LmxValue, third: LmxValue, marker: LmxMarker, depth: u64) -> result: u64 writes(big) {
+  let changed = LmxValue::LmxNumber(x: 99_u64);
+  set big^.inner[0_u64].dest = 99_u64;
+  set big^.inner[1_u64].dest = 99_u64;
+  set big^.inner[0_u64].comparator = changed;
+  set big^.inner[1_u64].comparator = changed;
+  if depth > 0_u64 {
+    let next = depth - 1_u64;
+    let left = lmx_slow(big: big, dest: dest, f: f, a: a, b: b, third: third, marker: marker, depth: next);
+    let right = lmx_slow(big: big, dest: dest, f: f, a: a, b: b, third: third, marker: marker, depth: next);
+    return left +wrap right;
+  }
+  let nf = lmx_num(v: f);
+  let na = lmx_num(v: a);
+  let nb = lmx_num(v: b);
+  let nt = lmx_num(v: third);
+  let token = cvt::<u32, u64>(marker.token);
+  let s0 = dest +wrap nf;
+  let s1 = s0 +wrap na;
+  let s2 = s1 +wrap nb;
+  let s3 = s2 +wrap nt;
+  return s3 +wrap token;
+}
+
+fn inplace_let_probe(big: &LmxBig, i: u64, a: LmxValue, b: LmxValue, fast: Bool, token: u32, depth: u64) -> result: u64 writes(big) contract {
+  requires i < 2_u64;
+} {
+  set big^.plan = i;
+  let snapshot = big^.inner[i];
+  let dest = snapshot.dest;
+  let nil = LmxValue::LmxNil();
+  let marker = LmxMarker(token: token);
+  if lmx_nil(v: snapshot.comparator) {
+    if fast {
+      let na = lmx_num(v: a);
+      let nb = lmx_num(v: b);
+      let sum = na +wrap nb;
+      return dest +wrap sum;
+    }
+    let compared = lmx_slow(big: big, dest: dest, f: nil, a: a, b: b, third: nil, marker: marker, depth: depth);
+    return compared;
+  }
+  let compared = lmx_slow(big: big, dest: dest, f: snapshot.comparator, a: a, b: b, third: nil, marker: marker, depth: depth);
+  return compared;
+}
+
+fn lmx_falsifier(big: &LmxBig, i: u64) -> result: u64 writes(big) contract {
+  requires i < 2_u64;
+} {
+  let snapshot = big^.inner[i];
+  let nil = LmxValue::LmxNil();
+  let marker = LmxMarker(token: 0_u32);
+  let discarded = lmx_slow(big: big, dest: 0_u64, f: nil, a: nil, b: nil, third: nil, marker: marker, depth: 0_u64);
+  let old_number = lmx_num(v: snapshot.comparator);
+  return snapshot.dest +wrap old_number;
+}
+
+fn main() -> status: LmxExit pure {
+  let nil = LmxValue::LmxNil();
+  let eleven = LmxValue::LmxNumber(x: 11_u64);
+  let thirty_one = LmxValue::LmxNumber(x: 31_u64);
+  let padding = array_filled::<u64, 16>(value: 0_u64);
+  let row0 = LmxRow(dest: 0_u64, padding: padding, comparator: nil);
+  let row1 = LmxRow(dest: 0_u64, padding: padding, comparator: eleven);
+  let rows = array_filled::<LmxRow, 2>(value: row0);
+  set rows[1_u64] = row1;
+  let big = LmxBig(inner: rows, plan: 0_u64);
+  let yes = True();
+  let no = False();
+  let fast = inplace_let_probe(big: &big, i: 0_u64, a: eleven, b: thirty_one, fast: yes, token: 0_u32, depth: 1_u64);
+  if fast != 42_u64 {
+    return lmx_exit(code: 1_u8);
+  }
+  let callback = inplace_let_probe(big: &big, i: 1_u64, a: nil, b: thirty_one, fast: no, token: 0_u32, depth: 1_u64);
+  if callback != 84_u64 {
+    return lmx_exit(code: 2_u8);
+  }
+  if big.inner[1_u64].dest != 99_u64 {
+    return lmx_exit(code: 3_u8);
+  }
+  let changed = lmx_num(v: big.inner[1_u64].comparator);
+  if changed != 99_u64 {
+    return lmx_exit(code: 4_u8);
+  }
+  let fresh = LmxBig(inner: rows, plan: 0_u64);
+  let old = lmx_falsifier(big: &fresh, i: 1_u64);
+  if old != 11_u64 {
+    return lmx_exit(code: 5_u8);
+  }
+  let nil_big = LmxBig(inner: rows, plan: 0_u64);
+  let slow = inplace_let_probe(big: &nil_big, i: 0_u64, a: eleven, b: thirty_one, fast: no, token: 0_u32, depth: 1_u64);
+  if slow != 84_u64 {
+    return lmx_exit(code: 6_u8);
+  }
+  if big.plan != 1_u64 {
+    return lmx_exit(code: 7_u8);
+  }
+  return lmx_exit(code: 0_u8);
+}

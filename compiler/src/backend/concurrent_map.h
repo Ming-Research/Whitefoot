@@ -20,7 +20,8 @@ typedef struct wf_cmap_user wf_cmap_user;
 
 /* A map sized for capacity keys, or a small default when capacity is zero. */
 wf_cmap *wf_cmap_create(uint64_t capacity);
-/* Frees the map; it has no users left. */
+/* Frees the map and its nodes; it has no users left. The caller must first
+ * drain any slots whose payloads need releasing. */
 void wf_cmap_destroy(wf_cmap *map);
 /* A user of map for the calling thread; NULL when map already has
  * WF_CMAP_MAX_USERS. */
