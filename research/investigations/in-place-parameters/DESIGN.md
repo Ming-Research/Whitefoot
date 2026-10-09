@@ -509,6 +509,36 @@ shape. The job did not execute the programs; native correctness rests on the
 gate. The temporary job is removed; its definition is in this branch's
 history at `0a0776ce9`.
 
+### Halo with separate roots
+
+Observed on the 14900K by Halo-wf
+([run 37878776396](https://github.com/Ming-Research/Halo-wf/actions/runs/37878776396),
+artifact `halo-lm-inplace-let`): Halo's sources with `sort_compare`
+unsplit, built by experiment release `wf-exp-2ab47723e356` (main
+`a4a333fb8`'s tree) and by `wf-exp-b4e79dfdff01` (that base plus this
+change), 6 alternating pairs with a twin of the base.
+
+| kernel | head/base median |
+|---|---:|
+| sort with a comparator (300,000 elements) | 0.941 |
+| string-key | 0.748 |
+| integer-table | 0.866 |
+| concat | 0.866 |
+| fib | 0.969 |
+| sort (homogeneous fast path) | 0.951 |
+| binary-trees | 0.984 |
+| loop | 0.996 |
+
+The first five lie outside their spreads and the twin's largest deviation
+(integer-table 1.015, concat 0.984); none is slower. `sort_compare` drops
+from 297 instructions, one `memcpy` and a 0x1d8-byte frame to 255
+instructions, no `memcpy` and 0x60 bytes. `run`'s call arm is identical in
+both builds, its `Step` copy retained, as split frames are outside this
+change; `prepare` goes from two `memcpy` calls and 0x538 bytes to one and
+0x2d8, and whether the remaining one is the `Value` read is not yet
+attributed. Halo's check time is unchanged by this change (10.32 and 10.22 s
+against 10.25 and 10.40 s).
+
 ### Candidate rule, not selected
 
 The results above show the snapshot copy follows the frame representation,
