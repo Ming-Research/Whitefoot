@@ -1639,6 +1639,251 @@ fn probe_needle_counts(program: &IrProgram) -> Vec<usize> {
 }
 
 #[test]
+fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+    let source =
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for (name, count, blocked) in [
+            ("calls", 1, true),
+            ("direct", 1, false),
+            ("fields", 2, true),
+            ("fields_reversed", 2, true),
+            ("mixed", 1, true),
+        ] {
+            let parent = function(program, name);
+            let (chunk, families) = parent
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { chunk, indexed, .. },
+                        ..
+                    } if !indexed.is_empty() => Some((*chunk, indexed)),
+                    _ => None,
+                })
+                .expect("compatible aliases must split");
+            assert_eq!(families.len(), count, "{name}");
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.root.is_some() == blocked),
+                "{name}"
+            );
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.capture == families[0].capture),
+                "{name}: one storage capture"
+            );
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.count == families[0].count),
+                "{name}: one resolved root length"
+            );
+            let chunk = &program.functions()[chunk as usize];
+            let definitions = chunk
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result, operation, ..
+                    } => Some((*result, operation)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if name == "calls" {
+                let blocks = definitions
+                    .iter()
+                    .filter_map(|(result, operation)| {
+                        matches!(operation, IrOperation::IndexedBlock { .. }).then_some(*result)
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(blocks.len(), 1);
+                let arguments = definitions
+                    .iter()
+                    .filter_map(|(_, operation)| match operation {
+                        IrOperation::Call {
+                            function,
+                            arguments,
+                        } if program.functions()[*function as usize].name() == "add_one" => {
+                            Some(arguments[0])
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    arguments,
+                    vec![blocks[0], blocks[0]],
+                    "both aliases call with the same private block"
+                );
+            } else if name == "direct" {
+                let slice = chunk.parameters()[3 + families[0].capture].0;
+                let addresses = definitions
+                    .iter()
+                    .filter_map(|(_, operation)| match operation {
+                        IrOperation::IndexedAddress { slice, .. } => Some(*slice),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    addresses,
+                    vec![slice; 4],
+                    "both reads and both writes use the same dense family"
+                );
+            }
+        }
+        if let Err(failure) = crate::emit_llvm(program) {
+            panic!("resolved alias storage must emit: {failure:?}");
+        }
+    });
+}
+
+#[test]
+fn nested_indexed_aliases_capture_enclosing_blocks_and_dense_families() {
+    let source = include_bytes!("../../../tests/programs/parallel/indexed_calls.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for (name, blocked) in [("nested_alias_blocks", true), ("nested_alias_dense", false)] {
+            let mut parent = function(program, name);
+            let mut enclosing_storage = None;
+            let mut enclosing_private = None;
+            let mut enclosing_root = None;
+            for depth in 0..2 {
+                let splits = parent
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            operation:
+                                IrOperation::LoopSplit {
+                                    chunk,
+                                    captures,
+                                    indexed,
+                                    ..
+                                },
+                            ..
+                        } => Some((*chunk, captures, indexed)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(splits.len(), 1, "{name}: split at depth {depth}");
+                let (chunk, captures, families) = splits[0];
+                assert_eq!(families.len(), 1, "{name}: one resolved family");
+                let family = &families[0];
+                assert_eq!(family.root.is_some(), blocked, "{name}");
+                assert_eq!(family.projection.fields, vec![0]);
+                if let Some(storage) = enclosing_storage {
+                    assert_eq!(
+                        captures[family.capture], storage,
+                        "{name}: inner join must target the outer leaf's storage"
+                    );
+                    assert_eq!(
+                        family.root, enclosing_root,
+                        "{name}: the inner array alias must retain the Holder owner"
+                    );
+                    if !blocked {
+                        assert_eq!(
+                            Some(captures[family.private]),
+                            enclosing_private,
+                            "the dense inner join must inherit the outer storage mode"
+                        );
+                    }
+                }
+                let chunk = &program.functions()[chunk as usize];
+                let storage = chunk.parameters()[3 + family.capture].0;
+                let private = chunk.parameters()[3 + family.private].0;
+                let definitions = chunk
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let blocks = definitions
+                    .iter()
+                    .filter_map(|(result, operation)| match operation {
+                        IrOperation::IndexedBlock { blocks } => Some((*result, *blocks)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    blocks.len(),
+                    usize::from(blocked),
+                    "{name}: one block per root"
+                );
+                let slice = if blocked {
+                    let root = family.root.as_ref().expect("root-shaped storage");
+                    assert_eq!(root.fields, vec![0], "the block owns Holder.cells");
+                    let (block, directory) = blocks[0];
+                    assert_eq!(directory, storage);
+                    let cells = definitions
+                        .iter()
+                        .find_map(|(result, operation)| match operation {
+                            IrOperation::ProjectAddress {
+                                address,
+                                projection: crate::IrPlaceStep::Field { field: 0, .. },
+                            } if *address == block => Some(*result),
+                            _ => None,
+                        })
+                        .expect("cells project from the leaf's Holder block");
+                    if depth == 0 {
+                        let argument = definitions
+                            .iter()
+                            .find_map(|(_, operation)| match operation {
+                                IrOperation::Call {
+                                    function,
+                                    arguments,
+                                } if program.functions()[*function as usize].name()
+                                    == "add_field" =>
+                                {
+                                    Some(arguments[0])
+                                }
+                                _ => None,
+                            })
+                            .expect("outer helper call");
+                        assert_eq!(argument, block, "the helper borrows the same Holder block");
+                    }
+                    definitions
+                        .iter()
+                        .find_map(|(result, operation)| {
+                            matches!(operation, IrOperation::SliceFromRun { run } if *run == cells)
+                                .then_some(*result)
+                        })
+                        .expect("the indexed range comes from the leaf's cells")
+                } else {
+                    storage
+                };
+                if depth == 1 || !blocked {
+                    let addresses = definitions
+                        .iter()
+                        .filter_map(|(_, operation)| match operation {
+                            IrOperation::IndexedAddress { slice, .. } => Some(*slice),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        addresses,
+                        vec![slice; 2],
+                        "{name}: the read and write must use the remapped family at depth {depth}"
+                    );
+                }
+                enclosing_storage = Some(storage);
+                enclosing_private = Some(private);
+                enclosing_root = family.root.clone();
+                parent = chunk;
+            }
+        }
+    });
+}
+
+#[test]
 fn a_recognized_byte_walk_gains_one_wide_probe_with_its_needles() {
     with_ir(&byte_walk_source(NEUTRAL_MIDDLE, "1_u64"), |program| {
         assert_eq!(probe_needle_counts(program), vec![2]);
@@ -2245,6 +2490,7 @@ fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() 
                 })
                 .expect("the record field reduction splits");
             assert_eq!(families.len(), 2);
+            assert!(families.iter().all(|family| family.root.is_none()));
             assert_eq!(families[0].count, families[1].count);
             assert_ne!(families[0].capture, families[1].capture);
             assert_ne!(families[0].private, families[1].private);
@@ -2262,6 +2508,202 @@ fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() 
                 }
             );
             assert_eq!(families[1].private_type(), IrType::Bool);
+        }
+    });
+}
+#[test]
+fn indexed_helper_calls_share_root_blocks_remap_arguments_and_fill_mark_sentinels() {
+    use crate::ir::{IrConstant, IrIndexedFamilyKind};
+
+    let source = include_bytes!("../../../tests/programs/parallel/indexed_calls.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for (name, count, helper) in [
+            ("call_histogram", 1, "mark"),
+            ("slots_histogram", 1, "mark_slots"),
+            ("call_marks", 3, "mark_even"),
+            ("shared_call_fields", 3, "mark_fields"),
+            ("nested_helper_fields", 3, "mark_fields"),
+        ] {
+            let parent = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("source function");
+            let (chunk, captures, families) = parent
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::LoopSplit {
+                                chunk,
+                                captures,
+                                indexed,
+                                ..
+                            },
+                        ..
+                    } if !indexed.is_empty() => Some((*chunk, captures, indexed)),
+                    _ => None,
+                })
+                .expect("call-form loop must split");
+            assert_eq!(families.len(), count, "{name}");
+            assert!(
+                families.iter().all(|family| family.root.is_some()),
+                "{name}"
+            );
+            let chunk = &program.functions()[chunk as usize];
+            let definitions = chunk
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result, operation, ..
+                    } => Some((*result, operation)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let parameter = chunk.parameters()[3 + families[0].capture].0;
+            let block = definitions.iter().find_map(|(result, operation)| {
+                matches!(operation, IrOperation::IndexedBlock { blocks } if *blocks == parameter).then_some(*result)
+            }).expect("leaf borrows its root-shaped block");
+            assert!(parent.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+                matches!(instruction, IrInstruction::Define { result, operation: IrOperation::IndexedBlocks { .. }, .. } if *result == captures[families[0].capture])
+            }), "{name}: the original root supplies the sequential directory");
+
+            if name == "nested_helper_fields" {
+                let (inner_captures, inner_families) = definitions
+                    .iter()
+                    .find_map(|(_, operation)| match operation {
+                        IrOperation::LoopSplit {
+                            captures, indexed, ..
+                        } if !indexed.is_empty() => Some((captures, indexed)),
+                        _ => None,
+                    })
+                    .expect("nested indexed split");
+                assert_eq!(
+                    inner_captures[inner_families[0].capture], parameter,
+                    "inner join targets the enclosing leaf block"
+                );
+                assert_eq!(
+                    inner_families.len(),
+                    2,
+                    "inner join must not touch the outer direct third family"
+                );
+            } else {
+                let argument = definitions
+                    .iter()
+                    .find_map(|(_, operation)| match operation {
+                        IrOperation::Call {
+                            function,
+                            arguments,
+                        } if program.functions()[*function as usize].name() == helper => {
+                            Some(arguments[0])
+                        }
+                        _ => None,
+                    })
+                    .expect("ordinary helper call in the leaf");
+                assert!(definitions.iter().any(|(result, operation)| {
+                    matches!(operation, IrOperation::IndexedReference { roots, .. } if *result == argument && roots.len() == 1 && roots[0].block == block && matches!(roots[0].path.as_slice(), [crate::IrPlaceStep::BoxReferent { .. }]))
+                }), "{name}: helper argument must reference the leaf's block");
+            }
+
+            if matches!(name, "call_histogram" | "slots_histogram") {
+                assert!(matches!(
+                    families[0].kind,
+                    IrIndexedFamilyKind::Reduce {
+                        op: Ok(IrIntegerOperation::BitOr),
+                        identity: IrConstant::Integer { bits: 0, .. }
+                    }
+                ));
+                if name == "call_histogram" {
+                    assert!(
+                        definitions.iter().any(|(_, operation)| matches!(
+                            operation,
+                            IrOperation::IndexedAddress { .. }
+                        )),
+                        "mixed direct and call updates use one family"
+                    );
+                }
+            }
+            if name == "call_marks" {
+                for (constant, sentinel) in [
+                    (
+                        IrConstant::Integer {
+                            ty: IrType::Integer {
+                                width: 64,
+                                signed: false,
+                            },
+                            bits: 42,
+                        },
+                        IrConstant::Integer {
+                            ty: IrType::Integer {
+                                width: 64,
+                                signed: false,
+                            },
+                            bits: 43,
+                        },
+                    ),
+                    (
+                        IrConstant::Integer {
+                            ty: IrType::Integer {
+                                width: 64,
+                                signed: false,
+                            },
+                            bits: 43,
+                        },
+                        IrConstant::Integer {
+                            ty: IrType::Integer {
+                                width: 64,
+                                signed: false,
+                            },
+                            bits: 42,
+                        },
+                    ),
+                    (IrConstant::Bool(false), IrConstant::Bool(true)),
+                ] {
+                    let family = families
+                        .iter()
+                        .find(|family| family.kind == IrIndexedFamilyKind::Mark { constant })
+                        .expect("mark constant");
+                    assert_eq!(family.private_identity(), sentinel);
+                    assert_eq!(family.private_type(), family.projection.value_type);
+                }
+            }
+            if matches!(name, "shared_call_fields" | "nested_helper_fields") {
+                assert!(
+                    families
+                        .iter()
+                        .all(|family| family.capture == families[0].capture
+                            && family.private == families[0].private
+                            && family.count == families[0].count),
+                    "one representation and count for all families of a root"
+                );
+                let mut fields = families
+                    .iter()
+                    .map(|family| family.projection.fields.clone())
+                    .collect::<Vec<_>>();
+                fields.sort();
+                assert_eq!(fields, [vec![1], vec![2], vec![3]]);
+                assert!(definitions.iter().any(|(_, operation)| {
+                    matches!(operation, IrOperation::SliceFromBuffer { buffer } if *buffer == block)
+                }), "direct updates project from the same root passed to the helper");
+                for (_, operation) in &definitions {
+                    if let IrOperation::IndexedAddress { private, .. } = operation {
+                        assert!(
+                            definitions.iter().any(|(value, operation)| {
+                                value == private
+                                    && matches!(
+                                        operation,
+                                        IrOperation::Constant(IrConstant::Bool(false))
+                                    )
+                            }),
+                            "root-shaped updates retain the root stride and field offset"
+                        );
+                    }
+                }
+            }
         }
     });
 }

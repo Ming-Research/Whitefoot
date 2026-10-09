@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.114: copied cells and helper-call updates in indexed reductions
+
+Rules: changed PAR-2
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: An indexed operation update's accumulator operand may be one fresh, immutable, single-use copy of the same cell made earlier in the same block (`let old = R[e]; let next = old op x; set R[e] = next;`), with no root access or write to the subscript's or contribution's support in between. A call is an update of an indexed family when its reference argument reaches the root and the callee carries an indexed summary for that parameter: its whole body uses the parameter only for measure reads and admitted updates of families below its referent, through an acyclic chain of such calls; the caller's family takes the summary's kind. A family is identified by its resolved storage place and cell projection, so updates through different references to one storage are one family with one operation. The callee's net effect is a multiset of cell contributions under the family operation, or a set of cells receiving its constant, reading no root contents, so per-cell recombination stays exact. The selection ground is the pre-registered criterion: Snowghost's recount admitted 17 of its 32 histogram-like loops, exactly the six predicted beyond v0.107's 11 ([results](../research/investigations/indexed-reductions/DESIGN.md#copied-cells-and-helper-calls)).
+
 ## 2026-10-09 v0.113: guards observe cancellation through read-only shared handles
 
 Rules: changed TYPE-2, TYPE-9, TYPE-11, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, PRE-2
