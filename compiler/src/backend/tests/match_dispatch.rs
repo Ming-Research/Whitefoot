@@ -1695,7 +1695,6 @@ fn walk(op: &Outer, count: u64) -> result: u64 reads(op) {
       }
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
