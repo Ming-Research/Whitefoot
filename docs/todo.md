@@ -99,11 +99,12 @@ rarely insert at the same place.
   An exhausted final AUTO family could demand quadratically many vectors,
   each scanning all candidates, with additional scans for absent residuals.
   Promotion to the complete index on final-family entry or after N cold
-  demands for N candidates addresses that cubic construction. CI still needs
-  to confirm full-rebuild equivalence and whether this explains and recovers
-  Halo's regression while retaining the natural wasm interpreter's gain;
-  the new per-function affine work counters distinguish cold scans, memo
-  reuse, promotions and exhausted families.
+  demands for N candidates addresses that cubic construction; measured on
+  the 14900K it brings Halo's check to 0.835 of the demanded-index base and
+  keeps the wasm interpreter's gain (0.991)
+  ([promotion](../research/investigations/check-time/DESIGN.md#promotion-after-halos-regression)).
+  The per-function affine work counters distinguish cold scans, memo reuse,
+  promotions and exhausted families.
 
 - **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
   rewriting Halo's interpreter as plain `loop { match }` raised its source
@@ -120,9 +121,10 @@ rarely insert at the same place.
   repeated checks of unchanged functions. Validate each with a same-source
   base/twin/head timing of Halo's check on the 14900K through CI, unchanged
   conformance and corpus verdicts, and the full-rebuild differentials.
-  Reopen now to attribute the regression recorded above and measure the
-  promotion change against both interpreters; Halo's dominant remaining
-  checking cost is still unprofiled.
+  With promotion Halo's `pkg::vm` check takes 8.6 s on the 14900K, below
+  the 9.1-9.2 s before the demanded index; its dominant remaining checking
+  cost is still unprofiled. Reopen with a profile of Halo's check, or when
+  it grows past 10 s again.
 
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot
