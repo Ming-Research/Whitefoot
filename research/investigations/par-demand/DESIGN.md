@@ -478,3 +478,28 @@ review completion; literal `select i1 true` must not be mistaken for dynamic
 span saturation. Final permitted cargo check and clippy both exited zero
 after that repair. Work stops for the caller's review/push and CI evidence;
 there is no commit, design approval or claimed experiment pass.
+
+## Results of the third rerun (the stronger model's candidate)
+
+Run: [compute-bench 37999258600](https://github.com/Ming-Research/Whitefoot/actions/runs/37999258600),
+`claude/par-demand` at 7c5c99301, i9-14900K, 10 interleaved rounds,
+2026-10-09, same rule.
+
+The candidate is worse than the second rerun's and falls outside every
+prediction recorded above for the workloads that decided the round:
+
+| workload | predicted, 4 and 8 workers | measured, 4 / 8 workers | second rerun |
+|---|---|---|---|
+| small_split | 1.00 to 1.04 | 1.261 / 1.257 (8 workers fails: rerun 1.258, spreads 1.6 and 1.0 percent) | 1.126 / 1.123 |
+| large_helper | 1.00 to 1.02 | 1.305 / 1.305 (rerun 1.306) | 1.065 / 1.063 |
+| fir | 1.00 to 1.03 | 1.132 / 1.163 | 1.079 / 1.091 |
+| records | 0.99 to 1.02 | 1.051 / 1.068 | 1.006 / 1.021 |
+| spine | 1.02 to 1.04 | 1.005 / 1.037 | 1.034 / 1.035 |
+| recursion, hot_helper, small_constant | about 1.00 | within 1 percent | within 1 percent |
+
+At one worker every workload stayed near 1.00, as before. The gate on
+7c5c99301 also failed two of the candidate's new backend tests before any
+assertion (their sources did not compile). So caller-local slicing with
+inlined chunks and per-offer-unit polling, as implemented, is rejected by
+its own predictions; following the owner's instruction, the record goes to
+the strongest model.
