@@ -1946,7 +1946,7 @@ impl<'check, 'run> Survey<'check, 'run> {
             })
             .flat_map(|outcome| &outcome.range_partitions)
             .find(|partition| {
-                partition.loop_id == self.outer_loop
+                Some(partition.loop_id) == self.outer_loop
                     && partition.range == captured.start.capture
                     && partition.range == range.start.capture
             })
