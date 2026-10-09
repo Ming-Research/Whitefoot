@@ -170,7 +170,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                self.load_place_result(result, ty, &self.value_name(*address))?;
+                if self
+                    .storage
+                    .slot(result)
+                    .and_then(|slot| self.storage.read_through(slot))
+                    .is_none()
+                {
+                    self.load_place_result(result, ty, &self.value_name(*address))?;
+                }
             }
             IrOperation::ConstructStruct { nominal, fields } => {
                 if ty != IrType::Nominal(*nominal) {
@@ -488,13 +495,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         for (position, ((parameter, ty), argument)) in parameters.iter().zip(arguments).enumerate()
         {
             // The storage plan proved every incoming value is the original
-            // argument's unchanged contents. Its caller's storage already
-            // holds those bytes, even if this edge's source has another slot.
-            if self
-                .storage
-                .slot(*parameter)
-                .is_some_and(|slot| self.incoming_places.contains_key(&slot))
-            {
+            // argument's or Load's unchanged contents. The selected source
+            // already holds those bytes, even if this edge has another slot.
+            if self.storage.slot(*parameter).is_some_and(|slot| {
+                self.incoming_places.contains_key(&slot)
+                    || self.storage.read_through(slot).is_some()
+            }) {
                 continue;
             }
             if self.storage.slot(*parameter).is_some()
@@ -729,7 +735,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn slot_place(&mut self, slot: usize) -> Result<String, BackendFailure> {
-        if let Some(destination) = self.storage.destination(slot) {
+        if let Some(address) = self.storage.read_through(slot)
+            && !self.snapshot_copies.contains(&slot)
+        {
+            Ok(self.value_name(address))
+        } else if let Some(destination) = self.storage.destination(slot) {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
@@ -738,6 +748,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             self.entry_slot(FunctionSlot::OwnedValue(slot))
         }
+    }
+
+    /// Consume the planner's per-use copy schedule before evaluating any
+    /// operand or effect. A later operation starts from the captured address
+    /// again, so no emitted-block order becomes a runtime initialization fact.
+    pub(super) fn prepare_snapshot_use(
+        &mut self,
+        block: IrBlockId,
+        at: usize,
+    ) -> Result<(), BackendFailure> {
+        self.snapshot_copies.clear();
+        for slot in self.storage.snapshot_copies(block.index(), at) {
+            let address = self
+                .storage
+                .read_through(slot)
+                .ok_or(BackendFailure::InvalidIr)?;
+            let ty = self.storage.slots()[slot];
+            let source = self.value_name(address);
+            self.snapshot_copies.insert(slot);
+            let destination = self.slot_place(slot)?;
+            self.copy_storage(ty, &source, &destination)?;
+        }
+        Ok(())
     }
 
     /// A value as one LLVM first-class operand, loaded from its slot when it

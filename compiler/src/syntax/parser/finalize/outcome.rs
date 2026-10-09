@@ -200,7 +200,7 @@ pub enum FinalizeOutcome {
 ///
 /// Components are zero-based production-child ordinals. This runtime value is
 /// a diagnostic location, not a portable artifact reference.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NodePath {
     pub(crate) components: Vec<u32>,
 }

@@ -1,0 +1,20 @@
+struct Row {
+  entries: Array<u64, 2>;
+}
+
+fn paint(rows: &[Row]) -> result: unit writes(rows) {
+  if 0_u64 < rows^.len {
+    for (
+      k in 0_u64..2_u64,
+      apart(i, j) {
+      }
+    ) {
+      set rows^[0_u64].entries[k] = 0_u64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

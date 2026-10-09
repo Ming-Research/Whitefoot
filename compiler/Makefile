@@ -421,13 +421,20 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefil
 
 # The same test built to check every read and write of memory, which is the
 # only witness of a read of a freed node: such a read's result is discarded,
-# so no outcome differs. It is not part of completion-test, whose budget it
-# would exceed; docs/todo.md asks whether it joins the gate.
+# so no outcome differs; and built under ThreadSanitizer, which sees a race
+# between two threads that no outcome of one run reveals. Neither is part of
+# completion-test, whose budget they would exceed; map-sanitizers.yml runs
+# both on every change to the map's runtime or its tests.
 concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
 		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
 	ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
+concurrent-map-test-tsan: $(CONCURRENT_MAP_SOURCES) Makefile
+	@mkdir -p "$(COMPLETION_TMP)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=thread \
+		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-tsan"
+	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/concurrent-map-test-tsan"
 
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c),
@@ -714,7 +721,7 @@ completion-windows-wine:
 
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
-.PHONY: concurrent-map-test-sanitized
+.PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
 	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \

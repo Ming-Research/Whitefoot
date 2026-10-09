@@ -2067,3 +2067,79 @@ fn runtime_map_values_keep_ordinary_layout_without_disabling_unrelated_handlers(
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// The same provisional-result selection in a dispatch arm must write into
+/// the enclosing call's result destination, not into a part-local temporary.
+#[test]
+fn selection_in_a_split_arm_passes_the_result_destination_to_its_producer() {
+    let source = format!(
+        "{}{}",
+        super::payload_enums::SELECT_STEP,
+        r#"
+enum Command {
+  Again();
+  Select();
+}
+
+fn dispatch(command: Command, n: u64) -> result: Step pure {
+  loop {
+    match command {
+      Again() => {
+        set command = Command::Select();
+        continue;
+      }
+      Select() => {
+        let step = prepare(n: n);
+        let final_step = step;
+        match step {
+          Error() => {
+            set final_step = unwind(n: n);
+          }
+          Jump(..) => {
+          }
+          Done(..) => {
+          }
+          Stop() => {
+          }
+          Budget() => {
+          }
+        }
+        return final_step;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let select = Command::Select();
+    let direct = dispatch(command: select, n: n);
+    let first = valid_step(step: direct, n: n);
+    if bnot(first) {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let again = Command::Again();
+    let repeated = dispatch(command: again, n: n);
+    let second = valid_step(step: repeated, n: n);
+    if bnot(second) {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    let module = super::payload_enums::retain_step_producers(&emit(source.as_bytes()));
+    assert_split(&module, "wf_dispatch", 2);
+    super::payload_enums::assert_step_destination(definition(&module, "wf_dispatch.arm.1"));
+    let optimized = super::host_optimized_module(&module);
+    super::payload_enums::assert_step_destination(definition(&optimized, "wf_dispatch.arm.1"));
+    // The base retains both Step join parameters within this arm, so its raw
+    // producer destination and copy assertions fail even if LLVM hides a copy.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}

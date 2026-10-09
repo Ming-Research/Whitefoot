@@ -13,6 +13,63 @@ Owner-approved: On the status board on 2026-10-09, written in Chinese: after Sno
 
 Summary: Run-selecting places serve directly as bases of their length read and of element subscripts because they name exactly the place their borrow forms, so they add no proof or permission mechanism, instead of requiring a borrow before every length read or element access. Direct page selections and nonterminal page steps take index-step proof identity because they capture no extent and length writes kill their terms, while a page-reference borrow keeps per-formation identity because its captured extent survives growth.
 
+## 2026-10-09 Copied cells and helper-call updates in indexed reductions
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Loop permission admits a copied-cell accumulator operand and helper calls whose callee treats a reference parameter as an indexed accumulator, identifying families by resolved storage, because both preserve the per-cell order-independence argument and recover the six natural spellings that kept Snowghost below its criterion. Lowering gives every root with a call-updated family one private block per leaf with the root's storage shape and measures, all of that root's families in it, identity-filled for operations and filled with the constant's inverted-low-bit sentinel for marks, because a callee indexes the whole root by logical index and may read its measures, so a dense family slab cannot be passed; passing dense slabs or rewriting the callee are rejected ([lowering](../research/investigations/indexed-reductions/DESIGN.md#lowering)).
+## 2026-10-09 The release/borrow group boundary uses proved separations
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request "approve adding 'with the same proved separations used by the parallel permission' to the parallel-lowering decision that keeps a released place and a borrowed place out of one overlap group" with "agree" (translated); earlier the same day, on Snowghost's card handing the owning-element serialization to Whitefoot: "choose A" (translated).
+
+Summary: The overlap-group boundary that keeps a call releasing storage apart from a call borrowing it compares released and borrowed places with the separations the permission judgment proved for that ordered pair, because the unproved oracle it used serialized sibling calls on proved-disjoint ranges of an owning-element run (Snowghost's layout lost its 4-thread parallelism between releases 631d3ff and b2209fd); unknown roots and unproved overlap still split the group, and every member's borrowed and released places now come from the same statements as its footprint, which closes conditional-call and call-rooted-match members that recorded none.
+## 2026-10-09 Guards observe cancellation through read-only shared handles
+
+Nodes: language/waiting/shared-objects, language/system-interface/context-cancellation, compiler/waiting-contexts, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text and the changes to the two design nodes (language/waiting/shared-objects and language/system-interface/context-cancellation) with "agree", and then the item request that asked to approve PR #304's changes to the two compiler design nodes (compiler/waiting-contexts: a host wait may also suspend for a shared-unit acquisition; state-locks: the cancellation state is protected by one ordinary shared unit, with an atomic mirror bit for host waits) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: A general read-only handle, `SharedRead<T>`, joins `Shared<T>` as an atomic target with the same selections, identity and lifetime, and its read-only authority follows the resolved state root through aliases, descendants and call effects, because a guard must read state that no helper or alias can turn back into a write; a cancellation-specific target and cancellation interrupting a pending statement were rejected. `cancel_state` gives that view of a watch's cancellation state, and `cancel_fire` is a waiting held transition that wakes guard watches while host waits keep find-at-fire notification. The compiler keeps the cancellation state in one ordinary shared unit, publishing an atomic mirror for host waits during the held transition, and its waiting lowering suspends for that unit's acquisition as atomic statements do.
+## 2026-10-09 Range facts below elements, route A and range type invariants
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated), covering the choices the owner made on the status board on 2026-10-08 and 2026-10-09 that the specification log entry for v0.112 lists.
+
+Summary: Range facts read integer values below an element, a range type invariant replaces the decision that live storage carries no range fact across passes, ordinary obligations whose goals are range-term comparisons are proved by the range judgment while every other undischarged obligation keeps its ordinary verdict, `place_back`/`take_back` are placed writes, a computed give delivers its relations, instantiation runs two rounds, possibly aliased atomic targets that would establish a range type invariant are an unsupported capability for now, and a counted-element repair offers its range alternatives per row; grounds and measurements are in the range-field-terms, ordinary-range-obligations and range-type-invariants investigations.
+## 2026-10-09 Selected call results produced in place and read-through snapshots
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese: on the card asking whether the compiler may read a by-value array element directly from its source when the snapshot is only read and the source is unchanged until its last use, recommended option A, a compiler rule decided from checked effect facts with the language unchanged: "choose A" (translated); and on the item request approving the design decision of #310 that unobserved join parameters are removed before storage planning so a selected call result is written directly into its final place: "agreed" (translated).
+
+Summary: Internal block parameters and their incoming arguments that no operand, scrutinee, return, drop or cleanup observes are removed before storage planning, because a continuing match carried every binding in scope and an unobserved duplicate kept a provisional call result and the selected result in separate storage, copying the whole value on the unchanged arms (Halo's `instruction_call`). A by-value snapshot that is never written or exposed reads through its source wherever checked effects prove the source unchanged up to the use, and a use that cannot read through copies from the source right before it on that path only, because Halo's `prepare` copied each called element before reading its tag; making writers borrow-match instead and making indexed by-value reads borrows were refused. Read-only facts now cover range and run parameters as well [CALL-1, REF-4]. In Halo's call path both copies are gone from the optimized IR ([read-through snapshots](../research/investigations/in-place-parameters/DESIGN.md#read-through-snapshots)).
+## 2026-10-09 A payload-only keyed statement takes nothing for an absent key
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, on the request on the item "a statement that accesses an absent key's entry allocates a node and then frees it", the owner approved both changes to this node: the new decision that a single-entry statement whose writes all pass through the `Some` payload takes no cell or node on an absent key and locks a present key exclusively, and the claim decision narrowed to writers that may make an absent entry present ("approve", translated).
+
+Summary: A GET that refreshes an access stamp inside the entry's payload may write the entry, so it claimed a cell and built a node for every absent key and freed the node at unlock; on firn's GET miss workload on the i9-14900K that cost 12 to 20 percent of throughput against a build without the stamp. The checker now marks each single-entry target that can only write inside the `Some` payload, through its own writes, call rows and aliases taken from the statement's header, and the runtime then locks a present key exclusively and runs the block on the map's shared none slot for an absent one, the miss taking effect when the absence is observed, as the read path's does. With the stamp's rows narrowed to the stamp field, firn measured 0.99 to 1.04 of the stampless build's throughput. Deferring the node until the first write was refused because it still claims and unlocks a cell.
+
+## 2026-10-09 A map's reserve is released on request without waiting
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
+
+Summary: `shared_map_release_reserve` frees the cells a map keeps for its next move of their size and answers their bytes. It only tries the map's own short lock and answers zero while a mover or a reclaim holds it, since its caller, a server over its memory limit, asks again on its next command; waiting would add a move to that command's latency.
+## 2026-10-09 A moved map keeps spare cells only of its current size
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, on the card asking whether the concurrent map should keep a moved table's spare cells only when they match the current table's size, recommended option A: "choose A" (translated); the same day the owner chose option A on Firn-wf's card counting the spare table in `heap_in_use`, which names this change.
+
+Summary: A map whose size holds steady still moves between two warm tables of one size (12 ms against 111 ms for 2^22 cells at four threads), but the cells a growing table leaves behind are half its size and would serve only a move back to that size, holding up to half a table of memory idle that firn's memory limit counts. `reclaim` now keeps the newest freed cells only when they match the current table's size and frees a spare of any other size. Keeping every newest freed table and freeing every host-mapped table are kept as rejected alternatives.
 ## 2026-10-09 Cross-context cancellation of host waits
 
 Nodes: compiler/completion-runtime, compiler/waiting-contexts, compiler/waiting-contexts/bounded-waits, language/system-interface/context-cancellation, language/system-interface/deadlines, language/system-interface/outcome-typing

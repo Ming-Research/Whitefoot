@@ -50,6 +50,7 @@ enum TableTake {
         record: IrRecord,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     },
     Hold {
@@ -179,6 +180,9 @@ impl IrBuilder<'_> {
                                     record,
                                     key,
                                     read,
+                                    // Guards keep the existing reservation until their watch is registered.
+                                    inserts: target.inserts
+                                        || guard_roots.iter().any(|r| r.binding == target.binding),
                                     stable_absence: targets.len() > 1,
                                 }
                             }
@@ -457,6 +461,7 @@ impl IrBuilder<'_> {
                             record,
                             key,
                             read,
+                            inserts,
                             stable_absence,
                         } => {
                             self.define(
@@ -466,6 +471,7 @@ impl IrBuilder<'_> {
                                     table: *table,
                                     key: *key,
                                     read: *read,
+                                    inserts: *inserts,
                                     stable_absence: *stable_absence,
                                 },
                             )?;

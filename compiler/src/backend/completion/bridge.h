@@ -100,7 +100,10 @@ void wf__completion_file_append_submit(
 void *wf__cancel_new(void);
 void wf__cancel_retain(void *source);
 void wf__cancel_release(void *source);
-void wf__cancel_fire(void *source);
+void *wf__cancel_state(void *source);
+void wf__cancel_fire_held(void *source);
+/* Start returns 3: retry context_wait on resume until it acquires the unit. */
+int wf__shared_start(void *object, void *operation);
 int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record);
 int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
                                                 uint64_t count, void *cancel, void *record);
@@ -440,6 +443,11 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, stru
                               uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *));
+/* Releases the cells a table keeps as its reserve for the next move of its
+ * size and returns their bytes, or 0 when it keeps none or another thread
+ * holds the table's own lock; it changes no entry and needs no hold
+ * [SHARE-1]. */
+uint64_t wf__keyed_table_release_reserve(void *table);
 
 /* One key: locks the entry, or reads it beside other readers when `read`
  * is nonzero, and returns its `Option<V>` slot, filled with zeros, `None`,
@@ -530,6 +538,9 @@ int wf__resident_bytes(uint64_t *bytes);
 unsigned wf__driver_index(void);
 void *wf__runtime_take(uint64_t bytes);
 void wf__runtime_give(void *block, uint64_t bytes);
+/* The size the pool grants a request of `bytes`, as the heap reading counts
+ * a live block of that request [PRE-2]. */
+uint64_t wf__runtime_granted(uint64_t bytes);
 void wf__runtime_yield(void);
 _Noreturn void wf__runtime_exhausted(void);
 

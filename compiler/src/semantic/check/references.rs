@@ -2110,7 +2110,16 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(self
             .state_path(place, bindings)?
             .into_iter()
-            .map(EffectPath::from)
+            .map(|path| EffectPath {
+                path,
+                // Keep this before state_path truncates a dynamic selector.
+                // Descendant covers cannot establish where a payload lies.
+                inside_payload: place
+                    .path
+                    .iter()
+                    .take_while(|step| !matches!(step, PlaceStep::Descendant(_)))
+                    .any(|step| matches!(step, PlaceStep::Payload { .. })),
+            })
             .collect())
     }
 

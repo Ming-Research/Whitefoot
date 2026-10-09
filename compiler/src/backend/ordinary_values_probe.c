@@ -901,7 +901,7 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
-    wf_value first, second, deadline, later, latest;
+    wf_instant first, second, deadline, later, latest;
     wf_sleep_result slept;
     wf__body_now(&first, &inputs->clock);
     wf__body_now(&second, &inputs->clock);
@@ -914,9 +914,9 @@ static void time_probe(wf_inputs *inputs) {
     assert(wf__body_instant_reached(&deadline, &later));
     assert(wf__body_nanoseconds_from(&second, &later) >= 2000000u);
     wf__body_instant_after(&latest, &later, UINT64_MAX);
-    assert(latest.words[0] == UINT64_MAX);
+    assert(latest.ticks == UINT64_MAX);
     wf__body_instant_after(&latest, &latest, 1u);
-    assert(latest.words[0] == UINT64_MAX);
+    assert(latest.ticks == UINT64_MAX);
     assert(!wf__body_instant_reached(&latest, &later));
     /* 2020-01-01T00:00:00Z. */
     assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
@@ -974,7 +974,7 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     wf_deadline expired;
     memset(&expired, 0, sizeof(expired));
     expired.tag = WF_OPTION_SOME;
-    expired.value.words[0] = 1;
+    expired.value.ticks = 1;
     open_listener(&opened, &factory, &inputs->stops);
     assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED);
     factory.words[0] = 1;

@@ -38,7 +38,7 @@ use super::*;
 use std::rc::Rc;
 /// Which term one evaluated value's [ENT-3] image is established on: the
 /// place a `let` binder introduces, the compiler-owned commit value of one
-/// `set` occurrence, or a checked integer conversion's private success
+/// `set` or `give` occurrence, or a checked integer conversion's private success
 /// payload [ENT-2, ENT-5].
 /// These destinations use the same admitted source image; a conditional
 /// payload interprets it only inside its own success context.
@@ -1674,7 +1674,8 @@ struct CarriedMeasures {
 impl Vocabulary {
     /// The [GIVE-1] carrier of one `give`: a direct non-consuming bare atom
     /// is its own carrier term, and a typed integer literal or integer-typed
-    /// named const is delivered through the give's evaluated value [ENT-5].
+    /// named const or computed integer uses the give's evaluated value.
+    /// Computed shapes still need an ENT-3 let source to form an image.
     pub(super) fn eligible_delivery_terms(
         &mut self,
         value: &CheckedExpression,
@@ -1697,7 +1698,14 @@ impl Vocabulary {
             | CheckedExpression::NamedConstant {
                 value: CheckedValue::Integer { .. },
                 ..
-            } => DeliveryCarrier::Constant,
+            } => DeliveryCarrier::Evaluated,
+            CheckedExpression::NumericConversion {
+                mode: CheckedConversionMode::Exact,
+                source: CheckedNumericType::Integer(_),
+                destination: CheckedNumericType::Integer(_),
+                ..
+            } => DeliveryCarrier::Evaluated,
+            _ if operation_shape(value).is_some() => DeliveryCarrier::Evaluated,
             _ => return None,
         };
         Some((carrier, fragment))
@@ -2892,33 +2900,43 @@ impl Analyzer<'_, '_> {
             fragment,
         ));
         // [ENT-5] a bare atom is its own carrier term. A literal or named
-        // const is first evaluated to the give's value v, at which
-        // [ENT-3.S5]'s literal row establishes `v = value(d)` exactly as at a
-        // `let`; the edge then delivers what `let v = d; give v;` delivers,
-        // the edge's own bounds on other terms included.
-        let (carrier_term, constant_facts) = match carrier {
+        // const or computed expression is bound to the give's value v by
+        // the ordinary let sources. The edge then delivers what
+        // `let v = d; give v;` delivers, including the edge's bounds on
+        // other terms. A shape with no admitted source forms no image.
+        let (carrier_term, evaluated_facts) = match carrier {
             DeliveryCarrier::Atom(atom) => (atom, None),
-            DeliveryCarrier::Constant => {
-                let constant = self
-                    .reasoning()
-                    .copy_source(value)
-                    .expect("a typed integer literal or named const reads as one constant term");
-                let given = self
-                    .vocabulary
-                    .given_value_term(context.statement, value)
-                    .expect("an eligible give delivers one fragment integer");
+            DeliveryCarrier::Evaluated => {
                 let mut facts = source.facts.clone();
-                self.vocabulary.establish_copy_equality(
+                let _ = self.establish_value_image(
                     context.statement,
-                    given,
-                    constant,
+                    ValueImage::Commit(context.statement),
+                    value,
                     &mut facts,
                     &mut None,
                 );
+                let given = self
+                    .vocabulary
+                    .interned_commit_value_term(context.statement, value);
+                // S7 establishes nothing at a contradictory point, so it
+                // need not have interned the given value. That edge still
+                // contributes a contradictory image, neutral at the join.
+                if given.is_none()
+                    && !self
+                        .delivery_closure(&facts, carrier, receiver)
+                        .contradictory()
+                {
+                    return ProofFlowState::default();
+                }
+                let given = given.unwrap_or_else(|| {
+                    self.vocabulary
+                        .given_value_term(context.statement, value)
+                        .expect("an eligible give delivers one fragment integer")
+                });
                 (given, Some(facts))
             }
         };
-        let carried = constant_facts.as_ref().unwrap_or(&source.facts);
+        let carried = evaluated_facts.as_ref().unwrap_or(&source.facts);
         let facts = self.delivery_closure(carried, carrier, receiver);
         let event = self
             .vocabulary
@@ -2986,7 +3004,7 @@ impl Analyzer<'_, '_> {
     /// The closed state one give edge reads its carrier's relations from.
     /// Every edge withholds the fresh receiver, including edges visited after
     /// an earlier give interned the same stable term: a bare atom's closure
-    /// excludes it, and a constant's given value, whose one new equality the
+    /// excludes it, and an evaluated value, whose new relations the
     /// ordinary closure inserts incrementally, relates to it only through its
     /// implicit bounds, which the edge skips [ENT-5].
     fn delivery_closure(
@@ -3003,7 +3021,7 @@ impl Analyzer<'_, '_> {
                 &mut self.vocabulary.derivations,
                 receiver,
             )),
-            DeliveryCarrier::Constant => close(
+            DeliveryCarrier::Evaluated => close(
                 facts,
                 &self.vocabulary.terms,
                 &self.vocabulary.goals,

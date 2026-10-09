@@ -1217,12 +1217,43 @@ struct wf_watch {
 _Static_assert(sizeof(wf_watch) == WF_WATCH_SIZE, "WF_WATCH_SIZE is a watch's size");
 _Static_assert(_Alignof(wf_watch) == WF_WATCH_ALIGN, "WF_WATCH_ALIGN is a watch's alignment");
 
-/* Sources and watches each retain one reference. A pending call
- * borrows its watch, so parking adds no reference-count traffic. */
+typedef struct wf_shared {
+    _Atomic uint64_t handles;
+    atomic_flag lock;
+    /* Set while a statement that cannot park borrows the hold an unlock
+     * handed a parked context, and once that context runs again and waits
+     * for the hold back, which ends the borrowing. */
+    _Atomic uint8_t borrowed;
+    _Atomic uint8_t claimed;
+    uint32_t watched;
+    _Atomic uint64_t holders;
+    wf_context *waiting_head;
+    wf_context *waiting_tail;
+    wf_watch_link *watching;
+    /* The parked context an unlock handed the object to, until it resumes
+     * and takes it. */
+    _Atomic(wf_context *) granted;
+    size_t pool_bytes;
+} wf_shared;
+
+/* Sources, watches and SharedRead views retain one ordinary shared object.
+ * Guard-visible Bool storage is protected by its unit. Host waits observe
+ * the atomic mirror, published in the same held false-to-true transition. */
 typedef struct wf_cancel {
-    _Atomic uint64_t references;
+    union {
+        wf_shared shared;
+        unsigned char header[WF_SHARED_STATE_OFFSET];
+    };
+    uint8_t visible_fired;
     _Atomic unsigned fired;
 } wf_cancel;
+_Static_assert(offsetof(wf_cancel, visible_fired) == WF_SHARED_STATE_OFFSET,
+               "CancelState.fired uses the ordinary shared-state address");
+/* The null watch's immutable state needs no allocation. Its permanent
+ * storage owns one reference, so ordinary view release never frees it. */
+static wf_cancel wf_never_state = {
+    .shared = { .handles = 1u, .lock = ATOMIC_FLAG_INIT }
+};
 
 /* A watch without a clock deadline uses the existing timer-slot fast exit
  * for cleanup: zero still means no wait bookkeeping at all. No heap entry
@@ -1971,31 +2002,34 @@ static void wf_drivers_notify_others(void) {
 }
 
 void *wf__cancel_new(void) {
-    wf_cancel *source = wf__runtime_take(sizeof(*source));
-    atomic_init(&source->references, 1u);
+    wf_cancel *source = wf__shared_new(sizeof(*source) - WF_SHARED_STATE_OFFSET);
+    source->visible_fired = 0u;
     atomic_init(&source->fired, 0u);
     return source;
 }
 
-void wf__cancel_retain(void *opaque) {
-    wf_cancel *source = opaque;
-    uint64_t count = atomic_load_explicit(&source->references, memory_order_relaxed);
-    do {
-        if (count == UINT64_MAX) wf__runtime_exhausted();
-    } while (!atomic_compare_exchange_weak_explicit(&source->references, &count,
-                count + 1u, memory_order_relaxed, memory_order_relaxed));
+void wf__cancel_retain(void *source) {
+    wf__shared_share(source);
 }
 
-void wf__cancel_release(void *opaque) {
-    wf_cancel *source = opaque;
-    if (source != NULL && atomic_fetch_sub_explicit(&source->references, 1u,
-                                                   memory_order_acq_rel) == 1u)
-        wf__runtime_give(source, sizeof(*source));
+void wf__cancel_release(void *source) {
+    if (source != NULL && wf__shared_release(source)) wf__shared_free(source);
 }
 
-void wf__cancel_fire(void *opaque) {
+void *wf__cancel_state(void *source) {
+    if (source == NULL) source = &wf_never_state;
+    wf__shared_share(source);
+    return source;
+}
+
+/* The waiting call's start selects the ordinary resumable acquisition path.
+ * Its finish runs while that unit is held, and releases before returning. */
+void wf__cancel_fire_held(void *opaque) {
     wf_cancel *source = opaque;
-    if (atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel)) return;
+    source->visible_fired = 1u;
+    unsigned fired = atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel);
+    wf__shared_unlock(source, 1u);
+    if (fired) return;
     atomic_fetch_add_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
     for (unsigned index = 0; index < count; ++index) {
@@ -2185,12 +2219,26 @@ static void wf_context_arm_deadline(wf_driver *driver, wf_context *self,
     }
 }
 
+/* A native waiting body may acquire one ordinary shared unit. Start returns
+ * 3 so its emitted continuation retries after each wake, just like an atomic
+ * acquisition; finish receives the hold and must release it without waiting.
+ * This record is never submitted to a host adapter or linked as a host wait. */
+int wf__shared_start(void *object, void *operation) {
+    wf_completion_record *record = operation;
+    record->route = WF_COMPLETION_ROUTE_SHARED;
+    record->request.operation.shared = object;
+    return 3;
+}
+
 int wf__context_wait(void *operation, void *frame) {
     wf_context *self = wf_context_current;
     wf_driver *driver = wf_driver_self;
     wf_completion_record *record = (wf_completion_record *)operation;
     if (self == NULL || frame == NULL || driver == NULL) {
         wf_bridge_fail("a host operation waited outside every context");
+    }
+    if (record->route == WF_COMPLETION_ROUTE_SHARED) {
+        return wf__shared_acquire(record->request.operation.shared, 1u, frame);
     }
     if (record->route == WF_COMPLETION_ROUTE_READINESS) {
         const wf_file_request *request = &record->request;
@@ -2676,24 +2724,7 @@ int wf__watch_park(void *watch_frame, void *frame) {
  * once it runs again it waits only for the borrower under way.  The watches
  * of guards that read the object sit on `watching`, `watched` of them (the
  * guard-watch section), until a statement that writes the object ends. */
-typedef struct wf_shared {
-    _Atomic uint64_t handles;
-    atomic_flag lock;
-    /* Set while a statement that cannot park borrows the hold an unlock
-     * handed a parked context, and once that context runs again and waits
-     * for the hold back, which ends the borrowing. */
-    _Atomic uint8_t borrowed;
-    _Atomic uint8_t claimed;
-    uint32_t watched;
-    _Atomic uint64_t holders;
-    wf_context *waiting_head;
-    wf_context *waiting_tail;
-    wf_watch_link *watching;
-    /* The parked context an unlock handed the object to, until it resumes
-     * and takes it. */
-    _Atomic(wf_context *) granted;
-    size_t pool_bytes;
-} wf_shared;
+
 _Static_assert(
     sizeof(wf_shared) <= WF_SHARED_STATE_OFFSET,
     "a shared object's header must end before its state"
@@ -2736,6 +2767,13 @@ void *wf__runtime_take(uint64_t bytes) {
 
 void wf__runtime_give(void *block, uint64_t bytes) {
     wf_pool_give(block, wf_pool_granted((size_t)bytes));
+}
+
+uint64_t wf__runtime_granted(uint64_t bytes) {
+    if (bytes > SIZE_MAX) {
+        wf_context_exhausted();
+    }
+    return (uint64_t)wf_pool_granted((size_t)bytes);
 }
 
 void wf__runtime_yield(void) {
