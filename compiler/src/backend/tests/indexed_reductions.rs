@@ -815,3 +815,234 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
     assert!(report.contains(&expected), "{expected}{report}");
     std::fs::remove_dir_all(directory).expect("remove nested artifacts");
 }
+
+const EXTENDED_FORMS: &str = r#"fn measured() -> made: Box<Array<u64>> pure {
+  doc "Read the unchanged descriptor inside every colliding update.";
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 5_u64);
+  for (i in 0_u64..262144_u64) {
+    let bucket = i % 5_u64;
+    if bucket < cells.inner.len {
+      set cells.inner[bucket] = cells.inner[bucket] +wrap 1_u64;
+    }
+  }
+  return move cells;
+}
+
+fn temporaries() -> made: Box<Array<u64>> pure {
+  doc "A commuted one-step update crosses unrelated work before its store.";
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 5_u64);
+  for (i in 0_u64..262144_u64) {
+    let bucket = i % 5_u64;
+    let updated = 2_u64 +wrap cells.inner[bucket];
+    let unrelated = i +wrap 3_u64;
+    set cells.inner[bucket] = updated;
+  }
+  return move cells;
+}
+
+fn indexed_saturation() -> made: Box<Array<u32>> pure {
+  doc "Each quarter sums to 1310720000; only combining quarters saturates.";
+  let cells = box_array_filled::<u32>(count: 2_u64, value: 7_u32);
+  for (i in 0_u64..262144_u64) {
+    set cells.inner[0_u64] = cells.inner[0_u64] +sat 20000_u32;
+  }
+  return move cells;
+}
+
+fn scalar_saturation() -> result: u32 pure {
+  doc "The same cross-leaf clamp applies to a scalar accumulator.";
+  let total = 7_u32;
+  for (i in 0_u64..262144_u64) {
+    set total = 20000_u32 +sat total;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check literal counts, untouched cells, and the mathematical clamped sum.";
+  let measured_cells = measured();
+  let temporary_cells = temporaries();
+  let saturated_cells = indexed_saturation();
+  let saturated_scalar = scalar_saturation();
+  let measured_len = measured_cells.inner.len;
+  let temporary_len = temporary_cells.inner.len;
+  let saturated_len = saturated_cells.inner.len;
+  if measured_len != 8_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  if temporary_len != 8_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if saturated_len != 2_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected_measure = 5_u64;
+    let expected_temporary = 5_u64;
+    if cell < 4_u64 {
+      set expected_measure = 52434_u64;
+      set expected_temporary = 104863_u64;
+    } else if cell == 4_u64 {
+      set expected_measure = 52433_u64;
+      set expected_temporary = 104861_u64;
+    }
+    if measured_cells.inner[cell] != expected_measure {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if temporary_cells.inner[cell] != expected_temporary {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  if saturated_cells.inner[0_u64] != 4294967295_u32 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if saturated_cells.inner[1_u64] != 7_u32 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if saturated_scalar != 4294967295_u32 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn extended_forms_lower_to_private_ranges_and_unsigned_saturating_combines() {
+    let module = emit_with_overlap(EXTENDED_FORMS.as_bytes());
+    for name in ["measured", "temporaries", "indexed_saturation"] {
+        let body = super::emitted_body(&module, name);
+        for expected in [
+            ".allocation = call ptr @wf__heap_take",
+            ".fill.head:",
+            ".combine.head:",
+            "call void @wf__heap_give(ptr %indexed.",
+        ] {
+            assert!(
+                body.contains(expected),
+                "{name}: missing {expected}:\n{body}"
+            );
+        }
+    }
+    let indexed = super::emitted_body(&module, "indexed_saturation");
+    assert!(indexed.contains("store i32 0, ptr %indexed."), "{indexed}");
+    assert!(
+        indexed.contains("= call i32 @llvm.uadd.sat.i32(i32 %indexed."),
+        "{indexed}"
+    );
+    assert!(!emit(EXTENDED_FORMS.as_bytes()).contains("%indexed."));
+}
+
+#[test]
+fn extended_forms_execute_forced_splits_against_literal_oracles() {
+    let directory = test_directory();
+    let executable = observed_executable(
+        EXTENDED_FORMS,
+        &[
+            "measured",
+            "temporaries",
+            "indexed_saturation",
+            "scalar_saturation",
+        ],
+        &directory,
+    );
+    let report = run_observed(&executable, false);
+    assert!(
+        report.contains("indexed allocations=3 leaves=16\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=4,4,4,4,0,0,0,0\n"),
+        "{report}"
+    );
+    let report = run_observed(&executable, true);
+    assert!(
+        report.contains("indexed allocations=0 leaves=4\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=1,1,1,1,0,0,0,0\n"),
+        "{report}"
+    );
+    std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");
+}
+
+const MARKS_FIELDS: &str =
+    include_str!("../../../../tests/programs/parallel/indexed_marks_fields.wf");
+
+#[test]
+fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
+    let module = emit_with_overlap(MARKS_FIELDS.as_bytes());
+    for function in ["marks_one", "marks_zero", "marks_bool"] {
+        let body = super::emitted_body(&module, function);
+        assert!(body.contains("store i1 0, ptr %indexed."), "{body}");
+        assert!(body.contains(".merged = or i1"), "{body}");
+        assert!(body.contains(".is_private = or i1"), "{body}");
+    }
+    let fields = super::emitted_body(&module, "field_values");
+    assert_eq!(
+        fields.matches(".allocation = call ptr @wf__heap_take").count(),
+        2
+    );
+    assert!(fields.contains(".field = select i1"), "{fields}");
+    assert!(fields.contains(".stride = select i1"), "{fields}");
+    assert!(!emit(MARKS_FIELDS.as_bytes()).contains("%indexed."));
+    let directory = test_directory();
+    let names = [
+        "marks_one",
+        "marks_zero",
+        "marks_bool",
+        "field_values",
+        "nested_families",
+    ];
+    let executable = build_linked_executable(
+        &observed_with(&module, &names),
+        Some(OBSERVER),
+        &[],
+        &directory,
+    );
+    let report = run_observed(&executable, false);
+    assert!(
+        report.contains("indexed allocations=22 leaves=36\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=4,4,4,4,20,0,0,0\n"),
+        "{report}"
+    );
+    let report = run_observed(&executable, true);
+    assert!(
+        report.contains("indexed allocations=0 leaves=9\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=1,1,1,1,5,0,0,0\n"),
+        "{report}"
+    );
+    std::fs::remove_dir_all(directory).expect("remove mark/field native artifacts");
+}
+
+#[test]
+fn indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs() {
+    let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
+    let module = emit_with_overlap(source);
+    let directory = test_directory();
+    let executable = build_linked_executable(
+        &observed_with(&module, &["reduce"]),
+        Some(OBSERVER),
+        &[],
+        &directory,
+    );
+    for fail in ["1", "2"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", "4")
+            .env("WF_TEST_FAIL", fail)
+            .bounded_output()
+            .expect("run field slab acquisition failure");
+        assert_eq!(
+            output.status.code(),
+            Some(90),
+            "allocation {fail}: {output:?}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("remove field acquisition artifacts");
+}
