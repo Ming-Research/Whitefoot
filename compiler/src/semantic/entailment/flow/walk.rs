@@ -763,6 +763,9 @@ impl Analyzer<'_, '_> {
                 true
             }
             CheckedStatement::Proof(proof) => {
+                // Range premises join the later range problem, but they still
+                // make this a written certificate for PRF-1's AUTO judgment.
+                let certificate_written = !proof.uses.is_empty();
                 let ordinary_proof;
                 let proof = if proof
                     .uses
@@ -897,7 +900,7 @@ impl Analyzer<'_, '_> {
                 // disposition. [PRF-1] instead judges a written certificate's
                 // redundancy by AUTO alone: Step 6 may prove a target without
                 // making its explicitly written certificate redundant.
-                let (target_right, partner_right) = if proof.uses.is_empty() {
+                let (target_right, partner_right) = if !certificate_written {
                     (
                         self.reasoning()
                             .checked_affine_right_term(&proof.target.right),
@@ -908,7 +911,7 @@ impl Analyzer<'_, '_> {
                     (None, None)
                 };
                 let target_goal = |inequality, right| {
-                    if proof.uses.is_empty() {
+                    if !certificate_written {
                         ProofGoal::Affine { inequality, right }
                     } else {
                         ProofGoal::AutomaticAffine { inequality }
@@ -932,12 +935,12 @@ impl Analyzer<'_, '_> {
                             .disposition
                             == ProofDisposition::Proved
                     }));
-                let redundant = !proof.uses.is_empty() && target_proved;
+                let redundant = certificate_written && target_proved;
                 // [MSR-4] a blockless target no step discharged is refuted
                 // when the entering context derives the negation of one of
                 // its bounds.
                 let target_refuted =
-                    proof.uses.is_empty() && !target_proved && target_failure.is_none() && {
+                    !certificate_written && !target_proved && target_failure.is_none() && {
                         let mut members = vec![(target.clone(), target_right, partner_right)];
                         if partner_written {
                             members.push((partner.clone(), partner_right, target_right));
@@ -1062,7 +1065,7 @@ impl Analyzer<'_, '_> {
                         .collect(),
                     source_ordinal,
                     name: proof.name.clone(),
-                    certificate_written: !proof.uses.is_empty(),
+                    certificate_written,
                     check,
                 });
                 true

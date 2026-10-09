@@ -995,6 +995,28 @@ fn an_auto_provable_target_rejects_its_whole_use_block_as_redundant() {
 }
 
 #[test]
+fn a_range_use_still_makes_an_auto_provable_target_redundant() {
+    let source = format!(
+        r#"fn bounded(order: &[u64], limit: u64) -> result: u64 reads(order) contract {{
+  requires forall small(k in 0_u64..order^.len): order^[k] < limit;
+}} {{
+  let count = order^.len;
+  invariant upper_bound: count <= count {{
+    use small(count);
+  }}
+  return count;
+}}
+
+{COMMAND_MAIN}"#
+    );
+    assert_prf1_issue(
+        source.as_bytes(),
+        SourceProofObligation::RedundantUseBlock,
+        ExpectedProofIssueNode::Invariant,
+    );
+}
+
+#[test]
 fn repeated_normalized_uses_require_one_explicit_multiplier() {
     let source = format!(
         r#"fn combine(value: u64, limit: u64) -> result: unit pure contract {{
