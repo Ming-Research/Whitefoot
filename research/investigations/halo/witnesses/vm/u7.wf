@@ -55,7 +55,6 @@ fn run(ops: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, base0: u64, room: u64) -> r
       }
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: ExitStatus pure {

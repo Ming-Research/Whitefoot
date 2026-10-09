@@ -83,7 +83,6 @@ fn repeat(op: Op, limit: u64) -> out: u64 pure {
       }
     }
   }
-  return acc;
 }
 "#;
 
