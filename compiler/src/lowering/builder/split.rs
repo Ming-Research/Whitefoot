@@ -393,10 +393,9 @@ impl<'program> IrBuilder<'program> {
             .map(|(family, _, _)| family)
             .chain(&self.indexed_block_families)
         {
-            if let Some(family) = indexed_roots
-                .iter_mut()
-                .find(|family| family.root == root.root && family.fields == root.fields)
-            {
+            if let Some(family) = indexed_roots.iter_mut().find(|family| {
+                self.same_indexed_root(&family.root, &root.root) && family.fields == root.fields
+            }) {
                 for call in &root.calls {
                     if !family.calls.contains(call) {
                         family.calls.push(call.clone());
@@ -435,9 +434,10 @@ impl<'program> IrBuilder<'program> {
             let binding = root
                 .binding()
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;
-            let owner = block_owners.iter().find(|owner| {
-                owner.root == family.root.root && family.root.path.starts_with(&owner.path)
-            });
+            let owner = block_owners
+                .iter()
+                .filter(|owner| self.indexed_block_contains(owner, &family.root))
+                .min_by_key(|owner| owner.place.path.len());
             let block = owner.is_some();
             let (capture, private) = if let Some((_, capture, private)) = block_captures
                 .iter()
@@ -445,21 +445,35 @@ impl<'program> IrBuilder<'program> {
             {
                 (*capture, *private)
             } else {
+                let storage_index = if block {
+                    indexed_roots
+                        .iter()
+                        .position(|candidate| self.indexed_owner(candidate).ok().as_ref() == owner)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                } else {
+                    index
+                };
                 let capture = captures.len();
                 captures.push(Capture {
                     binding,
                     ty: IrType::Range { element },
                     reconstruction: if block {
-                        CaptureReconstruction::IndexedBlock { index }
+                        CaptureReconstruction::IndexedBlock {
+                            index: storage_index,
+                        }
                     } else {
-                        CaptureReconstruction::IndexedRoot { index }
+                        CaptureReconstruction::IndexedRoot {
+                            index: storage_index,
+                        }
                     },
                 });
                 let private = captures.len();
                 captures.push(Capture {
                     binding,
                     ty: IrType::Bool,
-                    reconstruction: CaptureReconstruction::IndexedPrivate { index },
+                    reconstruction: CaptureReconstruction::IndexedPrivate {
+                        index: storage_index,
+                    },
                 });
                 if let Some(owner) = owner {
                     block_captures.push((owner.clone(), capture, private));
@@ -467,19 +481,21 @@ impl<'program> IrBuilder<'program> {
                 (capture, private)
             };
             if let Some(reduction) = permission.indexed.get(index) {
-                let count =
-                    if let Some((_, count)) = counts.iter().find(|(source, _)| source == root) {
-                        *count
-                    } else {
-                        let count = captures.len();
-                        captures.push(Capture {
-                            binding,
-                            ty: U64,
-                            reconstruction: CaptureReconstruction::IndexedCount { index },
-                        });
-                        counts.push((root.clone(), count));
-                        count
-                    };
+                let count = if let Some((_, count)) = counts
+                    .iter()
+                    .find(|(source, _)| self.same_indexed_root(source, root))
+                {
+                    *count
+                } else {
+                    let count = captures.len();
+                    captures.push(Capture {
+                        binding,
+                        ty: U64,
+                        reconstruction: CaptureReconstruction::IndexedCount { index },
+                    });
+                    counts.push((root.clone(), count));
+                    count
+                };
                 let value_type = super::lower_type(self.erasure, reduction.value_type)?;
                 let kind = match &reduction.kind {
                     crate::semantic::IndexedFamilyKind::Reduce { op } => {
@@ -508,7 +524,13 @@ impl<'program> IrBuilder<'program> {
                     root: if let Some(owner) = owner {
                         Some(crate::ir::IrIndexedRoot {
                             block_type: owner.ty,
-                            fields: family.root.path[owner.path.len()..]
+                            fields: self
+                                .indexed_block_fields(
+                                    owner,
+                                    &self
+                                        .indexed_place(family.root.root, &family.root.path)
+                                        .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                                )?
                                 .iter()
                                 .map(|step| match step {
                                     crate::semantic::CheckedPlaceStep::Field(field) => Ok(*field),
@@ -710,7 +732,8 @@ impl<'program> IrBuilder<'program> {
         ty: Option<IrType>,
     ) -> Result<IrValueId, LoweringFailure> {
         if let Some((_, slice, _)) = self.indexed_roots.iter().rev().find(|(candidate, _, _)| {
-            candidate.root == family.root && candidate.fields == family.fields
+            self.same_indexed_root(&candidate.root, &family.root)
+                && candidate.fields == family.fields
         }) {
             return Ok(*slice);
         }
@@ -736,7 +759,8 @@ impl<'program> IrBuilder<'program> {
         family: &crate::semantic::IndexedReduction,
     ) -> Result<IrValueId, LoweringFailure> {
         if let Some((_, _, private)) = self.indexed_roots.iter().rev().find(|(candidate, _, _)| {
-            candidate.root == family.root && candidate.fields == family.fields
+            self.same_indexed_root(&candidate.root, &family.root)
+                && candidate.fields == family.fields
         }) {
             return Ok(*private);
         }
@@ -827,6 +851,7 @@ impl<'program> IrBuilder<'program> {
             self.overlap,
             self.function_name,
         )?;
+        builder.places.clone_from(&self.places);
         builder
             .readonly_atomic_roots
             .clone_from(&self.readonly_atomic_roots);
@@ -937,10 +962,11 @@ impl<'program> IrBuilder<'program> {
             });
         }
         for family in indexed_roots {
-            if builder.indexed_blocks.iter().any(|block| {
-                block.owner.root == family.root.root
-                    && family.root.path.starts_with(&block.owner.path)
-            }) {
+            if builder
+                .indexed_blocks
+                .iter()
+                .any(|block| builder.indexed_block_contains(&block.owner, &family.root))
+            {
                 builder.indexed_block_families.push(family.clone());
                 let slice = builder.indexed_capture(family, None)?;
                 let private =

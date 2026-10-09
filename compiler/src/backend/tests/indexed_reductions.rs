@@ -84,6 +84,43 @@ fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() 
 }
 
 #[test]
+fn indexed_aliases_execute_one_private_storage_per_resolved_root() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    let directory = test_directory();
+    let executable = observed_executable(
+        source,
+        &["calls", "direct", "fields_reversed", "fields", "mixed"],
+        &directory,
+    );
+    for zero in [false, true] {
+        let report = run_observed(&executable, zero);
+        if zero {
+            assert!(
+                report.contains("indexed allocations=0 leaves=5\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=1,1,1,1,1,0,0,0\n"),
+                "{report}"
+            );
+        } else {
+            // One dense family allocation, plus four root directories each
+            // with four leaf blocks. Aliased sibling fields share a block.
+            assert!(
+                report.contains("indexed allocations=21 leaves=20\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=4,4,4,4,4,0,0,0\n"),
+                "{report}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("remove alias observer artifacts");
+}
+
+#[test]
 fn indexed_ir_contains_private_fill_ordered_combine_and_release() {
     let module = emit_with_overlap(PROGRAM);
     for expected in [
@@ -1028,16 +1065,16 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=4,4,4,4,0,0,0,0\n"),
+        report.contains("indexed loops=4,4,4,4,4,0,0,0\n"),
         "{report}"
     );
     let report = run_observed(&executable, true);
     assert!(
-        report.contains("indexed allocations=0 leaves=4\n"),
+        report.contains("indexed allocations=0 leaves=5\n"),
         "{report}"
     );
     assert!(
-        report.contains("indexed loops=1,1,1,1,0,0,0,0\n"),
+        report.contains("indexed loops=1,1,1,1,1,0,0,0\n"),
         "{report}"
     );
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");

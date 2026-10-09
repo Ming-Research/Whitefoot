@@ -157,7 +157,8 @@ private storage until every splitter call joins, and the outlined body only
 borrows its assigned cells. Nested outlined loops transport the enclosing
 private root mappings through their captures.
 
-Each family uses one allocation containing one dense cell range per leaf,
+For roots without call-updated families, each family uses one allocation
+containing one dense cell range per leaf,
 identity-filled for reductions or false-filled for marks. The recursive
 splitter halves those ranges with its iteration range. After the join,
 reductions visit flat cell offsets in leaf order followed by cell order;
@@ -423,14 +424,15 @@ with payload, or reads of partial results; they stay outside this rule.
 ### Lowering
 
 A call passes a reference, so its callee indexes a private copy by the
-root's own logical indices and may read its measures. For a family that some
-call in the loop updates, each leaf's private storage is therefore a block
+root's own logical indices and may read its measures. If any family of a root
+has a call update, every family of that root shares one block per leaf
 with the root's storage shape and element stride, carrying the root's
 measures, with identity in the family's cells; the leaf passes a reference to
 its own block. A constant mark fills its cells with a sentinel that differs
 from the constant (the constant with its lowest bit inverted), since the
 callee writes only the constant there; the join stores the constant where a
-leaf's cell holds it. Families no call updates keep the dense private slabs.
+leaf's cell holds it. Roots without call-updated families keep dense
+per-family private slabs.
 
 ### Criterion
 
@@ -461,4 +463,3 @@ intends. Record: Snowghost-wf revision `4a9258b`,
 `research/investigations/storage-layout/par-classification/g-indexed-exp68.md`
 (check run 37904741220, report run 37904741267, both on `28f6ae7`). The
 count measures permission only, not runtime overlap or speed.
-

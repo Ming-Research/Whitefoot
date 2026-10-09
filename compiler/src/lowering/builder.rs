@@ -471,6 +471,11 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    if overlap == OverlapLowering::On {
+        builder.places = Some(std::rc::Rc::new(
+            crate::semantic::CheckedPlaceMap::for_function(function),
+        ));
+    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -751,6 +756,8 @@ struct IrBuilder<'program> {
     /// Indexed families, their current ranges, and source/private storage modes.
     indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
     indexed_blocks: Vec<indexed::BlockBinding>,
+    /// The checker's resolved origins, shared by this body and its chunks.
+    places: Option<std::rc::Rc<crate::semantic::CheckedPlaceMap>>,
     indexed_block_families: Vec<crate::semantic::IndexedReduction>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
@@ -820,6 +827,7 @@ impl<'program> IrBuilder<'program> {
             capture_write_contexts: Vec::new(),
             indexed_roots: Vec::new(),
             indexed_blocks: Vec::new(),
+            places: None,
             indexed_block_families: Vec::new(),
             records: 0,
         };

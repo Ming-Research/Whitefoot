@@ -3847,3 +3847,103 @@ fn indexed_summary_cache_reuses_successes_and_cycle_denials_per_parameter() {
         });
     }
 }
+
+#[test]
+fn indexed_helper_aliases_require_one_operation_per_resolved_family() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/par2-neg-indexed-helper-aliased-operations.wf"
+    );
+    let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
+        panic!("expected the indexed-family condition");
+    };
+    assert!(
+        reason.contains("one fixed operation or one constant"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn indexed_direct_aliases_require_one_operation_per_resolved_family() {
+    // The old separate-family accounting denied these direct updates by
+    // counting both ordinary reads against each family's single update.
+    let source = include_str!(
+        "../../../../tests/conformance/cases/par2-neg-indexed-helper-aliased-operations.wf"
+    )
+    .replace(
+        "add_one(p: first);",
+        "set first^[0_u64] = first^[0_u64] +wrap 1_u64;",
+    )
+    .replace(
+        "double_cell(p: second);",
+        "set second^[0_u64] = second^[0_u64] *wrap 2_u64;",
+    );
+    let LoopDenial::IndexedReduction { reason, .. } = denied(source.as_bytes(), "reduce", 1) else {
+        panic!("expected the indexed-family condition");
+    };
+    assert!(
+        reason.contains("one fixed operation or one constant"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn indexed_helper_aliases_cannot_hide_ordinary_root_occurrences() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/par2-neg-indexed-helper-aliased-read.wf"
+    );
+    let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
+        panic!("expected the indexed-family condition");
+    };
+    assert!(reason.contains("every occurrence"), "{reason}");
+}
+
+#[test]
+fn indexed_compatible_aliases_share_families_and_allow_disjoint_fields() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    let table = permission_of(source);
+    for (name, families, calls) in [
+        ("calls", 1, 2),
+        ("direct", 1, 0),
+        ("fields", 2, 1),
+        ("fields_reversed", 2, 1),
+        ("mixed", 1, 1),
+    ] {
+        let judged = only_loop(&table, name);
+        assert_eq!(
+            judged.verdict,
+            LoopVerdict::PermittedEligible,
+            "{name}: {judged:?}"
+        );
+        assert_eq!(judged.indexed.len(), families, "{name}");
+        assert_eq!(
+            judged
+                .indexed
+                .iter()
+                .map(|family| family.calls.len())
+                .sum::<usize>(),
+            calls,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn indexed_aliased_roots_require_identical_or_disjoint_resolved_places() {
+    let source = include_str!(
+        "../../../../tests/conformance/cases/par2-neg-indexed-helper-aliased-operations.wf"
+    ).replace("fn reduce() -> result: u64 pure {", "fn reduce(choice: u64) -> result: u64 pure contract {\n  requires choice < 2_u64;\n} {")
+     .replace("let cells = array_filled::<u64, 1>(value: 1_u64);", "let seed = array_filled::<u64, 1>(value: 1_u64);\n  let cells = array_filled::<Array<u64, 1>, 2>(value: seed);")
+     .replace("let first = &cells;", "let first = &cells[0_u64];")
+     .replace("let second = first;", "let second = &cells[choice];")
+     .replace("double_cell(p: second);", "add_one(p: second);")
+     .replace("return cells[0_u64];", "return cells[0_u64][0_u64];")
+     .replace("let observed = reduce();", "let observed = reduce(choice: 0_u64);");
+    let LoopDenial::IndexedReduction { reason, .. } = denied(source.as_bytes(), "reduce", 1) else {
+        panic!("expected the indexed-family condition");
+    };
+    assert!(
+        reason.contains("one fixed resolved storage path"),
+        "{reason}"
+    );
+}

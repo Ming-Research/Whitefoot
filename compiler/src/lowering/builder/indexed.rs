@@ -1,14 +1,27 @@
 //! Borrowed root-shaped storage shared by a leaf's indexed families.
 
 use super::*;
-use crate::semantic::{CheckedContainerRoot, CheckedPlaceStep, IndexedReduction};
+use crate::semantic::{
+    CheckedContainerRoot, CheckedPlaceStep, CheckedResolvedPlace, CheckedResolvedStep,
+    IndexedReduction,
+};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(super) struct BlockOwner {
-    pub root: crate::semantic::CheckedPlaceRoot,
+    pub place: CheckedResolvedPlace,
     pub path: Vec<CheckedPlaceStep>,
     pub ty: IrType,
 }
+
+impl PartialEq for BlockOwner {
+    fn eq(&self, other: &Self) -> bool {
+        self.ty == other.ty
+            && self.place.path.len() == other.place.path.len()
+            && self.place.contains(&other.place)
+    }
+}
+
+impl Eq for BlockOwner {}
 
 pub(super) struct BlockBinding {
     pub owner: BlockOwner,
@@ -17,6 +30,67 @@ pub(super) struct BlockBinding {
 }
 
 impl IrBuilder<'_> {
+    pub(super) fn indexed_place(
+        &self,
+        root: crate::semantic::CheckedPlaceRoot,
+        path: &[CheckedPlaceStep],
+    ) -> Option<CheckedResolvedPlace> {
+        let steps = path
+            .iter()
+            .map(CheckedPlaceStep::place_step)
+            .collect::<Vec<_>>();
+        let places = self.places.as_ref()?.resolve(root, &steps);
+        let [place] = places.as_slice() else {
+            return None;
+        };
+        Some(place.clone())
+    }
+
+    pub(super) fn same_indexed_root(
+        &self,
+        left: &CheckedContainerRoot,
+        right: &CheckedContainerRoot,
+    ) -> bool {
+        matches!(
+            (self.indexed_place(left.root, &left.path), self.indexed_place(right.root, &right.path)),
+            (Some(left), Some(right)) if left.path.len() == right.path.len() && left.contains(&right)
+        )
+    }
+
+    pub(super) fn indexed_block_contains(
+        &self,
+        owner: &BlockOwner,
+        root: &CheckedContainerRoot,
+    ) -> bool {
+        self.indexed_place(root.root, &root.path)
+            .is_some_and(|place| {
+                owner.place.contains(&place)
+                    && place.path[owner.place.path.len()..]
+                        .iter()
+                        .all(|step| matches!(step, CheckedResolvedStep::Field(_)))
+            })
+    }
+
+    /// Below a root-shaped block, stored families and inline ancestors use
+    /// only field steps. Their resolved suffix survives reference aliases
+    /// whose written path starts at a different depth.
+    pub(super) fn indexed_block_fields(
+        &self,
+        owner: &BlockOwner,
+        place: &CheckedResolvedPlace,
+    ) -> Result<Vec<CheckedPlaceStep>, LoweringFailure> {
+        if !owner.place.contains(place) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        place.path[owner.place.path.len()..]
+            .iter()
+            .map(|step| match step {
+                CheckedResolvedStep::Field(field) => Ok(CheckedPlaceStep::Field(*field)),
+                _ => Err(LoweringFailure::InvalidCheckedProgram),
+            })
+            .collect()
+    }
+
     /// Inline fields belong to their nearest owning block. Keeping the
     /// enclosing fixed aggregate preserves references to those fields too.
     pub(super) fn indexed_owner(
@@ -46,7 +120,9 @@ impl IrBuilder<'_> {
             ty = self.indexed_step(ty, step)?.1;
         }
         Ok(BlockOwner {
-            root: family.root.root,
+            place: self
+                .indexed_place(family.root.root, &family.root.path[..prefix])
+                .ok_or(LoweringFailure::InvalidCheckedProgram)?,
             path: family.root.path[..prefix].to_vec(),
             ty,
         })
@@ -123,18 +199,27 @@ impl IrBuilder<'_> {
         &mut self,
         place: &CheckedContainerRoot,
     ) -> Result<Option<IrValueId>, LoweringFailure> {
+        let Some(base) = self.indexed_place(place.root, &[]) else {
+            return Ok(None);
+        };
+        let Some(resolved) = self.indexed_place(place.root, &place.path) else {
+            return Ok(None);
+        };
         let found = self
             .indexed_blocks
             .iter()
             .rev()
-            .find(|binding| {
-                binding.owner.root == place.root && place.path.starts_with(&binding.owner.path)
-            })
-            .map(|binding| (binding.address, binding.owner.path.len()));
-        if let Some((address, prefix)) = found {
-            return self
-                .project_address_path(address, &place.path[prefix..])
-                .map(Some);
+            .find(|binding| binding.owner.place.contains(&resolved))
+            .map(|binding| (binding.address, binding.owner.clone()));
+        if let Some((address, owner)) = found {
+            let path = if owner.place.path.len() <= base.path.len() {
+                let mut path = self.indexed_block_fields(&owner, &base)?;
+                path.extend_from_slice(&place.path);
+                path
+            } else {
+                place.path[owner.place.path.len() - base.path.len()..].to_vec()
+            };
+            return self.project_address_path(address, &path).map(Some);
         }
         Ok(None)
     }
@@ -151,23 +236,24 @@ impl IrBuilder<'_> {
                 if mapping.call != *call || mapping.argument != argument {
                     continue;
                 }
-                let owner = self.indexed_owner(&family)?;
                 let Some(binding) = self
                     .indexed_blocks
                     .iter()
                     .rev()
-                    .find(|binding| binding.owner == owner)
+                    .find(|binding| self.indexed_block_contains(&binding.owner, &family.root))
                 else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
-                let suffix = &family.root.path[owner.path.len()..];
-                // Substitute the checked callee-to-root path. The caller may
-                // spell the actual through a reference alias, so its written
-                // path depth is not the actual's resolved path depth.
-                let Some(depth) = mapping.callee_root.path.len().checked_sub(suffix.len()) else {
-                    let inside = suffix.len() - mapping.callee_root.path.len();
-                    return self.project_address_path(binding.address, &suffix[..inside]);
-                };
+                let owner = binding.owner.clone();
+                let address = binding.address;
+                if owner.place.contains(&mapping.actual) {
+                    let path = self.indexed_block_fields(&owner, &mapping.actual)?;
+                    return self.project_address_path(address, &path);
+                }
+                if !mapping.actual.contains(&owner.place) {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                }
+                let depth = owner.place.path.len() - mapping.actual.path.len();
                 let IrType::Address(referent) = self.value_type(original)? else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
@@ -182,7 +268,7 @@ impl IrBuilder<'_> {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
                 let replacement = crate::ir::IrIndexedRootReference {
-                    block: binding.address,
+                    block: address,
                     path,
                 };
                 if !roots.contains(&replacement) {

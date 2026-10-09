@@ -3240,3 +3240,106 @@ fn calls_to(program: &IrProgram, caller: &IrFunction, names: &[&str]) -> Vec<IrV
         })
         .collect()
 }
+
+#[test]
+fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+    let source =
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for (name, count, blocked) in [
+            ("calls", 1, true),
+            ("direct", 1, false),
+            ("fields", 2, true),
+            ("fields_reversed", 2, true),
+            ("mixed", 1, true),
+        ] {
+            let parent = function(program, name);
+            let (chunk, families) = parent
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { chunk, indexed, .. },
+                        ..
+                    } if !indexed.is_empty() => Some((*chunk, indexed)),
+                    _ => None,
+                })
+                .expect("compatible aliases must split");
+            assert_eq!(families.len(), count, "{name}");
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.root.is_some() == blocked),
+                "{name}"
+            );
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.capture == families[0].capture),
+                "{name}: one storage capture"
+            );
+            assert!(
+                families
+                    .iter()
+                    .all(|family| family.count == families[0].count),
+                "{name}: one resolved root length"
+            );
+            let chunk = &program.functions()[chunk as usize];
+            let definitions = chunk
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result, operation, ..
+                    } => Some((*result, operation)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if name == "calls" {
+                let blocks = definitions
+                    .iter()
+                    .filter_map(|(result, operation)| {
+                        matches!(operation, IrOperation::IndexedBlock { .. }).then_some(*result)
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(blocks.len(), 1);
+                let arguments = definitions
+                    .iter()
+                    .filter_map(|(_, operation)| match operation {
+                        IrOperation::Call {
+                            function,
+                            arguments,
+                        } if program.functions()[*function as usize].name() == "add_one" => {
+                            Some(arguments[0])
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    arguments,
+                    vec![blocks[0], blocks[0]],
+                    "both aliases call with the same private block"
+                );
+            } else if name == "direct" {
+                let slice = chunk.parameters()[3 + families[0].capture].0;
+                let addresses = definitions
+                    .iter()
+                    .filter_map(|(_, operation)| match operation {
+                        IrOperation::IndexedAddress { slice, .. } => Some(*slice),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    addresses,
+                    vec![slice; 4],
+                    "both reads and both writes use the same dense family"
+                );
+            }
+        }
+        if let Err(failure) = crate::emit_llvm(program) {
+            panic!("resolved alias storage must emit: {failure:?}");
+        }
+    });
+}

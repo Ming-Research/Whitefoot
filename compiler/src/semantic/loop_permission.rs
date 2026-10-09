@@ -580,18 +580,22 @@ fn judge<'check>(
         .filter(|root| {
             root.needs_reduction
                 || survey.indexed.iter().any(|other| {
-                    other.binding == root.binding
-                        && same_element_root(&other.origin, &root.origin)
-                        && other.map != root.map
+                    same_element_root(&other.origin, &root.origin) && other.map != root.map
                 })
         })
-        .map(|root| root.binding)
+        .flat_map(|root| survey.places.resolve(PlaceRoot::Binding(root.binding), &[]))
         .collect::<Vec<_>>();
     let remap = survey
         .indexed
         .iter()
         .enumerate()
-        .filter(|(_, root)| selected.contains(&root.binding))
+        .filter(|(_, root)| {
+            selected.iter().any(|origin| {
+                survey
+                    .places
+                    .overlaps(&UnprovedSeparations, origin, &root.origin)
+            })
+        })
         .map(|(old, _)| old)
         .collect::<Vec<_>>();
     for call in &mut survey.indexed_calls {
@@ -602,9 +606,13 @@ fn judge<'check>(
                 .expect("call families require reduction");
         }
     }
-    survey
-        .indexed
-        .retain(|root| selected.contains(&root.binding));
+    survey.indexed.retain(|root| {
+        selected.iter().any(|origin| {
+            survey
+                .places
+                .overlaps(&UnprovedSeparations, origin, &root.origin)
+        })
+    });
     survey.walk(body, 0);
     survey.finish(statement)
 }
@@ -859,16 +867,16 @@ impl<'check, 'run> Survey<'check, 'run> {
                 let map = self
                     .outermost_map(path_subscripts(&target.path))
                     .map(|(_, map)| map);
-                if let Some(root) = self.indexed.iter_mut().find(|root| {
-                    root.binding == binding
-                        && same_element_root(&root.origin, &origin)
-                        && root.fields == fields
+                let mut root = target.clone();
+                root.path.truncate(position);
+                root.ty = index.base_type;
+                if let Some(position) = self.indexed.iter().position(|existing| {
+                    same_element_root(&existing.origin, &origin) && existing.fields == fields
                 }) {
-                    root.needs_reduction |= map.is_none() || root.map != map;
+                    let existing = &mut self.indexed[position];
+                    existing.needs_reduction |= map.is_none() || existing.map != map;
+                    self.retain_indexed_owner(position, root, binding);
                 } else {
-                    let mut root = target.clone();
-                    root.path.truncate(position);
-                    root.ty = index.base_type;
                     self.indexed.push(IndexedAccumulator {
                         root,
                         binding,
@@ -1032,13 +1040,12 @@ impl<'check, 'run> Survey<'check, 'run> {
                     .indexed
                     .iter()
                     .position(|existing| {
-                        existing.binding == binding
-                            && same_element_root(&existing.origin, &origin)
+                        same_element_root(&existing.origin, &origin)
                             && existing.fields == family.fields
                     })
                     .unwrap_or_else(|| {
                         self.indexed.push(IndexedAccumulator {
-                            root,
+                            root: root.clone(),
                             binding,
                             origin,
                             map: None,
@@ -1052,6 +1059,7 @@ impl<'check, 'run> Survey<'check, 'run> {
                         });
                         self.indexed.len() - 1
                     });
+                self.retain_indexed_owner(position, root, binding);
                 self.indexed[position].needs_reduction = true;
                 self.indexed[position].calls.push(mapping);
                 mapped.push((position, family.kind));
@@ -1061,6 +1069,33 @@ impl<'check, 'run> Survey<'check, 'run> {
                 argument,
                 families: mapped,
             });
+        }
+    }
+
+    /// Equal resolved families can be spelled through different inline
+    /// ancestors. Retain the enclosing owner so a helper's reference reaches
+    /// the actual private cells, not an inline copy in an argument wrapper.
+    fn retain_indexed_owner(
+        &mut self,
+        position: usize,
+        root: CheckedContainerRoot,
+        binding: BindingId,
+    ) {
+        let owner = |root: &CheckedContainerRoot| {
+            let prefix = root
+                .path
+                .iter()
+                .rposition(|step| matches!(step, CheckedPlaceStep::BoxReferent(_)))
+                .map_or(0, |index| index + 1);
+            self.places.resolve(root.root, &root.place_path()[..prefix])
+        };
+        let current = owner(&self.indexed[position].root);
+        let candidate = owner(&root);
+        if matches!((current.as_slice(), candidate.as_slice()), ([current], [candidate])
+            if candidate.path.len() < current.path.len() && candidate.contains(current))
+        {
+            self.indexed[position].root = root;
+            self.indexed[position].binding = binding;
         }
     }
 
@@ -1179,13 +1214,10 @@ impl<'check, 'run> Survey<'check, 'run> {
         set_target_place(self.places, target, node, &mut footprint);
         let exact = match target {
             CheckedSetTarget::Storage(target) => self.indexed.iter().position(|root| {
-                self.indexed_origin(target)
-                    .is_some_and(|(binding, origin)| {
-                        root.binding == binding
-                            && same_element_root(&root.origin, &origin)
-                            && indexed_parts(target)
-                                .is_some_and(|(_, _, fields)| fields == root.fields)
-                    })
+                self.indexed_origin(target).is_some_and(|(_, origin)| {
+                    same_element_root(&root.origin, &origin)
+                        && indexed_parts(target).is_some_and(|(_, _, fields)| fields == root.fields)
+                })
             }),
             _ => None,
         };
@@ -1293,13 +1325,15 @@ impl<'check, 'run> Survey<'check, 'run> {
                 "every write must update an indexed cell; the root and its length stay unchanged",
             );
         };
-        let Some((binding, origin)) = self.indexed_origin(target) else {
+        let Some((_, origin)) = self.indexed_origin(target) else {
             return Err(
                 "the target must be an integer or Bool cell of one outside Array or Slots root",
             );
         };
-        if binding != root.binding || !same_element_root(&origin, &root.origin) {
-            return Err("all updates must use one fixed storage path of the same outside binding");
+        if !same_element_root(&origin, &root.origin) {
+            return Err(
+                "indexed updates of overlapping outside bindings must use one fixed resolved storage path",
+            );
         }
         let Some((_, index, fields)) = indexed_parts(target) else {
             return Err("the target must be a subscripted cell or record field");
@@ -1381,7 +1415,22 @@ impl<'check, 'run> Survey<'check, 'run> {
         // can change a binding between the target and operand evaluations.
         // Captures retain different occurrence IDs, but identical typed paths
         // and offset atoms in this one statement select the same cell.
-        root.root == target.root && same_update_path(&root.path, &target.path)
+        let Some((written_position, _, _)) = indexed_parts(target) else {
+            return false;
+        };
+        let Some((read_position, _, _)) = indexed_parts(root) else {
+            return false;
+        };
+        let written = self
+            .places
+            .resolve(target.root, &target.place_path()[..written_position]);
+        let read = self
+            .places
+            .resolve(root.root, &root.place_path()[..read_position]);
+        same_update_path(
+            &target.path[written_position..],
+            &root.path[read_position..],
+        ) && matches!((written.as_slice(), read.as_slice()), ([written], [read]) if same_element_root(written, read))
     }
 
     fn same_legacy_indexed_operand(
@@ -1412,8 +1461,7 @@ impl<'check, 'run> Survey<'check, 'run> {
                 .collect::<Vec<_>>(),
         );
         let read = self.places.resolve(PlaceRoot::Binding(binding), &path);
-        target.binding() == Some(binding)
-            && same_offset
+        same_offset
             && matches!((written.as_slice(), read.as_slice()), ([written], [read]) if same_element_root(written, read))
     }
 
@@ -1446,13 +1494,17 @@ impl<'check, 'run> Survey<'check, 'run> {
         }
         for (position, root) in self.indexed.iter().enumerate() {
             for other in &self.indexed[..position] {
-                if root.binding != other.binding {
+                // Preserve the fixed storage path for one outside binding,
+                // and apply it to references reaching that same owner too.
+                if !self.indexed_overlaps(root, &other.origin)
+                    && !self.indexed_overlaps(other, &root.origin)
+                {
                     continue;
                 }
                 if !same_element_root(&root.origin, &other.origin) {
                     return Some(LoopDenial::IndexedReduction {
                         statement: root.statement.clone(),
-                        reason: "all updates must use one fixed storage path of the same outside binding",
+                        reason: "indexed updates of overlapping outside bindings must use one fixed resolved storage path",
                     });
                 }
                 if root.fields.starts_with(&other.fields) || other.fields.starts_with(&root.fields)
@@ -1477,7 +1529,12 @@ impl<'check, 'run> Survey<'check, 'run> {
             let families = self
                 .indexed
                 .iter()
-                .filter(|root| root.binding == binding)
+                .filter(|root| {
+                    owners.iter().any(|owner| {
+                        self.places
+                            .overlaps(&UnprovedSeparations, owner, &root.origin)
+                    })
+                })
                 .collect::<Vec<_>>();
             let reads = self
                 .reads
