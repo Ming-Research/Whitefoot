@@ -49,7 +49,7 @@ use super::*;
 
 /// Only descriptor words may be stored by an empty-window constructor.
 /// Inspect the shared row: callers use the same ordinary construction body.
-fn assert_empty_window_headers(module: &str, row: &str, header_fields: usize) {
+fn assert_empty_window_headers(module: &str, row: &str, header_fields: usize, capacity: usize) {
     let body = emitted_prelude_row(module, row);
     assert!(!body.contains("poison"), "{body}");
     assert!(!body.contains("undef"), "{body}");
@@ -69,7 +69,7 @@ fn assert_empty_window_headers(module: &str, row: &str, header_fields: usize) {
         assert!(
             body.lines().any(|line| {
                 line.trim().starts_with(&format!(
-                    "{address} = getelementptr inbounds {{ {}[64 x ",
+                    "{address} = getelementptr inbounds {{ {}[{capacity} x ",
                     "i64, ".repeat(header_fields)
                 )) && line.ends_with(&format!(", ptr %wf.result, i32 0, i32 {field}"))
             }),
@@ -200,8 +200,8 @@ fn main() -> status: std::process::ExitStatus pure {
             .lines()
             .any(|line| line.ends_with(" = type { i32, i32, i32 }"))
     );
-    assert_empty_window_headers(&module, "slots_new", 1);
-    assert_empty_window_headers(&module, "ring_new", 2);
+    assert_empty_window_headers(&module, "slots_new", 1, 64);
+    assert_empty_window_headers(&module, "ring_new", 2, 64);
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
@@ -520,8 +520,8 @@ fn main() -> status: std::process::ExitStatus pure {
         );
         module
     });
-    assert_empty_window_zeroed(&module, "slots_new", 1);
-    assert_empty_window_zeroed(&module, "ring_new", 2);
+    assert_empty_window_headers(&module, "slots_new", 1, 0);
+    assert_empty_window_headers(&module, "ring_new", 2, 0);
     let observed = super::owned_places::retain_calls(&module)
         .replace("@wf__heap_take(", "@wf_observe_window_allocate(");
     let observer = r#"
