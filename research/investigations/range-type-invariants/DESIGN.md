@@ -195,11 +195,18 @@ Observed on branch `claude/proof-facts`; tests are in
    `range5-neg-parent-read-without-depth`, `range3-neg-grouping-not-fresh`,
    each 0.21 s to 0.72 s) and +0.10 s in the other 1926. Programs that state
    no range clause are unaffected; the suite's 14 exit-status differences are
-   this branch's new positive cases, which base rejects. Which change makes
-   the three certificates slower has not been isolated: the second
-   instantiation round is the likely cause, since all three judge `apart`
-   certificates over two facts whose reads chain, but no build with the round
-   disabled was timed.
+   this branch's new positive cases, which base rejects. A same-source
+   attribution
+   ([run 37915201824](https://github.com/Ming-Research/Whitefoot/actions/runs/37915201824))
+   timed the branch at `bdebb7176` against the same source with RANGE-3's
+   second instantiation round removed (a temporary control commit,
+   `a85fe2bc8`), with a byte-identical twin of the branch, over the three
+   cases and the natural-form interpreter, 6 rounds: the three cases take
+   2.19 s [2.19, 2.20] with two rounds and 0.655 s [0.65, 0.66] with one
+   (0.299, twin 1.000), with identical exit statuses, and the interpreter is
+   unchanged (0.994). The second round is therefore the whole cost; it adds
+   instances to these `apart` certificates, whose two facts' reads chain,
+   though none of the three needs them for its verdict.
 
 ## Specification changes
 
