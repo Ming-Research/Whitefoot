@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Overlap groups order a release before borrows of the storage it frees
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: In the session of 2026-10-08, written in Chinese, after the report that presented fixing the general case of the Paged overlap cut, a call that relocates a Box block and a call borrowing through its content sharing one overlap group, as Q151: "approve them all, finish everything, then hand over" (translated); on the status board, after the card that presented comparing checker-resolved released and borrowed places, instead of IR tracing or a class-only cut, as "how is the overlap cut judged?": "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: The overlap lowering may hand out a call before it enters and run the next one; PAR-1 does not count a borrow's formation or entry as a read, so a call that frees or relocates storage, such as `grow(cell: &p, ...)`, could share a group with a call borrowing `&p.inner`, breaking the borrowed argument's dereferenceable entry or racing its owner-slot load. The permission pass now records each call's released places (owned arguments with a release action, written references through which a write can release storage, views such as `Entries<Box<T>>` included, and aggregates consumed by argument cleanup) and borrowed places (every origin of a reference argument and the owner slots loaded to form it), and lowering ends a group before a member whose released and borrowed places overlap another member's under OWN-7. Tracing argument values through the IR (control-flow joins, range formation and aggregate consumption each escaped it) and keeping every releasing call apart from every borrowing call (which stopped `tests/programs/parallel/tree.wf`'s recursion over disjoint written Box subtrees from overlapping) are kept as rejected alternatives. No source permission or specification rule changes.
 ## 2026-10-08 Memory statistics
 
 Nodes: language/system-interface/memory-statistics

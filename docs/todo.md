@@ -1226,6 +1226,19 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
+- **Audit nonempty release classification for shared handles and key sets.**
+  `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
+  reaches no owned component for `Shared` and has no `KeySet` action, while
+  the backend's `type_derives_release` classifies both as releasing storage.
+  Its `check_self_tail_releases` consumer may therefore omit an FN-10
+  release obligation. This is an inspection finding, not a reproduced
+  acceptance failure; keep it separate from the call-group boundary, which
+  uses the release graph's storage actions and changes no acceptance rule.
+  Reopen before the next tail-release change: construct shared-handle and
+  key-set self-tail witnesses, compare their required cleanup with STOR-3,
+  SHARE-1 and FN-10, then unify the action classification if the discrepancy
+  affects the judgment; validate empty scalar and zero-capacity controls too.
+
 ## Parallel lowering and runtime
 
 - **PAR-1 operand footprints treat a copied reference as its referent.**
@@ -1847,10 +1860,19 @@ rarely insert at the same place.
   beside `let all = &data.inner[0_u64..2000000_u64];`
   (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
   range loads the Box's pointer, which the first statement writes. No
-  program observes it: the lowering hands out only calls, and a member that
-  is not a call ends every overlap group (`overlaps` in
-  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
-  in place needs only its address, so only a path through a Box's `inner`
+  program observes that non-call pair: the lowering hands out only calls,
+  and a member that is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Call argument formation is protected
+  separately: the checker retains released places (owned heap arguments,
+  written heap-owning referents, and whole aggregates consumed by argument
+  cleanup) and borrowed places (reference arguments and owner slots loaded
+  by reference formation) on each call site. Lowering ends a group before
+  argument formation when one member releases storage overlapping another
+  member's borrowed place under OWN-7; the new member may start a new group.
+  Disjoint written Box references and disjoint owned transfers retain overlap
+  eligibility. The PAR-1 verdict still lacks the owner-slot read described here.
+  Forming a reference to storage held in place needs only its address, so
+  only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
   formed path passes; validate with that pair denied, the rest of the
   quicksort ledger unchanged, and `let larger = &v^[after..n];` still

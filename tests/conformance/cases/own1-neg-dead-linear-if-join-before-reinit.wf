@@ -1,0 +1,43 @@
+nodrop struct InterplayToken {
+  value: u8;
+}
+
+fn interplay_close(input: InterplayToken) -> observed: u8 pure {
+  doc "PROV-6 permits whole destructuring to discharge the linear token.";
+  let InterplayToken(value: prior) = move input;
+  return prior;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Both branches consume log, so LIV-1 admits their dead-state join. Reading log.value before SET-1 reinitializes log is OWN-1 UseAfterMove; a later set cannot authorize an earlier read. The matching positive case omits only that read. Keeping both branches consuming avoids an earlier LIV-1 disagreement and isolates the dead-use rejection while retaining the ENT-5, INV-1 and OWN-11 loop shape.";
+  let log = InterplayToken(value: 0_u8);
+  let left = 0_u64;
+  let right = 2_u64;
+  let round = 0_u8;
+  loop (
+    invariant balanced: left + right == 2_u64
+  ) {
+    if round == 2_u8 {
+      break;
+    }
+    if round == 0_u8 {
+      let first = interplay_close(input: move log);
+      set left = 2_u64;
+      set right = 0_u64;
+    } else {
+      let second = interplay_close(input: move log);
+      set left = 0_u64;
+      set right = 2_u64;
+    }
+    let stale = log.value;
+    set log = InterplayToken(value: round);
+    invariant joined: left + right == 2_u64;
+    set round = round +wrap 1_u8;
+    continue;
+  }
+  let final_value = interplay_close(input: move log);
+  if final_value != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
