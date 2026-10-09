@@ -713,9 +713,10 @@ impl Checker<'_, '_> {
                         site: _,
                         premises,
                         goal,
+                        frame,
                         proof,
                     } = queries.get(position)?;
-                    format!("query\n{instance:?}\n{premises:?}\n{goal:?}\n{proof:?}")
+                    format!("query\n{instance:?}\n{premises:?}\n{goal:?}\n{frame:?}\n{proof:?}")
                 }
                 _ => continue,
             };

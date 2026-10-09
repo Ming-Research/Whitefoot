@@ -1,0 +1,27 @@
+struct Row {
+  left: Slots<u8, 2>;
+  right: u64;
+}
+
+interface Touch {
+  fn touch(table: &Array<Row, 2>, i: u64, j: u64) -> result: unit writes(table) contract {
+    requires i < 2_u64;
+    requires j < 2_u64;
+    ensures table^[i].left.len == entry(table)^[i].left.len;
+  };
+}
+
+fn update(actual_table: &Array<Row, 2>, actual_i: u64, actual_j: u64) -> updated: unit writes(actual_table[actual_j].right) contract {
+  requires actual_j < 2_u64;
+} {
+  set actual_table^[actual_j].right = 1_u64;
+  return unit;
+}
+
+binding FieldTouch : Touch {
+  touch = update;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

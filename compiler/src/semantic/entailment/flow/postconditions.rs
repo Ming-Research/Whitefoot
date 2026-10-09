@@ -140,7 +140,8 @@ impl Input<'_, '_> {
     /// its actual's verified FN-9 surface. A bound call uses the retained
     /// formal surface only when its exact FN-4 query is discharged and every
     /// actual premise selected by that query has an earlier-component FN-9
-    /// summary. A zero-premise implication needs only its retained query.
+    /// summary. A zero-premise implication needs only its retained query,
+    /// including its declared-row evidence when FN-4 discharged a frame.
     pub(super) fn available_call_postconditions(
         &self,
         function: super::super::super::model::FunctionId,
@@ -162,6 +163,10 @@ impl Input<'_, '_> {
                     || query.instance != Some(self.function.id)
                     || query.goal != boundary.selector.block
                     || query.premises.len() != boundary.actual_premises.len()
+                    || query
+                        .frame
+                        .as_ref()
+                        .is_some_and(|frame| frame.actual != function)
                 {
                     return None;
                 }

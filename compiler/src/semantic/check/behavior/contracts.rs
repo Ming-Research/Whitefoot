@@ -15,12 +15,22 @@ use super::super::super::entailment::{
     CallGoalDisposition, EntailmentContext, FunctionEntailment, analyze_function, contract_implies,
     finalize_function_entailment,
 };
-use super::super::super::goal::{CheckedRequirement, GoalDatum, GoalExpression, GoalTemplate};
-use super::super::super::model::{
-    BindingId, CheckedBoundPostcondition, CheckedCallContract, CheckedContractQuery,
-    CheckedExpression, CheckedFunction, CheckedParameter, CheckedType, ContractQueryId,
+use super::super::super::goal::{
+    CheckedRequirement, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
-use super::super::super::postcondition::{ParameterDenotation, PostconditionConstantOrigin};
+use super::super::super::model::{
+    BindingId, CheckedBoundPostcondition, CheckedCallContract, CheckedContractFrame,
+    CheckedContractQuery, CheckedEffectStep, CheckedExpression, CheckedFunction, CheckedParameter,
+    CheckedStatePath, CheckedType, ContractQueryId,
+};
+use super::super::super::places::{
+    CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
+    SeparationOracle, places_overlap,
+};
+use super::super::super::postcondition::{
+    NormalizedRelation, ParameterDenotation, PostconditionConstantOrigin, PostconditionPlaceRoot,
+    RelationDatum, RelationTemplate,
+};
 use super::super::requires::{ExpandedClauseDatum, ExpandedClauseExpression};
 use super::super::type_invariants::{substitute_expanded, substitute_relation};
 use super::super::{CheckStop, Checker, ControlCounters, FunctionSignature};
@@ -139,25 +149,26 @@ impl<'unit> Checker<'_, 'unit> {
                 site: site.clone(),
                 premises: formal_requirement_paths.clone(),
                 goal: required.clause.clone(),
+                frame: None,
                 proof,
             });
         }
-        // Stronger postcondition: at each result route, the actual set alone
-        // must discharge every relation the formal promises there. Entry
-        // parameter, exit parameter and result identities are distinct even
-        // where their selected types and written projections agree.
+        // Stronger postcondition: a frame equality on an unwritten place
+        // needs no actual contract. Every other promise still follows only
+        // from the actual's published relations on the selected route.
         let parameter_count = normalized.parameters.len();
         let mut postcondition_premises = Vec::with_capacity(formal_contracts.ensures.len());
         for promised in &formal_contracts.ensures {
+            let frame = frame_postcondition(&promised.relation, &normalized, actual);
             let available = actual_contracts
                 .ensures
                 .iter()
-                .filter(|published| ensures_available_on_route(published, promised))
+                .filter(|published| frame.is_none() && ensures_available_on_route(published, promised))
                 .collect::<Vec<_>>();
             let premises = available
                 .iter()
                 .map(|published| {
-                    expanded_contract_goal(&published.expression, parameter_count)
+                    expanded_contract_goal(&published.expression, parameter_count, false)
                         .map(GoalTemplate::new)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -165,7 +176,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .iter()
                 .map(|published| published.clause.clone())
                 .collect::<Vec<_>>();
-            let goal = expanded_contract_goal(&promised.expression, parameter_count)?;
+            // The retained frame judgment authorizes identifying entry and
+            // exit only for this equality. Its ordinary proof is then a
+            // zero-premise reflexivity query, never a fabricated FN-9 clause.
+            let goal =
+                expanded_contract_goal(&promised.expression, parameter_count, frame.is_some())?;
             let postcondition_variables = contract_postcondition_variables(&normalized, promised);
             let mut proof = self.types.contract_implication(
                 &normalized,
@@ -187,6 +202,7 @@ impl<'unit> Checker<'_, 'unit> {
                 site: site.clone(),
                 premises: premise_paths,
                 goal: promised.clause.clone(),
+                frame,
                 proof,
             });
             postcondition_premises.push(
@@ -459,6 +475,199 @@ fn ensures_available_on_route(published: &InterfaceEnsures, promised: &Interface
     }
 }
 
+/// [FN-4] Match the normalized relation, not its written affine spelling.
+/// A measure frames its containing place; a scalar frames its own place.
+fn frame_postcondition(
+    relation: &RelationTemplate,
+    formal: &FunctionSignature,
+    actual: &FunctionSignature,
+) -> Option<CheckedContractFrame> {
+    let [left, right] = &relation.operands;
+    if relation.normalized != NormalizedRelation::Equal || left.displacement != right.displacement
+    {
+        return None;
+    }
+    let (ordinal, projections) = frame_datums(&left.datum, &right.datum)
+        .or_else(|| frame_datums(&right.datum, &left.datum))?;
+    let parameter = actual.parameters.get(ordinal as usize)?;
+    if !parameter.mode.is_reference() {
+        return None;
+    }
+    // Effect roots already denote the referent. Retain every later
+    // projection, including indexed measured places admitted by FN-9.
+    let (GoalProjection::Deref, projections) = projections.split_first()? else {
+        return None;
+    };
+    let unwritten = ResolvedPlace {
+        root: PlaceRoot::Binding(BindingId(ordinal)),
+        path: projections
+            .iter()
+            .map(|projection| match projection {
+                GoalProjection::FormalSubscript { ordinal } => {
+                    PlaceStep::Index(contract_index(*ordinal))
+                }
+                other => other.place_step(),
+            })
+            .collect(),
+        atomic_aliases: Vec::new(),
+    };
+    for write in &actual.declared_effects.writes {
+        let written = contract_effect_place(write, actual)?;
+        if places_overlap(&FrameSeparations, &written, &unwritten) {
+            return None;
+        }
+    }
+    // Different formal roots can alias at a call. A formal access covering
+    // this place makes EFF-5 separate it from every other argument's write.
+    // No such separation is needed when all actual writes share this root.
+    if actual
+        .declared_effects
+        .writes
+        .iter()
+        .any(|write| write.root != parameter.declaration)
+    {
+        let covered = formal
+            .declared_effects
+            .reads
+            .iter()
+            .chain(&formal.declared_effects.writes)
+            .map(|access| contract_effect_place(access, formal))
+            .collect::<Option<Vec<_>>>()?
+            .iter()
+            .any(|access| access.contains(&unwritten));
+        if !covered {
+            return None;
+        }
+    }
+    Some(CheckedContractFrame {
+        actual: actual.id,
+        unwritten,
+    })
+}
+
+/// A binding has no caller state. In particular a declared index is not
+/// assumed live beside `.free`/`.next`, nor are two window lengths assumed
+/// equal across the call. Only the overlap walk's structural/literal rules
+/// can separate these paths; no requirement becomes a frame premise.
+struct FrameSeparations;
+
+impl SeparationOracle for FrameSeparations {
+    fn indices_distinct(&self, _left: CapturedValue, _right: CapturedValue) -> bool {
+        false
+    }
+
+    fn ranges_disjoint(&self, _left: CapturedRange, _right: CapturedRange) -> bool {
+        false
+    }
+
+    fn index_is_live(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+        false
+    }
+
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
+        false
+    }
+
+    fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
+        false
+    }
+
+    fn window_length_is_shared(&self, _window: &ResolvedPlace) -> bool {
+        false
+    }
+}
+
+fn contract_index(ordinal: u32) -> CapturedValue {
+    CapturedValue::new(
+        CaptureId::SpellingDetermined,
+        CapturedTerm::Binding(BindingId(ordinal)),
+    )
+}
+
+/// Both signatures use parameter ordinals in the ordinary overlap judgment.
+/// Positions retain identity but gain no assumed inequalities; the existing
+/// structural/literal separations decide what the declared row cannot reach.
+fn contract_effect_place(
+    path: &CheckedStatePath,
+    signature: &FunctionSignature,
+) -> Option<ResolvedPlace> {
+    let ordinal = |declaration| {
+        signature
+            .parameters
+            .iter()
+            .position(|parameter| parameter.declaration == declaration)
+            .and_then(|index| u32::try_from(index).ok())
+    };
+    let steps = path
+        .steps
+        .iter()
+        .map(|step| {
+            Some(match step {
+                CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
+                CheckedEffectStep::Deref => PlaceStep::Deref,
+                CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
+                    variant: *variant,
+                    field: *field,
+                },
+                CheckedEffectStep::Index(parameter) => {
+                    PlaceStep::Index(contract_index(ordinal(*parameter)?))
+                }
+                CheckedEffectStep::Range { start, end } => PlaceStep::Range(CapturedRange {
+                    start: contract_index(ordinal(*start)?),
+                    end: contract_index(ordinal(*end)?),
+                }),
+                CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
+                CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(ResolvedPlace {
+        root: PlaceRoot::Binding(BindingId(ordinal(path.root)?)),
+        path: steps,
+        atomic_aliases: Vec::new(),
+    })
+}
+
+fn frame_datums<'a>(
+    exit: &'a RelationDatum,
+    entry: &RelationDatum,
+) -> Option<(u32, &'a [GoalProjection])> {
+    match (exit, entry) {
+        (
+            RelationDatum::Parameter {
+                ordinal,
+                projections,
+                ty,
+                denotation: ParameterDenotation::ExitState,
+            },
+            RelationDatum::Parameter {
+                ordinal: entry_ordinal,
+                projections: entry_projections,
+                ty: entry_type,
+                denotation: ParameterDenotation::EntryDatum,
+            },
+        ) if ordinal == entry_ordinal && projections == entry_projections && ty == entry_type => {
+            Some((*ordinal, projections))
+        }
+        (RelationDatum::Measure(measure, exit), RelationDatum::Measure(entry_measure, entry))
+            if measure == entry_measure
+                && exit.projections == entry.projections
+                && exit.ty == entry.ty =>
+        {
+            match (exit.root, entry.root) {
+                (
+                    PostconditionPlaceRoot::ExitParameter { ordinal },
+                    PostconditionPlaceRoot::Parameter {
+                        ordinal: entry_ordinal,
+                    },
+                ) if ordinal == entry_ordinal => Some((ordinal, &exit.projections)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn contract_postcondition_variables(
     signature: &FunctionSignature,
     selector: &InterfaceEnsures,
@@ -495,6 +704,7 @@ fn contract_postcondition_variables(
 fn expanded_contract_goal(
     expression: &ExpandedClauseExpression,
     parameter_count: usize,
+    frame: bool,
 ) -> Result<GoalExpression, CheckStop> {
     let parameter_count =
         u32::try_from(parameter_count).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
@@ -505,7 +715,7 @@ fn expanded_contract_goal(
             ty,
             denotation,
         }) => GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: if *denotation == ParameterDenotation::ExitState {
+            ordinal: if *denotation == ParameterDenotation::ExitState && !frame {
                 parameter_count
                     .checked_add(*ordinal)
                     .ok_or(SemanticCompilerFailure::CounterOverflow)?
@@ -552,7 +762,7 @@ fn expanded_contract_goal(
             result: *result,
             arguments: arguments
                 .iter()
-                .map(|argument| expanded_contract_goal(argument, parameter_count as usize))
+                .map(|argument| expanded_contract_goal(argument, parameter_count as usize, frame))
                 .collect::<Result<Vec<_>, _>>()?,
         },
         ExpandedClauseExpression::InvalidSelectorUse { .. } => {

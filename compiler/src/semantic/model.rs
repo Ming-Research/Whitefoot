@@ -3175,7 +3175,20 @@ pub(crate) struct CheckedContractQuery {
     pub(crate) site: NodePath,
     pub(crate) premises: Vec<NodePath>,
     pub(crate) goal: NodePath,
+    /// [FN-4] authority for identifying this frame equality's entry and
+    /// exit datums in a zero-premise query. Other queries keep them distinct.
+    pub(crate) frame: Option<CheckedContractFrame>,
     pub(crate) proof: super::entailment::FunctionEntailment,
+}
+
+/// The actual row leaves this place unwritten; the formal boundary separates
+/// it from other arguments' writes. This is binding evidence, not an actual
+/// FN-9 summary or a runtime snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedContractFrame {
+    pub(crate) actual: FunctionId,
+    /// Root and index bindings are parameter ordinals of the actual.
+    pub(crate) unwritten: super::places::ResolvedPlace,
 }
 
 /// The authoritative contract surface of one bound call [FN-5].
