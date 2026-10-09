@@ -234,6 +234,17 @@ fn read_stop_deadline(stop: &ReadStop) -> result: Bool reads(stop) {
   }
 }
 
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
 fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
   let port = 0_u16;
