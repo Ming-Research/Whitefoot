@@ -670,16 +670,31 @@ selected proofs and clone independence; dropping an endpoint, failing to sort
 or failing to deduplicate fails it. Existing bound-store candidate/transition,
 generic source-order, interface-fingerprint and cold/warm driver tests remain.
 
-Validation is pending CI; no builds, formatters, tests or measurements ran
-locally, and the edits are unstaged and uncommitted. CI must compile and lint
-all targets, run the new and existing tests and the full exact-revision gate,
-and compare exact verdicts and diagnostics against base. Before claiming a
-speedup, use the base/twin/head protocol above on the pinned Halo source and
-natural/plain interpreter panels, six rotating rounds on the 14900K with
-counters unset, recording wall/user/system time, RSS, statuses and spread.
-Start with the smallest sample. Any observable result difference rejects the
-change; a difference within base/twin spread does not establish a speedup.
-Attribute allocation changes separately; no percentage saving is yet measured.
+Validation: the gate passed on the changed compiler (run 37897424627 at
+`555a926b5`); later commits change only this record and leave
+`docs/todo.md` as the base has it. Timing used the base/twin/head protocol
+above on the 14900K with counters unset, six rotating rounds, base
+`wf-exp-5f1c70cd829a` (the tree of main `c35fffd73`) and head
+`wf-exp-555a926b5fbc`, the twin a byte copy of base:
+
+| Input | Base median | Head median | Twin/base | Head/base | Run |
+|---|---:|---:|---:|---:|---|
+| Halo `pkg::vm` (Halo-wf main source) | 8.701 s (range 1.11%) | 7.729 s (range 1.35%) | 1.001 | 0.888 | Halo-wf 37903060714 |
+| Natural wasm interpreter (v2h) | 3.460 s | 3.435 s | 0.994 | 0.993 | Whitefoot 37901726190 |
+| Plain series, 640 arms | 16.165 s | 16.175 s | 0.990 | 1.001 | same |
+| Plain series, 320 arms | 1.585 s [1.570, 1.600] | 1.620 s [1.610, 1.630] | 0.997 | 1.022 | same |
+| Plain series, 40-160 arms | 0.010-0.220 s | equal | 1.000 | 1.000 | same |
+
+Halo's check falls by 11.2%: every head round (7.70-7.80 s) lies below
+every base and twin round (8.63-8.73 s). This sits inside the profile's
+overlapping estimate of three to twelve points for the three reductions;
+the panel does not apportion the saving among them. The v2h and 640-arm
+results are within twin spread, as expected: their time is in the affine
+index and joins, which these changes do not touch, and the series still
+grows about tenfold per doubling. The 320-arm head rounds lie above every
+base round by about 2% while 160 and 640 arms show no difference; the cause
+is unexplained and no consumer of that size is known, so it is recorded
+rather than attributed. Allocation savings are not attributed separately.
 
 
 An independent read-only Codex reviewer (inherited model; exact identifier
