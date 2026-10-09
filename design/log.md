@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Conditional calls join statement groups
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the status board, written in Chinese: on 2026-10-08, on the card asking whether the compiler should let an `if` statement such as a guarded recursive call join a statement group as PAR-1 allows, recommended option A, conditional calls: "choose A" (translated); then, approving the request that presented the two departures from that card, a guard handed out whether or not its condition holds and arguments limited to forms safe to evaluate unconditionally: "agree" (translated); and on 2026-10-09, on the card asking whether to merge the change although it alone does not let Snowghost's suffix translation run in parallel, recommended option A, merge it as a general improvement: "choose A" (translated).
+
+Summary: An `if` whose one acting arm is a single call statement needing no release, whose condition has no call and whose arguments are constants or total reads of places without an index step or operator, is a PAR-1 member with the footprint of its condition and the call; next to an adjacent call member in a permitted run or pair, outside atomic blocks, it lowers to an ordinary call of a synthesized guard function, so hand-out, join, call grain and recursion budget apply unchanged. The planner had refused every such statement although PAR-1 admits it; Snowghost's edit spends about 80 percent in a recursion whose left call is guarded this way, though that recursion needs the stored-data invariant and more of its statements as members before it can run in parallel ([edit parallelism](../research/investigations/edit-parallelism/DESIGN.md)). Admitting and outlining every `if` and `match` statement, and leaving conditional statements refused until the invariant exists, are kept as rejected alternatives.
 ## 2026-10-09 Promote the demanded affine index before cubic demand
 
 Nodes: compiler/proof-query-context
