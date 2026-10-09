@@ -453,6 +453,7 @@ impl ItemSpellings {
 fn analyzed_rendering(function: &CheckedFunction) -> String {
     let CheckedFunction {
         formal_hypothesis,
+        prelude_element: _,
         id,
         declaration,
         module,

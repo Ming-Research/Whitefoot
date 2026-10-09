@@ -837,6 +837,7 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         Ok(CheckedFunction {
             formal_hypothesis: true,
+            prelude_element: None,
             id: signature.id,
             declaration: signature.declaration,
             module: self

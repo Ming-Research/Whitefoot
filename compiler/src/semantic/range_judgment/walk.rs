@@ -184,7 +184,7 @@ impl<'program> Walker<'program> {
         let mut state = State::default();
         for parameter in &function.parameters {
             let value = match parameter.mode {
-                CheckedMode::Range => {
+                CheckedMode::Range | CheckedMode::Run => {
                     let location = Location::root(Origin::Parameter(parameter.binding));
                     match self.world.container(location, 1) {
                         Some(container) => {
@@ -1516,6 +1516,9 @@ impl<'program> Walker<'program> {
                     return Value::Ref(View::Unknown);
                 };
                 let row = self.int(state, &index.offset);
+                let crate::semantic::CheckedSegmentSource::Storage(root) = root else {
+                    return Value::Ref(View::Unknown);
+                };
                 match self.path_target(state, root.root, &root.path) {
                     Target::Location(location) => {
                         let location = state.resolve(&location);

@@ -1,0 +1,37 @@
+fn set_first(part: &Run<u64>, value: u64) -> result: unit writes(part) contract {
+  requires part^.len > 0_u64;
+} {
+  set part^[0_u64] = value;
+  return unit;
+}
+
+fn edit_middle(run: &Run<u64>) -> result: u64 writes(run) contract {
+  requires run^.len == 1024_u64;
+} {
+  let part = &run^[510_u64..514_u64];
+  invariant width: part^.len == 4_u64;
+  let nested = &part^[1_u64..3_u64];
+  set_first(part: nested, value: 77_u64);
+  invariant retained: run^.len == 1024_u64;
+  return part^[1_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1025_u64);
+  for (
+    i in 0_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
+    place_back(window: &p.inner, value: i);
+  }
+  let run = &p.inner[1_u64..1025_u64];
+  let got = edit_middle(run: run);
+  invariant owner_length: p.inner.len == 1025_u64;
+  if got != 77_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if p.inner[512_u64] != 77_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

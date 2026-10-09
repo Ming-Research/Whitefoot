@@ -47,6 +47,7 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
         | IrType::Entries { .. }
         | IrType::Window { capacity: None, .. }
         | IrType::Range { .. }
+        | IrType::Run { .. }
         | IrType::RuntimeBoxPayload { .. }
         | IrType::Address(_) => false,
     })
