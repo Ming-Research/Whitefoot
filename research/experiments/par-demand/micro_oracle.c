@@ -36,9 +36,16 @@ static uint64_t oracle(uint64_t reps, uint64_t n, uint64_t seed) {
         return seed + reps * a;
     }
     if (!strcmp(MICRO, "spine")) {
-        /* Sum of the side leaves plus the final spine tip. */
-        uint64_t constant = n + 3 * (n * (n - 1) / 2);
-        return seed + reps * constant + (1 + 3 * n) * (reps * (reps - 1) / 2);
+        /* spine(n, v) is its tip v + n plus a side leaf rotl(v + k, 7) * 3
+         * for each k below n. The rotation keeps the compiled spine from
+         * folding into a closed form, which a linear leaf allowed. */
+        uint64_t sum = seed;
+        for (uint64_t i = 0; i < reps; ++i) {
+            uint64_t value = i + n;
+            for (uint64_t k = 0; k < n; ++k) value += rotl(i + k, 7) * 3;
+            sum += value;
+        }
+        return sum;
     }
     uint64_t sum = seed;
     if (!strcmp(MICRO, "hot_helper")) {

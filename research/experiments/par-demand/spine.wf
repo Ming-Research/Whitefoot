@@ -1,5 +1,6 @@
 fn leaf(v: u64) -> result: u64 pure {
-  return v *wrap 3_u64;
+  let rotated = irotl(v, 7_u32);
+  return rotated *wrap 3_u64;
 }
 
 fn spine(n: u64, v: u64) -> result: u64 pure {
