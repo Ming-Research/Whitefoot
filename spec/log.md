@@ -11,13 +11,20 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.113: no merging or reordering of waiting calls
+## 2026-10-09 v0.114: no merging or reordering of waiting calls
 
 Rules: changed EFF-3
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated): EFF-3's licence applies only to calls that do not wait.
 
 Summary: EFF-3 licensed deduplicating and reordering any `pure`, non-allocating call with equal arguments, while a `pure waits` function may change shared objects whose changes take effect in the execution's order (WAIT-2, SHARE-3) and appear in no row (SHARE-2); the two rules conflicted with no stated priority. The licence now excludes waiting calls. No compiler behaviour changes today, since the backend derives no function attributes from rows; the rule closes the hazard before it does. Selection ground: found while answering the owner's question about Shared and effect rows on the relaxed-fields research (#301).
+## 2026-10-09 v0.113: guards observe cancellation through read-only shared handles
+
+Rules: changed TYPE-2, TYPE-9, TYPE-11, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, PRE-2
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text (the read-only shared handle `SharedRead<T>`, `cancel_state` returning a read-only view of the cancellation state, and `cancel_fire` becoming a waiting operation that wakes guards) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: `SharedRead<T>` is a retaining read-only handle made from a `Shared<T>` by `shared_read` and shared by `shared_read_share`; it may be an atomic statement's target and its guard may read through it, while writes, whole replacement, `swap` and consuming transfer through it, or through any alias, projection, map selection or call row whose resolved state root it is, are refused (SHARE-2). `cancel_state(watch)` returns `SharedRead<CancelState>` over the watch's cancellation state, whose `fired` stays true after firing and false for `cancel_never`, so a guard such as `bor(ready, fired)` waits until either holds. `cancel_fire` declares `waits`: in atomic order it changes the state from unfired to fired, wakes contexts parked on guards that read it and still ends host waits as v0.110 specifies; firing inside an atomic statement or from a nonwaiting function is refused. The selection ground is firn's stop path, where a guarded wait for the script engine could not be ended by cancellation; a cancellation-specific target and cancellation interrupting a pending statement were rejected for adding host-specific admission or a nonexecuting outcome.
 
 ## 2026-10-09 v0.112: range facts below elements, ordinary obligations owed to the range judgment, range type invariants
 

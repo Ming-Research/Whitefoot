@@ -100,7 +100,10 @@ void wf__completion_file_append_submit(
 void *wf__cancel_new(void);
 void wf__cancel_retain(void *source);
 void wf__cancel_release(void *source);
-void wf__cancel_fire(void *source);
+void *wf__cancel_state(void *source);
+void wf__cancel_fire_held(void *source);
+/* Start returns 3: retry context_wait on resume until it acquires the unit. */
+int wf__shared_start(void *object, void *operation);
 int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record);
 int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
                                                 uint64_t count, void *cancel, void *record);

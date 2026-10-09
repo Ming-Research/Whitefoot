@@ -16,7 +16,7 @@ use crate::{
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
 };
 use std::collections::{HashMap, HashSet};
-pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
+pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
 pub(in crate::semantic::check) const SHARE2_KEY_WITHOUT_MOVE: &str = "name the key set without `move`: the statement reads it when it begins and the binding over it stays valid while the set is not written";
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
 pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "read handles and keys before the statement: copy a handle held in a state out with `shared_share` in an earlier atomic statement, and compute a key that comes from a state into a local the same way; a statement reads its handles and keys when it begins, before it holds any state";
@@ -122,13 +122,20 @@ impl Checker<'_, '_> {
                         CheckedNominalKind::Shared {
                             state,
                             shape: CheckedShared::Object,
-                        } => Some(state),
+                        } => Some((
+                            state,
+                            self.types.source_nominal_instances[nominal.0 as usize]
+                                .as_ref()
+                                .is_some_and(|(template, _)| {
+                                    self.types.nominal_templates[*template].name == "SharedRead"
+                                }),
+                        )),
                         _ => None,
                     }
                 }
                 _ => None,
             };
-            let Some(state) = state else {
+            let Some((state, read_only)) = state else {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -199,6 +206,10 @@ impl Checker<'_, '_> {
                 referent,
                 scope.loops.len(),
             )?;
+            block_bindings
+                .get_mut(&declaration.id())
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .read_only_state = read_only;
             if let Some(reference) = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())
@@ -396,6 +407,7 @@ impl Checker<'_, '_> {
                 live: true,
                 loop_depth,
                 compiler_updated: false,
+                read_only_state: false,
                 reference: Some(reference),
                 refinement_witnesses: Vec::new(),
                 call_value: false,

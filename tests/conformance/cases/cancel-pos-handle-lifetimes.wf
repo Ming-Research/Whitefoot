@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
+fn main() -> status: ExitStatus pure waits {
   let source = std::time::cancel_source();
   let shared = std::time::cancel_share(source: &source);
   let watch = std::time::cancel_watch(source: &source);
