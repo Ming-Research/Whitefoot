@@ -1,0 +1,20 @@
+fn need(n: u64) -> r: unit pure contract {
+  define parity = iand(n, 1_u64);
+  requires parity == 0_u64;
+} {
+  doc "Consume the exact parity goal.";
+  return unit;
+}
+
+fn witness() -> r: unit pure {
+  doc "With no write between the definitions and the call, S7's zero bound on the evaluated parity transports to the requirement.";
+  let a = 2_u64;
+  let low = iand(a, 1_u64);
+  need(n: a);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "All function requirements are checked without executing the witness.";
+  return std::process::exit_status(code: 0_u8);
+}
