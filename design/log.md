@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Lazy syntax paths, shared declaration reads and indexed generic provenance
+
+Nodes: compiler/typed-syntax-access, compiler/generic-validation-scope
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve #305's two design decisions: syntax views build node paths only when used, and declaration reads of the modules of one resolved unit share one adjacency; generic argument provenance is indexed by (substitution, parameter), still taking the minimum source position" with "agreed" (translated).
+
+Summary: A borrowed syntax view builds its node paths and reverse lookup on the first path query, and the declaration-read queries of one resolved unit share immutable adjacency and module roots while keeping separate traversal state, instead of each module rebuilding a full view only to count entries. Generic argument provenance is indexed by the ordered substitution without its region axis and by parameter key, keeping the minimum source-node index, instead of scanning every recorded site. Neither changes a judgment, diagnostic, path or read set; with a stack array for missing bound slots they take Halo's `pkg::vm` check from 8.701 to 7.729 s on the 14900K (0.888, twin 1.001) and leave the wasm interpreter and the arm series within twin spread ([check-time](../research/investigations/check-time/DESIGN.md#halos-profile-and-the-first-cost-reductions)).
+
 ## 2026-10-09 Offset disequalities, invariant L0 facts and origin transport
 
 Nodes: language/checks-and-proofs/automatic-facts, language/checks-and-proofs/obligation-discharge/origin-transport
@@ -20,6 +28,7 @@ Nodes: compiler/parallel-lowering
 Owner-approved: On the status board, written in Chinese: on 2026-10-08, on the card asking whether the compiler should let an `if` statement such as a guarded recursive call join a statement group as PAR-1 allows, recommended option A, conditional calls: "choose A" (translated); then, approving the request that presented the two departures from that card, a guard handed out whether or not its condition holds and arguments limited to forms safe to evaluate unconditionally: "agree" (translated); and on 2026-10-09, on the card asking whether to merge the change although it alone does not let Snowghost's suffix translation run in parallel, recommended option A, merge it as a general improvement: "choose A" (translated).
 
 Summary: An `if` whose one acting arm is a single call statement needing no release, whose condition has no call and whose arguments are constants or total reads of places without an index step or operator, is a PAR-1 member with the footprint of its condition and the call; next to an adjacent call member in a permitted run or pair, outside atomic blocks, it lowers to an ordinary call of a synthesized guard function, so hand-out, join, call grain and recursion budget apply unchanged. The planner had refused every such statement although PAR-1 admits it; Snowghost's edit spends about 80 percent in a recursion whose left call is guarded this way, though that recursion needs the stored-data invariant and more of its statements as members before it can run in parallel ([edit parallelism](../research/investigations/edit-parallelism/DESIGN.md)). Admitting and outlining every `if` and `match` statement, and leaving conditional statements refused until the invariant exists, are kept as rejected alternatives.
+
 ## 2026-10-09 Promote the demanded affine index before cubic demand
 
 Nodes: compiler/proof-query-context
