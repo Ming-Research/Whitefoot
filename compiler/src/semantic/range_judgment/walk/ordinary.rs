@@ -211,6 +211,30 @@ impl Walker<'_> {
         ty: CheckedType,
         index: Linear,
     ) -> Option<Value> {
+        // As in path_target, retain the selected array's fixed extent before
+        // projecting its element. Fact instances need this length to prove
+        // their reads defined, including each nested subscript. A Run keeps
+        // its captured extent: ty there can be the range's element type.
+        if matches!(ty, CheckedType::Array { .. }) {
+            let target = match &value {
+                Value::Owned(location) | Value::Ref(View::Place(location)) => {
+                    Some(Target::Location(location.clone()))
+                }
+                Value::Ref(View::Element {
+                    container,
+                    indices,
+                    projection,
+                }) => Some(Target::Element {
+                    container: *container,
+                    indices: indices.clone(),
+                    projection: projection.clone(),
+                }),
+                _ => None,
+            };
+            if let Some(target) = target {
+                let _ = self.target_length(state, &target, ty);
+            }
+        }
         Some(match value {
             Value::Ref(View::Run {
                 container,
