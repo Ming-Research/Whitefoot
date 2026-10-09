@@ -63,7 +63,9 @@ fn map_key(index: u64) -> key: Array<u8, 3> pure {
   let a = cvt.wrap::<u64, u8>(index);
   let b = cvt.wrap::<u64, u8>(middle);
   let c = cvt.wrap::<u64, u8>(high);
-  let bytes: Array<u8, 3> =[a, b, c];
+  let bytes = array_filled::<u8, 3>(value: a);
+  set bytes[1_u64] = b;
+  set bytes[2_u64] = c;
   return bytes;
 }
 
