@@ -604,3 +604,87 @@ family cost are recorded above; performance remains unverified. D1, T1, V3 and
 new verification-stage T8 are not applicable. Design-lint counts and readiness
 are unverified. The reviewer used source/Git reads and official GitHub
 reference lookup, with no execution of builds, tests, checks or measurements.
+
+
+## Halo's profile and the first cost reductions
+
+Question: can shared syntax preparation, indexed argument provenance and one
+small allocation removal reduce package checking without changing any verdict,
+diagnostic text, diagnostic order or source attribution? The supplied analysis
+(`sol-costnext.txt`, sections 4, 1 and 3) selects these first reductions from
+[Halo-wf profile run 37893283903](https://github.com/Ming-Research/Halo-wf/actions/runs/37893283903).
+Its manifest pins Halo source `98114a4ded00351391ca092848178e68a3af768b`, compiler
+`wf-exp-1b988b826eab`, DWARF call graphs and a plain check of 8.542 s on the
+14900K. These are baseline observations, not measurements of this change.
+
+| Profile entry | Inclusive CPU share | Self share |
+|---|---:|---:|
+| Syntax view construction / path sorting / destruction | 4.88% / 1.92% / 1.18% | — |
+| Declaration reads | 6.69% | 0.06% |
+| Descendant traversal | 3.74% | 3.43% |
+| Generic template validation | 15.23% | 0.00% |
+| Generic substitution / binding-site recording | 2.79% / 2.17% | 0.06% / 2.03% |
+| Frontier join with transport | 18.31% | 0.00% |
+| Vector growth / libc realloc / memmove | 7.58% / 6.13% / 4.51% | — / — / 4.51% |
+
+The analysis transcribed declaration reads as 6.74%; the supplied
+`children-full.txt:53` says 6.69%, used here. Inclusive entries overlap and are
+not a partition of a phase or additive savings. The exports lack complete
+caller trees, particularly allocator stacks; they do not attribute the growth
+share to `BoundStore::slots_for`.
+
+- **A — syntax preparation.** `DeclarationReads` builds item adjacency,
+  module membership and module roots once for the target and its dependency
+  queries over one resolved unit. Each query keeps its own visited set.
+  `SyntaxView` constructs paths on the first path request and the sorted
+  reverse index only on its first lookup; path components reserve the known
+  tree depth. The immutable syntax is their only input. Descendant DFS stays
+  unchanged: finalized node IDs are postorder, while its result is preorder;
+  an indexed replacement needs an additional ordered subtree representation,
+  beyond these local setup changes. No semantic judgments are cached.
+- **B — provenance.** A nested hash index keys the complete region-free
+  substitution and parameter key, retaining exactly the smallest source-node
+  index. Binding order, argument kinds and group-member identity remain part
+  of equality. The map is never iterated to choose a diagnostic. Substitution
+  preparation and every semantic judgment still run as before.
+- **C — allocation.** The at-most-two missing terms in `BoundStore::slots_for`
+  use a stack array and populated slice, retaining sort order and duplicate
+  elimination. Bulk layout changes are deferred: copying selected cells and
+  extra candidates is wider work with no caller-level allocation attribution.
+
+The new Rust tests are implementation checks in the existing unit-test gate:
+A compares every lazy path and reverse lookup against an eager child-walk
+oracle on empty, sibling and nested syntax, including both first-request
+orders; reversed components or sorting by node ID fail it. Its four-module
+fixture asserts explicit direct and transitive read sets, repeats queries in
+reverse order, and distinguishes unused declarations and an empty module;
+omitting provisional contract uses or sharing visited state fails it.
+B repeats and reorders registrations from two call sites with equal arguments
+and different region axes, checking independent parameters and fallback for
+other arguments; keeping the first/last registration or keying regions fails
+it. C inserts both missing endpoints in reverse order on append and relayout,
+plus equal, one-missing and existing endpoints, asserting slots, ordered cells,
+selected proofs and clone independence; dropping an endpoint, failing to sort
+or failing to deduplicate fails it. Existing bound-store candidate/transition,
+generic source-order, interface-fingerprint and cold/warm driver tests remain.
+
+Validation is pending CI; no builds, formatters, tests or measurements ran
+locally, and the edits are unstaged and uncommitted. CI must compile and lint
+all targets, run the new and existing tests and the full exact-revision gate,
+and compare exact verdicts and diagnostics against base. Before claiming a
+speedup, use the base/twin/head protocol above on the pinned Halo source and
+natural/plain interpreter panels, six rotating rounds on the 14900K with
+counters unset, recording wall/user/system time, RSS, statuses and spread.
+Start with the smallest sample. Any observable result difference rejects the
+change; a difference within base/twin spread does not establish a speedup.
+Attribute allocation changes separately; no percentage saving is yet measured.
+
+
+An independent read-only Codex reviewer (inherited model; exact identifier
+unavailable) inspected `c35fffd731118da889bc3c6298402f8dc470aeec` through this
+working diff, all changed files, direct consumers, relevant specification and
+design commitments, and the tests' failure conditions. It found none within
+that scope: A4, D2, C4, T4–T6, G1–G3 and DC1–DC3 passed source inspection;
+DC4 and all executable validation, design-lint counts/readiness and performance
+remain unverified. The tests' claimed mutation failures are by inspection,
+not executed results. D1, T1, T7, T8 and V3 are not applicable to this diff.

@@ -60,10 +60,49 @@ pub(super) struct ActualGroup {
     pub(super) bindings: Vec<NodeId>,
 }
 
-struct BindingSite {
-    substitution: GenericSubstitution,
-    key: GenericParameterKey,
-    source: NodeId,
+/// Diagnostic provenance only: equal arguments share a minimum source node,
+/// independently of the substitution's separately attached region axis.
+#[derive(Default)]
+struct BindingSites {
+    by_arguments: HashMap<GenericSubstitution, HashMap<GenericParameterKey, NodeId>>,
+}
+
+impl BindingSites {
+    fn record(
+        &mut self,
+        substitution: &GenericSubstitution,
+        sources: &[(GenericParameterKey, NodeId)],
+    ) {
+        if sources.is_empty() {
+            return;
+        }
+        let arguments = substitution.clone().with_regions(Vec::new());
+        let sites = self.by_arguments.entry(arguments).or_default();
+        for &(key, source) in sources {
+            sites
+                .entry(key)
+                .and_modify(|known| {
+                    if source.index() < known.index() {
+                        *known = source;
+                    }
+                })
+                .or_insert(source);
+        }
+    }
+
+    fn get(
+        &self,
+        fallback: NodeId,
+        key: GenericParameterKey,
+        substitution: &GenericSubstitution,
+    ) -> NodeId {
+        let arguments = substitution.clone().with_regions(Vec::new());
+        self.by_arguments
+            .get(&arguments)
+            .and_then(|sites| sites.get(&key))
+            .copied()
+            .unwrap_or(fallback)
+    }
 }
 
 #[derive(Default)]
@@ -71,7 +110,7 @@ pub(super) struct BehaviorInventory {
     pub(super) formals: HashMap<DeclarationId, FormalGroup>,
     pub(super) actuals: HashMap<DeclarationId, ActualGroup>,
     references: RefCell<Vec<FunctionReference>>,
-    binding_sites: RefCell<Vec<BindingSite>>,
+    binding_sites: RefCell<BindingSites>,
     pub(super) declaration_arguments: Vec<FunctionArgument>,
 }
 
@@ -852,27 +891,10 @@ impl<'unit> TypeContext<'unit> {
         substitution: &GenericSubstitution,
         sources: &[(GenericParameterKey, NodeId)],
     ) -> Result<(), CheckStop> {
-        if sources.is_empty() {
-            return Ok(());
-        }
-        let arguments = substitution.clone().with_regions(Vec::new());
-        let mut sites = self.behavior.binding_sites.borrow_mut();
-        for (key, source) in sources {
-            if let Some(site) = sites
-                .iter_mut()
-                .find(|site| site.key == *key && site.substitution == arguments)
-            {
-                if source.index() < site.source.index() {
-                    site.source = *source;
-                }
-            } else {
-                sites.push(BindingSite {
-                    substitution: arguments.clone(),
-                    key: *key,
-                    source: *source,
-                });
-            }
-        }
+        self.behavior
+            .binding_sites
+            .borrow_mut()
+            .record(substitution, sources);
         Ok(())
     }
     pub(super) fn behavior_binding_site(
@@ -881,14 +903,11 @@ impl<'unit> TypeContext<'unit> {
         key: GenericParameterKey,
         substitution: &GenericSubstitution,
     ) -> Result<NodeId, CheckStop> {
-        let arguments = substitution.clone().with_regions(Vec::new());
         Ok(self
             .behavior
             .binding_sites
             .borrow()
-            .iter()
-            .find(|site| site.key == key && site.substitution == arguments)
-            .map_or(fallback, |site| site.source))
+            .get(fallback, key, substitution))
     }
     pub(super) fn function_argument_instance(
         &self,
@@ -1717,6 +1736,80 @@ impl<'unit> DeclarationInventory<'unit> {
                 node,
                 "a forwarded group names an interface declaration",
             ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::{CheckedConst, CheckedType};
+
+    #[test]
+    fn binding_sites_keep_the_minimum_node_across_registration_order_and_regions() {
+        let declaration = |index| DeclarationId::from_index(index).unwrap();
+        let node = |index| NodeId::from_index(index).unwrap();
+        let ty = GenericParameterKey::Source(declaration(0));
+        let function = GenericParameterKey::Member {
+            application: node(1),
+            member: declaration(1),
+        };
+        let count = GenericParameterKey::Source(declaration(2));
+        let bindings = vec![
+            (ty, GenericArgument::Type(CheckedType::Bool)),
+            (
+                function,
+                GenericArgument::Function(FunctionArgument::Source {
+                    reference: FunctionReferenceId(0),
+                    concrete: true,
+                }),
+            ),
+            (count, GenericArgument::Const(CheckedConst::Value(3))),
+        ];
+        let arguments = GenericSubstitution::from_bindings(bindings.clone()).unwrap();
+        let first_region = arguments
+            .clone()
+            .with_regions(vec![(declaration(3), declaration(4))]);
+        let second_region = arguments
+            .clone()
+            .with_regions(vec![(declaration(3), declaration(5))]);
+        // These source-node pairs model two calls with the same type/function
+        // arguments; attached regions do not distinguish their provenance.
+        let first_call = [(ty, node(20)), (function, node(21))];
+        let second_call = [(function, node(81)), (ty, node(80))];
+        let calls = [(&first_region, first_call), (&second_region, second_call)];
+        for order in [[0, 1, 0, 1], [1, 0, 1, 0]] {
+            let mut sites = BindingSites::default();
+            sites.record(&arguments, &[]);
+            assert!(sites.by_arguments.is_empty());
+            for index in order {
+                let (substitution, sources) = &calls[index];
+                sites.record(substitution, sources);
+            }
+            for substitution in [&arguments, &first_region, &second_region] {
+                assert_eq!(sites.get(node(99), ty, substitution), node(20));
+                assert_eq!(sites.get(node(99), function, substitution), node(21));
+                assert_eq!(sites.get(node(99), count, substitution), node(99));
+            }
+            assert_eq!(sites.by_arguments.len(), 1);
+            // Equality remains that of the entire ordered binding vector.
+            // A different const argument or order must not share provenance.
+            let mut other = bindings.clone();
+            other[2].1 = GenericArgument::Const(CheckedConst::Value(4));
+            let other = GenericSubstitution::from_bindings(other).unwrap();
+            assert_eq!(sites.get(node(99), ty, &other), node(99));
+            sites.record(&other, &[(ty, node(10))]);
+            assert_eq!(sites.get(node(99), ty, &other), node(10));
+            assert_eq!(sites.get(node(99), ty, &arguments), node(20));
+            let reversed =
+                GenericSubstitution::from_bindings(bindings.iter().copied().rev().collect())
+                    .unwrap();
+            assert_eq!(sites.get(node(99), ty, &reversed), node(99));
+            let another_member = GenericParameterKey::Member {
+                application: node(2),
+                member: declaration(1),
+            };
+            assert_eq!(sites.get(node(99), another_member, &arguments), node(99));
         }
     }
 }

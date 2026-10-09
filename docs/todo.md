@@ -106,25 +106,22 @@ rarely insert at the same place.
   The per-function affine work counters distinguish cold scans, memo reuse,
   promotions and exhausted families.
 
-- **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
-  rewriting Halo's interpreter as plain `loop { match }` raised its source
-  check from about 7.7 s to 9.0 s, and the owner judged 9 s still too long.
-  Impact: every edit of an interpreter-sized program waits that long before
-  any diagnostic, and larger interpreters (full wasm, Lua) grow further. No
-  profile of Halo's check exists yet. The known sinks come from the v2h
-  wasm interpreter and the synthetic arm series: rebuilding the affine L0
-  index (64% of checking-thread samples in the stage-3 profile, addressed by
-  the lazy index above), join work at many-arm matches, dense single-input
-  snapshots, image formation and inventory scans. Possible directions after
-  the lazy index: a Halo profile to rank its own sinks, cheaper joins of
-  many arms that assign disjoint facts, and reuse of per-arm facts across
-  repeated checks of unchanged functions. Validate each with a same-source
-  base/twin/head timing of Halo's check on the 14900K through CI, unchanged
-  conformance and corpus verdicts, and the full-rebuild differentials.
-  With promotion Halo's `pkg::vm` check takes 8.6 s on the 14900K, below
-  the 9.1-9.2 s before the demanded index; its dominant remaining checking
-  cost is still unprofiled. Reopen with a profile of Halo's check, or when
-  it grows past 10 s again.
+- **Checking Halo remains too slow for package iteration.** Halo-wf profile
+  run 37893283903 records an 8.542 s `pkg::vm` check on the 14900K after affine
+  index promotion. The profile now identifies repeated syntax setup, linear
+  generic argument provenance and distributed allocation costs; the
+  [profile and first reductions](../research/investigations/check-time/DESIGN.md#halos-profile-and-the-first-cost-reductions)
+  records the shares and their attribution limits. Shared declaration-read
+  setup, lazy syntax paths/reverse lookup, indexed minimum-source provenance
+  and stack storage for missing bound slots are implemented with focused
+  tests, pending CI. Confirm unchanged verdicts, complete diagnostics and
+  source attribution, existing cold/warm behavior, and the full gate before
+  measuring base/twin/head on the same Halo source through CI on the 14900K.
+  No speedup is established yet. Descendant-query indexing, substitution reuse
+  and bulk bound-store layout remain deferred: they require ordered subtree
+  data, checking-context/provenance keys or caller-level allocation evidence,
+  respectively. Reopen those costs after this comparison and a follow-up
+  profile; many-arm joins remain the separate scaling investigation above.
 
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot
@@ -3199,17 +3196,6 @@ rarely insert at the same place.
   emitted output and measure the saved work and retained memory before
   selecting either change. See the
   [inventory design](../research/investigations/compiler-architecture/DESIGN.md#p23-one-inventory-without-rollback).
-
-- **Syntax views eagerly build the node-path index.** The shared view now
-  serves the graph reader and interface fingerprinting as well as checking;
-  those first two consumers use tokens and extents but never node paths.
-  Constructing their unused path vectors and sorted lookup index adds work
-  whose practical cost is unmeasured. Consider constructing that index on its
-  first path query within the same borrowed view. This adds lazy cache state
-  and is deferred because no current measurement identifies view setup as a
-  blocker. Reopen with the next module-reading performance investigation;
-  require unchanged paths, extents and fingerprints, and measure whether the
-  saved setup work matters before changing the cache policy.
 
 - **Measure the retained emission model's text storage when backend memory matters.**
   Structured LLVM emission retains definition text for fragment construction

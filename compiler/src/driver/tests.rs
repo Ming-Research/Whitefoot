@@ -74,6 +74,83 @@ const ROOT_INTERFACE: &[u8] =
     b"public fn main() -> status: std::process::ExitStatus pure doc \"Runs the program.\";\n";
 const ROOT_BODY: &[u8] = b"fn main() -> status: std::process::ExitStatus pure {\n  let code = pkg::user::use_half();\n  return std::process::exit_status(code: code);\n}\n";
 
+/// One resolved unit serves every module query without sharing traversal
+/// state. The expected sets distinguish direct uses, transitive contract
+/// uses, an unused declaration and a module with no declarations.
+#[test]
+fn shared_declaration_reads_preserve_each_modules_reached_items() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::leaf: [];\npkg::base: [pkg::leaf];\npkg::empty: [];\npkg: [pkg::base];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .unwrap();
+    let records: Vec<(&str, &[u8])> = vec![
+        (
+            "leaf/module.wfm",
+            b"public const limit: u8 = 7_u8;\n\npublic struct Token {\n  public value: u8;\n}\n",
+        ),
+        (
+            "base/module.wfm",
+            b"public fn make() -> result: u8 pure contract {\n  ensures result <= pkg::leaf::limit;\n} doc \"Makes a bounded value.\";\n\npublic fn unused() -> token: pkg::leaf::Token pure doc \"Supplies a token.\";\n",
+        ),
+        ("empty/module.wfm", b"\n"),
+        (
+            "main.wf",
+            b"fn main() -> result: u8 pure {\n  let first = pkg::base::make();\n  let second = pkg::base::make();\n  return first;\n}\n",
+        ),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let limits = CompilerLimits::default();
+    let bundle = crate::SourceBundle::with_prelude_and_modules(
+        &inputs,
+        graph.modules().to_vec(),
+        limits.source,
+    )
+    .unwrap();
+    let canonical = super::canonical_syntax(&bundle, limits, false).unwrap();
+    let crate::ResolutionOutcome::Complete(resolved) = crate::resolve(canonical) else {
+        panic!("the multi-module fixture resolves");
+    };
+    let reads = super::reads::DeclarationReads::new(&resolved).unwrap();
+    let module = |path: &[&str]| {
+        graph
+            .modules()
+            .iter()
+            .position(|module| module.package() == crate::Package::Program && module.path() == path)
+            .and_then(crate::ModuleId::from_index)
+            .unwrap()
+    };
+    let (leaf, base, empty, root) = (
+        module(&["leaf"]),
+        module(&["base"]),
+        module(&["empty"]),
+        module(&[]),
+    );
+    let item = |module, role: &str, name: &str| (module, (role.to_owned(), name.to_owned()));
+    let expected = [
+        (
+            root,
+            [item(base, "fn", "make"), item(leaf, "const", "limit")].into(),
+        ),
+        (
+            base,
+            [item(leaf, "const", "limit"), item(leaf, "struct", "Token")].into(),
+        ),
+        (leaf, std::collections::BTreeSet::new()),
+        (empty, std::collections::BTreeSet::new()),
+    ];
+    // Reordered and repeated queries must retain exactly each target's roots.
+    for index in [0, 1, 2, 3, 3, 2, 1, 0] {
+        let (target, expected) = &expected[index];
+        assert_eq!(reads.read_declarations(*target).as_ref(), Some(expected));
+        let fresh = super::reads::DeclarationReads::new(&resolved).unwrap();
+        assert_eq!(fresh.read_declarations(*target).as_ref(), Some(expected));
+    }
+}
+
 /// Every module's verdict and every entry's composition verdict, with
 /// and without the cache; the two must agree apart from reuse.
 fn verdicts(
