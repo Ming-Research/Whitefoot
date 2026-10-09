@@ -264,10 +264,10 @@ measured.
 
 ## Recommendation and stages
 
-This section is this author's position. The owner asked, before a
-direction is chosen, for two further independent studies of the same
-question against the same criteria; the comparison of the three is added
-below when they are done.
+This section is this author's position as first written. The owner asked,
+before a direction is chosen, for two further independent studies of the
+same question against the same criteria; [the comparison](#three-independent-studies-compared)
+revises the demand signal and the order of the stages below.
 
 Recommended: **B, with A's single decision pass as its first stage.**
 B addresses the two problem groups that static pricing has failed on
@@ -301,6 +301,88 @@ What would overturn the recommendation: a worker-local emptiness check
 that costs as much as today's query (stage 3 measures it first, on the
 microbenchmark), or a suite result where demand-driven splitting loses to
 static pricing on regular kernels by more than noise.
+
+## Three independent studies compared
+
+At the owner's request, two further studies answered the same question
+against the same criteria without seeing this author's recommendation:
+[one by Fable](study-fable.md) and [one by Astra](study-astra.md) (each
+file's header says what it was given). This section compares the three:
+"this plan" is the recommendation above.
+
+### Where all three agree
+
+1. **The family of direction.** All three choose demand-driven, lazy
+   exposure of work as the governing rule, with static prices reduced to an
+   advisory role: a floor or upper bound for pruning, a first guess, a
+   ranking. All three reject a stronger static or profile-guided model as
+   the governing policy, for the same reason: H1 is stated over every
+   input, and a price, however good, is wrong for some input by an
+   arbitrary factor (the chain-pull and phased-DAG cases).
+2. **What stays.** Permission and proof erasure, the sequential world, a
+   loop at each range leaf, the Chase-Lev deques and join helping, and the
+   ledger. The power-of-two allowance with its 16-chunks-per-lane cap goes.
+3. **One place decides**, after ordinary lowering [coord-wfbl-03-39].
+4. **Topology belongs to the direction.** Default to physical cores, keep
+   SMT siblings parked, treat mixed core classes as unequal, and wake
+   helpers on actual demand, which also addresses the hosted SMT result
+   [coord-wfbl-03-60].
+5. **Some backlog stays outside it.** Allocator contention
+   [coord-wfbl-03-55], construction and packing [coord-wfbl-03-22,
+   coord-wfbl-03-31], the DAG executor [coord-wfbl-03-25], chunk code
+   quality [coord-wfbl-03-23, coord-wfbl-03-34] and every permission gap
+   are separate lines.
+6. **H1 as written cannot be met literally.** No runtime decision fits
+   within 2 percent of a nanosecond-sized site, oversubscribed or busy
+   hosts are outside any policy's control, and a direction's guarantee has
+   to be a stated overhead bound plus an empirical requirement under a
+   declared host model.
+
+### Where they differ
+
+| Question | This plan | Fable | Astra |
+| --- | --- | --- | --- |
+| What signals demand | the worker's own deque is empty | an idle thief writes a request into a victim's lane; the owner reads one word | an idle worker records a request and parks; a checkpoint answers it |
+| What decides "worth handing out" | the static price as a floor | a per-site scale learned at run time: a thief times what it ran (two clock reads), the owner samples inline runs; the floor is a time, about 20-50 us | work credits earned by executed work in a compiler cost model; no clock at checkpoints; observations only at coarse epochs |
+| Loops | halve while the deque is empty | an iterative slice driver: run slices of about 5 us, at each boundary hand out the far half of the rest on request; seed log2(P) halves at entry when someone is idle | split the unexecuted remainder at checkpoints on demand |
+| Recursion | replace the depth budget by the same demand rule | keep the budget and the sequential clone below the cut (the only known way to keep nanosecond-sized recursion inside 2 percent), give a stolen task a fresh budget, refresh the cut on demand at most once per 50-100 us per lane | remove the depth budget; credits are conserved, not reset per steal; retain latent continuations so deep work stays reachable |
+| Weak targets | no clock needed | needs a monotonic clock read at hand-outs and samples; without one, falls back to the static price | no clock at all on the payload path |
+| First experiment | build the suite, then the single decision pass, then a prototype | a small prototype of the demand gate, static pruning and the slice driver, on existing kernels, with pass/fail fixed for six cells, before the suite exists | a no-hand-out experiment first: checkpoints and latent state with helpers parked, to see whether cheap sequential execution survives them |
+| Order of the refactor | the single pass second | the single pass last | the single pass only after the mechanism earns its place |
+
+### What the comparison changes
+
+- **The demand signal should be an explicit request**, not the owner's
+  own empty deque. Both other studies argue this, and it is better: an
+  empty deque says nothing about whether anyone is idle, while a request
+  says someone is. This plan's B is revised accordingly.
+- **The first step should be a small decisive experiment, not the suite or
+  the refactor.** Both other studies put an experiment that can refute the
+  direction before the larger investments; the suite and the single pass
+  remain needed but follow.
+- **H1 and H2 need restating** before any direction is measured against
+  them, on the lines all three agree: a per-decision-point allowance for
+  sites with a runtime extent and zero cost for statically bounded small
+  sites; compute lanes clamped to the CPUs so oversubscription is excluded
+  by construction; a defined load for the busy-host class; a region-length
+  axis; and, from Astra's counterexample (a sequential prefix of S followed
+  by a wide phase of work 8S at eight workers can reach only 4.5x, not the
+  6.4x H2 asks), H2 measured against a realizable reference schedule rather
+  than the work-over-span bound.
+
+### What remains for the owner to decide
+
+1. **How "worth handing out" is learned**: a runtime clock (Fable; strongest
+   bound, needs a clock on targets that have one) or compiler-modelled work
+   credits (Astra; no clock, but depends on a cost model surviving
+   optimization).
+2. **Recursion**: keep a cut with a sequential clone below it (Fable; protects
+   nanosecond recursion) or remove the depth budget and keep latent
+   continuations (Astra; reaches deep work, costs retained state).
+3. **The first experiment**: Fable's demand-gate prototype (tests that
+   lazy hand-out keeps today's speedups) or Astra's no-hand-out experiment
+   (tests that the bookkeeping is affordable at all). They test different
+   premises; both are small, and running both is possible.
 
 ## Appendix: history of interventions
 
