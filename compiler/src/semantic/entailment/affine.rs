@@ -1239,6 +1239,12 @@ mod tests {
             (inequality(&[(0, -1)], 0), inequality(&[(0, i128::MIN)], 0)),
             (inequality(&[(0, 1)], -2), inequality(&[(0, 3)], -4)),
             (inequality(&[], 0), inequality(&[], 0)),
+            // The target multiple overflows while the divisor tightening is
+            // representable; the divisor candidate must still be visited.
+            (
+                inequality(&[(0, 3), (1, 6 * (i128::MAX / 8))], 5),
+                inequality(&[(0, 6), (1, 6 * (i128::MAX / 8))], 13),
+            ),
         ];
         let mut scratch = AffineResidualScratch::default();
         for limits in [
@@ -1292,6 +1298,33 @@ mod tests {
             reference_residual_after(&cases[1].0, &cases[1].1, &mut AffineCheckState::new()),
             Err(AffineCheckError::ArithmeticOverflow),
             "MIN cancellation cannot be regrouped into a successful subtraction"
+        );
+        // Independently of the reference traversal: production visits the
+        // candidate's own residual and then the divisor tightening's.
+        let (target, candidate) = &cases[8];
+        let wide = i128::MAX / 8;
+        let mut observed = Vec::new();
+        let mut check = AffineCheckState::new();
+        let selected = scratch.prove(target, candidate.into(), &mut check, |residual, _| {
+            observed.push(AffineInequality {
+                terms: residual.terms().into(),
+                upper: residual.upper(),
+            });
+            None::<usize>
+        });
+        assert_eq!(selected, None);
+        assert_eq!(
+            observed.len(),
+            2,
+            "the skipped multiple leaves the representable divisor candidate"
+        );
+        assert_eq!(
+            Ok(observed[1].clone()),
+            reference_residual_after(
+                target,
+                &inequality(&[(0, 1), (1, wide)], 2),
+                &mut AffineCheckState::new()
+            )
         );
     }
 
