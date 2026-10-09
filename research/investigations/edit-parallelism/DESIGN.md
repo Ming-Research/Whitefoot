@@ -67,7 +67,8 @@ Snowghost-wf run
 [37840469770](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840469770)
 (branch `research/gran-profile`, hosted `ubuntu-24.04`): `perf record -F 4999
 -g` of the sequential image over the 2,000-edit pair and over its first pair
-alone. The full run counts 21,500 listed samples and the setup run 16,436,
+alone. It samples the software `task-clock` event, so the shares below are
+clock-sampled time per function; no hardware counter is used. The full run counts 21,500 listed samples and the setup run 16,436,
 so 5,064 samples (about 1.0 CPU second, roughly 510 microseconds per edit on
 this host under the profiler) belong to the edits. Per-edit self samples:
 
