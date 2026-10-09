@@ -77,6 +77,18 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **Atomic binding-use checking omits loop-header invariants.** SHARE-2
+  requires the guard and block together to name every atomic binding, but
+  `statement_mentions` in `compiler/src/semantic/check/control/atomic.rs`
+  visits a loop's endpoints and body without its header invariants. An
+  atomic binding named only by an admitted measure in a header can therefore
+  receive `AtomicBindingUnused` before entailment. This is a source-inspected
+  discrepancy; no execution has confirmed it. Extend the existing mention
+  traversal over checked affine relations, with a positive case naming a
+  binding only in a header and a negative control naming it nowhere. Keep
+  this separate from measure-place admission; reopen when completing
+  SHARE-2's proof-only binding-use coverage.
+
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot
   place forget every location" [RANGE-2]. Read with a binding as a

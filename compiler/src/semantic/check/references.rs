@@ -441,6 +441,8 @@ pub(super) enum RequiredReferent {
     Enum,
     /// An index root requires directly indexable storage [OP-4].
     IndexableStorage,
+    /// A measure place selects a row of the measure table [MSR-1].
+    MeasuredStorage,
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -2104,8 +2106,12 @@ impl<'unit> TypeContext<'unit> {
             // [TYPE-7] missing `^`.
             RequiredReferent::IndexableStorage => matches!(
                 ty,
-                CheckedType::Array { .. } | CheckedType::Buffer { .. } | CheckedType::Window { .. }
+                CheckedType::Array { .. }
+                    | CheckedType::Buffer { .. }
+                    | CheckedType::Window { .. }
+                    | CheckedType::Entries { .. }
             ),
+            RequiredReferent::MeasuredStorage => ty.measured().is_some(),
         })
     }
     /// [REF-2] applies one access's invalidation to every live reference in

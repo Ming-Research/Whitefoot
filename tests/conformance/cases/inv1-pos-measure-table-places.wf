@@ -1,0 +1,40 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let fixed = array_filled::<u8, 2>(value: 0_u8);
+  let fixed_ref = &fixed;
+  let array = box_array_filled::<u8>(count: 2_u64, value: 0_u8);
+  let array_ref = &array.inner;
+  let slots = slots_new::<u8, 2>();
+  let slots_ref = &slots;
+  let dynamic_slots = box_slots_new::<u8>(capacity: 2_u64);
+  let dynamic_slots_ref = &dynamic_slots.inner;
+  let ring = ring_new::<u8, 2>();
+  let ring_ref = &ring;
+  let dynamic_ring = box_ring_new::<u8>(capacity: 2_u64);
+  let dynamic_ring_ref = &dynamic_ring.inner;
+  let lengths = array_filled::<u64, 2>(value: 1_u64);
+  let segments = box_segments_filled::<u8>(lengths: &lengths[0_u64..2_u64], value: 0_u8);
+  let segments_ref = &segments.inner;
+  let keys = key_set_new(capacity: 2_u64);
+  let keys_ref = &keys;
+  let range = &fixed[0_u64..2_u64];
+  for (
+    i in 0_u64..1_u64,
+    invariant fixed_length: fixed.len == fixed_ref^.len,
+    invariant array_length: array.inner.len == array_ref^.len,
+    invariant slots_length: slots.len == slots_ref^.len,
+    invariant slots_capacity: slots.cap == slots_ref^.cap,
+    invariant dynamic_slots_length: dynamic_slots.inner.len == dynamic_slots_ref^.len,
+    invariant dynamic_slots_capacity: dynamic_slots.inner.cap == dynamic_slots_ref^.cap,
+    invariant ring_length: ring.len == ring_ref^.len,
+    invariant ring_capacity: ring.cap == ring_ref^.cap,
+    invariant ring_origin: ring.head == ring_ref^.head,
+    invariant dynamic_ring_length: dynamic_ring.inner.len == dynamic_ring_ref^.len,
+    invariant dynamic_ring_capacity: dynamic_ring.inner.cap == dynamic_ring_ref^.cap,
+    invariant dynamic_ring_origin: dynamic_ring.inner.head == dynamic_ring_ref^.head,
+    invariant segment_count: segments.inner.len == segments_ref^.len,
+    invariant key_count: keys.len == keys_ref^.len,
+    invariant range_length: range^.len == 2_u64
+  ) {
+  }
+  return std::process::exit_status(code: 0_u8);
+}
