@@ -312,3 +312,36 @@ fn opaque_drop_has_no_implicit_native_close() {
     assert!(!llvm.contains("call void @wf_std.fs.close_"));
     assert!(compile_and_run(&llvm).status.success());
 }
+
+/// Different checked instances keep their types and effects but call the one
+/// PRE-2 host definition, with the same two-pointer ordinary ABI.
+#[test]
+fn generic_host_instances_call_one_host_symbol() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-map-release-reserve-read-handle.wf"
+    );
+    let llvm = super::emit(source);
+    let symbol = "@wf_std.process.release_map_reserve";
+    let calls = llvm
+        .lines()
+        .filter(|line| line.contains("call i64") && line.contains(symbol))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2, "{llvm}");
+    for call in calls {
+        assert!(
+            call.contains("@wf_std.process.release_map_reserve(ptr "),
+            "{call}"
+        );
+        assert_eq!(call.matches("ptr ").count(), 2, "{call}");
+        assert!(!call.contains("$instance$"), "{call}");
+    }
+    assert_eq!(
+        llvm.lines()
+            .filter(|line| line.starts_with("declare i64 @wf_std.process.release_map_reserve("))
+            .count(),
+        1,
+        "{llvm}"
+    );
+    assert!(!llvm.contains("@wf_std.process.release_map_reserve$instance$"));
+    assert!(!llvm.contains("@wf_shared_map_release_reserve"));
+}

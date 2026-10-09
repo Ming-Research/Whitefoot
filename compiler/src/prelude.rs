@@ -6,23 +6,11 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
-    // makes each of the five an opaque struct
-    // with a constructor entry that exists to be refused, and [TYPE-9] keeps
-    // their element storage compiler-owned: a declaration can state neither
-    // the elements nor the omitted-capacity form, so what the body carries is
-    // exactly the readonly measure fields [MSR-1].
-    //
-    // The fence writes the capacity parameter `const N: u64`. That spelling
-    // does not parse: [GRAM-2]'s `gparam := "const" IDENT ":" type` takes a
-    // lexical IDENT, and [TYPE-2] says so outright -- "in this
-    // specification's prose `N` stands for a written const argument; source
-    // writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows
-    // do". The rows below therefore write `const n: u64`, exactly as
-    // `slots_new<T, const n: u64>` of the same fence does.
-    //
-    // [OWN-1] `Array` carries no capability modifier, so an instance has the
-    // capabilities of its element; `Slots`, `Ring` and `Box` are `nocopy`.
+    // [PRE-1] writes the five storage shapes first, then the cell Box.
+    // [TYPE-2] makes each opaque, with a constructor entry that exists to be
+    // refused; [TYPE-9] keeps their storage compiler-owned. The shapes expose
+    // readonly measure fields [MSR-1], and Box exposes its inner place. Their
+    // written capability modifiers select the ordinary [OWN-1] closure.
     (
         "prelude/Array.wf",
         PreludeSource::Opaque,
@@ -408,12 +396,6 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
-"#,
-    ),
-    (
-        "prelude/shared_map_release_reserve.wf",
-        PreludeSource::Function,
-        r#"fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map);
 "#,
     ),
 ];

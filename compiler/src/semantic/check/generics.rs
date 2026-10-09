@@ -1137,7 +1137,31 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .module_symbol_base(template.declaration, &template.name);
-        let symbol = if template.generic_parameters.is_empty() {
+        let host = self
+            .types
+            .declarations
+            .declaration_home(template.declaration)
+            .is_some_and(|(package, path)| {
+                *package == crate::PackageKey::Standard && crate::library::is_host_module(path)
+            });
+        // PRE-2 supplies one definition for every instance. Until the
+        // linked ABI supports more shapes, require fixed scalars and
+        // references to statically known shapes; in particular an owned
+        // T or an &T cannot select a different ABI at a concrete instance.
+        if host
+            && !template.generic_parameters.is_empty()
+            && (!template
+                .generic_parameters
+                .iter()
+                .all(|parameter| matches!(parameter, GenericParameter::Type { .. }))
+                || !generic_host_abi_type(result_mode, result)
+                || parameters
+                    .iter()
+                    .any(|parameter| !generic_host_abi_type(parameter.mode, parameter.ty)))
+        {
+            return Err(SemanticCompilerFailure::UnsupportedGenericHostAbi.into());
+        }
+        let symbol = if template.generic_parameters.is_empty() || host {
             base
         } else {
             // An instance's symbol names its template and a digest of its
@@ -2389,5 +2413,54 @@ pub(super) fn summary_entailment(
         loop_invariants: entailment.loop_invariants.clone(),
         postconditions,
         ..super::super::entailment::FunctionEntailment::default()
+    }
+}
+
+/// The supported part of a generic linked boundary has one ABI even at its
+/// symbolic instance. Nominal references are pointer slots irrespective of
+/// their fields or type arguments; owned aggregates and generic bare types
+/// need a representation protocol that the host boundary does not yet carry.
+fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
+    use super::super::model::CheckedMode;
+    match mode {
+        CheckedMode::Own => matches!(
+            ty,
+            CheckedType::Unit | CheckedType::Bool | CheckedType::Integer(_) | CheckedType::Float(_)
+        ),
+        CheckedMode::Reference => matches!(
+            ty,
+            CheckedType::Unit
+                | CheckedType::Bool
+                | CheckedType::Integer(_)
+                | CheckedType::Float(_)
+                | CheckedType::Nominal(_)
+                | CheckedType::Array { .. }
+                | CheckedType::KeySet
+        ),
+        CheckedMode::Range | CheckedMode::Run => false,
+    }
+}
+
+#[cfg(test)]
+mod host_abi_tests {
+    use super::*;
+    use crate::semantic::CheckedMode;
+
+    #[test]
+    fn a_generic_host_boundary_refuses_unfixed_or_unsupported_abi_shapes() {
+        let generic = CheckedType::Generic(crate::DeclarationId::from_index(0).unwrap());
+        assert!(!generic_host_abi_type(CheckedMode::Own, generic));
+        assert!(!generic_host_abi_type(CheckedMode::Reference, generic));
+        let nominal = CheckedType::Nominal(NominalId(0));
+        assert!(!generic_host_abi_type(CheckedMode::Own, nominal));
+        assert!(!generic_host_abi_type(
+            CheckedMode::Range,
+            CheckedType::Integer(IntegerType::U8)
+        ));
+        assert!(generic_host_abi_type(CheckedMode::Reference, nominal));
+        assert!(generic_host_abi_type(
+            CheckedMode::Own,
+            CheckedType::Integer(IntegerType::U64)
+        ));
     }
 }

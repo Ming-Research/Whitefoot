@@ -353,12 +353,11 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
     }
 }
 
-/// The [PRE-1] records whose bodies the compiler itself emits: the ten
-/// construction functions [OP-13], the nine window operations [OP-10],
+/// The [PRE-1] records whose bodies the compiler itself emits: the
+/// construction functions [OP-13], the window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`,
-/// the map's five functions `shared_map_new`, `map_count`, `map_scan`,
-/// `map_clear` and `shared_map_release_reserve`, and the key set's three
-/// [SHARE-1].
+/// the map's four functions `shared_map_new`, `map_count`, `map_scan`
+/// and `map_clear`, and the key set's three [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -366,8 +365,8 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
-    // [OP-13] the ten construction functions.
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 33] = [
+    // [OP-13] construction functions and the paged operations [OP-10].
     "box_new",
     "array_filled",
     "slots_new",
@@ -394,7 +393,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
-    // [SHARE-1] the shared-object handle's two functions, the map's five
+    // [SHARE-1] the shared-object handle's two functions, the map's four
     // and the key set's three.
     "shared_new",
     "shared_share",
@@ -402,7 +401,6 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 34] = [
     "map_count",
     "map_scan",
     "map_clear",
-    "shared_map_release_reserve",
     "key_set_new",
     "key_set_insert",
     "key_set_read_key",
@@ -413,9 +411,9 @@ mod builder;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use builder::layout_ceiling;
 #[cfg(test)]
 pub(crate) use builder::lower_checked;
-pub(crate) use builder::layout_ceiling;
 pub(crate) use builder::lower_checked_from;
 #[cfg(test)]
 pub(crate) use builder::lower_checked_with_layout;

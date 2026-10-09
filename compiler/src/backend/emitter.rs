@@ -278,6 +278,7 @@ fn emit_module(
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
     let mut functions = Module::default();
+    let mut linked_declarations = std::collections::HashMap::new();
     for (ordinal, function) in program.functions().iter().enumerate() {
         // A member of a budgeted component keeps its ordinary symbol and its
         // ordinary signature, and that symbol obtains the initial budget and
@@ -306,7 +307,20 @@ fn emit_module(
                 dispatch_layout,
             },
         )?;
-        functions.append(emitter.emit()?);
+        let emitted = emitter.emit()?;
+        if function.blocks().is_empty() {
+            // PRE-2's generic instances retain their own checked signature
+            // and call operands, but link to one definition. Emit its
+            // declarations once and refuse any inconsistent linked ABI.
+            if let Some(previous) = linked_declarations.get(function.name()) {
+                if previous != &emitted.declarations {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                continue;
+            }
+            linked_declarations.insert(function.name().to_owned(), emitted.declarations.clone());
+        }
+        functions.append(emitted);
     }
     // The budget-carrying half of each family: one variant per member, the
     // same emitter over the same IR as every other function of this module,
@@ -2740,9 +2754,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_keyed_table_scan(result, *table, *cursor, *count, *set),
             IrOperation::ConcurrentHashMapClear { table } => {
                 self.emit_keyed_table_clear(result, *table)
-            }
-            IrOperation::ConcurrentHashMapReleaseReserve { table } => {
-                self.emit_keyed_table_release_reserve(result, *table)
             }
             IrOperation::TableLockEntry {
                 record,

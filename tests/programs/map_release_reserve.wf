@@ -4,6 +4,7 @@ alias MemoryMeter = std::process::MemoryMeter;
 alias exit_status = std::process::exit_status;
 
 fn low_byte(v: u64) -> result: u8 pure {
+  doc "Return the low byte of an integer.";
   let low = iand(v, 255_u64);
   match cvt.checked::<u64, u8>(low) {
     Ok(value: byte) => {
@@ -16,6 +17,7 @@ fn low_byte(v: u64) -> result: u8 pure {
 }
 
 fn spell(destination: &[u8], value: u64) -> result: unit writes(destination) {
+  doc "Write a key as eight low-to-high bytes.";
   let cursor = 0_u64;
   let rest = value;
   loop @octets {
@@ -33,11 +35,12 @@ fn spell(destination: &[u8], value: u64) -> result: unit writes(destination) {
   return unit;
 }
 
-fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 writes(store), writes(meter) {
+fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 reads(store), writes(meter) {
+  doc "Compare released reserve bytes with the decrease in heap holding.";
   let before = std::process::heap_in_use(meter: meter);
-  let freed = shared_map_release_reserve::<u64>(map: store);
+  let freed = std::process::release_map_reserve::<u64>(map: store, meter: meter);
   let after = std::process::heap_in_use(meter: meter);
-  let again = shared_map_release_reserve::<u64>(map: store);
+  let again = std::process::release_map_reserve::<u64>(map: store, meter: meter);
   if freed == 0_u64 {
     return 1_u8;
   }
@@ -55,6 +58,7 @@ fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Exercise reserve release at several map sizes while retaining entries.";
   let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);

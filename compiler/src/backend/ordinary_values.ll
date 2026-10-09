@@ -949,3 +949,11 @@ entry:
   %bytes = load { i32, i64 }, ptr %result, align 8
   ret { i32, i64 } %bytes
 }
+
+declare i64 @wf__body_release_map_reserve(ptr, ptr)
+
+define i64 @wf_std.process.release_map_reserve(ptr %map, ptr %meter) align 64 {
+entry:
+  %freed = call i64 @wf__body_release_map_reserve(ptr %map, ptr %meter)
+  ret i64 %freed
+}
