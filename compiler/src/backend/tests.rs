@@ -40,6 +40,7 @@ mod owned_places;
 mod parallel;
 /// Union-laid-out payload enums (compiler/payload-enum-layout).
 mod payload_enums;
+mod read_through;
 /// Range references over the three storage origins [REF-4, STOR-1], and the
 /// compute kernels that take a range of work.
 ///

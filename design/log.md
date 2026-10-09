@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 Selected call results produced in place and read-through snapshots
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese: on the card asking whether the compiler may read a by-value array element directly from its source when the snapshot is only read and the source is unchanged until its last use, recommended option A, a compiler rule decided from checked effect facts with the language unchanged: "choose A" (translated); and on the item request approving the design decision of #310 that unobserved join parameters are removed before storage planning so a selected call result is written directly into its final place: "agreed" (translated).
+
+Summary: Internal block parameters and their incoming arguments that no operand, scrutinee, return, drop or cleanup observes are removed before storage planning, because a continuing match carried every binding in scope and an unobserved duplicate kept a provisional call result and the selected result in separate storage, copying the whole value on the unchanged arms (Halo's `instruction_call`). A by-value snapshot that is never written or exposed reads through its source wherever checked effects prove the source unchanged up to the use, and a use that cannot read through copies from the source right before it on that path only, because Halo's `prepare` copied each called element before reading its tag; making writers borrow-match instead and making indexed by-value reads borrows were refused. Read-only facts now cover range and run parameters as well [CALL-1, REF-4]. In Halo's call path both copies are gone from the optimized IR ([read-through snapshots](../research/investigations/in-place-parameters/DESIGN.md#read-through-snapshots)).
 ## 2026-10-09 A payload-only keyed statement takes nothing for an absent key
 
 Nodes: compiler/waiting-contexts/concurrent-map
