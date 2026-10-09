@@ -290,6 +290,7 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Length,
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
+            CheckedMeasure::Pages,
         ] {
             let term = self.vocabulary.intern_measure(cell_measure, &path);
             let bound = match cell_measure.cell(measured) {

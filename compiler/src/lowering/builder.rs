@@ -8,6 +8,7 @@ mod call_grain;
 mod contexts;
 mod loops;
 mod prelude;
+pub(crate) use prelude::layout_ceiling;
 mod probe;
 mod ranges;
 mod results;
@@ -535,7 +536,7 @@ fn lower_function<'program>(
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
-        builder.lower_prelude_row(&function.name)?;
+        builder.lower_prelude_row(&function.name, function.prelude_element)?;
     } else {
         builder.blocks.clear();
         builder.current = None;
@@ -578,7 +579,7 @@ const fn lower_source_mode(mode: CheckedMode) -> IrSourceMode {
     match mode {
         CheckedMode::Own => IrSourceMode::Own,
         CheckedMode::Reference => IrSourceMode::Reference,
-        CheckedMode::Range => IrSourceMode::Range,
+        CheckedMode::Range | CheckedMode::Run => IrSourceMode::Range,
     }
 }
 
@@ -611,6 +612,16 @@ fn lower_parameter_type(
     // [REF-4, TYPE-8] a `&[T]` parameter's written type is the element type
     // and its kind is its mode, so the descriptor type is formed here and
     // never from the type alone.
+    if parameter.mode == CheckedMode::Run {
+        return Ok(IrType::Run {
+            element: lower_element(
+                erasure,
+                parameter
+                    .range_element
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+            )?,
+        });
+    }
     if parameter.mode == CheckedMode::Range {
         return Ok(IrType::Range {
             element: lower_element(
@@ -634,7 +645,12 @@ fn lower_borrow_mode_type(
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own || matches!(ty, IrType::Buffer { .. } | IrType::Range { .. }) {
+    if mode == CheckedMode::Own
+        || matches!(
+            ty,
+            IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
+        )
+    {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {
@@ -1410,7 +1426,15 @@ impl<'program> IrBuilder<'program> {
                     // carries the selected address; a range join carries the
                     // selected pointer and count. Neither has the by-value
                     // representation of its written referent type.
-                    let result = if *result_mode == CheckedMode::Range {
+                    let result = if *result_mode == CheckedMode::Run {
+                        IrType::Run {
+                            element: lower_element(
+                                self.erasure,
+                                result_range_element
+                                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                            )?,
+                        }
+                    } else if *result_mode == CheckedMode::Range {
                         IrType::Range {
                             element: lower_element(
                                 self.erasure,
@@ -1696,7 +1720,7 @@ impl<'program> IrBuilder<'program> {
                         (actual, expected),
                         (IrType::Address(referent), _) if referent.ty() == expected
                     )
-                    && !matches!(actual, IrType::Range { element } if self.element_type(element)? == expected)
+                    && !matches!(actual, IrType::Range { element } | IrType::Run { element } if self.element_type(element)? == expected)
                 {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
@@ -2287,12 +2311,9 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let displaced = self.displaced_release(&target)?;
+        let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
-        if let Some(drop) = displaced {
-            self.append_drops(vec![drop])?;
-        }
-        Ok(())
+        self.append_drops(displaced)
     }
 
     fn project_struct_path(

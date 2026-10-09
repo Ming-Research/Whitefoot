@@ -323,6 +323,7 @@ fn contained_nominals(
             | IrType::Buffer { element }
             | IrType::Segments { element }
             | IrType::Range { element }
+            | IrType::Run { element }
             | IrType::Entries { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }

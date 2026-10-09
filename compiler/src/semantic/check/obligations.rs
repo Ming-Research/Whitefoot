@@ -480,8 +480,17 @@ impl Records<'_> {
             // [OP-4] a segment owes `i < s.len` after the place's own
             // subscripts.
             CheckedExpression::BorrowSegment { root, segment, .. } => {
-                self.container_root(root);
-                if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                match root {
+                    crate::semantic::CheckedSegmentSource::Storage(root) => {
+                        self.container_root(root)
+                    }
+                    crate::semantic::CheckedSegmentSource::Element(place) => {
+                        self.range_element_place(place)
+                    }
+                }
+                if let crate::semantic::CheckedSegmentSelect::One(index)
+                | crate::semantic::CheckedSegmentSelect::Page(index) = segment
+                {
                     self.expression(&index.offset);
                     self.source(
                         SemanticRule::Op4,

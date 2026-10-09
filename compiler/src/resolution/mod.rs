@@ -165,6 +165,7 @@ impl BuiltinPreludeId {
     pub(crate) const NARROW_ERROR: Self = Self(21);
     pub(crate) const INT: Self = Self(22);
     pub(crate) const FLOAT: Self = Self(23);
+    pub(crate) const RUN: Self = Self(24);
 
     /// Returns the internal built-in record index.
     #[must_use]

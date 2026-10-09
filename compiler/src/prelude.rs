@@ -60,7 +60,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // [PRE-1] writes the cell after the four shapes. [TYPE-2] makes it an
+    (
+        "prelude/Paged.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Paged<T> {
+  readonly len: u64;
+  readonly cap: u64;
+}
+"#,
+    ),
+    // [PRE-1] writes the cell after the five shapes. [TYPE-2] makes it an
     // opaque struct with one field and a constructor
     // entry that exists to be refused.
     //
@@ -186,6 +195,15 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/box_paged_new.wf",
+        PreludeSource::Function,
+        r#"fn box_paged_new<T>(capacity: u64) -> result: Box<Paged<T>> pure contract {
+  ensures result.inner.len == 0_u64;
+  ensures result.inner.cap == capacity;
+};
+"#,
+    ),
+    (
         "prelude/slots_from_array.wf",
         PreludeSource::Function,
         r#"fn slots_from_array<T, const n: u64>(values: Array<T, n>) -> result: Slots<T, n> pure contract {
@@ -269,6 +287,24 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
   requires capacity >= cell^.inner.cap;
   ensures cell^.inner.cap == capacity;
   ensures cell^.inner.len == entry(cell)^.inner.len;
+};
+"#,
+    ),
+    (
+        "prelude/grow_paged.wf",
+        PreludeSource::Function,
+        r#"fn grow_paged<T>(cell: &Box<Paged<T>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires capacity >= cell^.inner.cap;
+  ensures cell^.inner.cap == capacity;
+  ensures cell^.inner.len == entry(cell)^.inner.len;
+};
+"#,
+    ),
+    (
+        "prelude/paged_page_len.wf",
+        PreludeSource::Function,
+        r#"fn paged_page_len<T>() -> result: u64 pure contract {
+  ensures result >= 1_u64;
 };
 "#,
     ),

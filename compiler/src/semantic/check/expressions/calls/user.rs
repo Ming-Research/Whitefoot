@@ -348,8 +348,9 @@ impl<'unit> Checker<'_, 'unit> {
             // about the range kind itself is therefore judged first, and it
             // is [TYPE-5]'s ordinary argument mismatch.
             {
-                use super::super::super::super::model::CheckedMode;
-                if (argument.mode == CheckedMode::Range) != (parameter.mode == CheckedMode::Range) {
+                if (argument.mode.is_range() || parameter.mode.is_range())
+                    && argument.mode != parameter.mode
+                {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
@@ -647,6 +648,7 @@ impl<'unit> Checker<'_, 'unit> {
                     field: *field,
                 },
                 CheckedEffectStep::Index(parameter) => PlaceStep::Index(captured(*parameter)),
+                CheckedEffectStep::Page(parameter) => PlaceStep::Page(captured(*parameter)),
                 CheckedEffectStep::Range { start, end } => {
                     PlaceStep::Range(super::super::super::super::places::CapturedRange {
                         start: captured(*start),
@@ -871,6 +873,7 @@ impl<'unit> Checker<'_, 'unit> {
         for (depth, steps) in left.path.iter().zip(&right.path).enumerate() {
             match steps {
                 (PlaceStep::Index(first), PlaceStep::Index(second))
+                | (PlaceStep::Page(first), PlaceStep::Page(second))
                     if first.provably_same(*second) =>
                 {
                     continue;
@@ -883,6 +886,10 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 (PlaceStep::Index(first), PlaceStep::Index(second)) => {
                     candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                }
+                (PlaceStep::Page(first), PlaceStep::Page(second)) => {
+                    candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                    break;
                 }
                 (PlaceStep::Range(first), PlaceStep::Range(second)) => {
                     candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
@@ -1156,26 +1163,27 @@ impl<'unit> TypeContext<'unit> {
         // names: the resolved path where that path is exact and the place is
         // not written through a reference variable that is not exact, and
         // otherwise the place as written through that variable.
-        let spelled = crate::semantic::places::named_place(&argument.expression).and_then(|named| {
-            let PlaceRoot::Binding(root) = named.root else {
-                return None;
-            };
-            let local = bindings.values().find(|local| local.binding == root)?;
-            (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
-                let mut place = ResolvedPlace {
-                    atomic_aliases: Vec::new(),
-                    root: named.root,
-                    path: named.steps,
+        let spelled =
+            crate::semantic::places::named_place(&argument.expression).and_then(|named| {
+                let PlaceRoot::Binding(root) = named.root else {
+                    return None;
                 };
-                place.path.extend(named.suffix);
-                place
-            })
-        });
+                let local = bindings.values().find(|local| local.binding == root)?;
+                (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
+                    let mut place = ResolvedPlace {
+                        atomic_aliases: Vec::new(),
+                        root: named.root,
+                        path: named.steps,
+                    };
+                    place.path.extend(named.suffix);
+                    place
+                })
+            });
         let passed_place = match &spelled {
             Some(place) => Some(place),
             None => passed_place.filter(|place| exactness.is_exact_path(place)),
         };
-        if expected_mode == CheckedMode::Range {
+        if expected_mode.is_range() {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
             // was formed over: `&a[2..4]` names two elements whatever `a.len`
@@ -1382,6 +1390,11 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Range(range) => {
                     projections.push(GoalProjection::Range(*range));
                 }
+                // [REF-4] the page a `&[T]` actual formed from `&p.pages[k]`
+                // names; kept for the same reason as a range step.
+                PlaceStep::Page(page) => {
+                    projections.push(GoalProjection::Page(*page));
+                }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
                 PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
@@ -1567,7 +1580,7 @@ impl<'unit> DeclarationInventory<'unit> {
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_ENDING_ROWS: [&str; 7] = [
+        const BOUND_ENDING_ROWS: [&str; 8] = [
             "take_back",
             "remove_at",
             "append",
@@ -1575,6 +1588,7 @@ impl<'unit> DeclarationInventory<'unit> {
             "place_front",
             "take_front",
             "grow",
+            "grow_paged",
         ];
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());

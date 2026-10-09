@@ -1,0 +1,14 @@
+fn ignore(page: &[u64]) -> result: unit pure {
+  return unit;
+}
+
+fn touch_page(p: &Paged<u64>, k: u64) -> result: unit reads(p.len) contract {
+  requires k < p^.pages.len;
+} {
+  ignore(page: &p^.pages[k]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

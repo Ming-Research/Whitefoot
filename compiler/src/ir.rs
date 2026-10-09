@@ -149,7 +149,9 @@ impl IrAddressed {
             IrType::Segments { element } => Self::Segments { element },
             IrType::KeySet => Self::KeySet,
             IrType::Entries { element } => Self::Entries { element },
-            IrType::Range { .. } | IrType::RuntimeBoxPayload { .. } => return None,
+            IrType::Range { .. } | IrType::Run { .. } | IrType::RuntimeBoxPayload { .. } => {
+                return None;
+            }
             IrType::Array { element, length } => Self::Array { element, length },
             IrType::Window {
                 shape,
@@ -220,6 +222,10 @@ pub enum IrType {
     /// the range and the element count, which is its one measure [MSR-1].
     /// It is a reference kind and not a type [TYPE-8], so no storage ever
     /// holds one and nothing is ever released through one.
+    /// Noncontiguous range: directory pointer, logical start and length.
+    Run {
+        element: IrElement,
+    },
     Range {
         element: IrElement,
     },
@@ -264,6 +270,8 @@ pub enum IrType {
 /// Which of [TYPE-9]'s two window shapes an [`IrType::Window`] is.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IrWindowShape {
+    /// Address-stable paged window, runtime-capacity only.
+    Paged,
     /// The window begins at slot zero and the block stores no `head`.
     Slots,
     /// The window begins at `head` and wraps modulo `cap` [WIN-1].
@@ -359,6 +367,7 @@ pub(crate) fn type_derives_release(
             | IrType::Float { .. }
             // [REF-4, TYPE-8] a range reference is a name for elements it
             // does not own, so nothing of it is ever released.
+            | IrType::Run { .. }
             | IrType::Range { .. }
             // A synthesized payload capture borrows the source Box allocation
             // and never carries ownership or cleanup authority.
@@ -759,6 +768,8 @@ impl IrRuntimeTargetObligations {
 /// The [MSR-1] measure one reader row loads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrMeasure {
+    /// Number of pages holding initialized elements.
+    Pages,
     Length,
     Capacity,
     Head,
@@ -951,6 +962,13 @@ pub enum IrOperation {
         layout_ceiling: IrLayoutCeiling,
     },
     /// [MSR-1] a `Segments` block's one measure, its segment count.
+    PagedPageLen {
+        element: IrElement,
+    },
+    PagedPage {
+        paged: IrValueId,
+        index: IrValueId,
+    },
     SegmentsMeasure {
         segments: IrValueId,
     },
@@ -1098,6 +1116,9 @@ pub enum IrOperation {
     /// requirement `vector.head <= vector.cap` was discharged before
     /// this operation exists, so the window is one contiguous range and the
     /// descriptor is the slot at `head` together with `len`.
+    /// A Paged window instead produces a Run's directory, zero origin and
+    /// initialized length; slicing changes its origin and count without
+    /// assuming that its elements occupy one contiguous allocation.
     SliceFromRun {
         run: IrValueId,
     },

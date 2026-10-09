@@ -312,7 +312,11 @@ impl<'ir> Environment<'ir> {
             Work::Constant(_) => true,
             Work::Value(value) => self.function.parameters().contains(&(*value, U64)),
             Work::Length(value) => self.function.parameters().iter().any(|(parameter, ty)| {
-                parameter == value && matches!(ty, IrType::Buffer { .. } | IrType::Range { .. })
+                parameter == value
+                    && matches!(
+                        ty,
+                        IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
+                    )
             }),
             Work::BoxArrayLength(value) => {
                 self.function.readonly_reference_parameters.contains(value)

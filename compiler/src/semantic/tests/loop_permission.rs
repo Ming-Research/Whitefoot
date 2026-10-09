@@ -3340,6 +3340,87 @@ fn continue_keeps_the_counted_update_but_an_outer_continue_leaves_the_range() {
     assert_eq!(edge, "a continue to an enclosing loop");
 }
 
+const PAGED_SOURCE: &str = r#"fn fill(page: &[u64]) -> result: unit writes(page) {
+  let count = page^.len;
+  for (j in 0_u64..count) {
+    set page^[j] = 9_u64;
+  }
+  return unit;
+}
+
+fn elements(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.len;
+  for (i in 0_u64..count) {
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn pages(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.pages.len;
+  for (i in 0_u64..count) {
+    fill(page: &p^.pages[i]);
+  }
+  return unit;
+}
+
+fn mixed(p: &Paged<u64>, n: u64) -> result: unit writes(p) contract {
+  requires n <= p^.pages.len;
+  requires n <= p^.len;
+} {
+  for (i in 0_u64..n) {
+    fill(page: &p^.pages[i]);
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn run(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (i in 0_u64..count) {
+    set part^[i] = i;
+  }
+  return unit;
+}
+
+fn partition(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let lo = i * 2_u64;
+    let hi = lo + 2_u64;
+    run(part: &p^[lo..hi]);
+  }
+  return unit;
+}
+
+fn overlapping(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let hi = i + 2_u64;
+    run(part: &p^[i..hi]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn paged_elements_pages_and_run_elements_are_independent_maps() {
+    for function in ["elements", "pages", "run"] {
+        let judged = permitted(PAGED_SOURCE.as_bytes(), function);
+        assert_eq!(
+            judged.actualization,
+            Some(LoopActualization::IndependentMap),
+            "{function}"
+        );
+    }
+}
+
 #[test]
 fn indexed_measures_temporaries_and_unsigned_saturation_are_permitted() {
     for (source, names, combine) in [
@@ -3406,6 +3487,30 @@ fn indexed_temporary_denials_report_the_temporary_contract() {
         assert!(reason.contains(reason_fragment), "{reason_fragment}: {reason}");
         assert!(!reason.contains("constant mark"), "{reason}");
     }
+}
+
+#[test]
+fn a_page_index_and_a_logical_index_are_different_parallel_maps() {
+    let refused = denied(PAGED_SOURCE.as_bytes(), "mixed", 2);
+    assert!(
+        matches!(refused, LoopDenial::SharedWrite { .. }),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn disjoint_paged_runs_are_proved_range_partitions() {
+    let judged = permitted(PAGED_SOURCE.as_bytes(), "partition");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+    let table = permission_of(PAGED_SOURCE.as_bytes());
+    let overlapping = only_loop(&table, "overlapping");
+    assert!(
+        matches!(overlapping.verdict, LoopVerdict::Denied(_)),
+        "runs [i, i + 2) of two iterations overlap: {overlapping:?}"
+    );
 }
 
 #[test]
