@@ -2496,30 +2496,39 @@ fn pair(x: Bool) -> result: unit pure {{
 }
 
 #[test]
-fn call_rooted_match_arm_borrow_of_proved_disjoint_owning_range_still_overlaps() {
-    // Bind the ranges before the pair so this isolates propagation of the
-    // arm's storage effects and consumption of the pair's retained proof.
+fn call_rooted_match_arm_range_borrows_keep_storage_boundary_without_entry_proofs() {
+    // Arm range formations are not planned; conditional calls reject inline ranges too.
     let source = IGNORED_OWNING_RANGE
         .replace(
             "fn pair(values: &[Box<u64>], middle: u64)",
             "fn pair(values: &[Box<u64>], middle: u64, x: Bool)",
         )
         .replace(
-            "  replace(values: &values^[0_u64..middle]);\n  ignore(values: &values^[middle..count]);",
-            "  let left = &values^[0_u64..middle];\n  let right = &values^[middle..count];\n  replace(values: left);\n  match check(a: &x) {\n    Active() => {\n      ignore(values: right);\n    }\n    Inactive() => {\n    }\n  }",
+            "  ignore(values: &values^[middle..count]);",
+            r#"  match check(a: &x) {
+    Active() => {
+      ignore(values: &values^[middle..count]);
+    }
+    Inactive() => {
+    }
+  }"#,
         );
     let source = format!("{STORAGE_MATCH_CHECK}\n{source}");
-    assert_call_rooted_match_storage_boundary(source.as_bytes(), "replace", "check", None);
-    let overlapping = source.replace(
-        "let right = &values^[middle..count]",
-        "let right = &values^[0_u64..count]",
-    );
-    assert_call_rooted_match_storage_boundary(
-        overlapping.as_bytes(),
-        "replace",
-        "check",
-        Some("s1 releases storage at left overlapping storage at right borrowed by s2"),
-    );
+    // The ignored inline range does not read its referent; PAR-1 permits both variants.
+    for endpoints in ["middle..count", "0_u64..count"] {
+        let source = source.replace(
+            "values: &values^[middle..count]",
+            &format!("values: &values^[{endpoints}]"),
+        );
+        assert_call_rooted_match_storage_boundary(
+            source.as_bytes(),
+            "replace",
+            "check",
+            Some(&format!(
+                "s1 releases storage at &values^[0_u64..middle] overlapping storage at &values^[{endpoints}] borrowed by s2"
+            )),
+        );
+    }
 }
 
 fn assert_call_rooted_match_storage_boundary(
