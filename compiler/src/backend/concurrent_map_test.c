@@ -3439,6 +3439,107 @@ static void holds_keep_their_bytes(void) {
     wf_cmap_destroy(map);
 }
 
+/* A second driver inserts the very key an absent statement observed, or
+ * updates its present payload through the new exclusive-existing path. */
+typedef struct {
+    wf_cmap *map;
+    uint32_t flags;
+    _Atomic int done;
+    int upgraded;
+} present_racer;
+
+static void *present_race(void *argument) {
+    present_racer *race = argument;
+    test_driver = 1;
+    wf_table_entry entry;
+    uint64_t *slot = wf__table_lock_entry(race->map, (const unsigned char *)"key", 3, race->flags, &entry);
+    race->upgraded = entry.inner.upgraded != 0;
+    slot[0] = 1;
+    slot[1] += 1;
+    wf__table_unlock_entry(&entry, 1);
+    atomic_store(&race->done, 1);
+    return NULL;
+}
+
+static void entries_noninserting(void) {
+    test_driver = 0;
+    wf_cmap *map = wf_cmap_create_entries(16, 8, 0);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_table_entry entry;
+    uint64_t allocations_before = atomic_load(&allocations);
+    int64_t used, live;
+    uint64_t *slot = wf__table_lock_entry(map, (const unsigned char *)"key", 3, 4, &entry);
+    totals(map, &used, &live);
+    if (slot != map->none || slot[0] != 0 || entry.inner.cell != NULL || used != 0 || live != 0 ||
+        u->chunks != NULL || u->cursor != NULL || u->room != 0 || atomic_load(&allocations) != allocations_before)
+        fail("non-inserting miss claimed a cell or allocated a node", (uint64_t)used, (uint64_t)live);
+    table *t = atomic_load(&map->current);
+    for (uint64_t i = 0; i < t->capacity; i++)
+        if (atomic_load(&t->cells[i].key) != EMPTY)
+            fail("non-inserting miss changed a cell", i, 0);
+    present_racer race = {.map = map, .flags = 0};
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, present_race, &race) != 0) abort();
+    pthread_join(thread, NULL); /* insertion must finish before the miss releases */
+    if (slot[0] != 0) fail("insertion changed shared None", slot[0], 0);
+    map->watch.count = 1;
+    uint64_t wakes = atomic_load(&written_calls);
+    wf__table_unlock_entry(&entry, 0);
+    if (atomic_load(&written_calls) != wakes)
+        fail("non-inserting miss reported a map write", atomic_load(&written_calls), wakes);
+    map->watch.count = 0;
+    slot = wf__table_lock_entry(map, (const unsigned char *)"key", 3, 4, &entry);
+    if (slot == map->none || slot[0] != 1 || slot[1] != 1 || entry.inner.cell == NULL ||
+        !(atomic_load(&((cell *)entry.inner.cell)->key) & LOCKED))
+        fail("non-inserting hit lost insertion or lacks exclusive lock", slot[0], slot[1]);
+    slot[1] = 7;
+    wf__table_unlock_entry(&entry, 1);
+    const uint64_t *read = wf__table_lock_entry(map, (const unsigned char *)"key", 3, 1, &entry);
+    if (read[1] != 7 || wf_cmap_count(map) != 1)
+        fail("non-inserting update was not retained", read[1], wf_cmap_count(map));
+    wf__table_unlock_entry(&entry, 1);
+
+    /* Exhausted patience must upgrade, wait for the old holder, then update. */
+    slot = wf__table_lock_entry(map, (const unsigned char *)"key", 3, 0, &entry);
+    patience[1] = 0;
+    atomic_store(&closed_seen[1], 0);
+    race.flags = 4;
+    atomic_store(&race.done, 0);
+    if (pthread_create(&thread, NULL, present_race, &race) != 0) abort();
+    while (!atomic_load(&closed_seen[1])) sched_yield();
+    if (atomic_load(&race.done)) fail("non-inserting writer passed a locked hit", 0, 0);
+    wf__table_unlock_entry(&entry, 1);
+    pthread_join(thread, NULL);
+    if (!race.upgraded) fail("non-inserting writer did not upgrade after impatience", 0, 0);
+    set_patience(PATIENCE, PATIENCE);
+
+    /* A miss beside another target holds absence until release. */
+    slot = wf__table_lock_entry(map, (const unsigned char *)"absent", 6, 6, &entry);
+    if (slot != map->none || !entry.inner.upgraded || !wf_cmap_holds_whole(u))
+        fail("non-inserting multi-target miss did not stabilize absence", 0, 0);
+    race.flags = 0;
+    atomic_store(&race.done, 0);
+    if (pthread_create(&thread, NULL, present_race, &race) != 0) abort();
+    while (atomic_load(&map->waiting) == 0) sched_yield();
+    if (atomic_load(&race.done)) fail("writer passed stable absence hold", 0, 0);
+    wf__table_unlock_entry(&entry, 0);
+    pthread_join(thread, NULL);
+    if (wf_cmap_holds_whole(u)) fail("miss release retained whole hold", 0, 0);
+
+    /* An enclosing whole hold remains owned by its caller, hit or miss. */
+    wf_cmap_hold(u);
+    slot = wf__table_lock_entry(map, (const unsigned char *)"absent", 6, 6, &entry);
+    if (slot != map->none || entry.inner.upgraded || !entry.held)
+        fail("held miss acquired another whole hold", 0, 0);
+    wf__table_unlock_entry(&entry, 0);
+    slot = wf__table_lock_entry(map, (const unsigned char *)"key", 3, 4, &entry);
+    if (slot[1] != 9) fail("racing payload updates were lost", slot[1], 9);
+    wf__table_unlock_entry(&entry, 1);
+    if (!wf_cmap_holds_whole(u)) fail("entry release gave away enclosing whole hold", 0, 0);
+    wf_cmap_unhold(u);
+    wf_cmap_destroy(map);
+}
+
 int main(int argc, char **argv) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
@@ -3452,6 +3553,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc != 1) return 2;
+    entries_noninserting();
     if (ENTRY_TESTS) {
         entries_huge_capacity();
         entries_sequential();

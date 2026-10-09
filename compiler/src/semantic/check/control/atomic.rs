@@ -226,6 +226,7 @@ impl Checker<'_, '_> {
                 kind,
                 referent,
                 reads: false,
+                inserts: true,
                 invariants,
             });
             handles.push(paths);
@@ -280,11 +281,23 @@ impl Checker<'_, '_> {
                 .iter()
                 .chain(guard.iter().flat_map(|g| g.1.writes.iter()))
                 .any(|p| aliases.contains(&p.root));
+            // Resolved writes retain payload containment before effect rows
+            // truncate dynamic selectors. Unknown/whole writes are variant writes.
+            if matches!(target.kind, CheckedTargetKind::MapEntry(_)) {
+                target.inserts = checked
+                    .effects
+                    .variant_writes
+                    .iter()
+                    .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
+                    .any(|root| aliases.contains(root));
+            }
         }
         let held = |path: &CheckedStatePath| statement_roots.contains(&path.root);
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
+            set.variant_writes
+                .retain(|root| !statement_roots.contains(root));
         }
         if let Some(g) = &guard {
             effects = effects.union(g.1.clone());

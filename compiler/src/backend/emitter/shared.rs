@@ -420,6 +420,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Locks one key's entry, keeping the lock in its record and the slot's
     /// address in the record's word.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn emit_table_lock_entry(
         &mut self,
         result: IrValueId,
@@ -427,6 +428,7 @@ impl FunctionEmitter<'_, '_> {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_table(table)? || record.kind() != IrRecordKind::TableEntry {
@@ -439,7 +441,7 @@ impl FunctionEmitter<'_, '_> {
             self.output,
             "  %{bare}.slot = call ptr @wf__table_lock_entry(ptr {table}, ptr %{bare}.key, i64 %{bare}.length, i32 {read}, ptr {record})\n  store ptr %{bare}.slot, ptr {word}",
             table = self.value_name(table),
-            read = if read {1 + 2 * u32::from(stable_absence)} else {0},
+            read = if read {1 + 2 * u32::from(stable_absence)} else if !inserts {4 + 2 * u32::from(stable_absence)} else {0},
             record = record_name(record),
             word = record_slot_name(record),
         )

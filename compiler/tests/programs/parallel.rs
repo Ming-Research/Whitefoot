@@ -521,3 +521,9 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
         }
     }
 }
+
+/// GET-like payload updates keep every increment on hits and never insert misses.
+#[test]
+fn map_payload_updates_preserve_absence_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_payload_updates.wf", 2);
+}

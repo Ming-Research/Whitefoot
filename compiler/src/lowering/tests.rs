@@ -1716,6 +1716,117 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
     });
 }
 
+/// Payload writes preserve None; whole writes (including aliases and call
+/// rows) must retain the inserting path. A row naming only a payload field of
+/// the whole entry, passed on through a second helper, is a payload write:
+/// firn's GET reaches its access stamp that way. The dynamic key prefix must not
+/// erase the payload evidence, and unioning a whole write must not lose it.
+#[test]
+fn keyed_atomic_insertion_flags_follow_resolved_writes() {
+    let source = br#"struct Counter { stamp: u64; }
+const key: Array<u8, 1> =[97_u8];
+
+fn replace(entry: &Option<Counter>) -> result: unit writes(entry) {
+  set entry^ = None<Counter>();
+  return unit;
+}
+
+fn payload(value: &Counter) -> result: unit writes(value.stamp) {
+  set value^.stamp = 3_u64;
+  return unit;
+}
+
+fn bump(entry: &Option<Counter>) -> result: unit writes(entry.Some.value.stamp) {
+  match entry^ {
+    Some(value: v) => { set v^.stamp = 1_u64; }
+    None() => {}
+  }
+  return unit;
+}
+
+fn bump_through(entry: &Option<Counter>) -> result: unit writes(entry.Some.value.stamp) {
+  bump(entry: entry);
+  return unit;
+}
+
+fn present(entry: &Option<Counter>) -> result: Bool reads(entry) {
+  match entry^ {
+    Some(value: unused) => { return True(); }
+    None() => { return False(); }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Counter>(capacity: 1_u64);
+  let k = &key[0_u64..1_u64];
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => { set v^.stamp = v^.stamp +wrap 1_u64; }
+      None() => {}
+    }
+  }
+  atomic t = &store[k] { let value = Counter(stamp: 0_u64); set t^ = Some<Counter>(value: value); }
+  atomic t = &store[k] { set t^ = None<Counter>(); }
+  atomic t = &store[k] { replace(entry: t); }
+  atomic t = &store[k] { let ref_value = &t^; set ref_value^ = None<Counter>(); }
+  atomic t = &store[k] {
+    match t^ { Some(value: v) => { let stamp = v^.stamp; } None() => {} }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => { let ref_value = &v^.stamp; set ref_value^ = 2_u64; }
+      None() => { let value = Counter(stamp: 0_u64); set t^ = Some<Counter>(value: value); }
+    }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => { let ref_value = &v^.stamp; set ref_value^ = 2_u64; }
+      None() => {}
+    }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => { payload(value: v); }
+      None() => {}
+    }
+  }
+  atomic t = &store[k] { bump_through(entry: t); }
+  atomic t = &store[k] when present(entry: t) { let ref_value = &t^; }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let flags = function(program, "main")
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::TableLockEntry { read, inserts, .. },
+                    ..
+                } => Some((*read, *inserts)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            flags,
+            vec![
+                (false, false),
+                (false, true),
+                (false, true),
+                (false, true),
+                (false, true),
+                (true, false),
+                (false, true),
+                (false, false),
+                (false, false),
+                (false, false),
+                (false, true),
+            ]
+        );
+    });
+}
+
 #[test]
 fn table_borrows_materialize_only_writable_roots() {
     let source = br#"const names: Array<u8, 2> =[97_u8, 98_u8];

@@ -59,6 +59,12 @@ typedef struct {
  * With held set, the caller holds the whole map. */
 void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
                          wf_cmap_entry *entry);
+/* Locks only a present key. An absent key returns the immutable shared None
+ * slot and records cell == NULL; unlock must receive present == 0 then.
+ * stable_absence holds the map whole and rechecks an absence until release.
+ * held has the same contract as wf_cmap_lock_entry. */
+void *wf_cmap_lock_present_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
+                                 int stable_absence, wf_cmap_entry *entry);
 /* Unlocks the entry: kept when present, else removed with its slot, which
  * then holds nothing to release. */
 void wf_cmap_unlock_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held, int present);
