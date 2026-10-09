@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 A break-free loop has no normal successor
+
+Nodes: language/loop-completion, compiler/checker-facts
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: An ordinary loop keeps a normal successor exactly when a break resolves to it, and a final loop without one delivers a value initializer by divergence, because a return-only or endless loop cannot fall through and a required trailing `return` invents a path with no execution; giving every ordinary loop a conservative fallthrough edge was refused. The checker records each loop's continuation once on the checked loop, and proof reachability, the invariant induction inventory and lowering read it rather than rediscovering exits from labels.
+
 ## 2026-10-09 Proof queries demand the affine index
 
 Nodes: compiler/proof-query-context

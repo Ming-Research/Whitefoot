@@ -1,0 +1,11 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let leave = True();
+  loop {
+    let chosen = if leave {
+      break;
+    } else {
+      give 1_u64;
+    }
+    return std::process::exit_status(code: 0_u8);
+  }
+}

@@ -96,7 +96,6 @@ fn sift_rise<Order<T, E>>(queue: &uniq Queue<Order<T, E>>, count: own u64, env: 
       exchange_at::<T>(heap: &uniq deref(queue).heap, left: parent, right: at);
       set at = parent;
     }
-    return unit;
   }
 }
 
@@ -139,7 +138,6 @@ fn sift_sink<Order<T, E>>(queue: &uniq Queue<Order<T, E>>, count: own u64, env: 
       exchange_at::<T>(heap: &uniq deref(queue).heap, left: at, right: best);
       set at = best;
     }
-    return unit;
   }
 }
 

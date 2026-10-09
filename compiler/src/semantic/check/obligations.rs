@@ -688,9 +688,21 @@ fn induction_inputs(
                 | CheckedStatement::Give { .. }
                 | CheckedStatement::Break { .. } => Vec::new(),
                 CheckedStatement::Loop {
-                    node_path, body, ..
+                    node_path,
+                    body,
+                    continues,
+                    ..
+                } => {
+                    // Escaping continues still contribute to the enclosing
+                    // frontier even when [FN-1] gives this loop no successor.
+                    walk(body, node_path, target, branches, atomic, explicit);
+                    if *continues {
+                        vec![ordinary()]
+                    } else {
+                        Vec::new()
+                    }
                 }
-                | CheckedStatement::CountedRange {
+                CheckedStatement::CountedRange {
                     node_path, body, ..
                 } => {
                     walk(body, node_path, target, branches, atomic, explicit);
