@@ -2073,26 +2073,26 @@ fn a_ring_is_not_an_element_projection_base() {
 
 #[test]
 fn range_facts_discharge_page_and_segment_borrow_bounds_at_their_sites() {
-    // [EFF-2] forming a page borrow reads nothing of its base, while a
-    // segment borrow reads the run's segment table, `data.len`.
+    // [EFF-2] forming a page reads the Paged's length to capture its
+    // initialized extent, while forming a segment borrow reads nothing.
     for (storage, row, bound, borrowed, expected) in [
         (
             "Paged<u8>",
-            "reads(indices)",
+            "reads(data.len), reads(indices)",
             "data^.pages.len",
             "data^.pages[i]",
             None,
         ),
         (
             "Paged<u8>",
-            "reads(indices)",
+            "reads(data.len), reads(indices)",
             "data^.len",
             "data^.pages[i]",
             Some(SemanticRule::Op4),
         ),
         (
             "Segments<u8>",
-            "reads(data.len), reads(indices)",
+            "reads(indices)",
             "data^.len",
             "data^[i]",
             None,
