@@ -986,7 +986,7 @@ fn function_kind_calls_discharge_the_formal_requirement() {
         (4, "requires value < 4_u64;", Some(SemanticRule::Fn8)),
         (
             0,
-            "define low = value < 4_u64;\n    define high = value > 4_u64;\n    requires bor(low, high);",
+            "define low = value < 4_u64;\n  define high = value > 4_u64;\n  requires bor(low, high);",
             Some(SemanticRule::Fn8),
         ),
     ] {
@@ -999,8 +999,8 @@ fn function_kind_calls_discharge_the_formal_requirement() {
 }}
 
 fn apply<fn action(value: u64) -> result: unit pure contract {{
-    {requirement}
-  }}>(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
+  {requirement}
+}}>(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{
   requires forall known(k in 0_u64..xs^.len): xs^[k] == {value}_u64;
 }} {{
   action(value: xs^[0_u64]);
