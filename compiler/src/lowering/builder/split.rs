@@ -383,7 +383,7 @@ impl<'program> IrBuilder<'program> {
         // Range captures borrow the source roots through the structured join.
         // In an enclosing leaf they inherit its private range, never the shared
         // source address. Own reductions replace those ranges at this split.
-        let mut indexed_roots = permission.indexed.iter().cloned().collect::<Vec<_>>();
+        let mut indexed_roots = permission.indexed.to_vec();
         for (root, _, _) in &self.indexed_roots {
             if !indexed_roots.contains(root) {
                 indexed_roots.push(root.clone());
