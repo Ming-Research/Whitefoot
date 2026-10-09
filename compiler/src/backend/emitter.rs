@@ -2188,8 +2188,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ty = public.result().ty();
         let (mut parameters, mut references) = self.signature_parameters(body)?;
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
-        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.target, self.program, &mut references)?;
+        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
+            self.target,
+            self.program,
+            &mut references,
+        )?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
@@ -2746,8 +2749,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 table,
                 key,
                 read,
+                inserts,
                 stable_absence,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
+            } => self.emit_table_lock_entry(
+                result,
+                *record,
+                *table,
+                *key,
+                *read,
+                *inserts,
+                *stable_absence,
+            ),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
