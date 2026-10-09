@@ -99,17 +99,22 @@ fn false_local_target() {
 
 #[test]
 fn exact_overflow() {
-    check(
-        "fn probe(xs: &[u16]) -> result: unit reads(xs) contract {
+    for expression in [
+        "    let y = xs^[i] + xs^[i];",
+        // The at-site binding is a range term, whatever initialized it.
+        "    let x = cvt::<u16, u16>(xs^[i]);\n    let y = x + x;",
+    ] {
+        let source = "fn probe(xs: &[u16]) -> result: unit reads(xs) contract {
   requires forall small(k in 0_u64..xs^.len): xs^[k] <= 1000_u16;
 } {
   for (i in 0_u64..xs^.len) {
     let y = xs^[i] + xs^[i];
   }
   return unit;
-}",
-        None,
-    );
+}"
+        .replace("    let y = xs^[i] + xs^[i];", expression);
+        check(&source, None);
+    }
 }
 
 #[test]
@@ -280,21 +285,69 @@ fn invalid_ordinary_certificate_stays_rejected() {
 
 #[test]
 fn nonlinear_exact_result_stays_unproved() {
+    // Even an exactly known range value does not make x * x a range term.
+    // The dead-arm twin also distinguishes non-deferral from the former
+    // opaque mathematical goal: a range-excluded site cannot discharge it.
+    for (body, expected_residual) in [
+        ("  let x = xs^[0_u64];\n  let y = x * x;", "x *defined x"),
+        (
+            "  let route = Route::Live();\n  match route {\n    Live() => {\n    }\n    Dead() => {\n      let x = xs^[0_u64];\n      let y = x * x;\n    }\n  }",
+            "x *defined x",
+        ),
+        (
+            "  let x = xs^[0_u64];\n  let scale = 2_u64;\n  let y = x * scale;",
+            "x *defined scale",
+        ),
+    ] {
+        let source = format!(
+            "enum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires 0_u64 < xs^.len;\n  requires forall two(k in 0_u64..xs^.len): xs^[k] == 2_u64;\n}} {{\n{body}\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let ordinary = source.replace(
+            "  requires forall two(k in 0_u64..xs^.len): xs^[k] == 2_u64;\n",
+            "",
+        );
+        let rejection = |source: &str| {
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                    panic!("{outcome:?}");
+                };
+                assert_eq!(issue.rule(), SemanticRule::Op2, "{issue:?}");
+                let crate::SemanticIssueKind::UndischargedIntegerDomainObligation {
+                    residual, ..
+                } = issue.kind()
+                else {
+                    panic!("{issue:?}");
+                };
+                assert_eq!(residual, expected_residual);
+                issue.kind().clone()
+            })
+        };
+        assert_eq!(rejection(&source), rejection(&ordinary));
+    }
+}
+
+#[test]
+fn a_false_boolean_requirement_keeps_fn8_when_only_array_filled_participates() {
     check(
-        "fn probe(xs: &[u16]) -> result: unit reads(xs) contract {
-  requires forall small(k in 0_u64..xs^.len): xs^[k] < 10_u16;
-} {
-  for (i in 0_u64..xs^.len) {
-    let y = xs^[i] * xs^[i];
-  }
-  return unit;
-}",
-        Some(SemanticRule::Op2),
+        "fn need(flag: Bool) -> result: unit pure contract {\n  requires flag;\n} {\n  return unit;\n}\n\nfn probe() -> result: unit pure {\n  let xs = array_filled::<u64, 1>(value: 0_u64);\n  need(flag: False());\n  return unit;\n}",
+        Some(SemanticRule::Fn8),
     );
 }
 
 #[test]
-fn projected_affine_call_requirement() {
+fn a_type_invariant_is_not_an_ordinary_call_requirement() {
+    // TYPE-11 shares the call-goal record representation, but it is not one
+    // of RANGE-2's deferred ordinary families, even in an excluded arm.
+    check(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nstruct Guard {\n  value: u64;\n  invariant small(g): g.value < 4_u64;\n}\n\nfn probe(value: u64) -> result: unit pure {\n  let xs = array_filled::<u64, 1>(value: 0_u64);\n  let route = Route::Live();\n  match route {\n    Live() => {\n    }\n    Dead() => {\n      let guarded = Guard(value: value);\n    }\n  }\n  return unit;\n}",
+        Some(SemanticRule::Type11),
+    );
+}
+
+#[test]
+fn a_scalar_field_requirement_keeps_ordinary_fn8() {
+    // RANGE-1 admits an integer field below an element, not a bare struct's
+    // scalar field. The range state knowing the field does not change its shape.
     check(
         "struct Bound {
   value: u64;
@@ -315,6 +368,61 @@ fn probe(xs: &[u64]) -> result: unit reads(xs) contract {
   }
   return unit;
 }",
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn a_scalar_field_subscript_keeps_ordinary_op4() {
+    // The field is outside RANGE-1 even when its value comes from a range fact.
+    check(
+        "struct Holder {\n  index: u64;\n}\n\nfn probe(xs: &Array<u64, 1>, table: &Array<u8, 4>) -> result: unit reads(xs), reads(table) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let holder = Holder(index: xs^[0_u64]);\n  let value = table^[holder.index];\n  return unit;\n}",
+        Some(SemanticRule::Op4),
+    );
+}
+
+#[test]
+fn call_requirements_select_ring_elements_after_substitution() {
+    // Instantiation encodes the projected actual as a datum, without the
+    // intermediate Ring type. RANGE-1 still excludes this first element
+    // selection; exclusion by the range walk cannot discharge its FN-8 goal.
+    check(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nfn need(value: u64) -> result: unit pure contract {\n  requires value < 4_u64;\n} {\n  return unit;\n}\n\nfn probe(rows: &Ring<Slots<u8, 8>, 8>, xs: &Array<u64, 1>) -> result: unit reads(rows) contract {\n  requires 0_u64 < rows^.len;\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n    }\n    Dead() => {\n      need(value: rows^[0_u64].len);\n    }\n  }\n  return unit;\n}",
+        Some(SemanticRule::Fn8),
+    );
+    // After substitution the Ring subscript follows an Array element, which
+    // RANGE-1 admits. A selected goal in the excluded arm holds vacuously.
+    check(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nfn need(rows: &Ring<Slots<u8, 8>, 8>) -> result: unit reads(rows) contract {\n  requires 0_u64 < rows^.len;\n  requires rows^[0_u64].len < 4_u64;\n} {\n  let length = rows^[0_u64].len;\n  return unit;\n}\n\nfn probe(table: &Array<Ring<Slots<u8, 8>, 8>, 1>, xs: &Array<u64, 1>) -> result: unit reads(table) contract {\n  requires 0_u64 < table^[0_u64].len;\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n    }\n    Dead() => {\n      need(rows: &table^[0_u64]);\n    }\n  }\n  return unit;\n}",
+        None,
+    );
+}
+
+#[test]
+fn a_requirement_subscript_keeps_its_actuals_shape() {
+    // A projected actual becomes an unknown captured offset in the ordinary
+    // goal. Selection must still see that holder.index is not a range term.
+    check(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nstruct Holder {\n  index: u64;\n}\n\nfn need(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> result: unit reads(rows) contract {\n  requires i < 4_u64;\n  requires rows^[i].len < 4_u64;\n} {\n  let length = rows^[i].len;\n  return unit;\n}\n\nfn probe(rows: &Array<Slots<u8, 8>, 4>, holder: Holder, xs: &Array<u64, 1>) -> result: unit reads(rows) contract {\n  requires holder.index < 4_u64;\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n    }\n    Dead() => {\n      need(rows: rows, i: holder.index);\n    }\n  }\n  return unit;\n}",
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn a_reference_requirement_preserves_the_actuals_binding_mode() {
+    // A reference scalar read is not a live own integer binding. An own
+    // scalar reached by the explicit borrow actual is still a range term.
+    let need = "fn need(value: &u64) -> result: unit pure contract {\n  requires value^ < 4_u64;\n} {\n  return unit;\n}\n";
+    check(
+        &format!(
+            "{need}\nenum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(value: &u64, xs: &Array<u64, 1>) -> result: unit pure contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let route = Route::Live();\n  match route {{\n    Live() => {{\n    }}\n    Dead() => {{\n      need(value: value);\n    }}\n  }}\n  return unit;\n}}"
+        ),
+        Some(SemanticRule::Fn8),
+    );
+    check(
+        &format!(
+            "{need}\nfn probe(xs: &Array<u64, 1>) -> result: unit reads(xs) contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let value = xs^[0_u64];\n  need(value: &value);\n  return unit;\n}}"
+        ),
         None,
     );
 }

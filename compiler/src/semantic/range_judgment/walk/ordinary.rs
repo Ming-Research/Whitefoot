@@ -163,8 +163,9 @@ impl Walker<'_> {
         }
     }
 
-    /// RANGE-3 ordinary clauses have comparison conclusions. Written
-    /// Boolean operators other than conjunction have no introduction rule.
+    /// RANGE-2 has already selected comparisons and their conjunctions.
+    /// Failure to reconstruct one here is an unrepresentable site, not an
+    /// unsupported source goal shape.
     pub(super) fn goal_comparisons_with(
         &mut self,
         state: &mut State,

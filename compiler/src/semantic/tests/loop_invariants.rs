@@ -3208,9 +3208,9 @@ fn a_local_run_has_no_out_of_scope_requirement_repair() {
         "  let rows = &input^;\n  let n = rows^.len;",
     );
     let (_, repair) = per_row_formation_failure(&source);
-    // The local reborrow denotes input's place in the checked relation.
+    // The invariant is written inside the function, where rows is in scope.
     assert_eq!(
         repair,
-        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): input^[k].len <= 4_u64`"
+        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`"
     );
 }

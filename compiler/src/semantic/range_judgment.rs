@@ -14,6 +14,7 @@
 mod constants;
 mod facts;
 pub(crate) use constants::judge as judge_constant_invariant;
+mod selection;
 mod solver;
 mod walk;
 mod world;
@@ -89,7 +90,7 @@ pub(crate) struct RangeJudgment {
     pub(crate) issues: Vec<RangeIssue>,
     pub(crate) certified: Vec<CertifiedLoop>,
     pub(crate) discharged: Vec<usize>,
-    /// Records whose unsupported goal or structural ceiling is reported by
+    /// Records whose unrepresentable site or structural ceiling is reported by
     /// `issues`; they cannot supply an ordinary unproved-source diagnostic.
     pub(crate) inconclusive: Vec<usize>,
 }
@@ -197,6 +198,7 @@ pub(crate) fn for_each_call(
 pub(crate) fn judge_program(
     functions: &[&CheckedFunction],
     nominals: &[CheckedNominal],
+    elements: &[super::model::CheckedType],
     selected: &[bool],
     constants: &[super::model::CheckedConstant],
     scope: JudgmentScope,
@@ -232,7 +234,7 @@ pub(crate) fn judge_program(
                 functions,
                 nominals,
                 function,
-                deferred_records(function),
+                deferred_records(function, functions, nominals, elements),
                 constants,
                 scope,
                 &prelude,
@@ -276,7 +278,12 @@ pub(crate) fn judge_program(
 }
 
 /// Collect every deferrable record; unrelated debt never disables the walk.
-fn deferred_records(function: &CheckedFunction) -> Vec<(usize, walk::DeferredAnswer)> {
+fn deferred_records(
+    function: &CheckedFunction,
+    functions: &[&CheckedFunction],
+    nominals: &[CheckedNominal],
+    elements: &[super::model::CheckedType],
+) -> Vec<(usize, walk::DeferredAnswer)> {
     use super::entailment::ObligationFamily;
     use super::obligations::ObligationSubject;
     let mut pending = Vec::new();
@@ -317,11 +324,19 @@ fn deferred_records(function: &CheckedFunction) -> Vec<(usize, walk::DeferredAns
                 }
                 pending.push((index, walk::DeferredAnswer::Pending));
             }
-            ObligationSubject::CallRequirement { .. } => {
-                pending.push((index, walk::DeferredAnswer::Pending))
+            ObligationSubject::CallRequirement { .. }
+                if record.rule == super::SemanticRule::Fn8 =>
+            {
+                // TYPE-11 and OP-14 share this record representation, but
+                // RANGE-2 selects ordinary-call FN-8 requirements only.
+                pending.push((index, walk::DeferredAnswer::Pending));
             }
             _ => {}
         }
+    }
+    if !pending.is_empty() {
+        let excluded = selection::excluded_sites(function, functions, nominals, elements);
+        pending.retain(|(index, _)| !excluded.excludes(&function.obligations[*index]));
     }
     pending
 }

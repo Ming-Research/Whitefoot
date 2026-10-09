@@ -1890,9 +1890,9 @@ impl<'program> Walker<'program> {
             } => {
                 let converted = self.eval(state, value);
                 if *mode == CheckedConversionMode::Exact {
-                    // Only integer-to-integer conversion domains are in the
-                    // walk's integer vocabulary. Other deferred domains are
-                    // an explicit capability gap, not an ordinary rejection.
+                    // Selection has excluded noninteger domains. A selected
+                    // symbolic integer domain whose type bounds this walk
+                    // cannot form remains an explicit capability gap.
                     let domain_value = if matches!(
                         (source, destination),
                         (
@@ -2456,19 +2456,9 @@ impl<'program> Walker<'program> {
                     }
                     _ => None,
                 };
-                // A nonlinear product is representable but has no affine
-                // relation to its operands. Its mathematical value has no
-                // result-type bounds until OP-2 is discharged: a typed opaque
-                // value here would prove its own overflow obligation.
-                let goal = match (exact.as_ref(), operation, values.as_slice()) {
-                    (Some(value), _, _) => Value::Int(value.clone()),
-                    (None, CheckedIntegerOperation::MultiplyExact, [left, right])
-                        if !left.is_constant() && !right.is_constant() =>
-                    {
-                        Value::Int(self.world.opaque(None))
-                    }
-                    _ => Value::Unknown,
-                };
+                let goal = exact
+                    .as_ref()
+                    .map_or(Value::Unknown, |value| Value::Int(value.clone()));
                 self.ordinary_domain(
                     state,
                     carrier,

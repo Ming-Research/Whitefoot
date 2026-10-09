@@ -2269,6 +2269,9 @@ fn range_facts_discharge_every_integer_domain_family() {
         ("u64", "0_u64 < xs^[k]", "9_u64 % x"),
         ("u64", "0_u64 < xs^[k]", "x / x"),
         ("u64", "0_u64 < xs^[k]", "x % x"),
+        // The unsigned domain mentions only x, not the scalar-field numerator.
+        ("u64", "0_u64 < xs^[k]", "holder.value / x"),
+        ("u64", "0_u64 < xs^[k]", "holder.value % x"),
         ("i64", "-9223372036854775808_i64 < xs^[k]", "ineg(x)"),
         ("i64", "-9223372036854775808_i64 < xs^[k]", "iabs(x)"),
         ("i64", "0_i64 < xs^[k]", "-9223372036854775808_i64 / x"),
@@ -2280,7 +2283,7 @@ fn range_facts_discharge_every_integer_domain_family() {
         ("u64", "xs^[k] < 256_u64", "cvt::<u64, u8>(x)"),
     ] {
         let source = field_range_program(&format!(
-            "fn probe(xs: &[{ty}]) -> result: unit reads(xs) contract {{\n  requires forall domain(k in 0_u64..xs^.len): {bound};\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let result = {expression};\n  }}\n  return unit;\n}}\n"
+            "struct Holder {{\n  value: {ty};\n}}\n\nfn probe(xs: &[{ty}], holder: Holder) -> result: unit reads(xs) contract {{\n  requires forall domain(k in 0_u64..xs^.len): {bound};\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let result = {expression};\n  }}\n  return unit;\n}}\n"
         ));
         field_range_verdict(&source, None);
     }
@@ -2346,49 +2349,50 @@ fn range_integer_domains_refuse_their_boundary_twins() {
 }
 
 #[test]
-fn range_requirements_accept_only_conjunctions_of_comparisons() {
-    for (goal, expected) in [
-        ("below", Some(true)),
-        ("band(below, different)", Some(true)),
-        ("band(below, both)", Some(true)),
-        ("band(below, two)", Some(false)),
-        ("bor(one, seven)", None),
-        ("bnot(either)", None),
-        ("bxor(below, seven)", None),
-        ("bor(two, seven)", None),
-        ("band(below, oneorseven)", None),
-        ("band(below, nottwo)", None),
-        ("band(below, exclusive)", None),
-    ] {
+fn signed_division_with_two_variable_operands_keeps_ordinary_op2() {
+    // OP-2's signed corner exclusion is (x != MIN or y != -1).
+    // Unlike a constant-operand instance, this is not a conjunction of
+    // comparisons, even when the range fact proves both operands positive.
+    for operation in ["/", "%"] {
         let source = field_range_program(&format!(
-            "fn need(x: u64) -> result: unit pure contract {{\n  define below = x < 4_u64;\n  define different = x != 2_u64;\n  define one = x == 1_u64;\n  define two = x == 2_u64;\n  define seven = x == 7_u64;\n  define either = bor(two, seven);\n  define both = band(different, one);\n  define oneorseven = bor(one, seven);\n  define nottwo = bnot(two);\n  define exclusive = bxor(one, seven);\n  requires {goal};\n}} {{\n  return unit;\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    need(x: x);\n  }}\n  return unit;\n}}\n"
+            "fn probe(xs: &Array<i64, 2>) -> result: unit reads(xs) contract {{\n  requires forall positive(k in 0_u64..xs^.len): xs^[k] > 0_i64;\n}} {{\n  let x = xs^[0_u64];\n  let y = xs^[1_u64];\n  let result = x {operation} y;\n  return unit;\n}}\n"
         ));
-        match expected {
-            Some(accepted) => {
-                field_range_verdict(&source, (!accepted).then_some(SemanticRule::Fn8));
-            }
-            None => super::assert_unsupported(
-                &source,
-                crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
-            ),
-        }
+        field_range_verdict(&source, Some(SemanticRule::Op2));
     }
 }
 
 #[test]
-fn deferred_float_conversion_is_an_explicit_capability() {
+fn range_requirements_accept_only_conjunctions_of_comparisons() {
+    // RANGE-2 leaves every bor/bnot/bxor goal to ordinary entailment,
+    // including nested ones and ones the range fact would imply.
+    for (goal, expected) in [
+        ("below", true),
+        ("band(below, different)", true),
+        ("band(below, both)", true),
+        ("band(below, two)", false),
+        ("bor(one, seven)", false),
+        ("bnot(either)", false),
+        ("bxor(below, seven)", false),
+        ("bor(two, seven)", false),
+        ("band(below, oneorseven)", false),
+        ("band(below, nottwo)", false),
+        ("band(below, exclusive)", false),
+    ] {
+        let source = field_range_program(&format!(
+            "fn need(x: u64) -> result: unit pure contract {{\n  define below = x < 4_u64;\n  define different = x != 2_u64;\n  define one = x == 1_u64;\n  define two = x == 2_u64;\n  define seven = x == 7_u64;\n  define either = bor(two, seven);\n  define both = band(different, one);\n  define oneorseven = bor(one, seven);\n  define nottwo = bnot(two);\n  define exclusive = bxor(one, seven);\n  requires {goal};\n}} {{\n  return unit;\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    need(x: x);\n  }}\n  return unit;\n}}\n"
+        ));
+        field_range_verdict(&source, (!expected).then_some(SemanticRule::Fn8));
+    }
+}
+
+#[test]
+fn a_float_conversion_keeps_its_ordinary_domain_rejection() {
+    // Exact float representability is not a comparison conjunction over
+    // integer range terms, so RANGE-2 does not defer this OP-6 domain.
     let source = field_range_program(
         "fn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall value(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let result = cvt::<u64, f32>(x);\n  }\n  return unit;\n}\n",
     );
-    with_semantics(&source, |outcome| {
-        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
-            panic!("{outcome:?}");
-        };
-        assert_eq!(
-            unsupported.feature(),
-            crate::UnsupportedSemanticFeature::RangeOrdinaryGoal
-        );
-    });
+    field_range_verdict(&source, Some(SemanticRule::Op6));
 }
 
 #[test]
@@ -2469,25 +2473,22 @@ fn an_unvisited_page_element_bound_is_an_explicit_capability() {
 }
 
 #[test]
-fn a_disjunction_requiring_both_disjuncts_is_unsupported() {
+fn a_disjunction_keeps_fn8_even_when_a_range_disequality_implies_it() {
+    // A true disjunction is still outside RANGE-2's selected goal shape.
     let source = field_range_program(
         "fn need(x: u64) -> result: unit pure contract {\n  define below = x < 2_u64;\n  define above = x > 2_u64;\n  requires bor(below, above);\n} {\n  return unit;\n}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall different(k in 0_u64..xs^.len): xs^[k] != 2_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    need(x: x);\n  }\n  return unit;\n}\n",
     );
-    super::assert_unsupported(
-        &source,
-        crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
-    );
+    field_range_verdict(&source, Some(SemanticRule::Fn8));
 }
 
 #[test]
-fn a_boolean_requirement_leaf_is_unsupported_even_when_its_value_is_a_comparison() {
+fn a_boolean_requirement_leaf_keeps_fn8_even_when_its_value_is_a_comparison() {
+    // The written requirement is a Boolean leaf; the range walk does not
+    // replace its shape with the comparison held by its actual argument.
     let source = field_range_program(
         "fn need(flag: Bool) -> result: unit pure contract {\n  requires flag;\n} {\n  return unit;\n}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let flag = x == 1_u64;\n    need(flag: flag);\n  }\n  return unit;\n}\n",
     );
-    super::assert_unsupported(
-        &source,
-        crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
-    );
+    field_range_verdict(&source, Some(SemanticRule::Fn8));
 }
 
 #[test]
@@ -2504,12 +2505,12 @@ fn range_comparison_conjunction_conformance() {
 }
 
 /// The bad return is checked on a path independent of the unsupported
-/// conversion. FN-9 is not a deferred family and must remain the verdict.
+/// page-element bound. FN-9 is not a deferred family and must remain the verdict.
 #[test]
 fn a_nondeferrable_error_precedes_an_unsupported_deferred_goal() {
     for generic in ["", "<T>"] {
         let source = field_range_program(&format!(
-            "fn probe{generic}(xs: &[u64], flag: Bool) -> result: u64 reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n  ensures result == 0_u64;\n}} {{\n  if flag {{\n    return 1_u64;\n  }}\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let converted = cvt::<u64, f32>(x);\n  }}\n  return 0_u64;\n}}\n"
+            "fn probe{generic}(xs: &[u64], data: &Paged<u64>, flag: Bool) -> result: u64 reads(xs), reads(data) contract {{\n  requires 0_u64 < data^.pages.len;\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n  ensures result == 0_u64;\n}} {{\n  if flag {{\n    return 1_u64;\n  }}\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let page = &data^.pages[0_u64];\n    let value = page^[x];\n  }}\n  return 0_u64;\n}}\n"
         ));
         field_range_verdict(&source, Some(SemanticRule::Fn9));
     }
@@ -2520,7 +2521,7 @@ fn a_nondeferrable_error_precedes_an_unsupported_deferred_goal() {
 #[test]
 fn an_unproved_ordinary_goal_precedes_another_functions_capability_gap() {
     let source = field_range_program(
-        "fn unsupported(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let converted = cvt::<u64, f32>(x);\n  }\n  return unit;\n}\n\nfn wrong(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let quotient = 9_u64 / x;\n  }\n  return unit;\n}\n",
+        "fn unsupported(xs: &[u64], data: &Paged<u64>) -> result: unit reads(xs), reads(data) contract {\n  requires 0_u64 < data^.pages.len;\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let page = &data^.pages[0_u64];\n    let value = page^[x];\n  }\n  return unit;\n}\n\nfn wrong(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let quotient = 9_u64 / x;\n  }\n  return unit;\n}\n",
     );
     for generic in [false, true] {
         let source = String::from_utf8(source.clone()).unwrap();
@@ -2560,17 +2561,21 @@ fn probe() -> result: u8 pure {{
     }
 }
 
-/// Ordinary entailment leaves the dead arm's bounds/conversion open; the
-/// range state knows the constructed variant and excludes that arm.
+/// The range state excludes the dead arm and discharges selected bounds
+/// there. A float domain is outside RANGE-2 and keeps its ordinary verdict
+/// even at a site the range walk excludes.
 #[test]
-fn deferred_obligations_in_an_excluded_variant_arm_hold_vacuously() {
+fn an_excluded_variant_only_discharges_selected_range_goals() {
     // EFF-2 counts the read syntactically, even in the excluded arm; the
     // conversion reads no formal storage and therefore exhibits pure.
-    for (operation, row) in [("xs^[i]", "reads(xs)"), ("cvt::<u64, f32>(i)", "pure")] {
+    for (operation, row, verdict) in [
+        ("xs^[i]", "reads(xs)", None),
+        ("cvt::<u64, f32>(i)", "pure", Some(SemanticRule::Op6)),
+    ] {
         let source = field_range_program(&format!(
             "enum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(xs: &[u64], i: u64) -> result: unit {row} contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let route = Route::Live();\n  match route {{\n    Live() => {{\n    }}\n    Dead() => {{\n      let value = {operation};\n    }}\n  }}\n  return unit;\n}}\n"
         ));
-        field_range_verdict(&source, None);
+        field_range_verdict(&source, verdict);
     }
 }
 

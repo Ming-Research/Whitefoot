@@ -1258,6 +1258,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let ranges = super::range_judgment::judge_program(
             &baseline_functions,
             &self.types.nominals,
+            &self.types.elements,
             &ordinary,
             &self.types.checked_constants,
             super::range_judgment::JudgmentScope::Concrete,
@@ -2172,6 +2173,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let ranges = super::range_judgment::judge_program(
             &range_functions,
             &self.types.nominals,
+            &self.types.elements,
             &judged,
             &self.types.checked_constants,
             super::range_judgment::JudgmentScope::Symbolic,

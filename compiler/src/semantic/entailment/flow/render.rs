@@ -168,7 +168,11 @@ impl Input<'_, '_> {
             // rendered from the same source-order path every other consumer
             // reads rather than from a field list.
             CheckedExpression::ContainerMeasure { measure, root } => {
-                let place = self.render_header_place(&container_root_path(root), counted);
+                // A repair is written in the body's scope. Keep its local
+                // reborrow spelling, not the referent used for proof identity.
+                let mut written = ResolvedPlace::spelled(root.root, false, Vec::new());
+                written.path.extend(root.place_path());
+                let place = self.render_header_place(&written, counted);
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             _ => return None,
