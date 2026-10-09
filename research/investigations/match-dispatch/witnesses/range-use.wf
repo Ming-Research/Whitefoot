@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+
+fn get(targets: &Array<u64, 4>, i: u64) -> r: u64 reads(targets) contract {
+  requires i < 4_u64;
+  requires forall valid(j in 0_u64..4_u64): targets^[j] < 4_u64;
+} {
+  let t = targets^[i];
+  invariant bounded: t < 4_u64 {
+    use valid(i);
+  }
+  return t;
+}

@@ -2,8 +2,9 @@
 //! function per arm (compiler/match-dispatch-lowering).
 //!
 //! The header becomes an always-inline dispatch function that computes the
-//! header's values and transfers, through a handler table indexed by the
-//! tag, to the function of the selected arm; every edge back to the header
+//! header's values and transfers through a handler table indexed by the
+//! tag, or a threaded enum's trailing handler word, to the selected arm;
+//! every edge back to the header
 //! becomes a guaranteed tail call of the dispatch function, so each arm ends
 //! in its own indirect transfer. All parts take one parameter list — the
 //! header's parameters, the header values the arms read, the values from
@@ -24,6 +25,20 @@ use crate::{
     IrBlock, IrBlockId, IrDrop, IrEnumType, IrFunction, IrInstruction, IrTerminator, IrType,
     IrValueId,
 };
+
+/// Reachability shared by the program-wide census and function emission.
+pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailure> {
+    let mut seen = vec![false; function.blocks().len()];
+    let mut pending = if seen.is_empty() { Vec::new() } else { vec![0] };
+    while let Some(index) = pending.pop() {
+        let visited = seen.get_mut(index).ok_or(BackendFailure::InvalidIr)?;
+        if !*visited {
+            *visited = true;
+            pending.extend(successors(&function.blocks()[index]));
+        }
+    }
+    Ok(seen)
+}
 
 /// The calling convention of every part, with its argument registers on the
 /// target: the convention without callee-saved registers where the host's
@@ -479,6 +494,18 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// The enum's pointer field is the dispatch source instead of the table.
+    handler_word: Option<usize>,
+}
+
+impl DispatchEmission {
+    pub(super) fn handlers_by_tag(&self) -> Vec<String> {
+        self.plan
+            .table
+            .iter()
+            .map(|arm| self.arm_symbols[*arm].clone())
+            .collect()
+    }
 }
 
 impl FunctionFramePlan {
@@ -562,6 +589,7 @@ impl FunctionEmitter<'_, '_> {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
+        let handler_word = self.dispatch_layout.word(plan.matched, self.function.name());
         let kind = if self.function.waits() {
             Some("the function waits")
         } else if self.grain.is_some() {
@@ -691,7 +719,8 @@ impl FunctionEmitter<'_, '_> {
         // is left for it, instead of being formed again in every arm.
         let mut with_base = types.clone();
         with_base.push("ptr".to_owned());
-        let table_base = spilled.is_empty()
+        let table_base = handler_word.is_none()
+            && spilled.is_empty()
             && ArgumentRegisters::demand(&with_base).is_ok_and(|demand| registers.fits(demand));
         if table_base {
             types = with_base;
@@ -746,6 +775,12 @@ impl FunctionEmitter<'_, '_> {
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
+        if handler_word.is_some() {
+            ledger.insert(
+                0,
+                format!("{body_symbol}: dispatches through the handler word in each {matched}"),
+            );
+        }
         if cursor.is_some() {
             ledger.insert(
                 0,
@@ -811,6 +846,7 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            handler_word,
         }))
     }
 
@@ -1035,8 +1071,8 @@ impl FunctionEmitter<'_, '_> {
         Ok(true)
     }
 
-    /// Emits the dispatch header's terminator in the dispatch function: the
-    /// handler table load and the guaranteed tail call of the selected arm.
+    /// Emits the dispatch header's terminator: the handler load and the
+    /// guaranteed tail call of the selected arm.
     /// Returns whether `block` was that header.
     pub(super) fn emit_dispatch_select(
         &mut self,
@@ -1059,8 +1095,44 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        self.materialize_operands([scrutinee])?;
-        let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+        let handler_word = dispatch.handler_word;
+        let matched = dispatch.plan.matched;
+        let cursor = dispatch.cursor.as_ref().map(|cursor| cursor.place);
+        let slot = if let Some(word) = handler_word {
+            let family = self
+                .dispatch_layout
+                .families(matched)
+                .get(word)
+                .ok_or(BackendFailure::InvalidIr)?;
+            if family.handlers != dispatch.handlers_by_tag() {
+                return Err(BackendFailure::InvalidIr);
+            }
+            let address = if let Some(place) = cursor {
+                self.value_name(place)
+            } else if matches!(self.value_type(scrutinee), Some(IrType::Address(_))) {
+                self.value_name(scrutinee)
+            } else {
+                self.value_place(scrutinee)?
+            };
+            self.handler_word_pointer(matched, &address, word)?
+        } else {
+            self.materialize_operands([scrutinee])?;
+            let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+            let slot = self.next_temporary()?;
+            let index = self.next_temporary()?;
+            self.output.symbol(table_symbol);
+            // A two-variant tag-only enum's i1 must index as +1, not -1.
+            if tag_ty == "i64" {
+                writeln!(self.output, "  %{index} = add i64 {tag}, 0")?;
+            } else {
+                writeln!(self.output, "  %{index} = zext {tag_ty} {tag} to i64")?;
+            }
+            writeln!(
+                self.output,
+                "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}"
+            )?;
+            format!("%{slot}")
+        };
         let carried: Vec<(IrValueId, IrValueId)> = self
             .block(block)?
             .parameters()
@@ -1068,22 +1140,13 @@ impl FunctionEmitter<'_, '_> {
             .map(|(parameter, _)| (*parameter, *parameter))
             .collect();
         let list = self.dispatch_arguments(&carried, true, None)?;
-        let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
-        self.output.symbol(table_symbol);
-        // A tag narrower than the index is zero-extended: a two-variant
-        // tag-only enum's `i1` tag would otherwise index as -1.
-        let index = self.next_temporary()?;
-        let mut text = if tag_ty == "i64" {
-            format!("  %{index} = add i64 {tag}, 0\n")
+        let align = if handler_word.is_some() {
+            self.handler_word_alignment(matched)?
         } else {
-            format!("  %{index} = zext {tag_ty} {tag} to i64\n")
+            8
         };
-        write!(
-            text,
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut text = format!("  %{handler} = load ptr, ptr {slot}, align {align}\n");
         if result == "void" {
             text.push_str(&format!(
                 "  musttail call {convention}void %{handler}({list})\n  ret void\n"
@@ -1159,6 +1222,7 @@ impl FunctionEmitter<'_, '_> {
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
         let pins = dispatch.pins.clone();
+        let handler_word = dispatch.handler_word;
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -1269,6 +1333,9 @@ impl FunctionEmitter<'_, '_> {
             module.text("\n");
         }
 
+        if handler_word.is_some() {
+            return Ok(());
+        }
         let mut references = References::default();
         let entries = table
             .iter()

@@ -163,22 +163,27 @@ fn assert_split(module: &str, base: &str, arms: usize) {
             && dispatch.contains("alwaysinline"),
         "the dispatch function is internal, inlined and of the parts' convention: {dispatch}"
     );
-    // The table is reached through the parameter the enclosing function
-    // passes where a register was left for it, and directly otherwise.
-    let through_parameter = dispatch.contains("x ptr], ptr %wf.dispatch.base");
-    assert!(
-        (through_parameter || dispatch.contains(&format!("x ptr], ptr @{base}.dispatch.table")))
-            && dispatch.contains(&format!("musttail call {convention}")),
-        "the header transfers through the handler table: {dispatch}"
-    );
-    assert!(
-        !through_parameter || module.contains(&format!("ptr @{base}.dispatch.table")),
-        "the enclosing function passes the table's address: {module}"
-    );
-    assert!(
-        !dispatch.contains("switch "),
-        "the header's match is the table transfer: {dispatch}"
-    );
+    let word = module.contains(&format!("{base}: dispatches through the handler word"));
+    if word {
+        assert!(dispatch.contains("load ptr, ptr "), "{dispatch}");
+        assert!(!dispatch.contains("x ptr], ptr "), "{dispatch}");
+        assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+    } else {
+        // Keep the original table checks for every unthreaded split.
+        let through_parameter = dispatch.contains("x ptr], ptr %wf.dispatch.base");
+        assert!(
+            through_parameter || dispatch.contains(&format!("x ptr], ptr @{base}.dispatch.table")),
+            "the header transfers through the handler table: {dispatch}"
+        );
+        assert!(!through_parameter || module.contains(&format!("ptr @{base}.dispatch.table")));
+        let table = module.lines()
+            .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
+            .expect("the handler table is emitted");
+        assert!(table.contains(&format!("[{arms} x ptr]"))
+            && (0..arms).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))), "{table}");
+    }
+    assert!(dispatch.contains(&format!("musttail call {convention}")), "{dispatch}");
+    assert!(!dispatch.contains("switch "), "{dispatch}");
     for arm in 0..arms {
         let arm = definition(module, &format!("{base}.arm.{arm}"));
         assert!(
@@ -193,15 +198,6 @@ fn assert_split(module: &str, base: &str, arms: usize) {
     assert!(
         !module.contains(&format!("@{base}.arm.{arms}(")),
         "one function per arm"
-    );
-    let table = module
-        .lines()
-        .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
-        .expect("the handler table is emitted");
-    assert!(
-        table.contains(&format!("[{arms} x ptr]"))
-            && (0..arms).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))),
-        "the table has one entry per tag: {table}"
     );
 }
 
@@ -250,13 +246,13 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
     if !convention.is_empty() {
-        // Eight parameters, in order: pc, acc, count, the hoisted code
-        // length and box referent (the run), the cell's address, the handler
-        // table and the frame. Jnz's joined next index is not a known step,
+        // Seven parameters: pc, acc, count, the hoisted code length and
+        // box referent (the run), the cell's address and the frame. Jnz's
+        // joined next index is not a known step,
         // so its edge needs the run to form the next cell's address.
         assert!(
             verdict.starts_with(
-                "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
+                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
             ),
             "{verdict}"
         );
@@ -490,6 +486,7 @@ fn the_matched_element_s_address_travels_between_the_parts() {
     // entering address, forward and backward jumps, and an in-place edge.
     let module = emit(CURSOR_INTERPRETER.as_bytes());
     if verdict(&module, "wf_run").starts_with("split") {
+        assert_handler_load(&module, "wf_run", 16, 8);
         assert!(
             module.contains(&format!(
                 "{}wf_run: carries the matched Op's address between the parts",
@@ -1480,4 +1477,601 @@ fn continue_edges_to_a_header_match_split_into_handlers() {
         assert!(verdict(&module, "wf_run").starts_with("split:"), "{module}");
         assert_interpreter_split(&module, "wf_run");
     }
+}
+
+/// A 12-byte union inside a 28-byte product ceiling: one word makes 20,
+/// two words make 28, three cannot fit. Tags deliberately differ from arm
+/// order. Copying Add, then replacing that copy with Sub must compute 18.
+const HANDLER_CELLS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Cell {
+  Halt(value: u32, extra: u8);
+  Add(value: u32, extra: u8);
+  Sub(value: u32, extra: u8);
+}
+
+fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
+  requires code^.inner.len > 0_u64;
+} {
+  let n = code^.inner.len;
+  let pc = 0_u64;
+  let acc = 0_u32;
+  loop (
+    invariant bound: pc < n
+  ) {
+    match code^.inner[pc] {
+      Add(value: v, extra: e) => {
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
+        set acc = acc +wrap amount;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u32;
+      }
+      Sub(value: v, extra: e) => {
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
+        set acc = acc -wrap amount;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u32;
+      }
+      Halt(value: v, extra: e) => {
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
+        return acc +wrap amount;
+      }
+    }
+  }
+  return 0_u32;
+}
+
+fn make_add() -> result: Cell pure {
+  return Cell::Add(value: 7_u32, extra: 2_u8);
+}
+
+fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
+  return cell^;
+}
+
+fn tag(cell: &Cell) -> result: u32 reads(cell) {
+  match cell^ {
+    Add(value: v, extra: e) => {
+      return 1_u32;
+    }
+    Sub(value: v, extra: e) => {
+      return 2_u32;
+    }
+    Halt(value: v, extra: e) => {
+      return 3_u32;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Cell>>, cell: Cell) -> result: unit writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: cell);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Cell>(capacity: 3_u64);
+  let first = make_add();
+  let copied = copy_cell(cell: &first);
+  push(code: &code, cell: copied);
+  push(code: &code, cell: first);
+  let third = Cell::Halt(value: 10_u32, extra: 3_u8);
+  push(code: &code, cell: third);
+  if code.inner.len == 3_u64 {
+    let replacement = Cell::Sub(value: 3_u32, extra: 1_u8);
+    set code.inner[1_u64] = replacement;
+    let kind = tag(cell: &code.inner[1_u64]);
+    let result = run(code: &code);
+    if result == 18_u32 {
+      if kind == 2_u32 {
+        return exit_status(code: 0_u8);
+      }
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+/// Follow the loaded target from the cursor parameter through the word GEP
+/// to the indirect call. A tag/table implementation cannot satisfy this.
+fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
+    let dispatch = definition(module, &format!("{base}.dispatch"));
+    let (slot, place) = dispatch.lines().find_map(|line| {
+        let (slot, gep) = line.trim().split_once(" = getelementptr inbounds i8, ptr ")?;
+        let place = gep.strip_suffix(&format!(", i64 {offset}"))?;
+        Some((slot, place))
+    }).expect("the handler word is addressed in the received element");
+    let handler = dispatch.lines().find_map(|line| {
+        line.trim().strip_suffix(&format!(" = load ptr, ptr {slot}, align {align}"))
+    }).expect("the target is loaded with the word's alignment");
+    assert!(dispatch.lines().next().unwrap().contains(&format!("ptr {place}")), "{dispatch}");
+    assert!(dispatch.lines().any(|line| line.contains("musttail call ")
+        && line.contains(&format!(" {handler}("))), "{dispatch}");
+    assert!(!dispatch.contains("load i32"), "{dispatch}");
+    assert!(!dispatch.contains("x ptr]"), "{dispatch}");
+    assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+    assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
+}
+
+#[test]
+fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
+    let (ty, mut probes) = super::system::with_ir(HANDLER_CELLS, |program| {
+        let target = crate::target::TargetLayout::host().expect("host target");
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(program, target, false)
+            .expect("composition plan");
+        let selected = &prepared.program;
+        let cell = selected.nominals().iter().find(|n| n.name() == "Cell").unwrap();
+        let layout = crate::target::union_enum_layout(target, selected, cell.id()).unwrap();
+        assert_eq!((layout.size(), layout.handler_offset(), layout.handler_alignment()),
+            (20, Some(12), Some(4)));
+        (format!("wf.t.{}", cell.link_name()), super::payload_enums::enum_layout_probes(selected))
+    });
+    let module = emit(HANDLER_CELLS);
+    assert_handler_load(&module, "wf_run", 12, 4);
+    let made = emitted_body(&module, "make_add");
+    assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
+    let copied = emitted_body(&module, "copy_cell");
+    assert!(copied.contains("call void @llvm.memmove.")
+        && copied.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)")), "{copied}");
+    let main = emitted_body(&module, "main");
+    assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
+    let tag = emitted_body(&module, "tag");
+    assert!(tag.contains("load i32") && tag.contains("switch i32"), "{tag}");
+    assert!(!tag.contains("load ptr"), "an ordinary match reads only the tag: {tag}");
+    assert!(module.contains(&format!(
+        "%{ty} = type {{ i32, [8 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
+    )), "{module}");
+    // Fixed layout constants plus LLVM DataLayout and the program's result
+    // distinguish a coherent wrong layout from the approved representation.
+    probes.insert(ty.clone(), (20, 4));
+    for tag in 0..3 {
+        probes.insert(format!("{ty}.v{tag}"), (12, 4));
+    }
+    super::payload_enums::assert_llvm_layouts(&module, probes);
+}
+
+#[test]
+fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
+    super::system::with_ir(HANDLER_CELLS, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
+        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let mut two = program.clone();
+        let mut other = two.functions[owner].clone();
+        other.name = "other_run".to_owned();
+        two.functions.push(other.clone());
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
+        let layout = crate::target::union_enum_layout(target, &prepared.program, cell).unwrap();
+        assert_eq!((layout.size(), layout.handler_offset()), (28, Some(12)));
+        let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
+        assert_handler_load(&module, "wf_run", 12, 4);
+        assert_handler_load(&module, "wf_other_run", 20, 4);
+        let made = emitted_body(&module, "make_add");
+        assert!(made.contains("store ptr @wf_run.arm.0,")
+            && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");
+        let mut three = two;
+        other.name = "third_run".to_owned();
+        three.functions.push(other);
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
+        let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
+        for base in ["wf_run", "wf_other_run", "wf_third_run"] {
+            assert_split(&module, base, 3);
+            assert!(module.contains(&format!("@{base}.dispatch.table = ")), "{module}");
+        }
+        assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
+    });
+}
+
+#[test]
+fn unsplit_and_native_owners_leave_enums_unthreaded() {
+    super::system::with_ir(HANDLER_CELLS, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
+        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let mut unsplit = program.clone();
+        unsplit.functions[owner].synthesis = Some(crate::IrSynthesis::Chunk);
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(&unsplit, target, false).unwrap();
+        assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
+        let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
+        assert!(verdict(&module, "wf_run").contains("compiler-synthesized"), "{module}");
+        assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
+        let mut foreign = program.clone();
+        let mut native = foreign.functions[owner].clone();
+        native.name = "native_run".to_owned();
+        native.blocks.clear();
+        foreign.functions.push(native);
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false).unwrap();
+        assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
+    });
+}
+
+#[test]
+fn handler_words_use_body_symbols_and_fragment_mode_keeps_tables() {
+    let source = enum_interpreter();
+    let inputs = [crate::SourceInput::new("handler-bodies.wf", source.as_bytes())];
+    let compile = |fragments| crate::compile_for_emission(&inputs,
+        crate::CompilerLimits::default(), crate::OverlapLowering::Off, None, fragments).unwrap().0;
+    let whole = compile(false);
+    let fragments = compile(true);
+    // The destination wrapper is for Outcome; Op's selected representation
+    // must not make its constructor guess the public wrapper's arm symbols.
+    if verdict(&whole, "wf_run.body").starts_with("split") {
+        assert!(whole.contains("store ptr @wf_run.body.arm."), "{whole}");
+        assert!(!whole.contains("store ptr @wf_run.arm."), "{whole}");
+        for module in [&whole, &crate::LlvmModule::decode(&whole.encode()).unwrap()] {
+            assert!(crate::split_module(module, crate::FragmentGranularity::Function).is_err());
+        }
+    } else {
+        assert!(!whole.contains("dispatches through the handler word"));
+    }
+    assert!(!fragments.contains("dispatches through the handler word"));
+    assert!(!fragments.contains("store ptr @wf_run.body.arm."));
+    if verdict(&fragments, "wf_run.body").starts_with("split") {
+        assert_split(&fragments, "wf_run.body", 4);
+    }
+    for granularity in [crate::FragmentGranularity::Function, crate::FragmentGranularity::Module] {
+        crate::split_module(&fragments, granularity).expect("ordinary layouts remain splittable");
+    }
+}
+
+#[test]
+fn nested_enum_words_use_the_language_ceiling_not_the_smaller_child_layout() {
+    let source = br#"enum Inner {
+  A(value: u64);
+  B(value: u64);
+  C(value: u64);
+}
+
+enum Outer {
+  Left(inner: Inner);
+  Right(inner: Inner);
+}
+
+fn walk(op: &Outer, count: u64) -> result: u64 reads(op) {
+  let left = count;
+  loop {
+    match op^ {
+      Left(inner: v) => {
+        if left > 0_u64 {
+          set left = left -wrap 1_u64;
+          continue;
+        }
+        return 1_u64;
+      }
+      Right(inner: v) => {
+        return 2_u64;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::system::with_ir(source, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let outer = program.nominals().iter().find(|n| n.name() == "Outer").unwrap().id();
+        let owner = program.functions().iter().find(|f| f.name() == "walk").unwrap();
+        let mut three = program.clone();
+        for name in ["second_walk", "third_walk"] {
+            let mut other = owner.clone();
+            other.name = name.to_owned();
+            three.functions.push(other);
+        }
+        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        // Inner: selected 16, ceiling 32. Outer: selected union 24,
+        // selected-child product 40, language ceiling 72. Three words give
+        // 48: legal under OP-9, refused by the prototype's 40-byte bound.
+        let layout = crate::target::union_enum_layout(target, &prepared.program, outer).unwrap();
+        assert_eq!((layout.size(), layout.handler_offset()), (48, Some(24)));
+        assert_eq!(prepared.program.nominal(outer).unwrap().handler_words, 3);
+        assert_eq!(prepared.program.nominal_ceilings[outer.index()].size,
+            crate::IrLayoutMagnitude::Finite(72));
+        let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
+        for base in ["wf_walk", "wf_second_walk", "wf_third_walk"] {
+            assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
+            assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+        }
+    });
+}
+
+/// The result nominal has room for a handler word (union 16 + word 8,
+/// product ceiling 24). Both primitive outcomes reach the split helper.
+const CHECKED_HANDLER_RESULT: &str = r#"fn handler_result_make(input: INPUT_TYPE) -> result: Result<OUTPUT_TYPE, ERROR_TYPE> pure {
+  return CHECKED_EXPRESSION;
+}
+
+fn handler_result_run(value: &Result<OUTPUT_TYPE, ERROR_TYPE>, count: u64) -> result: OUTPUT_TYPE reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Ok(value: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return payload^;
+      }
+      Err(error: problem) => {
+        break;
+      }
+    }
+  }
+  return 99_OUTPUT_TYPE;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let success = handler_result_make(input: SUCCESS_INPUT);
+  let failure = handler_result_make(input: FAILURE_INPUT);
+  let good = handler_result_run(value: &success, count: 2_u64);
+  let bad = handler_result_run(value: &failure, count: 2_u64);
+  if good == SUCCESS_OUTPUT {
+    if bad == 99_OUTPUT_TYPE {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+fn assert_checked_handler_result(
+    input: &str,
+    output: &str,
+    error: &str,
+    expression: &str,
+    success: &str,
+    failure: &str,
+    expected: &str,
+) {
+    let source = CHECKED_HANDLER_RESULT
+        .replace("INPUT_TYPE", input)
+        .replace("OUTPUT_TYPE", output)
+        .replace("ERROR_TYPE", error)
+        .replace("CHECKED_EXPRESSION", expression)
+        .replace("SUCCESS_INPUT", success)
+        .replace("FAILURE_INPUT", failure)
+        .replace("SUCCESS_OUTPUT", expected);
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_handler_result_run", 2);
+    assert!(
+        module.contains("wf_handler_result_run: dispatches through the handler word"),
+        "{module}"
+    );
+    let producer = emitted_body(&module, "handler_result_make");
+    for arm in 0..2 {
+        assert!(
+            producer.contains(&format!("store ptr @wf_handler_result_run.arm.{arm},")),
+            "{producer}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn checked_integer_results_initialize_handler_words() {
+    // Before F1 this fails during emission with InvalidIr, before linking.
+    assert_checked_handler_result(
+        "u64",
+        "u64",
+        "Overflow",
+        "input +checked 1_u64",
+        "6_u64",
+        "18446744073709551615_u64",
+        "7_u64",
+    );
+}
+
+#[test]
+fn checked_conversion_results_initialize_handler_words() {
+    // i64 -> u64 has both outcomes while retaining room for the word.
+    // Before F1 the checked-conversion producer fails with InvalidIr.
+    assert_checked_handler_result(
+        "i64",
+        "u64",
+        "NarrowError",
+        "cvt.checked::<i64, u64>(input)",
+        "7_i64",
+        "-1_i64",
+        "7_u64",
+    );
+}
+
+#[test]
+fn checked_absolute_results_initialize_handler_words() {
+    // A different intrinsic producer, formerly another insertvalue path.
+    assert_checked_handler_result(
+        "i64",
+        "i64",
+        "Overflow",
+        "iabs.checked(input)",
+        "-7_i64",
+        "-9223372036854775808_i64",
+        "7_i64",
+    );
+}
+
+#[test]
+fn checked_division_results_initialize_handler_words() {
+    // The successful division remains guarded; both branches construct the
+    // same planned layout. Before F1 emission refuses its memory-only result.
+    assert_checked_handler_result(
+        "i64",
+        "i64",
+        "DivError",
+        "14_i64 /checked input",
+        "2_i64",
+        "0_i64",
+        "7_i64",
+    );
+}
+
+const RUNTIME_HANDLER_RESULT: &[u8] = br#"const handler_map_key: Array<u8, 1> =[97_u8];
+
+enum HandlerMapInner {
+  First(value: u64);
+  Second(value: u64);
+  Third(value: u64);
+}
+
+enum HandlerMapOuter {
+  Left(inner: HandlerMapInner);
+  Right(inner: HandlerMapInner);
+}
+
+enum HandlerIndependent {
+  First(value: u64);
+  Second(value: u64);
+  Third(value: u64);
+}
+
+fn handler_map_run(value: &Option<HandlerMapInner>, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Some(value: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        match payload^ {
+          First(value: number) => {
+            return number^;
+          }
+          Second(value: number) => {
+            return number^;
+          }
+          Third(value: number) => {
+            return number^;
+          }
+        }
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  return 11_u64;
+}
+
+fn handler_outer_run(value: &HandlerMapOuter, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Left(inner: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return 13_u64;
+      }
+      Right(inner: payload) => {
+        break;
+      }
+    }
+  }
+  return 17_u64;
+}
+
+fn handler_independent_run(value: &HandlerIndependent, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      First(value: number) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return number^;
+      }
+      Second(value: number) => {
+        return number^;
+      }
+      Third(value: number) => {
+        break;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<HandlerMapInner>(capacity: 2_u64);
+  let absent = 0_u64;
+  let fresh = 0_u64;
+  let present = 0_u64;
+  let key = &handler_map_key[0_u64..1_u64];
+  atomic slot = &store[key] {
+    set absent = handler_map_run(value: slot, count: 2_u64);
+  }
+  atomic slot = &store[key] {
+    set fresh = handler_map_run(value: slot, count: 2_u64);
+    let content = HandlerMapInner::Second(value: 7_u64);
+    set slot^ = Some<HandlerMapInner>(value: content);
+  }
+  atomic slot = &store[key] {
+    set present = handler_map_run(value: slot, count: 2_u64);
+  }
+  let unrelated = HandlerIndependent::First(value: 19_u64);
+  let control = handler_independent_run(value: &unrelated, count: 2_u64);
+  let content = HandlerMapInner::Third(value: 23_u64);
+  let outer = HandlerMapOuter::Left(inner: content);
+  let enclosed = handler_outer_run(value: &outer, count: 2_u64);
+  if absent == 11_u64 {
+    if fresh == 11_u64 {
+      if present == 7_u64 {
+        if control == 19_u64 {
+          if enclosed == 13_u64 {
+            return std::process::exit_status(code: 0_u8);
+          }
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+#[test]
+fn runtime_map_values_keep_ordinary_layout_without_disabling_unrelated_handlers() {
+    // Without F2, Option<HandlerMapInner> receives a word: the assertion fails,
+    // and absent/fresh entries would load a null handler from runtime zeros.
+    let module = emit(RUNTIME_HANDLER_RESULT);
+    for base in ["wf_handler_map_run", "wf_handler_outer_run"] {
+        assert_split(&module, base, 2);
+        assert!(
+            module.contains(&format!("@{base}.dispatch.table = ")),
+            "{module}"
+        );
+        assert!(
+            !module.contains(&format!("{base}: dispatches through the handler word")),
+            "{module}"
+        );
+    }
+    // A blanket shutdown of handler words in a runtime-using program fails
+    // this control. Common primitive leaves must not connect the nominals.
+    assert_split(&module, "wf_handler_independent_run", 3);
+    assert!(
+        module.contains("wf_handler_independent_run: dispatches through the handler word"),
+        "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }
