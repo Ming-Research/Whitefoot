@@ -461,5 +461,9 @@ boundary: a helper that replaces a cell with an arbitrary value
 (`put_i32`'s `set list^.inner[at] = value;`) carries no summary, as the rule
 intends. Record: Snowghost-wf revision `4a9258b`,
 `research/investigations/storage-layout/par-classification/g-indexed-exp68.md`
-(check run 37904741220, report run 37904741267, both on `28f6ae7`). The
-count measures permission only, not runtime overlap or speed.
+(check run 37904741220, report run 37904741267, both on `28f6ae7`). After the review fix that identifies families by resolved storage, the
+recount with `wf-exp-0f91c4dd2c6f` (`0f91c4dd2`) again admitted 17 of 32,
+with the complete 1,122-loop permission ledger byte-identical to the earlier
+one (report run 37919747342, check run 37918100371, Snowghost-wf branch
+`research/par-count-exp0f`). The count measures permission only, not
+runtime overlap or speed.
