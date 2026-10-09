@@ -658,7 +658,9 @@ oracle on empty, sibling and nested syntax, including both first-request
 orders; reversed components or sorting by node ID fail it. Its four-module
 fixture asserts explicit direct and transitive read sets, repeats queries in
 reverse order, and distinguishes unused declarations and an empty module;
-omitting provisional contract uses or sharing visited state fails it.
+sharing visited state across queries fails it. No fixture declaration is
+reached only through a provisional contract use, so that adjacency input,
+carried unchanged from the per-module construction, is not tested here.
 B repeats and reorders registrations from two call sites with equal arguments
 and different region axes, checking independent parameters and fallback for
 other arguments; keeping the first/last registration or keying regions fails
