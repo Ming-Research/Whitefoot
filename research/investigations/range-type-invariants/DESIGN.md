@@ -208,6 +208,17 @@ Observed on branch `claude/proof-facts`; tests are in
    instances to these `apart` certificates, whose two facts' reads chain,
    though none of the three needs them for its verdict.
 
+   Remeasured after the review fixes, `array_filled`'s contents postcondition
+   and the merge of main
+   ([run 37986456418](https://github.com/Ming-Research/Whitefoot/actions/runs/37986456418)):
+   base main `53db34657`, head `394a8338b`, the same method. The conformance
+   suite takes 26.455 s [26.37, 26.51] at base, 26.485 s at the twin and
+   28.26 s [28.17, 28.45] at head (1.068, twin 1.001), +1.57 s of the +1.96 s
+   again in the same three certificate cases and no other case 20 ms
+   slower; the natural-form interpreter, now 0.82 s on main, is unchanged
+   (1.000). The owner accepted this cost on the status board on 2026-10-09;
+   its follow-up is status board item `proof-bl-cost-round2`.
+
 ## Specification changes
 
 - [TYPE-11]: a `type_invariant` body may be a range clause over binder data;
