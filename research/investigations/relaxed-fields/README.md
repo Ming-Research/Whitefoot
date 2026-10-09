@@ -2503,8 +2503,16 @@ gran's Whitefoot branch `claude/map-miss-no-claim` (status-board item
 `coord-wfbl-03-06`) implements that, deciding "never inserts" from the
 statement's write paths; Firn-wf's experiment branch `exp/stamp-narrow`
 narrows GET's helpers to `writes(slot.Some.value.access)` to take that path.
-That the fix removes the miss loss remains a prediction until the same-source
-miss comparison reruns on that compiler. On hits, where relaxed fields would
+The same-source miss comparison then ran on that branch's experiment
+release `wf-exp-b7054cbb15dc`
+([Firn-wf run 37986458410](https://github.com/Ming-Research/Firn-wf/actions/runs/37986458410),
+GET at depth 16 on an empty keyspace, two interleaved passes): the narrowed
+build reached 1.00, 1.04 and 1.00 of the unstamped build on 1, 2 and 4 CPUs
+(same-image reruns 0.99, 1.00, 0.99), against 0.84, 0.88 and 0.80 for the
+locked stamp, meeting the criterion stated before it ran (at least 0.97 and
+clearly above the locked stamp). It is exploratory in the same sense as the
+stages above, though the 12 to 20% effect stands well above their noise. The
+branch merged as Whitefoot #312. On hits, where relaxed fields would
 act, the locked stamp's cost is a few percent at most and unresolved at 1%,
 with no protocol reruns. On that basis, no cost large enough to motivate
 the semantic change being shown, the owner paused the design on 2026-10-09
@@ -2562,8 +2570,9 @@ performance success or implementation completion is claimed for any candidate.
 S1-H/S1-I's hidden-state summaries, EFF-3 transformation treatment, complete
 alias mappings and initialization/lifetime handoffs also remain unverified.
 The controls established, exploratorily, that the miss loss is the lock's
-transient claim (by source and `l0 ≈ lock`); the no-claim fix's effect, the
-locked stamp's cost on hits at 1%, and the second map on hits remain
+transient claim (by source and `l0 ≈ lock`), and that the no-claim fix
+removes it for statements whose writes stay inside the entry's payload; the
+locked stamp's cost on hits at 1% and the second map on hits remain
 unverified. The design is paused
 ([Controls and the pause](#controls-and-the-pause-2026-10-09)); the embedded
 code-shape probe, the event model and the target qualification plan wait for
