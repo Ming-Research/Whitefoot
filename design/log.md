@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 A payload-only keyed statement takes nothing for an absent key
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, on the request on the item "a statement that accesses an absent key's entry allocates a node and then frees it", the owner approved both changes to this node: the new decision that a single-entry statement whose writes all pass through the `Some` payload takes no cell or node on an absent key and locks a present key exclusively, and the claim decision narrowed to writers that may make an absent entry present ("approve", translated).
+
+Summary: A GET that refreshes an access stamp inside the entry's payload may write the entry, so it claimed a cell and built a node for every absent key and freed the node at unlock; on firn's GET miss workload on the i9-14900K that cost 12 to 20 percent of throughput against a build without the stamp. The checker now marks each single-entry target that can only write inside the `Some` payload, through its own writes, call rows and aliases taken from the statement's header, and the runtime then locks a present key exclusively and runs the block on the map's shared none slot for an absent one, the miss taking effect when the absence is observed, as the read path's does. With the stamp's rows narrowed to the stamp field, firn measured 0.99 to 1.04 of the stampless build's throughput. Deferring the node until the first write was refused because it still claims and unlocks a cell.
+
 ## 2026-10-09 A map's reserve is released on request without waiting
 
 Nodes: compiler/waiting-contexts/concurrent-map
