@@ -2884,7 +2884,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // v0.95's `Paged`, `Run`, `box_paged_new`, `grow_paged` and
     // `paged_page_len` add fifteen, the range postcondition of `array_filled`
     // adds its fact name `filled` and bound variable `k`, and v0.113 moves
-    // v0.110's `shared_map_release_reserve` and its three records to
+    // v0.111's `shared_map_release_reserve` and its three records to
     // `std::process` [PRE-2]. The last record is `free_empty`'s value
     // parameter, so that removal moves no preceding ordinal.
     assert_eq!(first.len(), 203);
