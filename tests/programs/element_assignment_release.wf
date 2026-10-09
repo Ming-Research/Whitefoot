@@ -164,14 +164,14 @@ fn indirect_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool
 
 fn replace_range(values: &[Cell], capacity: u64) -> result: Bool writes(values) {
   doc "Exercises both whole-element and projected range-reference targets.";
-  if values.len == 0_u64 {
+  if values^.len == 0_u64 {
     return False();
   }
   let replacement = make_cell(capacity: capacity);
-  set values[0_u64] = move replacement;
+  set values^[0_u64] = move replacement;
   let contents = make_payload(capacity: capacity);
-  set values[0_u64].payload = move contents;
-  return values[0_u64].payload.upvals.inner.cap == capacity;
+  set values^[0_u64].payload = move contents;
+  return values^[0_u64].payload.upvals.inner.cap == capacity;
 }
 
 fn other_windows(capacity: u64) -> result: Bool pure {
