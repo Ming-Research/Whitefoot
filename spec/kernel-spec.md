@@ -1,4 +1,4 @@
-# Kernel Specification v0.109
+# Kernel Specification v0.110
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1388,7 +1388,8 @@ A clause side's `+`, `-`, and `*` form that template's own operation nodes over 
 A formal datum keeps its zero-based parameter ordinal and its field, `^`, subscript, measure, and payload projections; named consts, literals, selected operation rows, written arguments after substitution, result types, and operand order retain their existing identities.
 Definition spelling, sharing, and NodePaths are absent after expansion.
 The requirement occurrence is `(concrete function instance, requires_clause NodePath)` and is outside predicate equality.
-Two predicates are equal only by exact typed-tree equality: there is no commutation, folding, reassociation, inversion, or De Morgan rewrite.
+Predicate identity is exact typed-tree equality: there is no commutation, folding, reassociation, inversion, or De Morgan rewrite.
+Disposition additionally uses the current origin equivalence of [ENT-4.OT].
 Signed decomposition, exact comparison-root L0 projection, and the fixed query-time Boolean introduction over independently proved children remain exactly [ENT-3, ENT-4, ENT-6].
 
 At an ordinary source call, resolution, concrete instantiation, named arguments, exact types, borrow feasibility, and all actual-expression obligations complete first.
@@ -1401,7 +1402,7 @@ admitted tree, it uses [ENT-2]'s occurrence-local call-argument
 evaluated-value identity instead. No
 exact operation or index identity is admitted before all of its nested domain
 obligations succeed.
-Every instantiated goal is judged independently in that unchanged state; a discharged clause adds no fact for a later clause.
+Every instantiated goal is submitted independently to [MSR-4] in that unchanged state; a discharged clause adds no fact for a later clause.
 The first refuted or unproved clause is the FN-8 call-site rejection and forms no checked program.
 Only total success reaches ordinary transfer, effects, and normal return; no call receives a runtime fallback, alternate entry, or body clone.
 
@@ -2985,7 +2986,8 @@ No caller fact is copied into a callee: an ordinary call judges its instantiated
 A fragment type is one member of the closed integer set [OP-2]; relations are over mathematical values, so relations between terms of different fragment types are well-formed and are created only by the sources and flow transports [ENT-3, ENT-5] admit.
 A widening conversion is a bare `cvt::<S, D>(e)` with integer S and D whose pair is whole-type total [OP-6]; it denotes the mathematical value of e, so wherever an [FN-9] relation term or a comparison-origin operand [ENT-3] admits a term or constant, a widening conversion of one is that term or constant itself.
 
-A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`. Alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
+A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant relations and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`.
+Alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
 
 Alternative (j) is a compiler-owned target-instance measure term used while forming or proving an [INV-1] counted next-header relation.
 For a measure factor whose place contains the counted binder in a subscript offset, each measure of that selected measured place, and each measure prefix needed to discharge its subscripts, has a target-instance term when its own path contains that offset.
@@ -3055,7 +3057,7 @@ FN-8's call-argument form is identified by `(concrete caller instance, call Node
 An [ENT-6] obligation-operand form is identified by `(concrete function instance, owning obligation NodePath, operand ordinal, exact captured type, ordered projections, final result type)` and may occur only in the canonical Goal queried for that one obligation.
 Both forms are neither places nor L0 terms, have no direct or complete ordinary source goal origin, add no flow fact or place support, and cannot be established by naming or reevaluating their source expression.
 Goal equality is exact typed tree equality, including every selected row and datum field, and therefore may hold across two source occurrences or concrete callee instances only when their complete typed trees are identical.
-The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit.
+The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
 Invariant targets and `proof_use` sources are affine inequalities rather than opaque Goals [INV-1, PRF-1]; an OP-4 bounds obligation remains an L0/affine relation and has no opaque Goal of its own.
 Goal construction may intern only written subexpressions and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
 
@@ -3064,10 +3066,10 @@ It carries no child facts merely by existing; [ENT-3] fact sources establish the
 If G's complete root is exactly one comparison origin relation R under [ENT-3], `+G` has the exact L0 projection R and `-G` has R's exact negation; a non-comparison root has no L0 projection.
 The signed fact and its projection are distinct manifestations in one combined state and have the supports [ENT-5] fixes.
 
-An atomic fact is one difference bound `t1 - t2 <= c` (t1, t2 terms, c a mathematical integer) or one disequality `t1 != t2`.
-Difference-bound identity preserves the ordered term pair; disequality identity is the unordered endpoint pair, although the first source-normalization encounter preserves its written orientation for rendering and component order.
-Source relations normalize exactly: `a <= b` is `a - b <= 0`; `a < b` is `a - b <= -1`; `a = b` is the bound pair `a - b <= 0` and `b - a <= 0`; `a >= b` and `a > b` swap operands; `a != b` is one disequality.
-A constant operand folds through Z: `a <= 7` is `a - Z <= 7`.
+An atomic fact is one difference bound `t1 - t2 <= c` (t1, t2 terms, c a mathematical integer) or one offset disequality `t1 - t2 != c`.
+Difference-bound identity preserves the ordered term pair; offset-disequality identity identifies `(t1, t2, c)` with `(t2, t1, -c)`, although the first source-normalization encounter preserves its written orientation for rendering and component order.
+Source relations normalize exactly: `a <= b` is `a - b <= 0`; `a < b` is `a - b <= -1`; `a = b` is the bound pair `a - b <= 0` and `b - a <= 0`; `a >= b` and `a > b` swap operands; `a != b` is `a - b != 0`.
+A constant operand folds through Z: `a <= 7` is `a - Z <= 7`, `a != 7` is `a - Z != 7`, and `7 != a` is `Z - a != -7`.
 Implicit facts hold at every program point: every term t carries the reflexive bound `t - t <= 0`; every term t of fragment type T carries `t - Z <= max(T)` and `Z - t <= -min(T)`; every measure term carries [MSR-2]'s standing facts; and every `P.len` term over a place of type `Array<T, N>` carries the equality to N (both bounds), with concrete N a constant and const-generic N a symbolic constant term.
 
 [MSR-1] Measure terms are the readonly fields and derived storage observations defined below, over one admitted measure place [OP-15].
@@ -3287,7 +3289,9 @@ A Bool expression has an ordinary goal origin G when, after its ordinary express
 Construction, an ordinary function call, a move or borrow, an undischarged partial operation, an expression requiring occurrence-local evaluated-value identity, and every other expression shape has no goal origin.
 A checked exact integer operation or subscript may therefore occur only below that total root and only through the admitted structure above; it never establishes its own safety merely by occurring in G.
 The unexpanded tree G is the direct goal.
-Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded and the binding holds it at this use.
+A live ordinary-let origin link pairs the binding's datum with its unique defining right-hand side exactly when that right-hand side has an admitted value expression, all its nested obligations have succeeded, and the binding holds it at this use.
+At a join, this hold is judged over [ENT-5]'s non-contradictory contributing inputs.
+Starting from a direct goal, its complete origin expansion recursively replaces each datum having a live link with that link's right-hand side, retaining a projected datum when the replacement cannot carry its typed projections.
 Expansion continues to a fixed point and is all-or-nothing for every eligible leaf; it never performs an algebraic rewrite.
 The goal-origin set is the direct goal plus that one complete valid expansion when it differs.
 Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write that reaches the binding [ENT-5] kills the latter normally.
@@ -3429,6 +3433,13 @@ Its support is that scrutinee place's own storage, so it dies on any [ENT-5] eve
 This loss forbids a new payload selection; it does not itself destroy a payload place already captured by a reference [REF-2].
 It establishes no L0 relation and no signed goal; it is an ownership-side refinement consumed by [REF-1], [REF-2] and [OWN-7].
 
+[ENT-3.S16]
+- S16 (proved invariant conclusions).
+When a header or local invariant gains authority under [INV-1], each bound of its conclusion whose normalized source-term form is exactly `a - b <= c`, with a and b admitted [ENT-2] terms including Z and c a mathematical integer constant, also establishes that ordinary L0 fact.
+An equality contributes its two bounds together.
+Normalization here combines the written affine expression over its source terms, without substituting their current immutable value images or eliminating other terms using premises.
+The fact has ordinary [ENT-5] term support, kills, joins and snapshots; a conclusion outside this exact difference-bound form contributes only its existing affine premise.
+
 [CALL-6] Publication: how a declared relation becomes a fact, where it is computed, where it is established, and that the set it belongs to is consistent.
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
 This rule states that route's four points once, so no rule computes a fact at one program point and uses it at another without naming both.
@@ -3443,7 +3454,7 @@ A relation naming results uses exactly [ENT-3.S12]'s closed result-destination l
 Every published relation set is checked for consistency at the declaration.
 A `contract_block` whose instantiated relations are contradictory at their establishment point is a hard error citing CALL-6 at the `fn_decl`, `ContradictoryPublishedRelations`, naming the clauses and carrying a repair [DIAG-1].
 The set is partitioned by route first, because a routed clause is available only on its own arm and two clauses on two arms are never in one caller state together; an unrouted clause selects every explicit return and every propagated error exit [FN-9] and is therefore a member of every route's set.
-Contradiction is the ordinary [ENT-4] question over the declared templates: each distinct operand datum is one term, a literal folds through Z with its value, and the set is contradictory exactly when its transitive closure derives a negative self-bound or forces two terms one declared disequality separates to be equal.
+Contradiction is the ordinary [ENT-4] judgment over the declared templates, with each distinct operand datum one term and literals normalized under [ENT-2].
 A template whose operand shape that closure cannot represent contributes no premise, so a reported contradiction is always a real one.
 The judgment is at the declaration because the set is fixed there: at a contradictory point every L0 relation and both signs of every goal are derivable [ENT-4], so an inconsistent contract is not one wrong fact at a caller but every fact at every caller, and no caller state repairs it.
 A contradictory `requires` set is a different thing and stays admissible: it makes the instance legally uninhabited [FN-8], publishes no relation, and no reachable non-contradictory caller can call it.
@@ -3451,8 +3462,8 @@ A contradictory `requires` set is a different thing and stays admissible: it mak
 *Judgment:* the S13 instantiation at the call, the establishment and restriction, the kill from the call, and the consistency check at the declaration.
 *Publishes:* the source, the substitution, the instantiation point, the establishment point, the destination list, and the support of every declared relation in the language.
 
-[ENT-4] The L0 component of the closed fact state is the least set containing its established and implicit facts and closed under exactly: (1) from `t1 - t2 <= c1` and `t2 - t3 <= c2`, derive `t1 - t3 <= c1 + c2`; (2) from `t1 - t2 <= 0` and a disequality between t1 and t2 in either orientation, derive `t1 - t2 <= -1`; (3) of two bounds on one ordered pair, the smaller constant subsumes.
-L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a = b` when both `a - b <= 0` and `b - a <= 0` are derivable; `a != b` when a disequality is present or `a - b <= -1` or `b - a <= -1` is derivable.
+[ENT-4] The L0 component of the closed fact state is the least set containing its established and implicit facts and closed under exactly: (1) from `t1 - t2 <= c1` and `t2 - t3 <= c2`, derive `t1 - t3 <= c1 + c2`; (2) from `t1 - t2 <= c` and `t1 - t2 != c`, derive `t1 - t2 <= c - 1`, and from `t2 - t1 <= -c` and that same disequality, derive `t2 - t1 <= -c - 1`; (3) of two bounds on one ordered pair, the smaller constant subsumes.
+L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a - b = c` when both `a - b <= c` and `b - a <= -c` are derivable; `a - b != c` when that offset disequality is present under [ENT-2]'s identity or `a - b <= c - 1` or `b - a <= -c - 1` is derivable.
 
 The opaque component retains established signed facts and the following finite truth-functional parent reconstruction over exact parent goals already interned in [ENT-2]'s universe.
 `+band(A,B)` derives from both `+A` and `+B`; `-band(A,B)` derives from either `-A` or `-B`; `+bor(A,B)` derives from either `+A` or `+B`; `-bor(A,B)` derives from both `-A` and `-B`; and either sign of `bnot(A)` derives from the opposite sign of A.
@@ -3468,12 +3479,29 @@ One retained proof never uses a parent-to-child source derivation and then that 
 
 The combined state is contradictory when L0 derives `t - t <= -1` for any t or when both signs of one exact goal are derivable.
 At a contradictory point every L0 relation and both signs of every goal in the finite universe are derivable and every ordinary obligation, call goal, and FN-9 selected-return relation is discharged.
-At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable, `refuted` when `+G` is absent and `-G` is derivable, and `unproved` otherwise.
+At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable in the [ENT-4.OT] view, `refuted` when `+G` is absent and `-G` is derivable there, and `unproved` otherwise.
 An instantiated L0 relation R is `discharged` when every normalized conjunct of R is derivable, `refuted` when R is not discharged and R's exact negation is derivable, and `unproved` otherwise.
-A one-bound negation is S1's reversed strict bound, an equality relation's negation is its disequality, and a disequality's negation is the equality's two-bound relation.
+A one-bound negation is S1's reversed strict bound, an equality relation's negation is its offset disequality with the same terms and constant, and an offset disequality's negation is the equality's two-bound relation under this rule's derivability judgment.
 These three dispositions are complete and exclusive [FN-8, FN-9].
 The least closure is unique and finite up to L0 subsumption because only the finite terms and goals [ENT-2] participate and the rules are monotone.
 Implementations may compute lazily or incrementally, but every derivability and disposition answer must equal this least-closure answer.
+
+[ENT-4.OT] Origin transport forms one query-local view of the entering fact state for [MSR-4].
+Two admitted value expressions are origin-equivalent at that point exactly when their complete valid [ENT-3] origin expansions have identical typed trees under [ENT-2]'s proof-path identity.
+The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
+Each origin class containing fragment-integer expressions with an L0 term-plus-constant representation selects its first such expression as representative and supplies the equality of every other such member to that representative.
+Each collected Boolean tree supplies one term view obtained by simultaneously replacing its proper integer subtrees having such representatives with those representatives, stopping traversal at a replacement.
+The Boolean inventory contains the collected Boolean trees, their term views and the Boolean subtrees of those views, partitioned by origin equivalence.
+Each entering signed fact supplies its sign to every member of its Boolean class and supplies each member's exact signed comparison projection when that projection exists.
+These equalities and projections augment the entering L0 state for this query, closed by [ENT-4].
+Over this fixed numeric state, the existing signed-goal derivation rules and transport of either proved sign to every member of its Boolean class are iterated to their least fixed point.
+Within [ENT-6]'s positive Boolean-introduction traversal, a visited Boolean datum also visits its live definition under the demanded sign and transports a successful child proof back to that datum.
+Each such child proof remains a premise of that introduction, including a negative affine ordering proof, and supplies no independently derivable signed fact.
+A transported proof retains its signed premise and the live definition introductions establishing origin equivalence.
+A derived sign supplies only a signed fact in this view, with Boolean introduction governed by [ENT-4] and decomposition confined to the [ENT-3] source establishments.
+The view's contradiction and disposition are [ENT-4]'s judgments over that fixed point.
+The view adds no ordinary flow fact, affine premise, source establishment or runtime evaluation and is discarded after this query.
+Its finite shared expression identities, one term view per collected Boolean tree, represented-value equalities and two signs per Boolean member fix its entire candidate set independently of any search order or work budget.
 
 [ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] the proof path [ENT-2] of any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
@@ -3490,10 +3518,10 @@ Every reference variable and every `Box` binding used by a goal's resolved place
 The two signs of one goal have identical support.
 
 A requirement or verified postcondition fact has exactly the ordinary L0 or opaque-goal support of its normalized relation after the rule's stated substitutions.
-An affine invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
+The affine component of an invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
 A write, consume, or scope exit changes or removes the current binding-to-image map but does not make an already proved theorem about the old image false; a live alias may therefore continue to use it, and a named `proof_use` source denotes exactly that immutable theorem while its invariant declaration remains in lexical scope [INV-1, PRF-1].
 Without a current value image or another retained theorem connecting an old atom to a submitted target, an unreachable old atom cannot help prove that target.
-Header and local invariant conclusions retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
+Header and local invariant affine components retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
 The additional transport below proves fresh instances of active header relations.
 A header invariant's name leaves lexical scope with its loop body [INV-1].
 The compiler neither removes one constructor and reruns the body nor computes a masked fact state to decide whether any fact was necessary.
@@ -3547,7 +3575,7 @@ A non-bare, projected, consuming, computed, constructed, call, subscripted, cons
 
 At the receiving `let` continuation, ordinary fact flow and its ordinary branch join remain unchanged.
 Separately join one delivery image from every reaching `give` edge of the initializer, in edge NodePath order, after the substitutions and kills above.
-When at least one image is non-contradictory, contradictory images are neutral and the non-contradictory images retain for each ordered term pair the weakest (largest-constant) bound held by all and each disequality held by all; a relation missing from one such image is not delivered.
+When at least one image is non-contradictory, the delivery join applies this rule's L0 join judgment below to those images, with contradictory images neutral.
 Hence images containing `x < 8` and `x < 128` establish `x < 128`, not nothing and not `x < 8`.
 An all-contradictory image set is contradictory; an absent eligible relation on a non-contradictory edge contributes an empty image and prevents delivery of that relation.
 Add exactly the joined L0 relations to the receiver's ordinary continuation state and close once.
@@ -3599,7 +3627,8 @@ Transport changes no runtime operation, evaluation, effect, reference or control
 
 Joins: at the continuation of a `match_stmt` or `value_match`, the ordinary fact state is the join over its canonical frontier, initially comprising every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after its applicable edge events; an arm every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
-Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all and each disequality held by all; the opaque join keeps one signed fact exactly when that identical goal and sign are held by all.
+Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all, and each offset disequality whose offset is zero or is established on some non-contradictory input exactly when every non-contradictory input holds it under [ENT-4]'s derivability.
+The opaque join keeps one signed fact exactly when that identical goal and sign are held by all non-contradictory inputs.
 The join of closed states is closed.
 A nonempty join whose every input is contradictory, and an empty join with no reaching edge, are each the contradictory all-derivable state.
 At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
@@ -3712,6 +3741,7 @@ Consequently an author can determine from this rule alone whether a target is au
 
 An [FN-8] Signed Goal query first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
 When neither sign is ordinarily derivable, its one remaining positive-proof route recursively follows exactly [ENT-4]'s fixed Boolean introduction table over the already-written goal tree: positive `band` and negative `bor` require every child in source order; negative `band` and positive `bor` visit every child in source order and retain the first successful witness; and `bnot` checks its sole child under the opposite sign.
+Visits use [ENT-4.OT]'s live definition links in the same query view.
 `bxor` has no introduction route.
 At each visited child, when the child root is `<=`, `<`, `>=`, or `>` over values having current affine images or measure terms, the checker normalizes that exact truth sign to one affine inequality; the child is then submitted to [MSR-4]'s disposition in the same ProofContext, which takes the ordinary [ENT-4] proof first and the normalized inequality at its affine steps.
 Successful children are joined only by the stated Boolean introduction node; they publish no child, parent, L0, or affine fact, and an unsuccessful candidate changes no later candidate or acceptance result.
@@ -3719,6 +3749,8 @@ This structural traversal invents no proposition, connective, rewrite, premise, 
 
 [MSR-4] One numeric goal disposition, shared by every consumer.
 This rule states once the complete ordered derivation of a numeric goal, and every consumer submits a goal and receives that disposition:
+
+Every step reads the origin-transport query view formed by [ENT-4.OT].
 
 ```text
 1  contradiction in the current combined state                                  [ENT-4]
@@ -3848,6 +3880,7 @@ Their conclusions form one simultaneous batch.
 For the base batch, form and submit every header target to [MSR-4] in the complete preheader state, using the counted initialization where [ENT-5] supplies one.
 Every target reads that same state.
 The batch is published as the current-iteration assumptions exactly when all bases succeed.
+Its L0 establishment is [ENT-3.S16].
 No target assumes a conclusion of its own base batch.
 The formed operand instances accompany those assumptions.
 Their formation obligations are part of the same base and next-header induction: they license the header's measure images and publish no additional numeric inequality beyond its written relations.
@@ -3884,8 +3917,9 @@ Without a proof block its target must succeed under [MSR-4]'s disposition.
 With a proof block it is checked by [PRF-1].
 It cannot assume its own target.
 On success its normalized target and immutable value images become one published affine fact after the statement; the fact may serve every later goal in the declaration's dominance region and may itself be named by a later `proof_use`.
+Its L0 establishment is [ENT-3.S16].
 Only that target is published: formation state, certificate premises, scaled premises, accumulator values, and residuals are never added to ProofContext.
-At a control-flow join, facts are compared by canonical inequality and immutable value images rather than invariant spelling or proof-source ordinal; identical conclusions reaching every non-contradictory input survive under [ENT-5].
+At a control-flow join, affine facts are compared by canonical inequality and immutable value images rather than invariant spelling or proof-source ordinal; identical conclusions reaching every non-contradictory input survive under [ENT-5].
 The invariant name keeps only its lexical scope and never changes canonical fact identity.
 
 For a counted loop whose complete header batch succeeds, the fixed exact-exhaustion rule is available only when the captured lower endpoint is proved no greater than the captured upper endpoint without using that header batch and, when a backedge is reachable, the hidden `binder + 1` update is proved representable in u64.

@@ -1,0 +1,23 @@
+fn need(value: Bool) -> r: unit pure contract {
+  requires value;
+} {
+  doc "Consume a proved Boolean value.";
+  return unit;
+}
+
+fn witness(x: u64, choose: Bool) -> r: unit pure {
+  doc "One input loses the definition link before the continuation learns a bound.";
+  let test = x < 9_u64;
+  if choose {
+    set x = 0_u64;
+  }
+  if x < 8_u64 {
+    need(value: test);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Reject transport through a definition absent on one reaching input.";
+  return std::process::exit_status(code: 0_u8);
+}

@@ -758,7 +758,13 @@ fn main() -> status: std::process::ExitStatus pure {
             4,
             "two division and two remainder sites remain distinct"
         );
-        for domain in domains {
+        validate_derivations(&function.entailment);
+        for (domain, invariant_name) in domains.into_iter().zip([
+            "divisor_positive",
+            "divisor_positive",
+            "dividend_lower",
+            "dividend_lower",
+        ]) {
             assert_eq!(domain.components.len(), 3);
             assert!(domain.discharged);
             assert!(domain.residual.is_none());
@@ -766,27 +772,21 @@ fn main() -> status: std::process::ExitStatus pure {
             let root = domain
                 .derivation
                 .expect("the accepted signed operation retains a derivation root");
-            let mut seen = vec![false; function.entailment.derivations.nodes.len()];
-            let mut stack = vec![root];
-            let mut used_invariant = false;
-            while let Some(node) = stack.pop() {
-                let index = node.0 as usize;
-                if seen[index] {
-                    continue;
-                }
-                seen[index] = true;
-                let retained = &function.entailment.derivations.nodes[index];
-                used_invariant |= matches!(
-                    retained,
-                    DerivationNode::AffineConsequence {
-                        premises,
-                        ..
-                    } if !premises.is_empty()
-                );
-                stack.extend(retained.parent_ids());
-            }
+            // [ENT-3.S16] makes the exact header bound an L0 source.
+            // Require the particular invariant that excludes zero or MIN,
+            // rather than accepting any nonempty affine premise list.
+            let invariant = function
+                .entailment
+                .loop_invariants
+                .iter()
+                .find(|invariant| invariant.name == invariant_name)
+                .expect("the signed domain's source invariant is retained");
             assert!(
-                used_invariant,
+                super::entailment::root_has_invariant_source(
+                    &function.entailment,
+                    root,
+                    &invariant.node_path,
+                ),
                 "each signed domain proof must consume a source invariant"
             );
         }

@@ -46,11 +46,12 @@ const fn fact_event_source(kind: FlowEventKind) -> Option<u8> {
         FlowEventKind::S9 => Some(9),
         FlowEventKind::S11 => Some(11),
         FlowEventKind::S13 => Some(13),
+        FlowEventKind::S16 => Some(16),
         _ => None,
     }
 }
 
-const FACT_EVENT_KINDS: [FlowEventKind; 8] = [
+const FACT_EVENT_KINDS: [FlowEventKind; 9] = [
     FlowEventKind::S1,
     FlowEventKind::S4,
     FlowEventKind::S5,
@@ -59,6 +60,7 @@ const FACT_EVENT_KINDS: [FlowEventKind; 8] = [
     FlowEventKind::S9,
     FlowEventKind::S11,
     FlowEventKind::S13,
+    FlowEventKind::S16,
 ];
 
 /// S12 is published from an already verified FN-9 summary at the call transfer,
@@ -79,8 +81,8 @@ fn ent3_labels_and_fact_event_constructors_name_the_same_sources() {
     let defined = defined_sources();
     assert_eq!(
         defined,
-        BTreeSet::from([1, 4, 5, 6, 7, 9, 11, 12, 13, 15]),
-        "ENT-3 defines the ten originating fact sources"
+        BTreeSet::from([1, 4, 5, 6, 7, 9, 11, 12, 13, 15, 16]),
+        "ENT-3 defines the eleven originating fact sources"
     );
 
     let modelled = FACT_EVENT_KINDS
