@@ -2120,10 +2120,11 @@ policy changes, introspection and script rollback obligations. Its
 [step-1 record][firn-step1] and [access implementation][firn-access] are
 consumers to adapt, not evidence that relaxed interleavings already meet them.
 
-## Decisions still needed from the owner
+## Decisions put to the owner
 
 The discussion above answers the relationship/platform question before asking
-for a shape. These are open research decisions, not approvals or spec edits.
+for a shape. These were the research decisions put to the owner; the owner's
+rulings follow in [Owner rulings](#owner-rulings-2026-10-09).
 
 1. **Settled: “Store<u32>” meant `Shared<u32>`.** The owner confirmed it on
    the board (2026-10-09). What remains open from that comment is decision 3
@@ -2409,15 +2410,25 @@ the per-rule additions were special cases.
 ## Controls and the pause (2026-10-09)
 
 Decision 2 made the semantic change conditional on the existing-language
-controls failing to recover the stamp cost. They ran on the i9-14900K runner
-through Firn-wf's `redis-bench.yml`, each build with a same-source rebuild
-twin, all on compiler `wf-exp-81609eda3c84`: no stamp (`base`, Firn-wf
-`6585531`), the locked stamp of maxmemory step 1 (`lock`, `66ff776`), the
-lock without the stamp write (`l0`, `bccf871`), a separate write-on-change
-statement (`c3`, `02363da`) and stamps in a second map (`c2`, `deed1d1`).
-Each cell is `redis-benchmark` GET at pipeline depth 16, two interleaved
-passes, median throughput relative to `base`; twin columns are the noise
-control.
+controls failing to recover the stamp cost. Exploratory runs of those controls
+on the i9-14900K preceded the protocol above, and their results led the owner
+to pause the design. All builds used compiler `wf-exp-81609eda3c84`: no stamp
+(`base`, Firn-wf `6585531`), the locked stamp of maxmemory step 1 (`lock`,
+`66ff776`), the lock without the stamp write (`l0`, `bccf871`), a separate
+write-on-change statement (`c3`, `02363da`) and stamps in a second map (`c2`,
+`deed1d1`). Each cell is `redis-benchmark` GET at pipeline depth 16, two
+interleaved passes, median throughput relative to `base`. Stage 1 ran Firn-wf
+`redis-bench.yml` from main (`280ab917`); stage 2 ran it from the experiment
+branch `exp/bench-keyspace` (`50e00997`), which adds the `keyspace` input
+setting `-r`.
+
+These runs depart from the protocol fixed above, so their results are
+exploratory: each `-twin` measures the same image again, so twins show run
+noise only, not rebuild noise (step 3); there were two passes and no pilot
+instead of ten paired blocks (step 3); server and client placement was not
+pinned or recorded, and the 8-CPU cells used a co-located client (step 2);
+several arms fail the `e_A <= 0.01` screen (step 4); and no corrective
+reruns were made (step 4).
 
 **Stage 1, every GET a miss** ([run 37910600667][stamp-run-1], 09:20–09:34
 UTC). The server was restarted per build and GET ran on an empty keyspace, so
@@ -2426,19 +2437,24 @@ same way.
 
 | CPUs | lock / twin | l0 / twin | c3 / twin | c2 / twin | base twin |
 |---|---|---|---|---|---|
-| 1 | 0.85 / 0.86 | 0.86 / 0.87 | 0.98 / 0.99 | 0.81 / 0.81 | 0.98 |
+| 1 | 0.85 / 0.86 | 0.85 / 0.87 | 0.98 / 0.99 | 0.81 / 0.81 | 0.98 |
 | 2 | 0.88 / 0.91 | 0.88 / 0.91 | 0.98 / 0.96 | 0.82 / 0.82 | 1.00 |
-| 4 | 0.85 / 0.84 | 0.84 / 0.84 | 0.98 / 0.98 | 0.44 / 0.43 | 1.01 |
+| 4 | 0.85 / 0.84 | 0.84 / 0.84 | 0.98 / 0.98 | 0.44 / 0.43 | 1.00 |
 
-The loss is the lock, not the stamp: `l0` loses as much as `lock`. Its cause
-is in the concurrent map runtime. A statement that may write an entry takes
-`wf_cmap_lock_entry`, which for an absent key claims a cell, allocates a
-node, copies the key and zeroes the slot; `wf_cmap_unlock_entry` then frees
-the node and marks the cell removed ([concurrent_map.c:1104–1160][cmap-main]).
-A read-only statement takes `wf_cmap_read_entry`, which returns absent
-without claiming. A GET miss under the stamp statement is thus a transient
-insert and delete; `c3`, whose first statement is read-only, writes nothing
-on a miss and loses nothing.
+`l0` loses as much as `lock`, so on misses the loss is the lock, not the
+stamp. The concurrent map runtime accounts for it by source: a statement that
+may write an entry takes `wf_cmap_lock_entry`, which for an absent key claims
+a cell, allocates a node, copies the key and zeroes the slot;
+`wf_cmap_unlock_entry` then frees the node and marks the cell removed
+([concurrent_map.c:1104–1160][cmap-main]). A read-only statement takes
+`wf_cmap_read_entry`, which returns absent without claiming. A GET miss under
+the stamp statement is thus a transient insert and delete. `c3`, whose first
+statement is read-only, writes nothing on a miss; no loss is resolved for it
+at this noise, though one of 2–4% is not excluded. The 9–17% loss of `lock`
+and `l0` stands well above the run noise here (base twin within 2%, arm twins
+within 4%), but not under the protocol's 1% screen. `c2` is no evidence on
+the second-map design: its statement writes the stamp map's entry, so a miss
+takes the same transient claim there.
 
 **Stage 2, GET after SET, 100,000 keys** ([run 37913253551][stamp-run-2],
 09:45–10:03 UTC). `redis-benchmark -r 100000` SET ran before GET in the same
@@ -2448,48 +2464,46 @@ changes about once a second.
 | CPUs | lock / twin | l0 / twin | c3 / twin | base twin |
 |---|---|---|---|---|
 | 1 | 0.97 / 0.96 | 0.95 / 0.96 | 0.90 / 0.94 | 0.97 |
-| 2 | 1.00 / 0.98 | 1.00 / 1.01 | 0.99 / 0.99 | 1.05 |
+| 2 | 1.00 / 0.98 | 1.00 / 1.00 | 0.99 / 0.99 | 1.05 |
 | 4 | 0.96 / 0.96 | 0.97 / 0.95 | 0.96 / 0.95 | 0.98 |
-| 8 | 1.01 / 1.01 | 1.00 / 1.00 | 0.99 / 0.98 | 1.01 |
+| 8 | 1.00 / 1.00 | 1.00 / 1.00 | 0.99 / 0.98 | 1.01 |
 
 **Stage 2, 10,000,000 keys** ([run 37915247817][stamp-run-3], 10:04–10:25
-UTC). Same protocol with `-r 10000000`. Random SET covers part of the
+UTC). Same procedure with `-r 10000000`. Random SET covers part of the
 keyspace, so the GET hit fraction rises with the request count: about 56%,
 78%, 92% and 99% at 1, 2, 4 and 8 CPUs. Revisits are rare, so nearly every
 hit changes its stamp.
 
 | CPUs | lock / twin | l0 / twin | c3 / twin | base twin |
 |---|---|---|---|---|
-| 1 | 0.96 / 1.00 | 1.02 / 1.01 | 1.02 / 1.00 | 1.03 |
+| 1 | 0.96 / 1.00 | 1.02 / 1.00 | 1.02 / 1.00 | 1.02 |
 | 2 | 0.95 / 0.95 | 0.97 / 0.96 | 0.92 / 0.94 | 1.01 |
 | 4 | 1.01 / 0.98 | 1.01 / 1.03 | 0.96 / 0.96 | 1.01 |
 | 8 | 0.97 / 0.96 | 0.99 / 1.00 | 0.93 / 0.93 | 0.99 |
 
-Against the protocol fixed above: the base twins in stage 2 differ from
-`base` by up to 4.7%, beyond the 1% noise ceiling, so the hit cells are
-inconclusive at the 1% criterion; they bound the locked stamp's loss on hits
-to a few percent at most, and resolve none. Stage 1 is decisive: a 9–17%
-loss against twins within 2%. On hits with stamps that nearly always change,
-`c3` is worse than the locked stamp (0.92–0.96) because it enters the map
-twice; it suits only keyspaces whose stamps rarely change. The second map
-(`c2`) is worse than the lock in every miss cell and collapses at four CPUs,
-so stage 2 omitted it.
+The base twins in stage 2 differ from `base` by up to 4.7%, so the hit cells
+resolve no loss at the protocol's 1% ceiling. The locked stamp's cells reach
+0.95–0.96, which does not exclude a loss above the protocol's 3% limit.
+`c3`'s hit cells, 0.90–1.02, are likewise unresolved; the second map was not
+measured on hits.
 
-**Outcome.** The one loss these runs resolve is a runtime cost on missing
-keys, removable without a semantic change: a statement that never inserts
-need not claim a cell for an absent key. gran's Whitefoot branch
-`claude/map-miss-no-claim` (status-board item `coord-wfbl-03-06`) implements
-that, deciding "never inserts" from the statement's write paths; Firn-wf's
-experiment branch `exp/stamp-narrow` narrows GET's helpers to
-`writes(slot.Some.value.access)` to take that path, and the same-source miss
-comparison will rerun on that compiler. Under decision 2's condition, the
-controls leave no measured cost that requires relaxed fields, so on
-2026-10-09 the owner paused the design (status-board item
-`firn-relaxed-field`). The rulings above remain the starting point if a
-workload later shows a cost these means cannot recover, such as a hot shared
-counter; reopening would restart at decision 2's controls for that workload.
-The *concurrently mutable place* rewrite of the proposal is not done, since
-the design is paused.
+**Outcome.** Decision 2's condition is settled for misses and undetermined
+for hits. On misses, the loss is attributed by source and by `l0 ≈ lock` to
+the transient claim, which a statement that never inserts need not make.
+gran's Whitefoot branch `claude/map-miss-no-claim` (status-board item
+`coord-wfbl-03-06`) implements that, deciding "never inserts" from the
+statement's write paths; Firn-wf's experiment branch `exp/stamp-narrow`
+narrows GET's helpers to `writes(slot.Some.value.access)` to take that path.
+That the fix removes the miss loss remains a prediction until the same-source
+miss comparison reruns on that compiler. On hits, where relaxed fields would
+act, the locked stamp's cost is a few percent at most and unresolved at 1%,
+with no protocol reruns. On that basis, no cost large enough to motivate
+the semantic change being shown, the owner paused the design on 2026-10-09
+(status-board item `firn-relaxed-field`). The rulings above remain the
+starting point if a workload shows a cost these means cannot recover, such
+as a hot shared counter; reopening restarts at decision 2's controls run
+under the full protocol, the second map included. The *concurrently mutable
+place* rewrite of the proposal is not done, since the design is paused.
 
 ## What is established and what remains unverified
 
@@ -2497,8 +2511,9 @@ Established by source inspection: the current rule conflict; the absence of
 a generic `Store`; the existing read/write route and its lifetime protocol;
 five admitted target ABIs versus narrower routine CI coverage; the earlier
 atomic-field and retry refusals; and the difference between scalar atomicity
-and a Shared transaction. The Firn-wf numbers above are verified as a faithful
-transcription of its pinned research record, not independently reproduced.
+and a Shared transaction. The Firn-wf numbers of the motivating evidence are verified as a faithful
+transcription of its pinned research record, not independently reproduced;
+the control numbers are computed from the cited CI artifacts.
 The source review also establishes the alias-attribute and aggregate-access
 obligations, stable node addresses and direct slot access, the read release's
 lack of guard notification, the absence of fixed CPU-feature settings,
@@ -2537,10 +2552,14 @@ performance criterion and embedded path/interrupt cost. No acceptance,
 performance success or implementation completion is claimed for any candidate.
 S1-H/S1-I's hidden-state summaries, EFF-3 transformation treatment, complete
 alias mappings and initialization/lifetime handoffs also remain unverified.
-The design is paused ([Controls and the pause](#controls-and-the-pause-2026-10-09));
-the embedded code-shape probe, the event model and the target qualification
-plan wait for a reopening. No build, test
-suite or benchmark was run for this documentation revision. The local Clang
+The controls established, exploratorily, that the miss loss is the lock's
+transient claim (by source and `l0 ≈ lock`); the no-claim fix's effect, the
+locked stamp's cost on hits at 1%, and the second map on hits remain
+unverified. The design is paused
+([Controls and the pause](#controls-and-the-pause-2026-10-09)); the embedded
+code-shape probe, the event model and the target qualification plan wait for
+a reopening. No build or test suite was run for this documentation revision;
+its only measurements are the three control runs cited there. The local Clang
 `-###` query only inspected driver defaults; it compiled and linked nothing.
 Effective LTO CPU/features and Linux outlined-atomic dependencies
 remain part of target qualification, not conclusions of that query. The
