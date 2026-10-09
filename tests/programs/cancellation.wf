@@ -315,48 +315,72 @@ fn fire_later(source: std::time::CancelSource, clock: Clock) -> result: unit pur
   return unit;
 }
 
-fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(clock), writes(server.receive) waits {
+fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: u8 writes(clock), writes(server.receive) waits {
   let source = std::time::cancel_source();
   let firing_source = std::time::cancel_share(source: &source);
   let watch = std::time::cancel_watch(source: &source);
   std::time::close_cancel_source(source: move source);
   let firing_clock = std::time::clock_share(clock: clock);
+  let begin = now(clock: clock);
+  let limit = instant_after(instant: begin, nanoseconds: 5000000000_u64);
+  let late = instant_after(instant: begin, nanoseconds: 2000000000_u64);
   let firing = spawn fire_later(source: move firing_source, clock: move firing_clock);
   let bytes = array_filled::<u8, 1>(value: 204_u8);
-  let unlimited = None<Instant>();
-  let outcome = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
+  let bounded = Some<Instant>(value: limit);
+  let outcome = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: bounded, cancel: &watch);
   std::time::close_cancel_watch(watch: move watch);
-  let cancelled = cancelled_read(outcome: outcome);
-  let unchanged = bytes[0_u64] == 204_u8;
-  return band(cancelled, unchanged);
+  let ended = now(clock: clock);
+  let slow = instant_reached(deadline: late, instant: ended);
+  match outcome {
+    Ok(value: count) => {
+      return 32_u8;
+    }
+    Err(error: stop) => {
+      let passed = read_stop_deadline(stop: &stop);
+      if passed {
+        return 31_u8;
+      }
+    }
+  }
+  if slow {
+    return 30_u8;
+  }
+  if bytes[0_u64] == 204_u8 {
+  } else {
+    return 33_u8;
+  }
+  return 0_u8;
 }
 
-fn cancelled_sleep(clock: &Clock) -> result: Bool writes(clock) waits {
+fn cancelled_sleep(clock: &Clock) -> result: u8 writes(clock) waits {
   let source = std::time::cancel_source();
   let watch = std::time::cancel_watch(source: &source);
   let firing_clock = std::time::clock_share(clock: clock);
   let begin = now(clock: clock);
-  let distant = instant_after(instant: begin, nanoseconds: 60000000000_u64);
+  let distant = instant_after(instant: begin, nanoseconds: 5000000000_u64);
+  let late = instant_after(instant: begin, nanoseconds: 2000000000_u64);
   let firing = spawn fire_later(source: move source, clock: move firing_clock);
   let outcome = sleep_until(deadline: distant, cancel: &watch);
   std::time::close_cancel_watch(watch: move watch);
   let ended = now(clock: clock);
-  let reached = instant_reached(deadline: distant, instant: ended);
+  let slow = instant_reached(deadline: late, instant: ended);
   match outcome {
     Ok(value: slept) => {
-      return False();
+      return 34_u8;
     }
     Err(error: cancelled) => {
-      return bnot(reached);
+      if slow {
+        return 35_u8;
+      }
+      return 0_u8;
     }
   }
 }
 
 fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
   let parked = parked_receive(server: server, clock: clock);
-  if parked {
-  } else {
-    return 10_u8;
+  if parked != 0_u8 {
+    return parked;
   }
   let source = std::time::cancel_source();
   let watch = std::time::cancel_watch(source: &source);
@@ -409,9 +433,8 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
     return 16_u8;
   }
   let rested = cancelled_sleep(clock: clock);
-  if rested {
-  } else {
-    return 17_u8;
+  if rested != 0_u8 {
+    return rested;
   }
   let pending_source = std::time::cancel_source();
   let pending_watch = std::time::cancel_watch(source: &pending_source);
