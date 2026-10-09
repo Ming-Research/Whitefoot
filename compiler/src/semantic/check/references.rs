@@ -2496,7 +2496,7 @@ mod tests {
                 assert_eq!(checker.is_atomic_binder(id), expected.1);
                 let paths = checker
                     .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
-                    .unwrap()
+                    .unwrap_or_else(|_| panic!("the place projects without a stop"))
                     .into_iter()
                     .map(|effect| effect.path)
                     .collect::<Vec<_>>();
@@ -2513,7 +2513,7 @@ mod tests {
                 assert!(
                     checker
                         .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
-                        .unwrap()
+                        .unwrap_or_else(|_| panic!("the place projects without a stop"))
                         .is_empty()
                 );
                 bindings.get_mut(&id).unwrap().call_value = false;
@@ -2531,7 +2531,7 @@ mod tests {
                 assert!(
                     checker
                         .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
-                        .unwrap()
+                        .unwrap_or_else(|_| panic!("the place projects without a stop"))
                         .is_empty()
                 );
             }
