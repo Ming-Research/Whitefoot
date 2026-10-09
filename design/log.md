@@ -13,6 +13,13 @@ Owner-approved: On the status board on 2026-10-09, written in Chinese: after Sno
 
 Summary: Run-selecting places serve directly as bases of their length read and of element subscripts because they name exactly the place their borrow forms, so they add no proof or permission mechanism, instead of requiring a borrow before every length read or element access. Direct page selections and nonterminal page steps take index-step proof identity because they capture no extent and length writes kill their terms, while a page-reference borrow keeps per-formation identity because its captured extent survives growth.
 
+## 2026-10-09 Scientific float spelling
+
+Nodes: language/surface-form/float-literals
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated).
+
+Summary: A float's canonical spelling is chosen among scientific forms (one nonzero integer digit before an exponent) and the fixed form, by bytes and then lexicographic order, so the specification agrees with what the compiler generated and with how writers spell numbers; the rejected alternatives were generating the `0.5e3` forms the old rule selected and accepting every rounding decimal.
 ## 2026-10-09 Copied cells and helper-call updates in indexed reductions
 
 Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
