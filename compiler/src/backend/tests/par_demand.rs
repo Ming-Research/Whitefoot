@@ -52,41 +52,184 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
     );
 }
 
+/// A small range reaches the unsliced tail without a runtime call. A large
+/// one must keep polling after progress, and only an observed request may
+/// enter the out-of-line recursive driver. The old caller dispatched straight
+/// to that driver on size alone, so it fails this check.
 #[test]
-fn a_range_below_the_minimum_span_calls_the_chunk_without_entering_the_driver() {
+fn demand_executes_local_slices_and_only_enters_the_driver_on_request() {
     let module = emit_lowered(SMALL.as_bytes(), DEMAND);
     let caller = function_body(&module, "@wf_dynamic");
-    let mut blocks = vec![String::new()];
-    for line in caller.lines() {
-        if !line.starts_with(' ') && line.ends_with(':') {
-            blocks.push(String::new());
-        }
-        blocks.last_mut().expect("a block").push_str(line);
-        blocks.last_mut().expect("a block").push('\n');
-    }
-    let small = blocks
-        .iter()
-        .find(|block| block.starts_with("par.small.v"))
-        .unwrap_or_else(|| panic!("the caller tests the range first: {caller}"));
-    assert!(small.contains("@wf__par_chunk_"), "{caller}");
-    assert!(!small.contains("@wf__par_slice_"), "{caller}");
-    let slice = blocks
-        .iter()
-        .find(|block| block.starts_with("par.slice.v"))
-        .unwrap_or_else(|| panic!("a large range still enters the driver: {caller}"));
-    assert!(slice.contains("@wf__par_slice_"), "{caller}");
-    // The comparison's right operand is an integer literal: the site's
-    // weight is static, so no division is left for run time.
+    let blocks = llvm_blocks(caller);
+    let block = |prefix: &str| {
+        *blocks
+            .iter()
+            .find(|block| block.starts_with(prefix))
+            .unwrap_or_else(|| panic!("missing {prefix}: {caller}"))
+    };
+    let head = block("par.head.");
+    let ask = block("par.ask.");
+    let slice = block("par.slice.");
+    let tail = block("par.tail.");
+    let handoff = block("par.handoff.");
     assert!(
-        caller.lines().any(|line| {
-            line.contains(" = icmp ult i64 ")
-                && line
-                    .rsplit(", ")
-                    .next()
-                    .is_some_and(|operand| operand.trim().parse::<u64>().is_ok())
-        }),
-        "the minimum span is a folded constant: {caller}"
+        head.contains("label %par.tail.") && head.contains("label %par.ask."),
+        "{caller}"
     );
+    assert!(ask.contains("@wf__par_demand_requested()"), "{caller}");
+    assert!(
+        ask.contains("label %par.handoff.") && ask.contains("label %par.slice."),
+        "{caller}"
+    );
+    assert!(
+        slice.contains("@wf__par_chunk_") && slice.contains("br label %par.head."),
+        "{caller}"
+    );
+    assert!(
+        tail.contains("@wf__par_chunk_") && tail.contains("br label %par.sliced."),
+        "{caller}"
+    );
+    assert_eq!(
+        caller.matches("call i64 @wf__par_slice_").count(),
+        1,
+        "{caller}"
+    );
+    assert!(
+        handoff.contains("@wf__par_slice_") && handoff.contains("noinline"),
+        "{caller}"
+    );
+    for fast in [head, slice, tail] {
+        assert!(
+            !fast.contains("@wf__par_demand_requested") && !fast.contains("@wf__par_slice_"),
+            "{caller}"
+        );
+    }
+    // The step is a literal and the same as the worthwhile-span threshold:
+    // no variable division and no 5,000-unit slices inside a 150,000-unit
+    // hand-out grain. A wrong, shorter polling interval fails this equality.
+    let literal = |text: &str, operation: &str| {
+        text.lines()
+            .find(|line| line.contains(operation))
+            .and_then(|line| line.rsplit(", ").next())
+            .and_then(|word| word.trim().parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("missing constant {operation}: {text}"))
+    };
+    let step = literal(slice, "add nuw i64");
+    assert_eq!(step, literal(head, "icmp ult i64"));
+    assert!(step >= 2);
+    assert!(
+        !caller.contains("udiv") && !caller.contains("select i1 %"),
+        "{caller}"
+    );
+}
+
+/// Empty/inverted ranges return the original seed without subtracting; a
+/// nonempty range can end at MAX, and a partial fold must pass its live seed
+/// and cursor to either the final tail or a hand-out. These are the facts
+/// licensing nuw in the generated scheduling arithmetic, not source proofs.
+#[test]
+fn demand_range_edges_and_reduction_continuations_keep_their_values() {
+    let module = emit_lowered(
+        br#"fn range(seed: u64, lo: u64, hi: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in lo..hi) { set total = total +wrap i; }
+  return total;
+}
+"#,
+        DEMAND,
+    );
+    let caller = function_body(&module, "@wf_range");
+    let blocks = llvm_blocks(caller);
+    let block = |prefix: &str| *blocks.iter().find(|b| b.starts_with(prefix)).unwrap();
+    assert!(caller.contains("icmp ult i64 %v1, %v2"), "{caller}");
+    assert!(
+        caller.contains("label %par.start.") && caller.contains("label %par.empty."),
+        "{caller}"
+    );
+    let empty = block("par.empty.");
+    assert!(
+        !empty.contains("call ") && !empty.contains("sub "),
+        "{caller}"
+    );
+    let head = block("par.head.");
+    let phis: Vec<_> = head
+        .lines()
+        .filter(|line| line.contains(" = phi "))
+        .collect();
+    assert_eq!(phis.len(), 2, "{caller}");
+    let cursor = phis[0].trim().split(" = ").next().unwrap();
+    let seed = phis[1].trim().split(" = ").next().unwrap();
+    assert!(
+        phis[0].contains("[ %v1, %par.start.") && phis[0].contains("%par.slice."),
+        "{caller}"
+    );
+    assert!(
+        phis[1].contains("[ %v0, %par.start.") && phis[1].contains("%par.slice."),
+        "{caller}"
+    );
+    assert!(
+        head.contains(&format!("sub nuw i64 %v2, {cursor}")),
+        "{caller}"
+    );
+    for part in ["par.tail.", "par.handoff."] {
+        assert!(
+            block(part).contains(&format!("(i64 {seed}, i64 {cursor}, i64 %v2")),
+            "{caller}"
+        );
+    }
+    assert!(
+        block("par.sliced.").contains("[ %v0, %par.empty."),
+        "{caller}"
+    );
+}
+
+#[test]
+fn demand_chunks_expand_before_loop_optimization_but_ordinary_chunks_do_not() {
+    // Nested loops exercise both captures and nested synthesized chunks. The
+    // assertions inspect every generated chunk, not a workload's symbol.
+    let source = br#"fn nested(seed: u64, n: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in 0_u64..n) {
+    let inner = i;
+    for (j in 0_u64..n) { set inner = inner +wrap j; }
+    set total = total +wrap inner;
+  }
+  return total;
+}
+"#;
+    for (mode, expected) in [(DEMAND, true), (OverlapLowering::OnWithCallGrain, false)] {
+        let module = emit_lowered(source, mode);
+        let chunks: Vec<_> = module
+            .lines()
+            .filter(|line| line.starts_with("define ") && line.contains("par_chunk_"))
+            .collect();
+        assert!(chunks.len() >= 2, "{module}");
+        for header in chunks {
+            assert_eq!(header.contains("alwaysinline"), expected, "{header}");
+        }
+        for header in module.lines().filter(|line| {
+            line.starts_with("define ")
+                && (line.contains("par_slice_") || line.contains("@wf_nested("))
+        }) {
+            assert!(!header.contains("alwaysinline"), "{header}");
+        }
+    }
+}
+
+fn llvm_blocks(function: &str) -> Vec<&str> {
+    let mut starts = Vec::new();
+    let mut offset = 0;
+    for line in function.split_inclusive('\n') {
+        if !line.starts_with(' ') && line.trim_end().ends_with(':') {
+            starts.push(offset);
+        }
+        offset += line.len();
+    }
+    starts.push(function.len());
+    starts
+        .windows(2)
+        .map(|pair| &function[pair[0]..pair[1]])
+        .collect()
 }
 
 #[test]

@@ -1090,11 +1090,13 @@ impl FunctionEmitter<'_, '_> {
         Ok(result)
     }
 
-    /// A demand site whose whole range is below its minimum span calls the
-    /// chunk directly; only a range worth handing out enters the slice driver.
-    /// The weight is the site's static price, so the minimum span is a
-    /// constant here and a tiny range pays one comparison, not the driver's
-    /// entry. The chunk takes the driver's parameters less the weight.
+    /// Keep no-request execution in the source caller. In whole-module output,
+    /// early chunk expansion exposes captures, bounds and enclosing-loop
+    /// invariants. Only an observed request enters the recursive driver.
+    ///
+    /// One polling interval is one minimum worthwhile span, in static work
+    /// units. The final short remainder runs once, with no poll. This is not
+    /// a time bound: runtime calibration remains a separate experiment.
     fn emit_demand_split(
         &mut self,
         result: IrValueId,
@@ -1103,85 +1105,112 @@ impl FunctionEmitter<'_, '_> {
         driver: &str,
         arguments: Vec<String>,
     ) -> Result<(), BackendFailure> {
+        // PAR-2's scalar combines carry an integer or Bool; an independent
+        // map carries Unit. Indexed storage uses the existing separate path.
+        if result_abi.uses_destination() {
+            return Err(BackendFailure::InvalidIr);
+        }
         let chunk_function = self
             .program
             .functions()
             .get(split.chunk as usize)
             .ok_or(BackendFailure::InvalidIr)?;
         let chunk = self.callee_symbol(split.chunk, chunk_function.name());
-        let minimum_span = crate::lowering::demand_minimum_span(split.weight);
+        let step = crate::lowering::demand_minimum_span(split.weight);
         let ordinal = result.ordinal();
-        let (small, slice, join) = (
-            format!("par.small.v{ordinal}"),
-            format!("par.slice.v{ordinal}"),
-            format!("par.sliced.v{ordinal}"),
+        let label = |part| format!("par.{part}.v{ordinal}");
+        let (start, empty, head, ask, slice, tail, handoff, join) = (
+            label("start"),
+            label("empty"),
+            label("head"),
+            label("ask"),
+            label("slice"),
+            label("tail"),
+            label("handoff"),
+            label("sliced"),
         );
-        let width = format!("%{}", self.next_temporary()?);
-        let ascending = format!("%{}", self.next_temporary()?);
-        let span = format!("%{}", self.next_temporary()?);
-        let tiny = format!("%{}", self.next_temporary()?);
+        let result_type = self.output.type_name(self.program, result_abi.ty())?;
+        let seed = self.value_name(split.seed);
         let lower = self.value_name(split.lower);
         let upper = self.value_name(split.upper);
+        let nonempty = format!("%{}", self.next_temporary()?);
+        let cursor = format!("%{}", self.next_temporary()?);
+        let carried = format!("%{}", self.next_temporary()?);
+        let remaining = format!("%{}", self.next_temporary()?);
+        let tiny = format!("%{}", self.next_temporary()?);
+        let requested = format!("%{}", self.next_temporary()?);
+        let end = format!("%{}", self.next_temporary()?);
+        let next = format!("%{}", self.next_temporary()?);
+        let tail_result = format!("%{}", self.next_temporary()?);
+        let handoff_result = format!("%{}", self.next_temporary()?);
         writeln!(
             self.output,
-            "  {width} = sub i64 {upper}, {lower}\n  \
-             {ascending} = icmp ugt i64 {upper}, {lower}\n  \
-             {span} = select i1 {ascending}, i64 {width}, i64 0\n  \
-             {tiny} = icmp ult i64 {span}, {minimum_span}\n  \
-             br i1 {tiny}, label %{small}, label %{slice}"
+            "  {nonempty} = icmp ult i64 {lower}, {upper}\n  \
+             br i1 {nonempty}, label %{start}, label %{empty}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        let result_type = self.output.type_name(self.program, result_abi.ty())?;
-        let destination = if result_abi.uses_destination() {
-            Some(self.value_place(result)?)
-        } else {
-            None
-        };
-        let mut driver_arguments = arguments.clone();
-        driver_arguments.push(format!("i64 {}", split.weight));
-        let mut values = Vec::new();
-        for (label, callee, mut arguments) in [
-            (&small, chunk.as_str(), arguments),
-            (&slice, driver, driver_arguments),
-        ] {
-            self.output.open_block(label.clone());
-            self.output.symbol(callee.to_string());
-            if let Some(destination) = &destination {
-                arguments.insert(0, format!("ptr {destination}"));
-                writeln!(
-                    self.output,
-                    "  call void @{callee}({})\n  br label %{join}",
-                    arguments.join(", ")
-                )
-            } else {
-                let value = format!("%{}", self.next_temporary()?);
-                let written = writeln!(
-                    self.output,
-                    "  {value} = call {result_type} @{callee}({})\n  br label %{join}",
-                    arguments.join(", ")
-                );
-                values.push(value);
-                written
-            }
+        self.output.open_block(empty.clone());
+        writeln!(self.output, "  br label %{join}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(start.clone());
+        writeln!(self.output, "  br label %{head}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(head.clone());
+        // The entry establishes cursor < upper. The backedge advances by
+        // step only when upper - cursor >= step, so cursor <= upper remains
+        // true even for upper == u64::MAX. No saturated-span select hides the
+        // difference from cancellation/loop-invariant motion after inlining.
+        writeln!(
+            self.output,
+            "  {cursor} = phi i64 [ {lower}, %{start} ], [ {end}, %{slice} ]\n  \
+             {carried} = phi {result_type} [ {seed}, %{start} ], [ {next}, %{slice} ]\n  \
+             {remaining} = sub nuw i64 {upper}, {cursor}\n  \
+             {tiny} = icmp ult i64 {remaining}, {step}\n  \
+             br i1 {tiny}, label %{tail}, label %{ask}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(ask.clone());
+        self.emit_demand_requested(&requested)?;
+        writeln!(
+            self.output,
+            "  br i1 {requested}, label %{handoff}, label %{slice}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut slice_arguments = arguments;
+        slice_arguments[0] = format!("{result_type} {carried}");
+        slice_arguments[1] = format!("i64 {cursor}");
+        self.output.open_block(slice.clone());
+        writeln!(self.output, "  {end} = add nuw i64 {cursor}, {step}")
             .map_err(|_| BackendFailure::TextEmission)?;
-        }
-        self.output.open_block(join.clone());
-        match (&destination, values.as_slice()) {
-            (None, [near, far]) => writeln!(
-                self.output,
-                "  {} = phi {result_type} [ {near}, %{small} ], [ {far}, %{slice} ]",
-                value_name(result)
-            ),
-            // A memory-only result stays in its destination; any other
-            // destination result is read back as emit_split_call does.
-            (Some(destination), []) if !self.is_memory_only(result_abi.ty())? => writeln!(
-                self.output,
-                "  {} = load {result_type}, ptr {destination}",
-                value_name(result)
-            ),
-            (Some(_), []) => Ok(()),
-            _ => return Err(BackendFailure::InvalidIr),
-        }
+        slice_arguments[2] = format!("i64 {end}");
+        self.output.symbol(chunk.clone());
+        writeln!(
+            self.output,
+            "  {next} = call {result_type} @{chunk}({})\n  br label %{head}",
+            slice_arguments.join(", ")
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(tail.clone());
+        slice_arguments[2] = format!("i64 {upper}");
+        writeln!(
+            self.output,
+            "  {tail_result} = call {result_type} @{chunk}({})\n  br label %{join}",
+            slice_arguments.join(", ")
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(handoff.clone());
+        self.output.symbol(driver.to_owned());
+        slice_arguments.push(format!("i64 {}", split.weight));
+        writeln!(
+            self.output,
+            "  {handoff_result} = call {result_type} @{driver}({}) noinline\n  br label %{join}",
+            slice_arguments.join(", ")
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(join);
+        writeln!(
+            self.output,
+            "  {} = phi {result_type} [ {seed}, %{empty} ], [ {tail_result}, %{tail} ], [ {handoff_result}, %{handoff} ]",
+            value_name(result)
+        )
         .map_err(|_| BackendFailure::TextEmission)
     }
 

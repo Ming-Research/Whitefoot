@@ -6,11 +6,16 @@ harness when that investigation ends. No gate consumes this directory.
 
 `--par-demand` implies `--par`, keeps every permitted group (so it rejects a
 simultaneous `--par-call-grain`), and keeps the existing recursion budget,
-cut and sequential clone. Non-indexed splits use the unchanged chunk in slices
-of `max(1, 5000 / static_weight)` iterations, assuming one nanosecond per weight
-unit. A request with at least `max(2, ceil(150000 / static_weight))` remaining
-iterations offers the far half and runs the near half locally. Accumulated
-reductions seed the near half and combine near then far after joining.
+cut and sequential clone. The [current unmeasured proposal](../../investigations/par-demand/DESIGN.md#caller-local-slices-proposed-third-change-before-measurement)
+emits non-indexed slices in the caller and requests early expansion of
+synthesized chunks in whole-module output; separately optimized fragments
+still need qualification. One slice has
+`max(2, ceil(150000 / static_weight))` iterations; these are work units, not
+nanoseconds. Only a request enters the recursive driver, which offers the
+far half and runs the near half locally. Accumulated reductions seed the
+near half with their live value and combine near then far after joining.
+A final short remainder runs once without polling. The coarser polling
+interval and early expansion need an owner decision before adoption.
 Indexed accumulators deliberately retain the existing prepare/split/finish path;
 the ledger says `legacy splitter for indexed`. This exception can still publish
 work with requests off. Inspect each formal kernel's ledger before attributing
@@ -31,8 +36,10 @@ The C lane layout remains private. Both checks emit:
 ```
 
 At a group this branches around acquisition and merges a null frame into the
-existing refused edge. In a slice driver it combines with the remaining-work
-comparison before choosing slice or half. The accessor's warm path reads its
+existing refused edge. At a non-indexed loop, the remaining-work comparison
+precedes the poll, and a false poll executes a caller-local slice then returns
+to the comparison. A true poll enters the driver. Its recursive workers use
+the same interval and still check before offering a half. The accessor's warm path reads its
 thread-local attachment flag, reads the lane pointer and performs one relaxed
 atomic word load; it includes call/return overhead without cross-language LTO.
 The compiler's ordinary native path compiles separate objects, so that cost
@@ -91,8 +98,7 @@ result is replaced on a rerun. The reducer reports wall/CPU medians, candidate
 ratio, noise and the initial/rerun verdicts. A failed rerun is `fail`; a first
 exceedance followed by a pass is `inconclusive` (the batches disagree). Twin
 spread is `(max - min) / median` over all candidate and identical-twin samples
-at a width; noise is the larger of that and 1%. Spread above 2% at any width
-makes the entire workload inconclusive. Widths 4/8 require ratio at most
+at a width; noise is the larger of that and 1%. Spread above 2% makes that workload/width cell inconclusive. Widths 4/8 require ratio at most
 `1.02 + noise`; width 1 requires absolute deviation from 1 at most noise.
 The script reports an experiment failure as data, and exits unsuccessfully
 only for malformed/missing evidence or a build/execution/oracle error.

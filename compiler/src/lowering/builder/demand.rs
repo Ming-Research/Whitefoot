@@ -8,17 +8,15 @@ use crate::{
     IrSynthesis, IrTerminator, IrType, IrValueId, LoweringFailure,
 };
 
-/// Prototype price calibration, deliberately not a runtime clock sample.
-const NANOS_PER_WEIGHT_UNIT: u64 = 1;
-const SLICE_NANOS: u64 = 5_000;
-const SLICE_WORK: u64 = SLICE_NANOS / NANOS_PER_WEIGHT_UNIT;
 const WORK_UNIT: u64 = super::call_grain::CALL_OFFER_WORK_UNIT;
 
 /// The fewest iterations of a site of this static weight worth handing out:
-/// the driver tests a remaining range against it, and the call site against
-/// the whole range before it enters the driver at all.
+/// the driver and the caller-local slices test their remaining range against
+/// it. One such span is also the polling interval. These are IR work units,
+/// not nanoseconds: optimized instructions need not cost one unit of time.
 pub(crate) const fn demand_minimum_span(weight: u64) -> u64 {
-    (WORK_UNIT - 1) / weight + 1
+    let span = (WORK_UNIT - 1) / weight + 1;
+    if span < 2 { 2 } else { span }
 }
 
 impl IrBuilder<'_> {
@@ -49,12 +47,11 @@ impl IrBuilder<'_> {
         // supplies assign_weights' positive static per-iteration price.
         let weight = b.new_parameter(U64)?;
         let one = b.demand_constant(1)?;
-        let slice_work = b.demand_constant(SLICE_WORK)?;
-        let quotient = b.demand_binary(Op::DivideExact, slice_work, weight)?;
-        let step = b.demand_binary(Op::Maximum, one, quotient)?;
         let work_less_one = b.demand_constant(WORK_UNIT - 1)?;
         let quotient = b.demand_binary(Op::DivideExact, work_less_one, weight)?;
         let minimum_span = b.demand_binary(Op::AddWrap, quotient, one)?;
+        let two = b.demand_constant(2)?;
+        let minimum_span = b.demand_binary(Op::Maximum, two, minimum_span)?;
         let (header, carried) = b.new_block(&[result_type, U64])?;
         let (done, _) = b.new_block(&[])?;
         let (check, _) = b.new_block(&[])?;
@@ -87,15 +84,15 @@ impl IrBuilder<'_> {
                 arguments: vec![worth, divisible],
             },
         )?;
-        // Only a range worth handing out reads the request word: a range
-        // below the minimum span never touches the word idle workers write,
-        // so its slices cost what the sequential loop costs at any width.
+        // Only a divisible range worth handing out reads the request word.
+        // The no-request path executes one work unit before polling again;
+        // this is an initial price, not a wall-time overhead guarantee.
         b.branch(worth, ask, slice)?;
         b.current = Some(ask);
         let requested = b.define(IrType::Bool, IrOperation::DemandRequested)?;
         b.branch(requested, halve, slice)?;
         b.current = Some(slice);
-        let count = b.demand_binary(Op::Minimum, span, step)?;
+        let count = b.demand_binary(Op::Minimum, span, minimum_span)?;
         // count <= upper - cursor: the cursor addition cannot wrap, even at MAX.
         let end = b.demand_binary(Op::AddWrap, cursor, count)?;
         let mut arguments = vec![accumulator, cursor, end];

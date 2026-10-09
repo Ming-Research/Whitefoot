@@ -2005,6 +2005,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if entry {
             signature.linkage = Linkage::Internal;
         }
+        // Request early expansion of demand chunks when their definitions
+        // are visible together with the caller (the whole-module experiment).
+        // Separately optimized fragments need their own qualification. This
+        // does not force source calls or splitters inline, or change --par.
+        if self.program.par_demand && self.function.synthesis() == Some(crate::IrSynthesis::Chunk) {
+            signature.suffix.push_str(" alwaysinline");
+        }
         if declaration {
             // Linked declarations retain their parameter names in whole-module
             // output; cross-fragment declarations are name-free.

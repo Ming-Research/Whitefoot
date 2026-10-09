@@ -30,6 +30,8 @@ and the design must change before anything else is built.
 
 ## The prototype
 
+This describes the measured prototype. The [proposed third change](#caller-local-slices-proposed-third-change-before-measurement) below describes the current unmeasured draft.
+
 Behind `--par-demand` (compiler) and with no worker ever asking (runtime
 setting `WF_PAR_DEMAND=off-never-request`, so every check answers "nobody
 wants it"):
@@ -249,3 +251,230 @@ the pre-rerun inspection of `fir` predicted; the call-site comparison removed
 most of `small_split`'s cost, whose remaining 12 percent is noise-bound here.
 Following the owner's instruction for a failure of this round, the whole
 record above goes to a stronger model for a plan.
+
+
+## Caller-local slices: proposed third change, before measurement
+
+This is an unmeasured experimental implementation after the second rerun,
+not an adopted design or a claim that the owner's performance bar is met.
+The design tree and specification are unchanged. The question is whether
+preserving the caller's optimization context and amortizing polls over a
+whole work unit remove the failures together. The same per-width pass/fail
+rule applies; no noisy cell becomes a pass by prediction.
+
+### What the third run's code actually shows
+
+The evidence below refers to the `run3/par-demand/{seq,demand}` images from
+[the second rerun](https://github.com/Ming-Research/Whitefoot/actions/runs/37995973324),
+whose recorded revision is `122afdc1d03c611b249e5bdbc218e6d0183814e9`.
+Line numbers are in the saved `.o.s` files, not newly generated assembly.
+
+- **Runtime tiny range (`small_split`).** Both `mark` and its chunk have
+  already inlined into `wf_workload`. The remaining cost is not another
+  chunk call. Sequential lines 233–247 check the input range and enter the
+  loop. Demand lines 423–435 additionally reload the Box slot and seed,
+  materialize `upper - lower`, saturate it with `cmovaeq`, compare against
+  21,428, and branch to the driver. Lines 478–482 are the three scalar stores'
+  loop; it makes no request call. The cold driver still makes captures live
+  across a possible call, with a larger frame (lines 339–351) and spills.
+  The saturated expression survives even though the caller just checked
+  that addition did not wrap. Thus the 12 percent has a concrete fast-path
+  mechanism; the noisy measurements do not isolate each instruction's cost.
+- **Large scalar helper (`large_helper`).** It is not the same clear
+  inner-loop code-quality defect as FIR. Sequential lines 105–126 and
+  demand lines 659–677 use the same four-way rotate/multiply/add structure.
+  Demand lines 570–588 do two divisions at driver entry; lines 614–638 do
+  span arithmetic, request call, reloads, slice-bound choice and a remainder
+  setup *on every slice*. The static weight is 8 (`large_helper.ll.raw`,
+  caller), so 5,000 units gives 625 iterations. The measured source has
+  two million-iteration helper calls per repetition. Each helper starts
+  1,600 slices and polls 1,571 times (while at least 18,750 remain), plus
+  the caller's group poll. A 625-iteration batch repeatedly needs the
+  modulo-four cleanup. The optimized arithmetic is much cheaper than the
+  prototype's assumed nanoseconds per IR unit. This is strong evidence for
+  polling/strip-mining overhead, not proof of what fraction of the 6 percent
+  it accounts for; a same-source ablation remains necessary for attribution.
+- **FIR (`fir`).** Sequential lines 144–188 have two outer iterations and
+  a compact inner `movsd; mulsd; addsd; incq; addq; cmpq; jbe` loop. Demand
+  lines 805–825 have four multiplies and four dependent scalar adds, with
+  negative indexed addresses and an inner cleanup at lines 826–850. The
+  original chunk exposes endpoints and eight captures as unrelated formals
+  (`split.rs`, `build_chunk`); its `last_tap + 1` relation and caller-local
+  storage facts become available too late when LLVM has already transformed
+  the standalone loop. In `fir.ll.raw`, line 229 has `noalias nonnull nocapture`
+  on the source range pointers, while line 840's chunk signature has bare
+  pointers; lines 240–241 form `last_tap + 1`, which the chunk receives as an
+  independent parameter. Outlining also cuts across the original outer loop.
+  This changes optimization opportunities and choices; assembly alone does
+  not identify which LLVM pass or individual missing fact selected the
+  slower schedule. The driver adds its own polls: weight 182 gives 27 outer
+  iterations per old slice, and lines 741–771 show call/reloads/setup.
+  Both code shape and bookkeeping are implicated.
+- **Spine (`spine`).** Lines 188–217 save five registers, test/decrement the
+  recursion budget and call the request accessor; lines 250–260 retain a
+  recursive call with work after it. The sequential tail-shaped path is
+  reached only at the cut. This mechanism is unchanged in this proposal.
+- **World selection.** `small_split.o.s` demand lines 1332–1354 query
+  `wf__par_pool_active` once per benchmark entry and choose the demand body
+  or sequential clone. It is not paid per one of the 200 million `mark`
+  invocations. The one-worker control therefore does not test waiting for
+  demand. The linked `large_helper.disassembly` at `0x17000` shows the real
+  accessor's attachment test, TLS access, pointer test and request load;
+  the weak `ret 0` fallback in the `.o.s` is not its linked implementation.
+
+### Alternatives and recommendation
+
+1. **Only enlarge slices or inline the existing chunk.** Cheap to implement,
+   and a larger slice reduces repeated remainder/poll costs, but neither
+   alone addresses both the caller-context loss and the tiny dynamic guard.
+   Enlarging a nominal number of nanoseconds does not calibrate actual work.
+2. **Test once, run the complete sequential clone when unrequested.** This
+   best preserves sequential code, but cannot answer demand arriving during
+   a long loop. It trades away experiment 2 and is not recommended.
+3. **Caller-local slices, early chunk expansion, cold recursive hand-out
+   (recommended experiment).** This draft implements that combination.
+   In whole-module emission LLVM receives the no-request loop in its original
+   caller, with a literal step and `alwaysinline` synthesized chunks. The request check leads to
+   the existing driver only when true; it otherwise runs a local slice and
+   checks again. A short remainder runs as one chunk without polling.
+4. **Asynchronous promotion of sequential machine code.** Patchable safe
+   points or interruption could avoid many polling instructions, but need a
+   target-specific continuation/register-map and synchronization design.
+   They offer no portable zero-cost guarantee, and are a separate design
+   investigation if cooperative checkpoints still fail.
+
+The adopted permission, lane/frame ABI, structured join, reduction identity,
+recursion cut and two worlds remain. No workload name selects a path. A
+nonempty entry test dominates subtraction; advancing by `step` only when
+`upper - cursor >= step` proves both generated `nuw` operations, including
+an endpoint at `u64::MAX`. An empty/inverted range returns its seed. A
+handoff passes the *current* accumulator and cursor with the original upper
+bound and captures, so it neither repeats the prefix nor loses its result.
+
+The candidate polls once per `max(2, ceil(150000 / weight))` iterations,
+at entry if worthwhile and then after each such slice. The recursive driver
+uses the same interval. This replaces the 5,000-unit interval: helper slices
+become 18,750 iterations and FIR slices 825. It is a work-unit interval, not
+150 microseconds. A helper with one million iterations now makes 53 polls,
+and executes its final short remainder once; the group poll stays. The
+existing driver can re-read a request that disappeared between the caller
+and entry and correctly continue without publication.
+
+**Owner decision required before adoption:** choose caller-local expansion
+and work-unit polling instead of the outlined 5,000-unit driver. The latter
+is an explicit responsiveness tradeoff, not a performance-neutral refactor.
+The current task authorizes an uncommitted experimental implementation and
+report; it does not record approval in the design tree. Specification delta:
+none. Ordinary non-demand `--par` output is required to remain byte-identical;
+all new emission branches and chunk attributes are gated by demand mode.
+
+### Costs, limitations and experiment 2
+
+Compiler emission adds constant-size control flow per split and two static
+chunk call sites (full slice and final tail). Forced expansion can duplicate
+large/nested bodies, increasing optimizer work and object size, and can make
+source helpers too large for further inlining. Neither cost has been measured.
+Source functions and recursive drivers are not forced inline. The existing
+fragment splitter retains external chunks in separate compilation units under
+function granularity, and can separate them from named-module callers under
+module granularity (`backend/fragments.rs`, `split_module` and `fragment_module`).
+ThinLTO can then import a body already optimized in isolation. Thus this patch
+does not establish early expansion for fragmented builds. Qualifying or changing
+fragment ownership is deferred until this whole-module experiment earns the
+approach; it needs its own code-quality and compile-cost comparison before a
+general compiler claim. Even the
+one-worker demand clone can compile differently because its generated chunks
+now expand earlier. The ordinary compiler modes do not use this attribute.
+
+For N iterations and interval G, the no-request path pays at most floor(N/G)
+request calls plus constant entry/tail work. A request call includes TLS and
+an ordinary C call; group-call overhead is unchanged. This is a *count*
+bound. A static IR weight supplies no lower bound on optimized wall time,
+so it is not a 2-percent time guarantee. Tiny dynamic sites still may retain
+a size branch, and cold paths may still induce spills. This draft is a
+falsifiable candidate, not a solution proved for nearly every program.
+
+For experiment 2, demand already present at a worthwhile entry can still
+seed recursive far-half hand-outs immediately. Demand arriving later can
+wait one larger slice, and an expensive/data-dependent iteration has no
+wall-time bound. This could lose speedup on irregular loops. The next stage
+must qualify both constants under the original bar and implement the chosen
+runtime calibration before static units can be treated only as advice.
+Clock calibration alone cannot retroactively bound a first observation or
+an arbitrary input phase change. Indexed reductions still use the legacy
+splitter, so neither their timing nor their speedup validates demand-only
+hand-out for those sites. These unresolved limits, and the unchanged spine
+cost, prevent claiming the full owner's goal complete.
+
+### Prediction fixed before the next run
+
+Ratios below are predictions for the candidate divided by sequential at both
+four and eight workers with requests disabled, not acceptance thresholds.
+One worker is predicted near 1.00 for every workload; the early-inlining
+change still requires inspecting that control. The existing twin-noise rule
+and rerun rule decide all cells without alteration.
+
+| Workload | Predicted ratio at 4 / 8 | Falsifiable expectation |
+| --- | --- | --- |
+| small_constant | 0.99–1.01 / 0.99–1.01 | pruning still emits no polling |
+| small_split | 1.00–1.04 / 1.00–1.04 | saturated span and repeated driver setup disappear; low confidence in eliminating every size check/spill |
+| recursion | 0.99–1.01 / 0.99–1.01 | group/cut paths unchanged |
+| spine | 1.02–1.04 / 1.02–1.04 | no improvement predicted; this can still fail in quiet cells |
+| hot_helper | 0.99–1.01 / 0.99–1.01 | group paths unchanged |
+| large_helper | 1.00–1.02 / 1.00–1.02 | request calls fall about thirtyfold and caller loop retains constant slice extent |
+| mandelbrot | 0.99–1.02 / 0.99–1.02 | expensive iterations amortize checks |
+| records | 0.99–1.02 / 0.99–1.02 | caller-local captures and less frequent polling |
+| fir | 1.00–1.03 / 1.00–1.03 | early expansion must recover caller-dependent loop simplification; medium/low confidence |
+| stencil | 0.99–1.02 / 0.99–1.02 | preserve inner-loop optimization, fewer checkpoints |
+| prefix | 0.99–1.03 / 0.99–1.03 | inspect any demand sites separately from legacy reduction work |
+| histogram | 0.99–1.03 / 0.99–1.03 | indexed fallback remains; no demand-only claim |
+
+Reject this candidate if any qualified cell exceeds the unchanged bound after
+its rerun. Inspect optimized code before counting a pass, especially helper
+inlining, FIR's inner loop, tiny-range spills and surviving polls. To separate
+causes if needed, compare context-only and interval-only variants in the same
+CI panel; no effect here has yet been causally measured.
+
+### Validation boundary for this draft
+
+`cargo check --offline --lib --tests` and `cargo clippy --offline --lib --tests`,
+each with `CARGO_BUILD_JOBS=4`, passed locally as explicitly permitted by the
+caller. They type-check tests but do not execute their assertions. No build,
+test binary, generated program, benchmark or timing was run in this task.
+
+Backend shape coverage replaces the earlier size-only caller test with a
+request-dominated handoff and recurring local-slice check, and adds carried
+seed/cursor/empty-range checks and early-inline isolation on nested chunks.
+The old implementation has neither the local-slice blocks nor the attributes,
+so those assertions reject it by inspection. **Red/green execution has not
+been performed** under this task's prohibition. CI must run the focused
+backend cases, LLVM validation and existing native on/off-demand cases,
+then the complete legacy-emission comparison and experiment 1. In particular,
+the same-process ordinary-emission test detects leaked option state; it does
+not replace a comparison with the pre-change compiler revision.
+
+
+Formatting: `make -C compiler format` failed on existing formatting drift in
+untouched files (including `compiler/src/bin/whitefootc.rs` and
+`compiler/tests/support/mod.rs`). Those files were not reformatted. A focused
+`rustfmt --check` with edition 2024 and `skip_children=true` passed for all
+four changed Rust files. `git diff --check` passed. The harness README's stale
+whole-workload noise description was corrected to the already-selected
+per-width rule; no reducer or verdict changed.
+
+
+Completion review: a separate read-only GPT-6 agent reviewed the complete
+six-file uncommitted diff against
+`23d60293c48989b8eca7a1445b23e44438c41361`, the affected consumers and relevant
+A/D/C/T/V and G/DC checklist items. It ran only `git diff --check`. Finding
+F1, an overbroad early-inlining claim for fragmented builds, was fixed by
+qualifying comments and guidance and recording the deferred qualification;
+the reviewer rechecked that wording. No unresolved concrete correctness defect
+was found by inspection. C4, T5, DC1 and DC4 remain unverified as applicable:
+emitted LLVM/execution, red/green assertions, the adoption decision, ordinary
+byte identity and the performance promises are not established by this review.
+The implementer also repaired a test's overly broad select matcher before
+review completion; literal `select i1 true` must not be mistaken for dynamic
+span saturation. Final permitted cargo check and clippy both exited zero
+after that repair. Work stops for the caller's review/push and CI evidence;
+there is no commit, design approval or claimed experiment pass.
