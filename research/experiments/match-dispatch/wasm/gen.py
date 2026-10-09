@@ -770,7 +770,10 @@ def count_dispatches(program):
           }
           let none = None<Instant>();
           let dl = digits.inner.len;
-          match write_once(factory: files, output: err, source: &digits.inner[0_u64..dl], start: 0_u64, end: dl, deadline: none) {
+          let profile_cancel = std::time::cancel_never();
+          let profile_write = write_once(factory: files, output: err, source: &digits.inner[0_u64..dl], start: 0_u64, end: dl, deadline: none, cancel: &profile_cancel);
+          std::time::close_cancel_watch(watch: move profile_cancel);
+          match profile_write {
             Ok(value: wrote) => {
             }
             Err(error: problem) => {
