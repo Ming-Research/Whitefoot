@@ -932,6 +932,298 @@ and 37555131716) measured CoreMark 1.019 against the cursor and Halo's
 `loop` 1.000 and `fib` 1.000 against before the cursor. Its unit tests
 failed where an arm's `pc + 1` follows the join of an `if`.
 
+## Stage 3: the gap to Silverfir-nano
+
+The question and the use of the result are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-the-gap-to-silverfir-nano).
+v2h was compiled by main at `0b7f5c5b9`. Silverfir-nano is `5f248e44`,
+`sf-nano-cli --interp`, whose handlers are generated assembly. wasmi is
+`wasmi_cli` 2.0.0, a Rust interpreter that dispatches by tail calls when
+built optimized for x86-64 or AArch64. All runs use CoreMark 2K with
+correct CRCs.
+
+**The ratio on the 14900K**, clang 22.1.8, 7 interleaved launches, medians
+([run 37562405938](https://github.com/Ming-Research/Whitefoot/actions/runs/37562405938)):
+
+| engine | score | against nano |
+|---|---:|---|
+| v2h | 5434.8 (1.1%) | 0.701, 0.691-0.707 |
+| twin of v2h | 5449.6 (1.6%) | 0.703 |
+| Silverfir-nano | 7751.9 (1.9%) | 1.000 |
+
+**On the owner's MacBook Air M5**, Apple clang 21. The owner authorized
+these local runs. The release compiler's `llvm.coro.end` form fails on
+Apple clang 21, so v2h was compiled by a compiler built on the Mac from
+`b60436d33`, main with its probe fixed (PR #264). Scores are from 7
+interleaved launches; the rest from 3 single launches each, whose spread
+is below 1%.
+
+| engine | score | against nano | dispatches | instructions | cycles | instructions per dispatch | cycles per dispatch | IPC |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| v2h | 2378.1 | 0.496 | 506.1M | 9.345G | 1.896G | 18.47 | 3.75 | 4.93 |
+| wasmi 2.0.0 | 3338.9 | 0.696 | 576.9M | 4.502G | 1.354G | 7.80 | 2.35 | 3.33 |
+| Silverfir-nano | 4796.2 | 1.000 | 521.6M | 4.051G | 0.957G | 7.77 | 1.84 | 4.23 |
+
+How each count was taken:
+- **v2h:** `gen.py --count`, which counts in the interpreter function's
+  header. That build is not split, but its count does not depend on the
+  lowering.
+- **Silverfir-nano:** its `interp-count` feature, read with
+  `--interp-stats`.
+- **wasmi:** a copy of its source counting at its tail-call `dispatch!`
+  macro and at the first dispatch.
+- **Instructions and cycles:** `/usr/bin/time -l`.
+
+A second 14900K run added wasmi and Silverfir-nano's x86-64 dispatch count
+([run 37567804610](https://github.com/Ming-Research/Whitefoot/actions/runs/37567804610)):
+
+| engine | score | against nano |
+|---|---:|---|
+| v2h | 5405.4 (2.4%) | 0.692, 0.689-0.704 |
+| twin of v2h | 5420.1 (1.1%) | 0.694 |
+| wasmi 2.0.0 | 6622.5 (2.0%) | 0.848, 0.842-0.863 |
+| Silverfir-nano | 7812.5 (2.3%) | 1.000 |
+
+Silverfir-nano's x86-64 build makes 521,583,097 dispatches, 23 fewer than
+its AArch64 build, so the counts compare across the two.
+
+v2h makes the fewest dispatches of the three, 3% fewer than Silverfir-nano
+and 12% fewer than wasmi. The gap is in each dispatch: on the M5 v2h
+executes 18.5 instructions per dispatch where both others execute 7.8, and
+its higher IPC recovers part of that. Relative costs per dispatch, from the
+scores and the dispatch counts:
+
+| | 14900K | M5 |
+|---|---:|---:|
+| v2h | 1.49 | 2.08 |
+| wasmi 2.0.0 | 1.07 | 1.30 |
+| Silverfir-nano | 1.00 | 1.00 |
+
+At wasmi's cost per dispatch, v2h's fewer dispatches would put it at about
+0.97 of Silverfir-nano on the 14900K.
+
+**Where v2h's instructions go.** The comparison pairs v2h's `I32Add` on
+x86-64 (main, 17 instructions; see "Edges by their step") with wasmi's
+`i32_add_rss` on AArch64. That handler adds two stack slots into wasmi's
+integer register, and its listing is from the M5 binary.
+
+| role | v2h `I32Add`, x86-64 | wasmi `i32_add_rss`, AArch64 |
+|---|---:|---:|
+| operand fields | 3 (`movzwl` each) | 1 (`ldp` of two byte offsets) |
+| frame base | 1 (`lea (%rcx,%r15,8)`) | 0 (the frame is a pointer) |
+| operation and slots | 3 | 3 (two loads, one add into the register) |
+| next index and bounds test | 3 (`lea`, `cmp`, `jae`) | 0 |
+| next operation and its handler | 4 (tag load, cursor add, table address, handler load) | 1 (`ldr x7, [x1, #0x10]!`: the next cell holds its handler's address) |
+| moves | 2 | 0 |
+| transfer | 1 | 1 |
+| total | 17 | 6 |
+
+Most of the difference is in the dispatch: 9 instructions against 1.
+- **Bounds test:** wasmi tests no bound, since its validated code cannot
+  fall off its end.
+- **Handler address:** its cells hold their handler's address, so the next
+  handler is one load that also advances the pointer.
+- **Operands:** its operand fields are byte offsets read in pairs.
+
+Silverfir-nano's cells likewise hold their handler's address. Its x86-64
+handlers keep two locals and the accumulator in registers and preload the
+next handler word.
+
+## Stage 3: the handler's address in the element
+
+Candidate 1 of
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-binding-what-wasmi-and-silverfir-nano-bind),
+measured as an upper bound with the prototype at `e840fb423`. The base is
+main at `8b647edbb`. In the prototype, a union-laid-out enum that exactly
+one split loop matches gains a pointer word after its largest variant.
+Every construction writes the address of the arm its tag selects, and the
+dispatch loads the next arm from the element it moves to. The ledger
+confirms that v2h's loop dispatches this way: "dispatches through the
+handler word in each Op".
+
+**CoreMark on the 14900K**, clang 22.1.8, 7 interleaved launches
+([run 37572316181](https://github.com/Ming-Research/Whitefoot/actions/runs/37572316181)):
+
+| engine | median score | spread | against base |
+|---|---:|---:|---:|
+| head | 5970.1 | 4.6% | 1.101 |
+| twin of the base | 5376.3 | 6.5% | 0.992 |
+| base | 5420.1 | 3.2% | 1.000 |
+
+- **Head against base, launch by launch:** ahead in all 7 pairs, at
+  1.055 to 1.114, median 1.093.
+- **Twin against base:** 0.967 to 1.011.
+- **Against Silverfir-nano:** that run's 7812.5 is not in this one. Taking
+  it anyway, head would be about 0.76 of nano and base 0.69.
+
+The hosted runners agree in direction. Ubuntu 24.04 measures 1.090, with
+the twin at 0.992. macOS 15 measures 1.008, but its spreads of 10% to 25%
+cannot separate the sides.
+
+**`I32Add` on x86-64** shrinks from 17 to 15 instructions on its path to
+the next arm:
+- **Removed:** the handler table's address (`lea`) and the load from the
+  table.
+- **Changed:** the tag load becomes a load of the next element's handler
+  word (`mov 0x28(%r9),%r10`).
+- **Element size:** 16 to 24 bytes, so the cursor step becomes
+  `add $0x18`.
+- **Unchanged:** the frame base, the bounds test and the two moves.
+
+**Halo on the 14900K**
+([run 37572318684](https://github.com/Ming-Research/Whitefoot/actions/runs/37572318684)),
+time ratio to base:
+
+| kernel | head | twin |
+|---|---:|---:|
+| `fib` | 1.0000 | 1.0040 |
+| `loop` | 1.0045 | 0.9988 |
+
+Neither kernel is more than 2% slower, but Halo's interpreter does not
+receive the mechanism, so this shows only that nothing else changed. Its
+loop over `Cell` has no handler-word line in the ledger.
+
+The prototype keeps an enum only where the word leaves its size and
+alignment within its product layout's. `Cell` (Halo-wf `acb39ad7f`,
+`lib/halo/value/module.wfm`) has 187 `u8` and 23 `u32` fields, so its
+product layout is 4-byte aligned, and an 8-byte word would raise that.
+v2h's `Op` has a `u64` field, so its product layout is already 8-byte
+aligned.
+
+**The word at a 4-byte ceiling.** The prototype at `c3f7cfd40` places
+the 8-byte address at the enum's ceiling alignment where that is below 8.
+Halo's `Cell` then takes the word at offset 12, in 20 bytes, 4-byte
+aligned. Halo on the 14900K, with candidates 1 and 2 as the step
+([run 37580659833](https://github.com/Ming-Research/Whitefoot/actions/runs/37580659833)),
+time against base:
+
+| kernel | head, with the word | step | twin |
+|---|---:|---:|---:|
+| `fib` | 0.975 | 0.999 | 0.998 |
+| `loop` | 0.984 | 1.002 | 1.002 |
+
+Against the step, `fib` takes 2.3% less time and `loop` 1.8%.
+
+That run's ledger filter kept only lines naming `split`, `keeps` or
+`carries`, so it does not show the word's line for `Cell`. Head and step
+differ only in this commit, and the difference exceeds the twin's 0.2%.
+The filter now also keeps the word's line.
+
+## Stage 3: the frame as an address
+
+Candidate 2, prototyped at `32c71df5a` on top of candidate 1 (`e840fb423`).
+A carried index that bases accesses `run[index + k]` into a stable run
+travels as the address of the run's element at that index. Recognition
+needs a checked requirement bounding the index by the run's length, which
+keeps the address arithmetic within [STOR-6]. In v2h the frame index `fp`
+qualifies, and the ledger reports "carries a run element's address for
+carried index v20".
+
+**CoreMark on the 14900K**
+([run 37578509308](https://github.com/Ming-Research/Whitefoot/actions/runs/37578509308)),
+base main `8b647edbb`:
+
+| engine | median score | against base |
+|---|---:|---:|
+| head, candidates 1 and 2 | 5970.1 | 1.099 |
+| step, candidate 1 | 6006.0 | 1.105 |
+| twin of the base | 5434.8 | 1.000 |
+| base | 5434.8 | 1.000 |
+
+The mechanism removes the frame base from every slot access:
+- `I32Add`'s path drops from 15 instructions to 14, `Copy`'s from 13 to 12;
+- `lea (%rcx,%r15,8),%rbx` is gone, and `%rcx` holds the frame.
+
+Head against step is 0.994, so the candidate misses the 2% rule.
+
+Halo's interpreter does not receive the mechanism, because it reaches
+frame slots only inside helpers that are not inlined
+([run 37578511955](https://github.com/Ming-Research/Whitefoot/actions/runs/37578511955)).
+Time against base:
+
+| kernel | head | twin |
+|---|---:|---:|
+| `fib` | 0.993 | 0.996 |
+| `loop` | 1.000 | 1.001 |
+
+## Stage 3: where v2h's time goes against wasmi
+
+The question and its method are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-where-the-time-goes).
+
+**Sources.**
+- **Machines:**
+  - the owner's MacBook Air M5, with Apple clang 21 and local builds the
+    owner authorized;
+  - the 14900K for the bounds counterfactual.
+- **Compilers built on the M5:**
+  - `b60436d33`, main's code generation (the base);
+  - `e840fb423`, candidate 1;
+  - `8a93bbb90`, candidates 1 and 2.
+- **Interpreters:** wasmi 2.0.0 and Silverfir-nano `5f248e44`. All run
+  CoreMark 2K.
+
+**Measurement.**
+- **Cycles and instructions:** `/usr/bin/time -l`, median of 3.
+- **Time per handler:** `sample` at the top of the stack, with v2h's arms
+  mapped to operations by match order.
+- **Counts per handler:**
+  - v2h's from `gen.py --profile`;
+  - wasmi's from a copy whose dispatch macro also counts by handler
+    address, with the same total of 576,865,919 dispatches.
+- **Stability:** absolute M5 scores varied by a factor of 2 between
+  sessions, while cycle counts matched across sessions within 2%. Cycles
+  are therefore the measure here.
+
+**Cycles per dispatch on the M5**, one session:
+
+| engine | instructions per dispatch | cycles per dispatch |
+|---|---:|---:|
+| v2h, main | 18.46 | 3.70 |
+| v2h, candidate 1 | 18.71 | 3.69 |
+| v2h, candidates 1 and 2 | 17.72 | 3.63 |
+| v2h, candidates 1 and 2, bounds tests removed | 15.54 | 3.61 |
+| wasmi 2.0.0 | 7.80 | 2.32 |
+| Silverfir-nano | 7.77 | 1.80 |
+
+**The bounds counterfactual.** Each run arm's 254 tests of the next index
+against the code's length were rewritten to true in the emitted LLVM. The
+result was linked with the runtime objects of a cached build. That
+interpreter is unsound and only measures the tests.
+
+| machine | variant | effect of removing the bounds tests |
+|---|---|---:|
+| M5 | main | cycles 1.038, instructions 0.883 |
+| 14900K | main | CoreMark 1.037 |
+| 14900K | candidates 1 and 2 | CoreMark 0.991 |
+
+On the 14900K
+([run 37579981158](https://github.com/Ming-Research/Whitefoot/actions/runs/37579981158)),
+main linked the same way scores 1.000, matching its twin.
+
+**Separate dispatch per branch outcome.** wasmi dispatches separately on
+each outcome of a conditional branch. v2h's arms join both outcomes into
+one dispatch: in the source, and again through LLVM's tail merging when
+the source keeps them apart. The experiment:
+- rewrite the 32 conditional-branch arms with a tail call per outcome;
+- compile with `-mllvm -enable-tail-merge=false`, so each outcome keeps its
+  own indirect jump.
+
+The result is 1.016 of the base's cycles on the M5.
+
+**Cycles per execution of comparable handlers on the M5**, from time
+shares, counts and total cycles. Sampling skid makes single values
+approximate.
+
+| kind | v2h, main | wasmi |
+|---|---|---|
+| register arithmetic | `I32AddAD` 1.85, `I32MulA` 1.5 | `i32_add_rrs` 1.3, `i32_mul_rrs` 1.2 |
+| arithmetic reading frame slots | `I32Add` 2.6, `I32AddD` 4.7 | `i32_add_rs_si` 1.3, `i32_add_rs_rs` 1.35 |
+| copy | `Copy` 2.8 | `u64_copy_ss` 1.9 |
+| conditional branch | `BrIf` 6.2, `BrI32Ne` 6.1 | `branch_i32_not_eq_ri` 5.0, `branch_i32_eq_ri` 3.3 |
+| memory load | `I32Load` 4.9 | `u32_load_mem0_offset16_rs` 2.6 |
+| call | `Call` 28 | `call_internal` 15.6 |
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

@@ -1145,8 +1145,9 @@ rarely insert at the same place.
   materially affect a measured consumer or lowering work reaches those paths.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
+  capacity Box is one pointer to one header-first allocation; `grow`
+  reallocates it, selected on Halo's measured table growth only (one consumer,
+  one machine), so its cost in other consumers stays unmeasured. A one-word owner, one allocation and header
   placement are distinct choices: a fat descriptor can also own one element
   allocation and make measure reads direct, while widening transport and
   capture storage. Neither alternative is established as generally faster.
@@ -2973,6 +2974,12 @@ rarely insert at the same place.
   the tag to the variant count and order fields to pack, a layout decision
   for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
   the wasm interpreter's `Op` stride. Reopen with that layout decision.
+  The handler word adds 8 bytes to every dispatched cell (Halo's `Cell`
+  becomes 20 bytes), and Halo's `fib` ran 1.5% slower with it, outside
+  both spreads ([match-dispatch](../research/investigations/match-dispatch/DESIGN.md#outcome-of-the-handler-word-on-the-natural-form));
+  the wider stride is the unverified suspect. Packing the tag, or a
+  handler word narrower than an address (an offset from the dispatch
+  family's first handler), would test it with the same Halo comparison.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
@@ -3029,6 +3036,20 @@ rarely insert at the same place.
   worth a compiler change only if it is no more than 2% slower there.
   Reopen when the wasm interpreter's profile shows register pressure the
   convention cannot hold, or when a target without `preserve_none` matters.
+
+- **Handler words are disabled for fragment builds.** Whole-program emission
+  computes one layout plan for every selected dispatch family and applies it
+  to constructors throughout the composition. A separately emitted or cached
+  fragment cannot yet consume that shared plan or bind a constructor to a
+  hidden arm symbol in another fragment, so `--fragments` deliberately keeps
+  ordinary enum layouts and tag-indexed tables. Implement the composition-wide
+  plan as fragment lowering input and cache identity, and give arm definitions
+  and references hidden cross-fragment linkage. Validate constructors and
+  dispatchers in different modules with both fragment granularities, a warm
+  cache, a changed family set, four-aligned enums and whole-value replacement;
+  require identical results and layout to whole-program emission. Reopen when
+  fragment dispatch performance is needed; the uncertainty is dependency and
+  cache invalidation coverage, not language acceptance.
 
 ## Code structure
 
@@ -3860,6 +3881,20 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The grow initialization oracle recognizes a runtime offset without proving
+  it is past the retained prefix.** In
+  `compiler/src/backend/tests/cost_shape.rs`, `fresh_allocation_for_fill`
+  accepts a `wf__heap_retake` root when any derived `getelementptr` index is
+  an SSA value; an unrelated offset that is zero or inside the old filled
+  prefix also meets that structural condition. This limitation is inherited
+  from the realloc oracle: its positive result alone does not establish the
+  no-refill claim. Keep that requested root handling during counted-retake
+  integration; follow up by tracing the offset to the preserved length or
+  requiring an independent retained-prefix observation. Validate with a
+  negative control whose runtime offset falls inside the prefix, alongside
+  the existing appended-tail and repeated-fill cases. Reopen before using
+  this oracle as evidence for a changed grow-fill lowering.
 
 - **`make -C compiler format` depends on the host's stable rustfmt.**
   `compiler/rust-toolchain.toml` pins only the `stable` channel, and

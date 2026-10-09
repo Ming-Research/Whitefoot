@@ -488,6 +488,9 @@ pub struct IrNominal {
     pub(crate) stable: Option<String>,
     pub(crate) id: IrNominalId,
     pub(crate) kind: IrNominalKind,
+    /// Word count from the composition-wide dispatch layout plan.
+    /// Zero until backend planning, before physical layout and emission.
+    pub(crate) handler_words: u32,
 }
 
 impl IrNominal {
@@ -1895,8 +1898,10 @@ impl IrFunction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IrProgram {
+    /// OP-9 ceilings before target representation choices, indexed by nominal.
+    pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,
     pub(crate) nominals: Vec<IrNominal>,
     pub(crate) elements: Vec<IrType>,
     pub(crate) constants: Vec<IrGlobalConstant>,
