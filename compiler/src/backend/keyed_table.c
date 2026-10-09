@@ -30,6 +30,9 @@
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
 #define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
 #endif
+#ifndef WF_CMAP_HEAP_CHANGE
+#define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
+#endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;
 /* The calling thread's user of a map, whose spare memory a hold's keys

@@ -838,6 +838,20 @@ rarely insert at the same place.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
 
+- **Atomic binding-use checking omits proof-only mentions.** SHARE-2
+  requires the guard and block together to name every atomic binding, but
+  `statement_mentions` in `compiler/src/semantic/check/control/atomic.rs`
+  visits a loop's endpoints and body without its header invariants and
+  returns false for `CheckedStatement::Proof(_)`. Impact: an atomic binding
+  named only in a loop-header invariant, a body `invariant_stmt` or a proof
+  use can receive a false `AtomicBindingUnused` before entailment. This is
+  a source-inspected discrepancy; no execution has confirmed it. Change:
+  extend the existing mention traversal over checked header relations and
+  body proofs, including their proof uses. Validate with positive cases
+  naming a binding only in each of those three positions and a negative
+  control naming it nowhere. Keep this separate from measure-place
+  admission; reopen when completing SHARE-2's proof-only binding-use coverage.
+
 - **Mathematical clause constants exceed the checker's i128 projection domain.**
   ENT-2 and MSR-5 specify mathematical integers, not an i128 ceiling. Source
   folding in `goal_affine_side` and `goal_projection`
@@ -2116,6 +2130,22 @@ rarely insert at the same place.
   helper records, past which it stops with a report. A `WSAPoll` readiness
   wait would give it the Linux readiness route's behavior. Reopen when a
   Windows server has to run without the port.
+
+- **Windows helper connects have no demonstrated cancellation bound.**
+  `wf_file_windows_socket_connect` in `completion/file_windows.c` still
+  calls blocking Winsock `connect`; it does not use the bounded polling
+  added for helper accepts and transfers. The helper interruption calls
+  `CancelSynchronousIo`, but whether that ends an outstanding connect is
+  unverified. A pending connection could therefore outlive its cancellation
+  watch or deadline on the native-disabled route, contrary to PRE-2. Validate
+  on Windows CI with a controlled pending connection, firing and deadline
+  cases, and a success race that preserves the connection and handle credit.
+  If interruption does not suffice, use nonblocking connect with bounded
+  readiness and `SO_ERROR`, or cancellable overlapped connect, restoring
+  ordinary socket behavior before publishing success. Deferred from the
+  bounded-send fix because connection establishment has a distinct ownership
+  and completion protocol; reopen with the next Windows cancellation change
+  or before relying on bounded connect without IOCP.
 
 - **A wait on another context on a helper costs a thread.** Once contexts
   run, a stream write on every host, a stream read on every host but Linux

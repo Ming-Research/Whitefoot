@@ -1,0 +1,8 @@
+fn wait(deadline: std::time::Instant) -> result: unit pure waits {
+  std::time::sleep_until(deadline: deadline);
+  return unit;
+}
+
+fn main() -> result: u8 pure {
+  return 0_u8;
+}

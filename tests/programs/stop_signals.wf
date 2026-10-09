@@ -7,94 +7,97 @@ alias StopListener = std::process::StopListener;
 alias Clock = std::time::Clock;
 alias Instant = std::time::Instant;
 
-fn stop_is_busy(problem: std::io::IoError) -> result: Bool pure {
+fn stop_error_kind(problem: std::io::IoError) -> result: u8 pure {
   match problem {
     NotFound(code: code_0, origin: origin_0) => {
-      return False();
+      return 0_u8;
     }
     PermissionDenied(code: code_1, origin: origin_1) => {
-      return False();
+      return 0_u8;
     }
     AlreadyExists(code: code_2, origin: origin_2) => {
-      return False();
+      return 0_u8;
     }
     NotDirectory(code: code_3, origin: origin_3) => {
-      return False();
+      return 0_u8;
     }
     IsDirectory(code: code_4, origin: origin_4) => {
-      return False();
+      return 0_u8;
     }
     DirectoryNotEmpty(code: code_5, origin: origin_5) => {
-      return False();
+      return 0_u8;
     }
     ReadOnly(code: code_6, origin: origin_6) => {
-      return False();
+      return 0_u8;
     }
     ResourceBusy(code: code_7, origin: origin_7) => {
-      return True();
+      return 1_u8;
     }
     InvalidInput(code: code_8, origin: origin_8) => {
-      return False();
+      return 0_u8;
     }
     InvalidPath(code: code_9, origin: origin_9) => {
-      return False();
+      return 0_u8;
     }
     Unsupported(code: code_10, origin: origin_10) => {
-      return False();
+      return 0_u8;
     }
     TimedOut(code: code_11, origin: origin_11) => {
-      return False();
+      return 0_u8;
     }
     DeadlinePassed() => {
-      return False();
+      return 0_u8;
+    }
+    Cancelled() => {
+      return 2_u8;
     }
     BrokenPipe(code: code_13, origin: origin_13) => {
-      return False();
+      return 0_u8;
     }
     WriteZero(code: code_14, origin: origin_14) => {
-      return False();
+      return 0_u8;
     }
     UnexpectedEnd(code: code_15, origin: origin_15) => {
-      return False();
+      return 0_u8;
     }
     ConnectionRefused(code: code_16, origin: origin_16) => {
-      return False();
+      return 0_u8;
     }
     ConnectionReset(code: code_17, origin: origin_17) => {
-      return False();
+      return 0_u8;
     }
     ConnectionAborted(code: code_18, origin: origin_18) => {
-      return False();
+      return 0_u8;
     }
     NotConnected(code: code_19, origin: origin_19) => {
-      return False();
+      return 0_u8;
     }
     AddressInUse(code: code_20, origin: origin_20) => {
-      return False();
+      return 0_u8;
     }
     AddressUnavailable(code: code_21, origin: origin_21) => {
-      return False();
+      return 0_u8;
     }
     ResourceExhausted(code: code_22, origin: origin_22) => {
-      return False();
+      return 0_u8;
     }
     FileTooLarge(code: code_23, origin: origin_23) => {
-      return False();
+      return 0_u8;
     }
     NoSpace(code: code_24, origin: origin_24) => {
-      return False();
+      return 0_u8;
     }
     QuotaExceeded(code: code_25, origin: origin_25) => {
-      return False();
+      return 0_u8;
     }
     CrossDevice(code: code_26, origin: origin_26) => {
-      return False();
+      return 0_u8;
     }
     DeviceFailure(code: code_27, origin: origin_27) => {
-      return False();
+      return 0_u8;
     }
     Other(code: code_28, origin: origin_28) => {
-      return False();
+      return 0_u8;
     }
   }
 }
@@ -102,7 +105,10 @@ fn stop_is_busy(problem: std::io::IoError) -> result: Bool pure {
 fn stop_byte(factory: &HandleFactory, output: &OutputStream, value: u8) -> result: Bool writes(factory), writes(output) waits {
   let bytes = array_filled::<u8, 1>(value: value);
   let unlimited = None<Instant>();
-  match std::io::write_once(factory: factory, output: output, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: next) => {
       return next == 1_u64;
     }
@@ -115,7 +121,10 @@ fn stop_byte(factory: &HandleFactory, output: &OutputStream, value: u8) -> resul
 fn stop_gate(factory: &HandleFactory, input: &InputStream) -> result: u8 writes(factory), writes(input) waits {
   let bytes = array_filled::<u8, 1>(value: 0_u8);
   let unlimited = None<Instant>();
-  match std::io::read_next(factory: factory, input: input, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = std::io::read_next(factory: factory, input: input, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: next) => {
       if next == 1_u64 {
         return bytes[0_u64];
@@ -132,7 +141,10 @@ fn stop_receive(factory: &HandleFactory, listener: &StopListener, clock: &Clock)
   let start = std::time::now(clock: clock);
   let end = std::time::instant_after(instant: start, nanoseconds: 30000000000_u64);
   let deadline = Some<Instant>(value: end);
-  match std::process::stop_next(factory: factory, listener: listener, deadline: deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = std::process::stop_next(factory: factory, listener: listener, deadline: deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match wait_outcome_3 {
     Ok(value: kind) => {
       match kind {
         Interrupt() => {
@@ -149,7 +161,43 @@ fn stop_receive(factory: &HandleFactory, listener: &StopListener, clock: &Clock)
   }
 }
 
+fn stop_fire_later(source: std::time::CancelSource, clock: Clock) -> result: unit pure waits {
+  let never = std::time::cancel_never();
+  let begin = std::time::now(clock: &clock);
+  let wake = std::time::instant_after(instant: begin, nanoseconds: 50000000_u64);
+  std::time::sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn stop_cancelled(factory: &HandleFactory, listener: &StopListener, clock: &Clock) -> result: Bool reads(clock), writes(factory), writes(listener) waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let firing_clock = std::time::clock_share(clock: clock);
+  let firing = spawn stop_fire_later(source: move source, clock: move firing_clock);
+  let unlimited = None<Instant>();
+  let outcome = std::process::stop_next(factory: factory, listener: listener, deadline: unlimited, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  match outcome {
+    Ok(value: request) => {
+      return False();
+    }
+    Err(error: failure) => {
+      let kind = stop_error_kind(problem: failure);
+      return kind == 2_u8;
+    }
+  }
+}
+
 fn stop_context(factory: HandleFactory, listener: StopListener, input: InputStream, output: OutputStream, errors: OutputStream, clock: Clock, mode: u8) -> result: u8 pure waits {
+  let cancelled = stop_cancelled(factory: &factory, listener: &listener, clock: &clock);
+  if cancelled {
+  } else {
+    std::process::close_stop_listener(factory: &factory, listener: move listener);
+    return 8_u8;
+  }
   let opened = stop_byte(factory: &factory, output: &errors, value: 76_u8);
   let gate = stop_gate(factory: &factory, input: &input);
   let code = 1_u8;
@@ -211,7 +259,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           std::process::close_stop_listener(factory: &factory, listener: move second_listener);
         }
         Err(error: second_problem) => {
-          set busy = stop_is_busy(problem: second_problem);
+          let error_kind = stop_error_kind(problem: second_problem);
+          set busy = error_kind == 1_u8;
         }
       }
       if busy {

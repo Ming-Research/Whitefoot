@@ -36,10 +36,12 @@
  * The file that includes this one supplies the host: WF_CMAP_TAKE(bytes) and
  * WF_CMAP_GIVE(block, bytes) for small blocks aligned to 16 bytes, which the
  * runtime takes from its own pool and never from the program's allocator
- * [STOR-8]; WF_CMAP_YIELD() to give up the processor; and
- * WF_CMAP_EXHAUSTED() when memory is short. Cell arrays of 2 MiB or more and
- * the chunks entries are carved from are mapped from the host here. It may
- * also supply WF_CMAP_HOST_FIELDS, members of its own placed in every map,
+ * [STOR-8]; WF_CMAP_YIELD() to give up the processor;
+ * WF_CMAP_EXHAUSTED() when memory is short; and WF_CMAP_HEAP_CHANGE(delta)
+ * for the live requested bytes outside that pool [PRE-2]. Cell arrays of
+ * 2 MiB or more and the chunks entries are carved from are mapped from the
+ * host here. It may also supply WF_CMAP_HOST_FIELDS, members of its own
+ * placed in every map,
  * WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
  * spare memory a hold's keys then reuse, and WF_CMAP_SPARE_KEYS(), a
  * `void *` place only the calling thread uses, where the memory of the last
@@ -47,6 +49,9 @@
  */
 #if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
 #error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
+#endif
+#ifndef WF_CMAP_HEAP_CHANGE
+#error "the includer supplies WF_CMAP_HEAP_CHANGE for storage outside its pool"
 #endif
 #ifndef WF_CMAP_CURRENT_USER
 #define WF_CMAP_CURRENT_USER(map) ((wf_cmap_user *)NULL)
@@ -217,8 +222,8 @@ struct wf_cmap {
     _Atomic int waiting;
     _Atomic uint64_t hold_next;
     _Atomic uint64_t hold_serving;
-    /* Where wf_cmap_drain has reached, and a large node it handed out last,
-     * given back to the pool on the next call. */
+    /* Where wf_cmap_drain has reached, and the node it handed out last,
+     * released on the next call, after the caller releases its value. */
     uint64_t drained;
     void *pending;
     uint64_t pending_bytes;
@@ -345,6 +350,7 @@ static cell *new_cells(uint64_t count) {
     cell *c = host_map(bytes);
     if (c == NULL)
         WF_CMAP_EXHAUSTED();
+    WF_CMAP_HEAP_CHANGE((int64_t)bytes);
     return c;
 }
 
@@ -352,8 +358,10 @@ static void free_cells(cell *c, uint64_t count) {
     size_t bytes = count * sizeof(cell);
     if (bytes < HUGE_BYTES)
         WF_CMAP_GIVE(c, bytes);
-    else
+    else {
+        WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
         host_unmap(c, bytes);
+    }
 }
 
 static void lock_map(wf_cmap *map) {
@@ -442,6 +450,9 @@ static void reclaim(wf_cmap *map) {
         } else {
             if (map->spare != NULL)
                 free_cells(map->spare, map->spare_capacity);
+            /* Still a live allocation owned by this map, just as a small
+             * spare remains a granted pool block: count until free_cells.
+             * Reusing it neither allocates nor releases storage [PRE-2]. */
             map->spare = r->cells;
             map->spare_capacity = r->capacity;
             WF_CMAP_GIVE(r, sizeof *r);
@@ -720,6 +731,7 @@ static node *new_node(wf_cmap_user *u, uint64_t bytes) {
     free_entry *f = u->free[k];
     if (f != NULL) {
         u->free[k] = f->next;
+        WF_CMAP_HEAP_CHANGE((int64_t)bytes);
         return (node *)(void *)f;
     }
     if (u->room < bytes) {
@@ -736,6 +748,9 @@ static node *new_node(wf_cmap_user *u, uint64_t bytes) {
     u->room -= bytes;
     if ((uint64_t)(uintptr_t)n >> READER_SHIFT)
         abort();
+    /* The node request is live; the rest of the chunk is an allocator
+     * reserve. Larger nodes are already counted by the host pool [PRE-2]. */
+    WF_CMAP_HEAP_CHANGE((int64_t)bytes);
     return n;
 }
 
@@ -744,6 +759,7 @@ static void free_node(wf_cmap_user *u, node *n, uint64_t bytes) {
         WF_CMAP_GIVE(n, bytes);
         return;
     }
+    WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
     unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
     free_entry *f = (free_entry *)(void *)n;
     f->next = u->free[k];
@@ -2662,7 +2678,10 @@ uint64_t wf_cmap_count(wf_cmap *map) {
 
 void *wf_cmap_drain(wf_cmap *map) {
     if (map->pending != NULL) {
-        WF_CMAP_GIVE(map->pending, map->pending_bytes);
+        if (map->pending_bytes > ENTRY_LARGEST)
+            WF_CMAP_GIVE(map->pending, map->pending_bytes);
+        else
+            WF_CMAP_HEAP_CHANGE(-(int64_t)map->pending_bytes);
         map->pending = NULL;
     }
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
@@ -2673,13 +2692,11 @@ void *wf_cmap_drain(wf_cmap *map) {
             continue;
         node *n = node_at(c);
         atomic_store_explicit(&c->key, REMOVED, memory_order_relaxed);
-        /* A large node goes back to the pool once its value is released;
-         * the rest leave with their chunks when the map is destroyed. */
-        uint64_t bytes = node_bytes(map, n->length);
-        if (bytes > ENTRY_LARGEST) {
-            map->pending = n;
-            map->pending_bytes = bytes;
-        }
+        /* Keep counting the node while the caller releases its value.
+         * Small nodes then become unused chunk storage, large ones return
+         * to the pool; neither remains live until chunk unmapping. */
+        map->pending = n;
+        map->pending_bytes = node_bytes(map, n->length);
         return slot_of(map, n);
     }
     return NULL;
@@ -2705,6 +2722,11 @@ wf_cmap *wf_cmap_create(uint64_t capacity) {
 }
 
 void wf_cmap_destroy(wf_cmap *map) {
+    /* Emitted drops have drained every value. Native callers may destroy
+     * slots with no owned payload directly; release their nodes too. */
+    if (map->slot_size != 0)
+        while (wf_cmap_drain(map) != NULL) {
+        }
     table *t = atomic_load(&map->current);
     table *pending = atomic_load(&t->next);
     if (pending)

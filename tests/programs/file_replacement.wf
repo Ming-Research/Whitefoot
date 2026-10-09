@@ -150,7 +150,10 @@ fn checkpoint(factory: &HandleFactory, out: &std::io::OutputStream, input: &std:
   doc "Announces the selected rewrite boundary and waits for input while the harness kills this process. A completed read means the harness did not stop it there.";
   let marker = array_filled::<u8, 1>(value: 46_u8);
   let unbounded = None<std::time::Instant>();
-  match std::io::write_once(factory: factory, output: out, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: factory, output: out, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: next) => {
       if next != 1_u64 {
         return 12_u8;
@@ -161,7 +164,9 @@ fn checkpoint(factory: &HandleFactory, out: &std::io::OutputStream, input: &std:
     }
   }
   let byte = array_filled::<u8, 1>(value: 0_u8);
-  std::io::read_next(factory: factory, input: input, destination: &byte[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded);
+  let wait_cancel_2 = std::time::cancel_never();
+  std::io::read_next(factory: factory, input: input, destination: &byte[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
   return 14_u8;
 }
 

@@ -19,6 +19,7 @@ use super::super::super::model::{
     CheckedMeasure, CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
     CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType, WindowShape,
 };
+use super::super::references::RequiredReferent;
 use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
 use super::StatementResult;
@@ -627,7 +628,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 owner.value_role(),
             )? {
-                let measured = self.check_indexed_place_rooted(
+                let measured = self.check_storage_place_rooted(
                     context,
                     place,
                     bindings,
@@ -635,6 +636,7 @@ impl<'unit> Checker<'_, 'unit> {
                     place,
                     loop_depth,
                     owner.value_role(),
+                    RequiredReferent::IndexableStorage,
                 )?;
                 if let Some(declaration) = measured.root_declaration()
                     && !allowed_values.contains(&declaration)
@@ -675,7 +677,7 @@ impl<'unit> Checker<'_, 'unit> {
                     "bind the integer value with a `let` and use that binding",
                 );
             }
-            let measured = self.check_indexed_place_rooted(
+            let measured = self.check_storage_place_rooted(
                 context,
                 place,
                 bindings,
@@ -683,6 +685,7 @@ impl<'unit> Checker<'_, 'unit> {
                 place,
                 loop_depth,
                 owner.value_role(),
+                RequiredReferent::MeasuredStorage,
             )?;
             // [INV-1] the place resolves in the same context an IDENT does,
             // and its root is one of the values that context admits.

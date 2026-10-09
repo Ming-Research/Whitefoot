@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.110: releasing a map's reserve
+## 2026-10-09 v0.111: releasing a map's reserve
 
 Rules: changed PRE-1, SHARE-1, WAIT-2
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
 
 Summary: PRE-1 adds `fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map)`, last in the declaration preorder so no earlier ordinal moves; it writes its handle as `heap_in_use` writes its meter, since each call may answer differently, and so no guard [SHARE-3] can call it. SHARE-1 says it changes no entry of the map that is the object's state, may release storage the map holds beyond what its entries need so that a later `heap_in_use` reading counts fewer bytes, and returns how many bytes it released; WAIT-2 lists that count among the execution's inputs. Selection ground: firn's maxmemory, which counts a map's reserve in `heap_in_use`, needs to give the reserve back before it evicts keys, and the operation takes the handle so that it needs no hold of the object and blocks no command.
+
+## 2026-10-09 v0.110: cross-context cancellation of host waits
+
+Rules: changed PRE-2
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot cross-context cancellation" that asked to approve PR #296's specification text and design nodes (PRE-2's cancellation sources and watches, the `cancel` parameter on the eight waiting host functions, `IoError::Cancelled` and its outcome rules, and design/language/system-interface/context-cancellation.md) with "agree" (translated), after choosing shape S1 on the board card firn-cancel-shape and direction A on cross-context cancellation, and agreeing that guard observation of cancellation moves to the stacked PR #304.
+
+Summary: `std::time` gains `CancelSource` and `CancelWatch`, nodrop handles of one cancellation state that `cancel_fire` fires permanently and `cancel_never` never fires, and every host function that bounds its wait by a deadline takes `cancel: &CancelWatch` right after it (`write_once`, `read_next`, `tcp_accept`, `tcp_connect`, `receive_next`, `send_once`, `stop_next`, and `sleep_until`, now returning `Result<unit, unit>`). A firing before the host has produced the outcome completes the wait as `Cancelled` (`IoError::Cancelled`) with nothing transferred; an outcome already produced wins, and a deadline racing a firing gives either as an execution input. The selection ground is firn's orderly stop, which polled every wait with a deadline of at most a second and could not end a wait without one; a prototype measured on the i9-14900K kept firn's throughput within 0.984 to 1.022 of polling and stopped about twenty times sooner (research/investigations/context-cancellation/README.md). Guard observation of cancellation is the stacked PR #304's.
 
 ## 2026-10-09 v0.109: offset disequalities, invariant L0 facts and origin transport
 

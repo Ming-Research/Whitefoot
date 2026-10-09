@@ -434,6 +434,66 @@ fn main() -> status: std::process::ExitStatus pure {{
     }
 }
 
+#[test]
+fn measured_place_headers_retain_base_and_backedge_evidence() {
+    for (source, expected_count) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/inv1-pos-key-set-entry-length-call.wf"
+            )
+            .as_slice(),
+            1,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/inv1-pos-measure-table-places.wf"
+            )
+            .as_slice(),
+            15,
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("measure-table headers must check: {outcome:?}");
+            };
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "main")
+                .expect("main exists");
+            let invariants = &main.entailment.loop_invariants;
+            assert_eq!(invariants.len(), expected_count);
+            for invariant in invariants {
+                assert!(invariant.proof.base, "{}", invariant.name);
+                assert_eq!(invariant.proof.step, Some(true), "{}", invariant.name);
+                let [input] = invariant.inputs.as_slice() else {
+                    panic!("{} must retain its one backedge", invariant.name);
+                };
+                assert!(input.discharged);
+                assert!(input.evidence.contradiction.is_none());
+                assert!(input.evidence.formation_failure.is_none());
+            }
+        });
+    }
+}
+
+#[test]
+fn key_set_writes_reject_the_stale_equality_at_the_backedge() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-key-set-insert-stale-length.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-key-set-scan-stale-length.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_invariant_required_relation(source, "keys.len == original");
+    }
+}
+
 // The field and counted binder share a spelling but have distinct identities.
 fn counted_field_collision_source(upper: u64, relation: &str) -> String {
     format!(
@@ -1612,7 +1672,9 @@ fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     set end = end + 1_u64;
   }
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return unit;
 }
 

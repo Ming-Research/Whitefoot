@@ -94,6 +94,28 @@ void wf__completion_file_append_submit(
     void *record
 );
 
+/* Non-null watches only; pending watched submissions return 2,
+ * completed ones 1, matching an ordinary host start. Source handles own the
+ * state; the pending call borrows a live watch through its finish. */
+void *wf__cancel_new(void);
+void wf__cancel_retain(void *source);
+void wf__cancel_release(void *source);
+void wf__cancel_fire(void *source);
+int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record);
+int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
+                                                uint64_t count, void *cancel, void *record);
+
+int wf__completion_file_read_watched_submit(int descriptor, void *buffer, uint64_t count,
+                                             void *cancel, void *record);
+int wf__completion_file_write_watched_submit(int descriptor, const void *buffer, uint64_t count,
+                                              void *cancel, void *record);
+int wf__completion_socket_connect_watched_submit(uint64_t low, uint64_t high, uint32_t tag,
+                                                  void *cancel, void *record);
+int wf__completion_socket_send_watched_submit(int descriptor, const void *buffer, uint64_t count,
+                                               void *cancel, void *record);
+int wf__completion_sleep_watched_submit(uint64_t deadline, void *cancel, void *record);
+int wf__completion_stop_next_watched_submit(void *cancel, void *record);
+
 /* Hands every byte written to the file before it to the host's durability
  * mechanism [PRE-2]. */
 void wf__completion_file_sync_submit(
@@ -138,6 +160,8 @@ void wf__completion_next_deadline(uint64_t deadline);
 /* Whether the record's deadline ended its operation: the driver cancelled
  * it and it transferred nothing. */
 int wf__completion_deadline_passed(const void *record);
+/* The supplied watch ended the operation, with nothing transferred. */
+int wf__completion_cancelled(const void *record);
 
 /* The monotonic clock the deadlines are readings of. */
 uint64_t wf__completion_monotonic_ns(void);
