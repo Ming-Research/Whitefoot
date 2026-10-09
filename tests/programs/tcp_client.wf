@@ -205,7 +205,7 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Connects to the loopback port named by the invocation, sends eight bytes through the connection's sending direction, and publishes every byte the peer returns through its receiving direction until the peer stops sending. Each direction is an ordinary linear owner [PRE-1, PROV-6]. The argument scratch, the receive chunk and the eight-byte payload are three inline Slots windows of this frame, and each call reaches one of them through a range reference whose interference the declared rows decide [TYPE-9, REF-4, EFF-5].";
-  let Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);

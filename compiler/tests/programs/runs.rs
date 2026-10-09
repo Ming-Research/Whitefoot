@@ -105,7 +105,7 @@ fn a_bump_extent_hands_out_runs_and_refuses_the_one_it_cannot_hold() {
         .expect("range formation must read the length from the same inline window");
     assert_eq!(gep_base(length_gep), slots_base);
     assert!(main.contains("getelementptr inbounds i64, ptr"));
-    assert!(!llvm.contains("call ptr @malloc"));
+    assert!(!llvm.contains("call ptr @wf__heap_take"));
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0));
@@ -160,8 +160,8 @@ fn the_general_store_hands_out_a_run_and_takes_it_back() {
     let llvm = compile_program("heap_run.wf");
     // One construction, one free, and the free is the cell's own release
     // emitted at the scope exit that owns it [PROV-6, STOR-3].
-    assert_eq!(llvm.matches("call ptr @malloc").count(), 1);
-    assert!(llvm.contains("call void @free"));
+    assert_eq!(llvm.matches("call ptr @wf__heap_take").count(), 1);
+    assert!(llvm.contains("call void @wf__heap_give"));
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(12));
@@ -213,7 +213,7 @@ fn a_run_of_store_backed_runs_is_a_block_pool() {
     // Re-derived for v0.60: the blocks themselves stay frame-resident, and the
     // one heap object the program owns is the boxed run the entry hands to the
     // lease, so exactly one allocation is emitted [STOR-1, STOR-8].
-    assert_eq!(llvm.matches("call ptr @malloc").count(), 1);
+    assert_eq!(llvm.matches("call ptr @wf__heap_take").count(), 1);
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0));

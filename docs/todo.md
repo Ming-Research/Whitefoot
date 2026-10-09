@@ -1185,6 +1185,19 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
+- **Audit nonempty release classification for shared handles and key sets.**
+  `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
+  reaches no owned component for `Shared` and has no `KeySet` action, while
+  the backend's `type_derives_release` classifies both as releasing storage.
+  Its `check_self_tail_releases` consumer may therefore omit an FN-10
+  release obligation. This is an inspection finding, not a reproduced
+  acceptance failure; keep it separate from the call-group boundary, which
+  uses the release graph's storage actions and changes no acceptance rule.
+  Reopen before the next tail-release change: construct shared-handle and
+  key-set self-tail witnesses, compare their required cleanup with STOR-3,
+  SHARE-1 and FN-10, then unify the action classification if the discrepancy
+  affects the judgment; validate empty scalar and zero-capacity controls too.
+
 ## Parallel lowering and runtime
 
 - **PAR-1 operand footprints treat a copied reference as its referent.**
@@ -1806,10 +1819,19 @@ rarely insert at the same place.
   beside `let all = &data.inner[0_u64..2000000_u64];`
   (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
   range loads the Box's pointer, which the first statement writes. No
-  program observes it: the lowering hands out only calls, and a member that
-  is not a call ends every overlap group (`overlaps` in
-  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
-  in place needs only its address, so only a path through a Box's `inner`
+  program observes that non-call pair: the lowering hands out only calls,
+  and a member that is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Call argument formation is protected
+  separately: the checker retains released places (owned heap arguments,
+  written heap-owning referents, and whole aggregates consumed by argument
+  cleanup) and borrowed places (reference arguments and owner slots loaded
+  by reference formation) on each call site. Lowering ends a group before
+  argument formation when one member releases storage overlapping another
+  member's borrowed place under OWN-7; the new member may start a new group.
+  Disjoint written Box references and disjoint owned transfers retain overlap
+  eligibility. The PAR-1 verdict still lacks the owner-slot read described here.
+  Forming a reference to storage held in place needs only its address, so
+  only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
   formed path passes; validate with that pair denied, the rest of the
   quicksort ledger unchanged, and `let larger = &v^[after..n];` still
@@ -2194,6 +2216,17 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Measure heap counting under an allocation-heavy program.** The cost of
+  counting each allocation (memory statistics) was measured only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation of emitted
+  storage, and stayed inside the twins' 3 to 7% spread, leaving the 1%
+  criterion unresolved. A Lua
+  engine running scripts allocates through the emitted heap on every call
+  (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
+  script). Measure the counted against the uncounted build on such a
+  workload, interleaved with twins on the i9-14900K; reopen when firn's
+  script path is next measured or when a program reports the counting.
+
 - **Paged indexed storage is absent in this checkout (Q2).** The active
   specification and checked type model define Array, Slots and Ring, with no
   Paged type or storage path. Impact: the selected indexed reduction rule can
@@ -2561,6 +2594,31 @@ rarely insert at the same place.
   a writer needs that distinction; validate equal-value expressions still
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
+
+- **Verify memory readings with observed driver participation.** The context
+  program checks completed allocations and exact balance after joining at
+  requested driver counts one and four; it cannot identify which counters
+  contributed. Existing context cases expose no driver participation report,
+  and a host without a usable native ring runs one driver. Add a forwarding
+  native allocation observer when qualifying several-driver accounting; it
+  must show at least two allocation writers, without changing scheduling,
+  and cover a read spanning transfer and release as well as joined balance.
+
+- **Migrate retained allocation experiments before rerunning them.** The
+  memory-statistics emitter now calls wf__heap_take and the size-aware
+  wf__heap_give. Container-representation Makefiles and the families ABI
+  adapters still intercept malloc/free, and their cost harnesses retain
+  one-argument release functions; the compute radix phase observer and
+  buffer-initialization runner also recognize the former symbols. These
+  scripts can miss observations or fail when used with this compiler.
+  Update symbol selection and the WF release ABI together, retain the C
+  controls' intended comparison, and demonstrate wrong release sizes are
+  detected before collecting fresh measurements. Deferred because these
+  experiments are outside the correctness gate and no run is requested;
+  reopen before their next use, not by interpreting old measurements as
+  results of the counted runtime.
+
+- **Route Paged's page and directory allocations through wf__heap_take/wf__heap_give when Paged lands; validate matching allocation and release sizes.**
 
 ## Modules and libraries
 

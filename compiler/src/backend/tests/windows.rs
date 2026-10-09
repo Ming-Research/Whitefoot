@@ -392,7 +392,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_empty_window_zeroed(&module, "slots_new", 1);
     assert_empty_window_zeroed(&module, "ring_new", 2);
     let observed = super::owned_places::retain_calls(&module)
-        .replace("@malloc(", "@wf_observe_window_allocate(");
+        .replace("@wf__heap_take(", "@wf_observe_window_allocate(");
     let observer = r#"
 #include <stdint.h>
 #include <stdlib.h>
@@ -616,14 +616,14 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("SET-1 must commit one element store");
     assert!(rhs < store);
     assert!(!main.contains("call void @wf_trap"));
-    assert_eq!(main.matches("call void @free").count(), 1);
-    assert!(!make.contains("call void @free"));
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 1);
+    assert!(!make.contains("call void @wf__heap_give"));
 
     // The proved count ceiling times the u16 stride fits the selected target's
     // byte domain. Target layout therefore admits the dynamic allocation and
     // the emitter needs only the allocator's null-result edge.
     let filled = emitted_prelude_row(&llvm, "box_array_filled");
-    assert!(filled.contains("call ptr @malloc"));
+    assert!(filled.contains("call ptr @wf__heap_take"));
     assert!(filled.contains("icmp ne ptr"));
     // The two labels below are the v0.59 emitted names for the exhaustion
     // edge. [STOR-8] keeps the edge and moves its meaning - it is the trusted
@@ -674,7 +674,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let refill = emitted_function(&llvm, "refill");
     assert!(refill.contains("call ptr @wf_box_array_filled$instance$"));
     let filled = emitted_prelude_row(&llvm, "box_array_filled");
-    assert!(filled.contains("call ptr @malloc"));
+    assert!(filled.contains("call ptr @wf__heap_take"));
     for absent in [
         "buffer.fill.target.",
         "@wf_target_domain_abort",
@@ -768,7 +768,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // Three release sites: the early return and the final return each carry
     // the cell the scope holds, and the loop break carries the body-scope
     // cell it leaves [STOR-3, LIV-1].
-    assert_eq!(cleanup.matches("call void @free").count(), 3);
+    assert_eq!(cleanup.matches("call void @wf__heap_give").count(), 3);
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
@@ -785,8 +785,8 @@ fn range_references_cross_helpers_without_transferring_ownership() {
     let main = emitted_function(&llvm, "main");
     assert!(fill.contains("store i64"));
     assert!(fold.contains("load i64"));
-    assert!(!fill.contains("call void @free"));
-    assert!(!fold.contains("call void @free"));
+    assert!(!fill.contains("call void @wf__heap_give"));
+    assert!(!fold.contains("call void @wf__heap_give"));
     // Both declared length requirements and the counted-range binder facts are
     // checked before lowering. Neither helper retains a runtime proof check.
     assert_eq!(fill.matches("call void @wf_trap").count(), 0);
@@ -812,9 +812,9 @@ fn range_references_cross_helpers_without_transferring_ownership() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 6);
     for exit in exits {
-        assert_eq!(exit.matches("call void @free").count(), 2, "{exit}");
+        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
     }
-    assert_eq!(main.matches("call void @free").count(), 12);
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 12);
     assert!(main.contains("call i8 @wf_fill"));
     assert!(main.contains("call i64 @wf_fold"));
 
@@ -881,9 +881,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(observe.starts_with("define i64 @wf_observe(ptr "));
     assert!(main.contains("call i8 @wf_update(ptr "));
     assert!(main.contains("call i64 @wf_observe(ptr "));
-    assert!(!update.contains("call void @free"));
-    assert!(!observe.contains("call void @free"));
-    assert_eq!(main.matches("call void @free").count(), 2);
+    assert!(!update.contains("call void @wf__heap_give"));
+    assert!(!observe.contains("call void @wf__heap_give"));
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 2);
 
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
@@ -965,8 +965,8 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
                 .contains(", i64 %v2)")
         );
     }
-    assert!(!build_body.contains("call void @free"));
-    assert!(!checksum_body.contains("call void @free"));
+    assert!(!build_body.contains("call void @wf__heap_give"));
+    assert!(!checksum_body.contains("call void @wf__heap_give"));
     // Bounds and arithmetic failures are typed results rather than written
     // proofs, so build and checksum contain no trap edge. Main owns two
     // `Box<Slots<u64>>` cells and releases both on each of its five exits.
@@ -984,9 +984,9 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 5);
     for exit in exits {
-        assert_eq!(exit.matches("call void @free").count(), 2, "{exit}");
+        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
     }
-    assert_eq!(main.matches("call void @free").count(), 10);
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 10);
 }
 
 /// The case counts lines, words and bytes over two chunks and combines the
@@ -1091,8 +1091,8 @@ fn chunk_summary_instances_preserve_window_abi_and_avoid_allocation() {
             "and is named by its ordinal: {parameter}"
         );
     }
-    assert!(!llvm.contains("call ptr @malloc"));
-    assert!(!llvm.contains("call void @free"));
+    assert!(!llvm.contains("call ptr @wf__heap_take"));
+    assert!(!llvm.contains("call void @wf__heap_give"));
 }
 
 #[test]
@@ -1241,12 +1241,12 @@ fn main() -> status: std::process::ExitStatus pure {
     // return edge carries exactly four run releases. Allocation identities
     // and their order are checked by the owned-place execution controls.
     let release = emitted_function(&llvm, "release");
-    assert_eq!(release.matches("call void @free").count(), 4);
+    assert_eq!(release.matches("call void @wf__heap_give").count(), 4);
     // Allocation is total [STOR-8], so `main` has no refusal arm to hold a
     // partly built owner on: its one edge hands the whole owner to `release`
     // and carries no release of its own.
     let main = emitted_function(&llvm, "main");
-    assert_eq!(main.matches("call void @free").count(), 0);
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 0);
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
@@ -1286,12 +1286,12 @@ fn main() -> status: std::process::ExitStatus pure {
     let take = emitted_function(&llvm, "take");
     // Three residual siblings released where the projected field left
     // [WIN-3, PROV-6].
-    assert_eq!(take.matches("call void @free").count(), 3);
+    assert_eq!(take.matches("call void @wf__heap_give").count(), 3);
     // One retained cell released in `main`. Allocation is total [STOR-8], so
     // there are no refusal arms holding partly built owners.
     assert_eq!(
         emitted_function(&llvm, "main")
-            .matches("call void @free")
+            .matches("call void @wf__heap_give")
             .count(),
         1
     );
@@ -1330,7 +1330,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(!llvm.contains("@wf.drop.buffer"));
     assert!(!llvm.contains("@wf.drop.run"));
     let main = emitted_function(&llvm, "main");
-    assert_eq!(main.matches("call void @free").count(), 1);
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 1);
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
@@ -1376,8 +1376,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let llvm = compile(source);
-    assert_eq!(llvm.matches("call ptr @malloc").count(), 1);
-    assert_eq!(llvm.matches("call void @free").count(), 1);
+    assert_eq!(llvm.matches("call ptr @wf__heap_take").count(), 1);
+    assert_eq!(llvm.matches("call void @wf__heap_give").count(), 1);
 
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
