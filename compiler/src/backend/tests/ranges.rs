@@ -1746,7 +1746,10 @@ fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
   }
   let window = &page[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       if written != 4_u64 {
         return std::process::exit_status(code: 1_u8);

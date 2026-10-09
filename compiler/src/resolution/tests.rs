@@ -2835,9 +2835,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `swap` [OP-11],
     // `shared_new`, `shared_share`, `shared_map_new`, `map_count`,
     // `map_scan`, `map_clear`, `key_set_new`, `key_set_insert` and
-    // `key_set_read_key` [SHARE-1] and `free_empty` [OP-14], each with its
-    // type, const and value parameters in declared order and then its range
-    // postconditions' names and bound variables [RANGE-1].
+    // `key_set_read_key` [SHARE-1], `free_empty` [OP-14] and
+    // `shared_map_release_reserve` [SHARE-1], each with its type, const and
+    // value parameters in declared order and then its range postconditions'
+    // names and bound variables [RANGE-1].
     assert_eq!(first[44].1, "Bool");
     assert_eq!(first[66].1, "Int");
     assert_eq!(first[67].1, "Float");
@@ -2871,22 +2872,25 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[193].1, "key_set_insert");
     assert_eq!(first[196].1, "key_set_read_key");
     assert_eq!(first[200].1, "free_empty");
+    assert_eq!(first[203].1, "shared_map_release_reserve");
     // The opaque phase holds the five storage shapes, the cell, the
     // shared-object handle, the keyed table, the key set and the keyed
     // entries, 44 records: `Array` contributes five, `Slots` six, `Ring`
     // seven, `Segments` four, `Paged` five, `Box` four, `Shared`,
     // `ConcurrentHashMap` and `KeySet` three each and `Entries` four. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 203 records where it held 397: v0.84's range
+    // inventory holds 206 records where it held 397: v0.84's range
     // postconditions of `box_array_filled` and `box_segments_filled` add
     // their fact names and bound variables, seven records [RANGE-1], v0.94's
     // `map_scan`, `map_clear` and `key_set_read_key` add thirteen [SHARE-1],
-    // and v0.95's `Paged`, `Run`, `box_paged_new`, `grow_paged` and
-    // `paged_page_len` add fifteen. The range postcondition of
-    // `array_filled` adds its fact name `filled` and bound variable `k`.
-    assert_eq!(first.len(), 203);
-    // `free_empty`'s own value parameter is the last record of the preorder.
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
+    // v0.95's `Paged`, `Run`, `box_paged_new`, `grow_paged` and
+    // `paged_page_len` add fifteen, v0.110's `shared_map_release_reserve`
+    // adds three, and the range postcondition of `array_filled` adds its fact
+    // name `filled` and bound variable `k`.
+    assert_eq!(first.len(), 206);
+    // `shared_map_release_reserve`'s own value parameter is the last record
+    // of the preorder.
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("map"));
     assert!(
         first
             .iter()
@@ -2898,11 +2902,11 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 203, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 206, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
-    let source = b"fn free_empty() -> result: unit pure {\n  return unit;\n}\n";
+    let source = b"fn shared_map_release_reserve() -> result: unit pure {\n  return unit;\n}\n";
     with_resolution_sources(
         &[SourceInput::new("collision.wf", source)],
         true,
@@ -2915,7 +2919,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 200)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 203)
             );
         },
     );

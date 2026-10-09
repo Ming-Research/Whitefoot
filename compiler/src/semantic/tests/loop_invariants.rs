@@ -1668,7 +1668,9 @@ fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     set end = end + 1_u64;
   }
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return unit;
 }
 

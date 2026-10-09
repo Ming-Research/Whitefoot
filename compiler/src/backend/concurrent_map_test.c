@@ -57,12 +57,14 @@
  * the blocks it has handed out and not had back. */
 static _Atomic int64_t blocks_out;
 static _Atomic uint64_t allocations;
+static _Atomic int64_t mapped_bytes_out;
 static void *test_take(size_t bytes);
 static void test_give(void *block);
 #define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
 #define WF_CMAP_GIVE(block, bytes) test_give(block)
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
+#define WF_CMAP_HEAP_CHANGE(delta) atomic_fetch_add_explicit(&mapped_bytes_out, (delta), memory_order_relaxed)
 struct wf_cmap;
 static void finishing(struct wf_cmap *map);
 #define WF_CMAP_FINISHING(map) finishing(map)
@@ -703,6 +705,15 @@ static wf_cmap_user *other_user;
 static const unsigned char *claim_key, *gone_key;
 static uint64_t claim_length, gone_length;
 
+/* A simulated competing removal must release its node and live count,
+ * just as a real writer does, before another claim replaces the cell. */
+static void remove_between_steps(wf_cmap_user *u, cell *c) {
+    node *n = node_at(c);
+    free_node(u, n, node_bytes(u->map, n->length));
+    count(u, 0, -1);
+    atomic_store(&c->key, REMOVED);
+}
+
 /* As a writer of claim_key that read the cell after index empty before the
  * writer under test did: claims that cell and stores 7 there. */
 static void claim_after(struct table *t, unsigned long long index) {
@@ -857,6 +868,8 @@ static void settle_pending(void) {
     pthread_join(thread, NULL);
     if (r != SETTLED || out != behind || seen != REMOVED || atomic_load(&behind->key) != (tag | LOCKED))
         fail("a claim behind a pending claim did not wait it out and settle", (uint64_t)r, seen);
+    /* This synthetic claim has no node: give it back before destruction. */
+    atomic_store(&behind->key, REMOVED);
     wf_cmap_destroy(map);
 }
 
@@ -869,6 +882,7 @@ static void claim_pending_behind(struct table *t, unsigned long long index) {
     (void)index;
     uint64_t tag = tag_of(claim_key, claim_length);
     cell *c = &t->cells[start_of(t, tag)];
+    remove_between_steps(other_user, c);
     atomic_store(&c->key, tag | LOCKED | PENDING);
     pthread_create(&pending_thread, NULL, give_back_later, c);
 }
@@ -879,6 +893,7 @@ static void claim_pending_behind(struct table *t, unsigned long long index) {
 static void claim_yields(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    other_user = wf_cmap_user_at(map, 1);
     table *t = atomic_load(&map->current);
     unsigned char k[16], gone[16];
     uint64_t k_length = counted_key(0, k), skip = 0;
@@ -917,12 +932,14 @@ static void hold_behind(struct table *t, unsigned long long index) {
     wf_cmap *map = other_user->map;
     uint64_t tag = tag_of(claim_key, claim_length);
     cell *c = &t->cells[start_of(t, tag)];
+    remove_between_steps(other_user, c);
     node *n = new_node(other_user, node_bytes(map, claim_length));
     n->length = claim_length;
     memcpy(n->bytes, claim_key, (size_t)claim_length);
     memset(slot_of(map, n), 0, (size_t)map->slot_size);
     ((uint64_t *)slot_of(map, n))[0] = 7;
     atomic_store(&c->value, (uint64_t)(uintptr_t)n);
+    count(other_user, 0, 1);
     atomic_store(&c->key, tag | LOCKED);
     pthread_create(&holding_thread, NULL, let_go_later, c);
 }
@@ -1048,6 +1065,7 @@ enum { LOST_EMPTY_CLAIM, CLAIM_MOVED, LOST_REMOVED_CLAIM, LOST_LOCK };
  * empty cell at index, either makes that cell removed, so the claim's
  * compare-and-swap loses, or begins a move, so the claim is given back. */
 static void lose_claim(struct table *t, unsigned long long index) {
+    count(other_user, 1, 0);
     atomic_store(&t->cells[index].key, REMOVED);
 }
 
@@ -1065,12 +1083,13 @@ static void reuse_removed(struct table *t, unsigned long long index) {
     memcpy(n->bytes, gone_key, (size_t)gone_length);
     memset(slot_of(map, n), 0, (size_t)map->slot_size);
     atomic_store(&t->cells[index].value, (uint64_t)(uintptr_t)n);
+    count(other_user, 0, 1);
     atomic_store(&t->cells[index].key, tag_of(gone_key, gone_length));
 }
 
 /* As another writer that removes the key in c just before the writer under
  * test locks it, so the lock's compare-and-swap loses. */
-static void remove_under_lock(struct cell *c) { atomic_store(&c->key, REMOVED); }
+static void remove_under_lock(struct cell *c) { remove_between_steps(other_user, c); }
 
 /* A statement with no patience that never waits for a held cell still runs
  * out of it when it must try again: after a lost claim of an empty or a
@@ -2845,6 +2864,12 @@ static void maps_swap(void) {
         fail("a swap moved a map's watches (kept, moved)", swap_map->watch.count, other->watch.count);
     swap_map->watch.count = 0;
     wf_cmap_destroy(other);
+    /* A map swapped with itself keeps its entries */
+    put_counted(swap_map, 0, 7, 70);
+    wf_cmap_swap(swap_map, swap_map, VALUE_TAG);
+    if (wf_cmap_count(swap_map) != 1 || counted_value(swap_map, 7) != 70)
+        fail("a map swapped with itself lost its entries (count, value)", wf_cmap_count(swap_map),
+             counted_value(swap_map, 7));
     wf_cmap_destroy(swap_map);
 }
 
@@ -3299,10 +3324,142 @@ static void release_cleared(void *table) {
     wf__keyed_table_free(table);
 }
 
+/* A move keeps the freed cells only when they are the current table's size:
+ * a map that grew keeps no spare of its old size, and one whose size holds
+ * steady while keys come and go keeps a spare of its own size for the next
+ * move, which it gives up when it grows again. */
+static void spares_match_the_current_size(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *user = wf_cmap_enter(map);
+    uint64_t got = 0;
+    for (uint64_t k = 0; k < 20000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    wf_cmap_get(user, key_of(0), &got);
+    table *now = atomic_load(&map->current);
+    if (map->spare != NULL && map->spare_capacity != now->capacity)
+        fail("a grown map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+    uint64_t next = 20000;
+    for (; next < 220000 || (map->spare == NULL && next < 420000); next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+        now = atomic_load(&map->current);
+        if (map->spare != NULL && map->spare_capacity != now->capacity)
+            fail("a steady map kept a spare of another size (spare, current)", map->spare_capacity, now->capacity);
+    }
+    if (map->spare == NULL)
+        fail("a steady map never kept a spare for its next move", now->capacity, 0);
+    if (wf_cmap_count(map) != 20000)
+        fail("churn lost or gained keys (count)", wf_cmap_count(map), 20000);
+    uint64_t steady = map->spare_capacity;
+    for (uint64_t k = next; k < next + 60000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    wf_cmap_get(user, key_of(next), &got);
+    now = atomic_load(&map->current);
+    if (now->capacity == steady)
+        fail("the map did not grow past its spare's size (capacity)", now->capacity, steady);
+    if (map->spare != NULL && map->spare_capacity != now->capacity)
+        fail("a regrown map kept its old spare (spare, current)", map->spare_capacity, now->capacity);
+    if (wf_cmap_count(map) != 80000)
+        fail("growth lost or gained keys (count)", wf_cmap_count(map), 80000);
+    wf_cmap_leave(user);
+    wf_cmap_destroy(map);
+}
+
 /* A clear under a whole hold empties the map at once, its own entries
  * included, keeps what the statement writes after it, and hands the old
  * entries to their release only once the hold is given up, leaking no
  * block. */
+/* A map's reserve, the cells it keeps for the next move of their size, goes
+ * on request: the release answers its bytes and changes no entry, a second
+ * answers 0, one made while the map's own lock is held answers 0 and leaves
+ * the reserve, and the map moves as before after a release. */
+static void reserves_release_on_request(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *user = wf_cmap_enter(map);
+    uint64_t got = 0;
+    for (uint64_t k = 0; k < 20000; k++)
+        wf_cmap_insert(user, key_of(k), k);
+    uint64_t next = 20000;
+    for (; map->spare == NULL && next < 420000; next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+    }
+    if (map->spare == NULL)
+        fail("a steady map never kept a reserve (keys inserted)", next, 0);
+    uint64_t bytes = map->spare_capacity * sizeof(cell);
+    atomic_store(&map->lock, 1);
+    uint64_t locked = wf_cmap_release_reserve(map);
+    if (locked != 0 || map->spare == NULL)
+        fail("a release while the map's lock was held took the reserve (freed, kept)", locked, map->spare != NULL);
+    atomic_store(&map->lock, 0);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != bytes || map->spare != NULL)
+        fail("a release did not free the reserve (freed, reserve bytes)", freed, bytes);
+    uint64_t again = wf_cmap_release_reserve(map);
+    if (again != 0)
+        fail("a second release freed bytes (freed, expected)", again, 0);
+    if (wf_cmap_count(map) != 20000)
+        fail("a release changed the count (count, expected)", wf_cmap_count(map), 20000);
+    if (!wf_cmap_get(user, key_of(next - 1), &got) || got != next - 1)
+        fail("a release lost an entry (value, expected)", got, next - 1);
+    for (uint64_t end = next + 200000; next < end; next++) {
+        wf_cmap_remove(user, key_of(next - 20000));
+        wf_cmap_insert(user, key_of(next), next);
+    }
+    if (wf_cmap_count(map) != 20000)
+        fail("churn after a release lost or gained keys (count, expected)", wf_cmap_count(map), 20000);
+    wf_cmap_leave(user);
+    wf_cmap_destroy(map);
+}
+
+static _Atomic int releasing_stop;
+static _Atomic uint64_t released_bytes;
+
+static void *release_reserves(void *arg) {
+    wf_cmap **maps = (wf_cmap **)arg;
+    while (!atomic_load(&releasing_stop)) {
+        uint64_t freed = wf_cmap_release_reserve(maps[0]) + wf_cmap_release_reserve(maps[1]);
+        atomic_fetch_add(&released_bytes, freed);
+    }
+    return NULL;
+}
+
+/* A release needs no statement, so it can meet a swap, which only needs no
+ * statement inside either map: each reserve moves with its map or is
+ * released, never both, so destroying both maps frees each array once. */
+static void reserves_release_beside_swaps(void) {
+    wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
+    wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
+    uint64_t next[2] = {0, 1000000};
+    for (int m = 0; m < 2; m++)
+        for (uint64_t k = 0; k < 64; k++, next[m]++)
+            wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+    atomic_store(&releasing_stop, 0);
+    atomic_store(&released_bytes, 0);
+    pthread_t releaser;
+    pthread_create(&releaser, NULL, release_reserves, maps);
+    for (unsigned round = 0; round < 20000; round++) {
+        for (int m = 0; m < 2; m++)
+            for (unsigned step = 0; step < 16; step++, next[m]++) {
+                wf_cmap_remove(users[m], key_of(next[m] - 64));
+                wf_cmap_insert(users[m], key_of(next[m]), next[m]);
+            }
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+        wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+    }
+    atomic_store(&releasing_stop, 1);
+    pthread_join(releaser, NULL);
+    if (atomic_load(&released_bytes) == 0)
+        fail("no release met a reserve beside the swaps (rounds)", 20000, 0);
+    for (int m = 0; m < 2; m++)
+        if (wf_cmap_count(maps[m]) != 64)
+            fail("a map lost or gained keys beside releases and swaps (count, expected)", wf_cmap_count(maps[m]), 64);
+    for (int m = 0; m < 2; m++) {
+        wf_cmap_leave(users[m]);
+        wf_cmap_destroy(maps[m]);
+    }
+}
+
 static void maps_clear(void) {
     wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
@@ -3439,6 +3596,88 @@ static void holds_keep_their_bytes(void) {
     wf_cmap_destroy(map);
 }
 
+/* PRE-2's requests outside the host pool: the exact mapping threshold,
+ * live nodes rather than chunk capacity, reuse, and drain after the value
+ * is released. Script moves to isolate a freed other-size table and
+ * replaced and reused spare arrays without a second large insertion
+ * workload. */
+static void heap_accounting(void) {
+    const int64_t mib = 1024 * 1024;
+    int64_t before = atomic_load(&mapped_bytes_out);
+    int64_t blocks_before = atomic_load(&blocks_out);
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 65536);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    if (atomic_load(&mapped_bytes_out) != before + 2 * mib)
+        fail("host cells are not counted by their requested bytes", atomic_load(&mapped_bytes_out) - before, 2 * mib);
+    unsigned char key[3] = {1, 2, 3};
+    for (unsigned round = 0; round < 2; round++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+        *slot = 11;
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+        if (atomic_load(&mapped_bytes_out) != before + 2 * mib + 32)
+            fail("new or reused node counted chunk reserves", atomic_load(&mapped_bytes_out) - before, 2 * mib + 32);
+        slot = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+        *slot = 0;
+        wf_cmap_unlock_entry(u, &entry, 0, 0);
+        if (atomic_load(&mapped_bytes_out) != before + 2 * mib)
+            fail("a free-list node is still counted", atomic_load(&mapped_bytes_out) - before, 2 * mib);
+    }
+    wf_cmap_entry entry;
+    uint64_t *small = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+    *small = 11;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    unsigned char long_key[600] = {0};
+    uint64_t *large = wf_cmap_lock_entry(u, long_key, sizeof long_key, 0, &entry);
+    *large = 99;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    if (atomic_load(&mapped_bytes_out) != before + 2 * mib + 32)
+        fail("a pool node was also counted outside the pool", atomic_load(&mapped_bytes_out) - before, 2 * mib + 32);
+
+    table *old = use_current(u);
+    start_move_for(map, old, 65536);
+    finish_move(map, old);
+    reclaim(map);
+    if (atomic_load(&mapped_bytes_out) != before + 6 * mib + 32 || map->spare != NULL)
+        fail("a pinned retired table lost its accounting", atomic_load(&mapped_bytes_out) - before, 6 * mib + 32);
+    /* The released 2 MiB table is not the current size, so it is freed
+     * rather than kept as a spare; the same-size moves below keep one. */
+    use_current(u);
+    if (atomic_load(&mapped_bytes_out) != before + 4 * mib + 32 || map->spare != NULL)
+        fail("a grown map's other-size table stayed counted (bytes, expected)", atomic_load(&mapped_bytes_out) - before, 4 * mib + 32);
+    for (unsigned round = 0; round < 2; round++) {
+        old = use_current(u);
+        start_move_for(map, old, 65536);
+        finish_move(map, old);
+        use_current(u);
+        if (atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
+            fail("replacing or reusing a spare miscounted its request", atomic_load(&mapped_bytes_out) - before, 8 * mib + 32);
+    }
+    int64_t live_blocks = atomic_load(&blocks_out);
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;) {
+        if (slot == small && atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
+            fail("a draining node stopped counting before its value was released", atomic_load(&mapped_bytes_out) - before, 8 * mib + 32);
+    }
+    if (atomic_load(&mapped_bytes_out) != before + 8 * mib || atomic_load(&blocks_out) != live_blocks - 1)
+        fail("draining did not release small and pool nodes once", atomic_load(&mapped_bytes_out) - before, 8 * mib);
+    wf_cmap_destroy(map);
+    if (atomic_load(&mapped_bytes_out) != before || atomic_load(&blocks_out) != blocks_before)
+        fail("destroy leaked map storage", atomic_load(&mapped_bytes_out), before);
+
+    /* Native slots with no owned payload need no caller-side drain. */
+    map = wf_cmap_create_entries(8, 8, 1);
+    u = wf_cmap_user_at(map, 0);
+    small = wf_cmap_lock_entry(u, key, sizeof key, 0, &entry);
+    *small = 11;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    large = wf_cmap_lock_entry(u, long_key, sizeof long_key, 0, &entry);
+    *large = 99;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    wf_cmap_destroy(map);
+    if (atomic_load(&mapped_bytes_out) != before || atomic_load(&blocks_out) != blocks_before)
+        fail("direct destroy leaked small or pool nodes", atomic_load(&mapped_bytes_out), before);
+}
+
 int main(int argc, char **argv) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
@@ -3448,11 +3687,14 @@ int main(int argc, char **argv) {
         tables_held_selection();
         tables_read_selection();
         shared_map_groups();
+        if (atomic_load(&mapped_bytes_out) != 0)
+            fail("selection checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
         puts("concurrent-map-test: selection checks passed");
         return 0;
     }
     if (argc != 1) return 2;
     if (ENTRY_TESTS) {
+        heap_accounting();
         entries_huge_capacity();
         entries_sequential();
         claim_ahead();
@@ -3514,6 +3756,11 @@ int main(int argc, char **argv) {
         concurrent(1);
         histories(20);
     }
+    reserves_release_on_request();
+    reserves_release_beside_swaps();
+    spares_match_the_current_size();
+    if (atomic_load(&mapped_bytes_out) != 0)
+        fail("map checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
     printf("concurrent-map-test: all checks passed\n");
     return 0;
 }

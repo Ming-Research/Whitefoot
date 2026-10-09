@@ -53,7 +53,9 @@ fn write_log(store: Keyspace, factory: HandleFactory, file: WriteFile, clock: Cl
   loop @writing {
     let started = std::time::now(clock: &clock);
     let wake = instant_after(instant: started, nanoseconds: 10000000_u64);
-    sleep_until(deadline: wake);
+    let wait_cancel_1 = std::time::cancel_never();
+    sleep_until(deadline: wake, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
     let stop = False();
     atomic m = &store.meta {
       set stop = m^.stopping;

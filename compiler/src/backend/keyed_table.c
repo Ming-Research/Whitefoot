@@ -28,6 +28,10 @@
 #define WF_CMAP_GIVE(block, bytes) wf__runtime_give((block), (bytes))
 #define WF_CMAP_YIELD() wf__runtime_yield()
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
+#define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
+#endif
+#ifndef WF_CMAP_HEAP_CHANGE
+#define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
 #endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;
@@ -140,6 +144,8 @@ void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width,
                            void (*release)(void *)) {
     wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
 }
+
+uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_reserve((wf_cmap *)table); }
 
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */

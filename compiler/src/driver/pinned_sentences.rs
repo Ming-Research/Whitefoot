@@ -331,7 +331,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let wide = payload.len;
   let view = &header[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
