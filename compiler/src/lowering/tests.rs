@@ -2162,16 +2162,29 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn page_borrows_below_range_elements_keep_the_outer_projection() {
-    // One program per helper, so a failure names the borrow it concerns. The
-    // same borrow below a range element of `Box<Segments<T>>` does not emit
-    // yet; docs/todo.md records that defect.
+fn run_borrows_below_range_elements_keep_the_outer_projection() {
+    // One program per helper, so a failure names the borrow it concerns.
     let helpers = [
+        (
+            "segments",
+            r#"fn segments(rows: &[Box<Segments<u64>>], i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  doc "A segment count and borrow below a range element use the segment block address.";
+  if rows^[i].inner.len > 0_u64 {
+    let part = &rows^[i].inner[0_u64];
+    return part^.len;
+  }
+  return 0_u64;
+}
+"#,
+        ),
         (
             "pages",
             r#"fn pages(rows: &[Box<Paged<u64>>], i: u64) -> result: u64 reads(rows) contract {
   requires i < rows^.len;
 } {
+  doc "A page borrow below a range element retains the outer projection.";
   if rows^[i].inner.pages.len > 0_u64 {
     let page = &rows^[i].inner.pages[0_u64];
     return page^.len;
@@ -2185,6 +2198,7 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
             r#"fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) contract {
   requires i < rows^.len;
 } {
+  doc "A page borrow below a range element retains the outer projection.";
   if rows^[i].inner.pages.len > 0_u64 {
     let page = &rows^[i].inner.pages[0_u64];
     return page^.len;
@@ -2196,7 +2210,7 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
     ];
     for (name, helper) in helpers {
         let source = format!(
-            "{helper}\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "{helper}\nfn main() -> status: std::process::ExitStatus pure {{\n  doc \"Keep the helper available for lowering.\";\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir(source.as_bytes(), |program| {
             let operations = function(program, name)
@@ -2219,10 +2233,12 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 "{name}: address the enclosing range element: {operations:?}"
             );
             assert!(
-                operations
-                    .iter()
-                    .any(|operation| matches!(operation, IrOperation::PagedPage { .. })),
-                "{name}: borrow the selected page"
+                operations.iter().any(|operation| if name == "segments" {
+                    matches!(operation, IrOperation::SegmentSlice { .. })
+                } else {
+                    matches!(operation, IrOperation::PagedPage { .. })
+                }),
+                "{name}: borrow the selected run"
             );
             if let Err(failure) = crate::emit_llvm(program) {
                 panic!(
@@ -3041,4 +3057,114 @@ fn calls_to(program: &IrProgram, caller: &IrFunction, names: &[&str]) -> Vec<IrV
             _ => None,
         })
         .collect()
+}
+
+/// Direct and borrowed runs must feed the same slice-address lowering, for
+/// reads and writes alike. Contract proofs erase before either body is lowered.
+#[test]
+fn direct_run_places_emit_the_borrowed_element_address() {
+    for (storage, selector, outer_bound, selection) in [
+        ("Segments<u64>", "values^[item]", "values^.len", "segment"),
+        (
+            "Paged<u64>",
+            "values^.pages[item]",
+            "values^.pages.len",
+            "page",
+        ),
+    ] {
+        let source = format!(
+            r#"fn direct_access(values: &{storage}, item: u64, slot: u64) -> result: u64 writes(values) contract {{
+  requires item < {outer_bound};
+  requires slot < {selector}.len;
+}} {{
+  doc "Read and replace an element through a direct run place.";
+  let previous = {selector}[slot];
+  set {selector}[slot] = previous;
+  return previous;
+}}
+
+fn borrowed_access(values: &{storage}, item: u64, slot: u64) -> result: u64 writes(values) contract {{
+  requires item < {outer_bound};
+  requires slot < {selector}.len;
+}} {{
+  doc "Read and replace the same element through its bound range reference.";
+  let part = &{selector};
+  let previous = part^[slot];
+  set part^[slot] = previous;
+  return previous;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  doc "Keep both helper bodies available for address inspection.";
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_ir(source.as_bytes(), |program| {
+            let addresses = |name| {
+                let definitions = function(program, name)
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect::<std::collections::HashMap<_, _>>();
+                let mut result = Vec::new();
+                for instruction in function(program, name)
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                {
+                    let (slice, offset, write) = match instruction {
+                        IrInstruction::Define {
+                            operation: IrOperation::SliceIndex { slice, offset, .. },
+                            ..
+                        } => (slice, offset, false),
+                        IrInstruction::StoreSlice { slice, index, .. } => (slice, index, true),
+                        _ => continue,
+                    };
+                    let (owner, selected) = match definitions.get(slice).expect("slice producer") {
+                        IrOperation::SegmentSlice { segments, index } if selection == "segment" => {
+                            (*segments, *index)
+                        }
+                        IrOperation::PagedPage { paged, index } if selection == "page" => {
+                            (*paged, *index)
+                        }
+                        other => panic!("unexpected {selection} slice producer: {other:?}"),
+                    };
+                    // All three inputs are the unchanged helper parameters:
+                    // owner, selected run and offset within that run.
+                    let parameter = |value| {
+                        function(program, name)
+                            .parameters()
+                            .iter()
+                            .position(|(input, _)| *input == value)
+                            .expect("unchanged source parameter")
+                    };
+                    result.push((
+                        parameter(owner),
+                        parameter(selected),
+                        parameter(*offset),
+                        write,
+                    ));
+                }
+                result
+            };
+            let direct = addresses("direct_access");
+            let borrowed = addresses("borrowed_access");
+            assert_eq!(
+                direct.len(),
+                2,
+                "read and write element addresses: {direct:?}"
+            );
+            assert_eq!(
+                direct, borrowed,
+                "{selection}: direct and borrowed element address inputs"
+            );
+        });
+    }
 }

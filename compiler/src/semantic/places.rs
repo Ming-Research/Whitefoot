@@ -149,6 +149,14 @@ impl CapturedValue {
         Self::new(UNKNOWN_CAPTURE, CapturedTerm::Opaque)
     }
 
+    /// A current source spelling, rather than one captured formation's extent.
+    pub(crate) const fn is_current_spelling(self) -> bool {
+        matches!(
+            self.capture,
+            CaptureId::ValueDetermined | CaptureId::SpellingDetermined
+        )
+    }
+
     /// The identity this capture carries inside a goal datum [ENT-2].
     ///
     /// A goal datum is compared structurally, so a place written twice is one
@@ -334,6 +342,18 @@ pub(crate) enum PlaceStep {
     Part(WindowPart),
     /// One measure read [OP-15, MSR-1]: descriptor storage, never a slot.
     Measure(CheckedMeasure),
+}
+
+impl PlaceStep {
+    /// Offset support of a current measure place [MSR-2]. A bound page's
+    /// captured length does not depend on later values of its selector.
+    pub(crate) fn measure_offset_support(&self) -> Option<BindingId> {
+        match self {
+            Self::Index(offset) => offset.support(),
+            Self::Page(offset) if offset.is_current_spelling() => offset.support(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

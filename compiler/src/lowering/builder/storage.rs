@@ -121,6 +121,9 @@ fn collect_borrowed_place_expression(
             collect_place(root, bindings);
         }
         CheckedExpression::BorrowRangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
@@ -177,14 +180,23 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         }
         CheckedExpression::ArrayIndex { offset, .. } => collect_expression(offset, bindings),
         CheckedExpression::RangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
         CheckedExpression::RangeElementMeasure { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
         CheckedExpression::BorrowRangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
@@ -209,6 +221,9 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                     collect_place(root, bindings);
                 }
                 crate::semantic::CheckedRangeSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref() {
+                        collect_expression(formation, bindings);
+                    }
                     collect_expression(&place.offset, bindings);
                     collect_steps(&place.path, None, bindings);
                 }
@@ -230,6 +245,9 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                     collect_place(root, bindings);
                 }
                 crate::semantic::CheckedSegmentSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref() {
+                        collect_expression(formation, bindings);
+                    }
                     collect_expression(&place.offset, bindings);
                     collect_steps(&place.path, None, bindings);
                 }
@@ -238,11 +256,15 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                 collect_expression(offset, bindings);
             }
         }
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
+        }
         CheckedExpression::Constant(_)
         | CheckedExpression::NamedConstant { .. }
         | CheckedExpression::Binding { .. }
         | CheckedExpression::ArrayMeasure { .. }
-        | CheckedExpression::RangeMeasure { .. }
         | CheckedExpression::DerefAddressed { .. }
         | CheckedExpression::Project { .. } => {}
     }

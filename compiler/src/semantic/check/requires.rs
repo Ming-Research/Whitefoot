@@ -55,6 +55,9 @@ fn collect_clause_places(expression: &CheckedExpression, places: &mut Vec<Checke
         {
             places.push(expression.clone());
         }
+        CheckedExpression::RangeMeasure { root, .. } if root.formation.is_some() => {
+            places.push(expression.clone());
+        }
         CheckedExpression::RangeElementMeasure { .. } | CheckedExpression::RangeIndex { .. } => {
             places.push(expression.clone());
         }
@@ -138,8 +141,35 @@ fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &Definition
         | CheckedExpression::ReadStorage { root, .. } => {
             expand_definition_path_offsets(&mut root.path, offsets);
         }
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref_mut() {
+                expand_definition_offsets(formation, offsets);
+            }
+        }
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            match root {
+                super::super::model::CheckedSegmentSource::Storage(root) => {
+                    expand_definition_path_offsets(&mut root.path, offsets)
+                }
+                super::super::model::CheckedSegmentSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref_mut() {
+                        expand_definition_offsets(formation, offsets);
+                    }
+                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
+                    expand_definition_path_offsets(&mut place.path, offsets);
+                }
+            }
+            if let super::super::model::CheckedSegmentSelect::One(index)
+            | super::super::model::CheckedSegmentSelect::Page(index) = segment
+            {
+                expand_definition_offset(&mut index.offset, &mut index.captured, offsets);
+            }
+        }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref_mut() {
+                expand_definition_offsets(formation, offsets);
+            }
             expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
             expand_definition_path_offsets(&mut place.path, offsets);
         }
@@ -951,6 +981,7 @@ impl<'unit> TypeContext<'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
         };
         let (element, constant) = match ty {
+            _ if range_referent => (Some(self.intern_element(ty)?), None),
             CheckedType::Window {
                 element, capacity, ..
             } => (Some(element), capacity),
@@ -960,7 +991,6 @@ impl<'unit> TypeContext<'unit> {
             | CheckedType::Entries { element } => (Some(element), None),
             // [SHARE-1] a key set's keys are no element type of the program.
             CheckedType::KeySet => (None, None),
-            _ if range_referent => (Some(self.intern_element(ty)?), None),
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
         Ok(GoalOperation::ContainerMeasure {
@@ -1614,7 +1644,7 @@ impl<'unit> TypeContext<'unit> {
         else {
             // [CALL-4] a fragment-integer place reached through struct-field
             // and `Box` content steps is a datum as its own value.
-            let (projections, reached) = self.clause_member_projections(
+            let (projections, reached, _) = self.clause_member_projections(
                 check_context,
                 &suffixes,
                 datum_type,
@@ -1638,7 +1668,7 @@ impl<'unit> TypeContext<'unit> {
                 },
             )));
         };
-        let (projections, measured_type) = self.clause_member_projections(
+        let (projections, measured_type, measured_range) = self.clause_member_projections(
             check_context,
             &suffixes[..suffixes.len()
                 - if measure == CheckedMeasure::Pages {
@@ -1651,7 +1681,7 @@ impl<'unit> TypeContext<'unit> {
             bindings,
             expanded_bindings,
         )?;
-        let row = self.clause_measure_row(measure, measured_type, false)?;
+        let row = self.clause_measure_row(measure, measured_type, measured_range)?;
         Ok(Some(ExpandedClauseExpression::Operation {
             row,
             type_arguments: Vec::new(),
@@ -1695,7 +1725,7 @@ impl<'unit> TypeContext<'unit> {
                 .source_spelling(*prefix.last().unwrap())?
                 == ".pages"
         {
-            let (_, reached) = self.clause_member_projections(
+            let (_, reached, reached_range) = self.clause_member_projections(
                 check_context,
                 &prefix[..prefix.len() - 1],
                 base,
@@ -1703,20 +1733,22 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
-            if matches!(
-                reached,
-                CheckedType::Window {
-                    shape: super::super::model::WindowShape::Paged,
-                    ..
-                }
-            ) {
+            if !reached_range
+                && matches!(
+                    reached,
+                    CheckedType::Window {
+                        shape: super::super::model::WindowShape::Paged,
+                        ..
+                    }
+                )
+            {
                 return Ok(Some(CheckedMeasure::Pages));
             }
         }
         let (ty, range_referent) = if prefix.is_empty() {
             (base, range_referent)
         } else {
-            let (_, reached) = self.clause_member_projections(
+            let (_, reached, reached_range) = self.clause_member_projections(
                 check_context,
                 prefix,
                 base,
@@ -1724,7 +1756,7 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
-            (reached, false)
+            (reached, reached_range)
         };
         let measured = range_referent
             || super::expressions::flat_storage::measured_kind_of(ty).is_some()
@@ -1753,8 +1785,9 @@ impl<'unit> TypeContext<'unit> {
         mut range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
-    ) -> Result<(Vec<GoalProjection>, CheckedType), CheckStop> {
+    ) -> Result<(Vec<GoalProjection>, CheckedType, bool), CheckStop> {
         let mut projections = Vec::with_capacity(suffixes.len());
+        let mut pages = false;
         for suffix in suffixes {
             let range_step = std::mem::replace(&mut range_referent, false);
             // [ENT-2] clause (b) forms a place with field selections,
@@ -1771,8 +1804,31 @@ impl<'unit> TypeContext<'unit> {
                     bindings,
                     expanded_bindings,
                 )?;
-                projections.push(projection);
+                range_referent =
+                    !range_step && (pages || matches!(ty, CheckedType::Segments { .. }));
+                projections.push(if pages {
+                    let GoalProjection::Subscript(offset) = projection else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    GoalProjection::Page(offset)
+                } else {
+                    projection
+                });
+                pages = false;
                 ty = element;
+                continue;
+            }
+            if !range_step
+                && matches!(
+                    ty,
+                    CheckedType::Window {
+                        shape: super::super::model::WindowShape::Paged,
+                        ..
+                    }
+                )
+                && self.declarations.tree.source_spelling(*suffix)? == ".pages"
+            {
+                pages = true;
                 continue;
             }
             if let CheckedType::Nominal(nominal) = ty
@@ -1802,7 +1858,7 @@ impl<'unit> TypeContext<'unit> {
             projections.extend(fields.into_iter().map(GoalProjection::Field));
             ty = reached;
         }
-        Ok((projections, ty))
+        Ok((projections, ty, range_referent))
     }
     /// One written subscript inside a clause (b) place [ENT-2].
     ///
@@ -1836,9 +1892,9 @@ impl<'unit> TypeContext<'unit> {
             // type, which is the type its checked datum carries.
             _ if range_referent => base,
             CheckedType::Buffer { element } => self.element_type(element)?,
-            CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                self.element_type(element)?
-            }
+            CheckedType::Array { element, .. }
+            | CheckedType::Window { element, .. }
+            | CheckedType::Segments { element } => self.element_type(element)?,
             _ => {
                 return self
                     .declarations
@@ -2090,7 +2146,7 @@ impl<'unit> TypeContext<'unit> {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         if !fields_only.is_empty() {
-            let (projections, final_ty) = self.clause_member_projections(
+            let (projections, final_ty, selected_range) = self.clause_member_projections(
                 check_context,
                 fields_only,
                 expression.ty(),
@@ -2103,7 +2159,7 @@ impl<'unit> TypeContext<'unit> {
                     .with_projection(projection, final_ty)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             }
-            range_referent = false;
+            range_referent = selected_range;
         }
         // [OP-14, TYPE-9] `free_empty` writes one source contract for both
         // direct windows and Boxes holding runtime-capacity windows. At the

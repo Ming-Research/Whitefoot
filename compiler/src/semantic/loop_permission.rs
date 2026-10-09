@@ -1698,10 +1698,11 @@ impl<'check> Survey<'check, '_> {
             )),
             // [REF-4, MSR-2] a read through a range reference reads the path
             // the reference names; its own offset is this node's child.
-            CheckedExpression::RangeMeasure { root, .. } => Some((
-                root.binding,
-                self.places.resolve(PlaceRoot::Binding(root.binding), &[]),
-            )),
+            CheckedExpression::RangeMeasure { root, .. } => {
+                let places = self.places.resolve(PlaceRoot::Binding(root.binding), &root.place_path());
+                self.record_element_reads(range_root_subscripts(root), &places);
+                Some((root.binding, places))
+            },
             CheckedExpression::RangeElementMeasure { place, .. } => {
                 let places = self.places.resolve(
                     PlaceRoot::Binding(place.root.binding),
@@ -2439,8 +2440,28 @@ fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
 
 /// The subscripts of one element place through a range, outermost first:
 /// the range's own offset, then the nested subscripts below the element.
+fn range_root_subscripts(root: &super::model::CheckedRangeRoot) -> Vec<(&NodePath, bool)> {
+    match root.formation.as_deref() {
+        Some(CheckedExpression::BorrowSegment { root, segment, .. }) => {
+            let mut result = match root {
+                super::CheckedSegmentSource::Storage(root) => path_subscripts(&root.path),
+                super::CheckedSegmentSource::Element(place) => range_element_subscripts(place),
+            };
+            if let super::CheckedSegmentSelect::One(index)
+            | super::CheckedSegmentSelect::Page(index) = segment
+            {
+                result.push((&index.obligation, false));
+            }
+            result
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn range_element_subscripts(place: &CheckedRangeElementPlace) -> Vec<(&NodePath, bool)> {
-    std::iter::once((&place.obligation, false))
+    range_root_subscripts(&place.root)
+        .into_iter()
+        .chain(std::iter::once((&place.obligation, false)))
         .chain(path_subscripts(&place.path))
         .collect()
 }

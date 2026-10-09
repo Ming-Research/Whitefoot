@@ -1162,16 +1162,9 @@ impl Reasoning<'_, '_, '_> {
             }
             // [MSR-1, REF-4] a range reference's one measure, over the place
             // the reference names [REF-1].
-            CheckedExpression::RangeMeasure { measure, root } => (
-                *measure,
-                ResolvedPlace::spelled(
-                    PlaceRoot::Binding(root.binding),
-                    is_holder(root.binding),
-                    Vec::new(),
-                ),
-                MeasuredKind::Range,
-                None,
-            ),
+            CheckedExpression::RangeMeasure { measure, root } => {
+                (*measure, root.proof_place(), MeasuredKind::Range, None)
+            }
             // [MSR-1] a storage shape's measure reader names the
             // same [ENT-2] term the clause and the invariant name, so a `let`
             // over one is the ordinary [ENT-3.S6] equality a buffer's is.
@@ -1190,7 +1183,7 @@ impl Reasoning<'_, '_, '_> {
             {
                 return Some(self.place_measure_term(
                     *measure,
-                    ResolvedPlace::from_path(place.root.binding, place.place_path()),
+                    place.proof_place(),
                     place.measured()?,
                     place.type_constant(),
                 ));

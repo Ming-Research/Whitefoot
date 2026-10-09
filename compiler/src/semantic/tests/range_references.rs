@@ -1002,3 +1002,128 @@ fn main() -> status: std::process::ExitStatus pure {{
         |kind| matches!(kind, SemanticIssueKind::InvalidReferenceUse { .. }),
     );
 }
+
+/// The checked paths, rather than merely acceptance, must identify the same
+/// storage under direct access and a bound range, with ordinary OWN-7 answers.
+#[test]
+fn direct_segment_elements_retain_borrowed_place_identity() {
+    use crate::semantic::model::{CheckedExpression, CheckedSetTarget, CheckedStatement};
+    use crate::semantic::places::{PlaceMap, PlaceRoot, UnprovedSeparations, places_overlap};
+    let source =
+        br#"fn inspect_runs(runs: &Segments<u64>, slot: u64) -> result: u64 writes(runs) contract {
+  requires 1_u64 < runs^.len;
+  requires slot < runs^[0_u64].len;
+  requires slot < runs^[1_u64].len;
+} {
+  doc "Direct elements and borrowed elements carry one checked storage path.";
+  let first_run = &runs^[0_u64];
+  let direct_first = runs^[0_u64][slot];
+  let borrowed_first = first_run^[slot];
+  let direct_second = runs^[1_u64][slot];
+  set runs^[0_u64][slot] = borrowed_first;
+  return direct_second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Inspect the helper's checked identities without executing it.";
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|f| f.name == "inspect_runs")
+            .expect("helper");
+        let places = PlaceMap::for_function(function);
+        let body = function.body.as_deref().expect("body");
+        let elements = body
+            .iter()
+            .filter_map(|statement| match statement {
+                CheckedStatement::Let {
+                    value: CheckedExpression::RangeIndex { place, .. },
+                    ..
+                } => Some(place),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(elements.len(), 3);
+        let resolved = elements
+            .iter()
+            .map(|place| {
+                places.resolve(PlaceRoot::Binding(place.root.binding), &place.place_path())[0]
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolved[0].clone().term_identity(),
+            resolved[1].clone().term_identity()
+        );
+        assert!(!places_overlap(
+            &UnprovedSeparations,
+            &resolved[0],
+            &resolved[2]
+        ));
+        let run = &elements[0].root;
+        let whole = places.resolve(PlaceRoot::Binding(run.binding), &run.place_path());
+        assert!(places_overlap(
+            &UnprovedSeparations,
+            &resolved[0],
+            &whole[0]
+        ));
+        let target = body
+            .iter()
+            .find_map(|statement| match statement {
+                CheckedStatement::Set {
+                    target: CheckedSetTarget::RangeIndex(place),
+                    ..
+                } => Some(place),
+                _ => None,
+            })
+            .expect("direct set target");
+        let written = places.resolve(
+            PlaceRoot::Binding(target.root.binding),
+            &target.place_path(),
+        );
+        assert_eq!(
+            written[0].clone().term_identity(),
+            resolved[1].clone().term_identity()
+        );
+    });
+}
+
+/// Negative conformance verdicts must come from the missing inner bound,
+/// not from the old rejection of a run selector as an element base.
+#[test]
+fn direct_run_elements_report_the_undischarged_inner_bound() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-segment-place-element-bound.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-element-bound.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-segment-count-is-not-element-length.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-stale-length.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op4-neg-paged-page-place-offset-written.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Op4, |kind| {
+            matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. })
+        });
+    }
+}

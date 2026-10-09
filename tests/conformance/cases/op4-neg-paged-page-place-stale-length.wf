@@ -1,0 +1,19 @@
+fn invalid(values: &Paged<u64>) -> result: u64 writes(values) contract {
+  requires 2_u64 <= values^.len;
+} {
+  doc "A direct page-length observation loses its bound when removal changes the extent.";
+  if 0_u64 < values^.pages.len {
+    if 1_u64 < values^.pages[0_u64].len {
+      let removed = take_back(window: values);
+      if 0_u64 < values^.pages.len {
+        return values^.pages[0_u64][1_u64];
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The preceding function is rejected at its invalid run-place use.";
+  return std::process::exit_status(code: 0_u8);
+}

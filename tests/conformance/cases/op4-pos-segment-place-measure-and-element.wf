@@ -1,0 +1,75 @@
+fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(values) {
+  doc "Read the length directly from a bounded segment place.";
+  if item < values^.inner.len {
+    return values^.inner[item].len;
+  }
+  return 0_u64;
+}
+
+fn edit_segment(values: &Box<Segments<i32>>, item: u64, slot: u64) -> value: i32 writes(values) {
+  doc "A direct element read and write address the same element as the borrowed run.";
+  if item < values^.inner.len {
+    if slot < values^.inner[item].len {
+      let before = values^.inner[item][slot];
+      set values^.inner[item][slot] = before +wrap 5_i32;
+      let borrowed = &values^.inner[item];
+      if slot < borrowed^.len {
+        return borrowed^[slot];
+      }
+    }
+  }
+  return 0_i32;
+}
+
+fn array_element_length(rows: &Segments<Array<u64, 4>>, segment: u64, offset: u64) -> count: u64 reads(rows) contract {
+  requires segment < rows^.len;
+  requires offset < rows^[segment].len;
+} {
+  doc "The run length in a contract counts complete arrays rather than their four inner elements.";
+  return rows^[segment][offset].len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check segment lengths, direct writes, borrowed reads and adjacent segment preservation.";
+  let widths = box_array_filled::<u64>(count: 3_u64, value: 2_u64);
+  set widths.inner[1_u64] = 0_u64;
+  set widths.inner[2_u64] = 4_u64;
+  let storage = box_segments_filled::<i32>(lengths: &widths.inner[0_u64..3_u64], value: 7_i32);
+  let empty_length = segment_length(values: &storage, item: 1_u64);
+  if empty_length != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if storage.inner[0_u64].len != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let changed = edit_segment(values: &storage, item: 2_u64, slot: 3_u64);
+  if changed != 12_i32 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if storage.inner.len != 3_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if storage.inner[0_u64].len != 2_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  if storage.inner[2_u64].len != 4_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if storage.inner[2_u64][3_u64] != 12_i32 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if storage.inner[0_u64][1_u64] != 7_i32 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let row = array_filled::<u64, 4>(value: 9_u64);
+  let array_widths = box_array_filled::<u64>(count: 1_u64, value: 2_u64);
+  let arrays = box_segments_filled::<Array<u64, 4>>(lengths: &array_widths.inner[0_u64..1_u64], value: row);
+  if arrays.inner[0_u64].len != 2_u64 {
+    return std::process::exit_status(code: 9_u8);
+  }
+  let array_length = array_element_length(rows: &arrays.inner, segment: 0_u64, offset: 1_u64);
+  if array_length != 4_u64 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

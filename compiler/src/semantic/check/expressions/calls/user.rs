@@ -1316,11 +1316,7 @@ impl<'unit> TypeContext<'unit> {
                     element: Some(root.element),
                     constant: None,
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: root.binding,
-                    projections: Vec::new(),
-                    ty: root.element_type,
-                }),
+                self.goal_referent_image(&root.proof_place(), root.element_type, atom)?,
             )),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1331,11 +1327,7 @@ impl<'unit> TypeContext<'unit> {
                     element: place.element(),
                     constant: place.type_constant(),
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: place.root.binding,
-                    projections: place.goal_projections(),
-                    ty: place.ty,
-                }),
+                self.goal_referent_image(&place.proof_place(), place.ty, atom)?,
             )),
             _ => None,
         };

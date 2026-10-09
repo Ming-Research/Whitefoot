@@ -359,8 +359,7 @@ impl Input<'_, '_> {
             }
             // [MSR-1, REF-4] the one measure a range reference has.
             CheckedExpression::RangeMeasure { measure, root } => {
-                let argument =
-                    goal_binding_place(root.binding, Vec::new(), root.element_type);
+                let argument = self.goal_place_datum(&root.proof_place(), root.element_type)?;
                 build_operation(
                     // Clause formation uses the ordinary measured-place
                     // row. A body read must have that same structural goal
@@ -381,11 +380,7 @@ impl Input<'_, '_> {
                 if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let measured = place.measured()?;
-                let argument = goal_binding_place(
-                    place.root.binding,
-                    place.goal_projections(),
-                    place.ty,
-                );
+                let argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
                 build_operation(
                     GoalOperation::ContainerMeasure {
                         measure: *measure,
@@ -403,11 +398,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { place, .. }
                 if admitted_partial && place.path.is_empty() =>
             {
-                let collection = goal_binding_place(
-                    place.root.binding,
-                    Vec::new(),
-                    place.root.element_type,
-                );
+                let collection = self.goal_place_datum(&place.root.proof_place(), place.root.element_type)?;
                 build_operation(
                     GoalOperation::RunIndex {
                         measured: MeasuredKind::Range,

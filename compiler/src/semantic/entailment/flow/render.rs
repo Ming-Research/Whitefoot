@@ -139,15 +139,14 @@ impl Input<'_, '_> {
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             CheckedExpression::RangeMeasure { measure, root } => {
-                (*measure, root.binding, Vec::new())
+                return Some(format!(
+                    "{}.{}",
+                    self.render_header_place(&root.proof_place(), counted_next_binder),
+                    measure.spelling()
+                ));
             }
             CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-                let mut resolved = ResolvedPlace::spelled(
-                    PlaceRoot::Binding(place.root.binding),
-                    is_holder(place.root.binding),
-                    Vec::new(),
-                );
-                resolved.path.extend(place.place_path());
+                let resolved = place.proof_place();
                 return Some(format!(
                     "{}.{}",
                     self.render_header_place(&resolved, counted_next_binder),
@@ -734,20 +733,11 @@ impl Input<'_, '_> {
             ),
             CheckedExpression::RangeMeasure { measure, root } => format!(
                 "{}.{}",
-                self.render_place(&ResolvedPlace::spelled(
-                    PlaceRoot::Binding(root.binding),
-                    is_holder(root.binding),
-                    Vec::new()
-                )),
+                self.render_place(&root.proof_place()),
                 measure.spelling(),
             ),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-                let mut resolved = ResolvedPlace::spelled(
-                    PlaceRoot::Binding(place.root.binding),
-                    is_holder(place.root.binding),
-                    Vec::new(),
-                );
-                resolved.path.extend(place.place_path());
+                let resolved = place.proof_place();
                 format!("{}.{}", self.render_place(&resolved), measure.spelling())
             }
             CheckedExpression::ArrayMeasure { measure, root, .. } => format!(

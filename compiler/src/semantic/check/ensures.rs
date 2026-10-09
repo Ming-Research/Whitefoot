@@ -2145,6 +2145,74 @@ impl<'unit> TypeContext<'unit> {
             source: source.clone(),
         }))
     }
+    fn postcondition_range_place(
+        &self,
+        root: &super::super::model::CheckedRangeRoot,
+        source: &crate::NodePath,
+        binding_info: &HashMap<BindingId, PostconditionBindingInfo>,
+    ) -> Result<Option<PostconditionReturnPlace>, CheckStop> {
+        if let Some(CheckedExpression::BorrowSegment {
+            root: base,
+            segment,
+            ..
+        }) = root.formation.as_deref()
+        {
+            let place = match base {
+                super::super::model::CheckedSegmentSource::Storage(base) => {
+                    let Some(binding) = base.binding() else {
+                        return Ok(None);
+                    };
+                    self.postcondition_storage_place(
+                        binding,
+                        &base.path,
+                        base.ty,
+                        source,
+                        binding_info,
+                    )?
+                }
+                super::super::model::CheckedSegmentSource::Element(element) => {
+                    let Some(mut place) =
+                        self.postcondition_range_place(&element.root, source, binding_info)?
+                    else {
+                        return Ok(None);
+                    };
+                    place.projections.extend(element.goal_projections());
+                    Some(place)
+                }
+            };
+            let Some(mut place) = place else {
+                return Ok(None);
+            };
+            place.projections.push(match segment {
+                super::super::model::CheckedSegmentSelect::One(index) => {
+                    GoalProjection::Subscript(index.captured.goal_identity())
+                }
+                super::super::model::CheckedSegmentSelect::Page(index) => {
+                    GoalProjection::Page(index.captured.goal_identity())
+                }
+                super::super::model::CheckedSegmentSelect::All(range) => {
+                    GoalProjection::Range(*range)
+                }
+            });
+            place.ty = root.element_type;
+            place.range_referent = true;
+            return Ok(Some(place));
+        }
+        let Some(info) = binding_info.get(&root.binding) else {
+            return Ok(None);
+        };
+        if info.ty != root.element_type {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        Ok(Some(PostconditionReturnPlace {
+            root: PostconditionReturnPlaceRoot::Binding(root.binding),
+            projections: Vec::new(),
+            ty: root.element_type,
+            range_referent: true,
+            source: source.clone(),
+        }))
+    }
+
     fn postcondition_projected_type(
         &self,
         mut ty: CheckedType,
@@ -2730,42 +2798,19 @@ impl<'unit> TypeContext<'unit> {
             // binding mode rather than `CheckedType`, so retain that kind for
             // the selected-return proof instead of trying to recover it from
             // the element type.
-            CheckedExpression::RangeMeasure { measure, root } => {
-                let Some(info) = binding_info.get(&root.binding) else {
-                    return Ok(None);
-                };
-                let element = root.element_type;
-                if info.ty != element {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                Ok(Some(PostconditionReturnDatum::Measure(
-                    *measure,
-                    PostconditionReturnPlace {
-                        root: PostconditionReturnPlaceRoot::Binding(root.binding),
-                        projections: Vec::new(),
-                        ty: element,
-                        range_referent: true,
-                        source: statement.clone(),
-                    },
-                )))
-            }
+            CheckedExpression::RangeMeasure { measure, root } => Ok(self
+                .postcondition_range_place(root, statement, binding_info)?
+                .map(|place| PostconditionReturnDatum::Measure(*measure, place))),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-                let Some(info) = binding_info.get(&place.root.binding) else {
+                let Some(mut selected) =
+                    self.postcondition_range_place(&place.root, statement, binding_info)?
+                else {
                     return Ok(None);
                 };
-                if info.ty != place.root.element_type {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                Ok(Some(PostconditionReturnDatum::Measure(
-                    *measure,
-                    PostconditionReturnPlace {
-                        root: PostconditionReturnPlaceRoot::Binding(place.root.binding),
-                        projections: place.goal_projections(),
-                        ty: place.ty,
-                        range_referent: false,
-                        source: statement.clone(),
-                    },
-                )))
+                selected.projections.extend(place.goal_projections());
+                selected.ty = place.ty;
+                selected.range_referent = false;
+                Ok(Some(PostconditionReturnDatum::Measure(*measure, selected)))
             }
             CheckedExpression::BufferMeasure { measure, root } => {
                 let expected = CheckedType::Buffer {

@@ -1,0 +1,9 @@
+fn invalid(values: &Segments<u64>, item: u64) -> result: u64 reads(values) {
+  doc "A direct length read owes the segment selector bound.";
+  return values^[item].len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The preceding function is rejected at its invalid run-place use.";
+  return std::process::exit_status(code: 0_u8);
+}

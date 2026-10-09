@@ -160,6 +160,7 @@ impl<'unit> Checker<'_, 'unit> {
                     expression: CheckedExpression::RangeMeasure {
                         measure,
                         root: super::super::super::model::CheckedRangeRoot {
+                            formation: None,
                             binding,
                             element,
                             element_type: place.ty,

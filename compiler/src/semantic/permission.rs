@@ -1923,6 +1923,9 @@ pub(super) fn set_target_place(
         // [REF-4] a range reference names one path, so the element a
         // subscript through it writes is that path extended by the index.
         CheckedSetTarget::RangeIndex(target) => {
+            if let Some(formation) = target.root.formation.as_deref() {
+                collect_operand_reads(places, formation, node, footprint);
+            }
             collect_operand_reads(places, &target.offset, node, footprint);
             for step in &target.path {
                 if let CheckedPlaceStep::Subscript(index) = step {
@@ -2235,7 +2238,7 @@ fn collect_operand_reads(
         CheckedExpression::RangeMeasure { root, .. } => {
             read(
                 footprint,
-                places.resolve(PlaceRoot::Binding(root.binding), &[]),
+                places.resolve(PlaceRoot::Binding(root.binding), &root.place_path()),
             );
         }
         CheckedExpression::RangeElementMeasure { place, .. }
