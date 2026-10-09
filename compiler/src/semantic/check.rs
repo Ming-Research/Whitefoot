@@ -255,6 +255,8 @@ struct LocalBinding {
     /// Compiler-updated counted binders are readable source bindings but are
     /// never writer-controlled storage [SET-1, OWN-11].
     compiler_updated: bool,
+    /// SHARE-2 authority of this atomic state root; aliases retain the root.
+    read_only_state: bool,
     /// [REF-1] what this binding names when it is a reference variable: its
     /// path set, its kind, and its [REF-2] validity. `None` is storage of its
     /// own.
@@ -2122,6 +2124,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             live: true,
             loop_depth: 0,
             compiler_updated: false,
+            read_only_state: false,
             // [REF-1] a reference parameter arrives naming the caller's path
             // by substitution [EFF-5]; inside this body the parameter name is
             // that path, so its set anchors at itself and every resolution

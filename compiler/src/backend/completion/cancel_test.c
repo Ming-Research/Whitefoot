@@ -20,9 +20,19 @@ static wf_driver firing_driver;
 static int frame;
 
 static void *fire_on_other_driver(void *source) {
+    wf_context firing = {0};
+    wf_host_operation call = {0};
+    uint8_t result = 0xff;
+    firing.driver = &firing_driver;
     wf_driver_self = &firing_driver;
-    wf__body_cancel_fire(source);
-    wf__body_cancel_fire(source); /* idempotent */
+    wf_context_current = &firing;
+    for (unsigned repeat = 0; repeat < 2; ++repeat) {
+        CHECK(wf__body_cancel_fire_start(&result, source, &call) == 3);
+        CHECK(wf__context_wait(&call, &frame) == 0);
+        wf__body_cancel_fire_finish(&result, source, &call);
+        CHECK(result == 0);
+    }
+    wf_context_current = NULL;
     wf_driver_self = NULL;
     return NULL;
 }
@@ -68,6 +78,217 @@ static void stopped_result(const wf_read_result *result, unsigned char byte, uns
     CHECK(result->err.error.tag == 1);
     CHECK(result->err.error.error.tag == reason);
     CHECK(byte == 0xcc);
+}
+
+typedef struct wake_race {
+    wf_value *source;
+    void *ordinary;
+    _Atomic unsigned arrived;
+    _Atomic unsigned go;
+} wake_race;
+
+static void meet_wake_race(wake_race *race) {
+    atomic_fetch_add(&race->arrived, 1u);
+    while (!atomic_load(&race->go)) wf_prim_yield();
+}
+
+static void *race_fire(void *opaque) {
+    wake_race *race = opaque;
+    meet_wake_race(race);
+    return fire_on_other_driver(race->source);
+}
+
+static void *race_write(void *opaque) {
+    wake_race *race = opaque;
+    wf_context writer = {0};
+    writer.driver = &firing_driver;
+    wf_driver_self = &firing_driver;
+    wf_context_current = &writer;
+    meet_wake_race(race);
+    CHECK(wf__shared_acquire(race->ordinary, 1u, &frame) == 0);
+    wf__shared_unlock(race->ordinary, 1u);
+    wf_context_current = NULL;
+    wf_driver_self = NULL;
+    return NULL;
+}
+
+/* Each schedule uses the production start/wait/finish and guard protocol.
+ * The watchdog, never a program deadline, detects a lost wake. */
+static void guard_races(void) {
+    wf_value source, watch;
+    wf_watch guard;
+    wf_test_guard_phase("cancellation guard: fire before registration");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    wf_cancel *view = wf__body_cancel_state(&watch);
+    CHECK(view == (void *)wf_value_pointer(&source));
+    fire_elsewhere(&source);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 1u);
+    wf__shared_unlock(view, 1u);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+
+    wf_test_guard_phase("cancellation guard: register before fire before park");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    view = wf__body_cancel_state(&watch);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 0u);
+    wf__watch_begin(&guard);
+    wf__watch_object(&guard, view);
+    wf__watch_object(&guard, view);
+    CHECK(guard.used == 1u && view->shared.watched == 1u);
+    wf__shared_unlock(view, 1u);
+    fire_elsewhere(&source);
+    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(guard.used == 0u && view->shared.watched == 0u);
+    CHECK(view->shared.watching == NULL);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+
+    wf_test_guard_phase("cancellation guard: two parked contexts on two drivers");
+    wf_context other = {0};
+    wf_watch other_guard;
+    other.driver = &firing_driver;
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    view = wf__body_cancel_state(&watch);
+    void *ordinary = wf__shared_new(1u);
+    for (unsigned index = 0; index < 2; ++index) {
+        wf_watch *current = index ? &other_guard : &guard;
+        wf_context_current = index ? &other : &wf_context_root;
+        wf_driver_self = index ? &firing_driver : &wf_driver_root;
+        CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+        CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+        CHECK(view->visible_fired == 0u);
+        wf__watch_begin(current);
+        wf__watch_object(current, view);
+        wf__watch_object(current, ordinary);
+        wf__shared_unlock(ordinary, 1u);
+        wf__shared_unlock(view, 1u);
+        CHECK(wf__watch_park(current, &frame) == 1);
+    }
+    wf_context_current = &wf_context_root;
+    wf_driver_self = &wf_driver_root;
+    fire_elsewhere(&source);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(wf_run_take(&firing_driver) == &other);
+    CHECK(wf_run_take(&firing_driver) == NULL);
+    CHECK(guard.used == 0u && other_guard.used == 0u);
+    CHECK(view->shared.watching == NULL && view->shared.watched == 0u);
+    CHECK(((wf_shared *)ordinary)->watching == NULL);
+    CHECK(((wf_shared *)ordinary)->watched == 0u);
+    /* A later write on another dependency cannot enqueue either twice. */
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    wf__shared_unlock(ordinary, 1u);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(wf_run_take(&firing_driver) == NULL);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 1u && atomic_load(&view->fired) == 1u);
+    wf__shared_unlock(view, 1u);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+    CHECK(wf__shared_release(ordinary));
+    wf__shared_free(ordinary);
+
+    wf_test_guard_phase("cancellation guard: concurrent state and firing wakes");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    view = wf__body_cancel_state(&watch);
+    ordinary = wf__shared_new(1u);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    wf__watch_begin(&guard);
+    wf__watch_object(&guard, view);
+    wf__watch_object(&guard, ordinary);
+    wf__shared_unlock(ordinary, 1u);
+    wf__shared_unlock(view, 1u);
+    CHECK(wf__watch_park(&guard, &frame) == 1);
+    wake_race race = { .source = &source, .ordinary = ordinary };
+    pthread_t fire_thread, write_thread;
+    CHECK(pthread_create(&fire_thread, NULL, race_fire, &race) == 0);
+    CHECK(pthread_create(&write_thread, NULL, race_write, &race) == 0);
+    while (atomic_load(&race.arrived) != 2u) wf_prim_yield();
+    atomic_store(&race.go, 1u);
+    CHECK(pthread_join(fire_thread, NULL) == 0);
+    CHECK(pthread_join(write_thread, NULL) == 0);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(guard.used == 0u && view->shared.watched == 0u);
+    CHECK(view->shared.watching == NULL);
+    CHECK(((wf_shared *)ordinary)->watched == 0u);
+    CHECK(((wf_shared *)ordinary)->watching == NULL);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+    CHECK(wf__shared_release(ordinary));
+    wf__shared_free(ordinary);
+
+    wf_test_guard_phase("cancellation fire: parked acquisition and retry");
+    wf_context firing = {0};
+    wf_host_operation call = {0};
+    uint8_t result = 0xff;
+    firing.driver = &firing_driver;
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    view = wf__body_cancel_state(&watch);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    wf_context_current = &firing;
+    wf_driver_self = &firing_driver;
+    CHECK(wf__body_cancel_fire_start(&result, &source, &call) == 3);
+    CHECK(wf__context_wait(&call, &frame) == 1);
+    CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
+    CHECK(result == 0xff && firing.record == NULL);
+    wf_context_current = &wf_context_root;
+    wf_driver_self = &wf_driver_root;
+    wf__shared_unlock(view, 1u);
+    CHECK(wf_run_take(&firing_driver) == &firing);
+    /* A contender wins before the woken fire; its next wait must retry. */
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    wf_context_current = &firing;
+    wf_driver_self = &firing_driver;
+    CHECK(wf__context_wait(&call, &frame) == 1);
+    CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
+    wf_context_current = &wf_context_root;
+    wf_driver_self = &wf_driver_root;
+    wf__shared_unlock(view, 1u);
+    CHECK(wf_run_take(&firing_driver) == &firing);
+    wf_context_current = &firing;
+    wf_driver_self = &firing_driver;
+    CHECK(wf__context_wait(&call, &frame) == 0);
+    wf__body_cancel_fire_finish(&result, &source, &call);
+    CHECK(result == 0 && view->visible_fired == 1u && atomic_load(&view->fired) == 1u);
+    CHECK(view->shared.waiting_head == NULL && view->shared.waiting_tail == NULL);
+    CHECK(atomic_load(&view->shared.holders) == 0u);
+    CHECK(wf_run_take(&firing_driver) == NULL);
+    wf_context_current = &wf_context_root;
+    wf_driver_self = &wf_driver_root;
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+
+    wf_test_guard_phase("cancellation view: retained never state");
+    wf__body_cancel_never(&watch);
+    view = wf__body_cancel_state(&watch);
+    void *same = wf__body_cancel_state(&watch);
+    CHECK(view == same);
+    wf__body_close_cancel_watch(&watch);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
+    wf__shared_unlock(view, 1u);
+    CHECK(!wf__shared_release(same));
+    CHECK(!wf__shared_release(view));
 }
 
 int main(void) {
@@ -136,7 +357,7 @@ int main(void) {
     wf__body_cancel_watch(&watch, &source);
     wf_deadline later = {0};
     later.tag = WF_OPTION_SOME;
-    later.value.words[0] = wf_file_monotonic_ns() + UINT64_C(60000000000);
+    later.value.ticks = wf_file_monotonic_ns() + UINT64_C(60000000000);
     parked(wf__body_receive_next_start(&result, &receive, &destination,
                                              0, 1, &later, &watch, operation()));
     CHECK(wf_driver_root.timer_count == 1);
@@ -169,7 +390,7 @@ int main(void) {
     /* Clock expiry removes the same watch even when the source never fires. */
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
-    later.value.words[0] = 1;
+    later.value.ticks = 1;
     parked(wf__body_receive_next_start(&result, &receive, &destination,
                                              0, 1, &later, &watch, operation()));
     finish_park();
@@ -224,14 +445,14 @@ int main(void) {
      * No host timeout is allowed to stand in for the firing. */
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
-    wf_value future = {{wf_file_monotonic_ns() + UINT64_C(60000000000), 0, 0, 0}};
+    wf_instant future = {wf_file_monotonic_ns() + UINT64_C(60000000000)};
     wf_sleep_result slept;
     parked(wf__body_sleep_until_start(&slept, &future, &watch, operation()));
     fire_elsewhere(&source);
     finish_park();
     wf__body_sleep_until_finish(&slept, &future, &watch, operation());
     CHECK(slept.tag == 1);
-    CHECK(wf_file_monotonic_ns() < future.words[0]);
+    CHECK(wf_file_monotonic_ns() < future.ticks);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
 
@@ -271,6 +492,7 @@ int main(void) {
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
 
+    guard_races();
     CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
     atomic_store(&wf_driver_count, 1u);
     while (atomic_load(&wf_drivers_notifying) != 0u) wf_prim_yield();

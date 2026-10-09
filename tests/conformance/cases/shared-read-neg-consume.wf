@@ -1,0 +1,13 @@
+nocopy struct State {
+  value: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = State(value: 1_u8);
+  let owner = shared_new::<State>(value: move initial);
+  let view = shared_read::<State>(shared: &owner);
+  atomic held = &view {
+    let taken = move held^;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

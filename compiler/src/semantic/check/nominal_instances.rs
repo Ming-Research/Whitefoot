@@ -756,16 +756,18 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(template.name.as_str(), "Shared" | "ConcurrentHashMap")
-                        && self
-                            .types
-                            .declarations
-                            .is_prelude_opaque_declaration(template.node)? =>
+                    if matches!(
+                        template.name.as_str(),
+                        "Shared" | "SharedRead" | "ConcurrentHashMap"
+                    ) && self
+                        .types
+                        .declarations
+                        .is_prelude_opaque_declaration(template.node)? =>
                 {
                     let state = substitution
                         .first_type_argument()
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let shape = if template.name == "Shared" {
+                    let shape = if matches!(template.name.as_str(), "Shared" | "SharedRead") {
                         CheckedShared::Object
                     } else {
                         // A table's entries are the prelude's `Option<V>`.
@@ -781,7 +783,13 @@ impl<'unit> Checker<'_, 'unit> {
                     if self
                         .types
                         .declarations
-                        .is_opaque_declaration(template.node)? =>
+                        .is_opaque_declaration(template.node)?
+                        && self
+                            .types
+                            .declarations
+                            .tree
+                            .children_with(template.node, Production::Field)?
+                            .is_empty() =>
                 {
                     CheckedNominalKind::Opaque
                 }
