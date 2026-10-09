@@ -1467,7 +1467,6 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
       }
     }
   }
-  return 0_u32;
 }
 
 fn make_add() -> result: Cell pure {
