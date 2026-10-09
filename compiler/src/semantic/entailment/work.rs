@@ -19,6 +19,21 @@
 //!   full, ordinary-fallback and expanded-row passes; `intern_calls` counts
 //!   ledger interning attempts before deduplication; `closure_cache_hits`
 //!   counts remembered closed-view reuse.
+//! - `function` also aggregates affine work: `affine_attempts` counts query
+//!   preparations (ordinary targets and certificate residuals);
+//!   `affine_memo_hits` and `affine_memo_misses` partition those attempts by
+//!   closed-state identity and complete ordered candidate equality.
+//!   `affine_cold_demands` counts distinct vector requests before promotion,
+//!   including absent vectors and the request that triggers promotion.
+//!   `affine_left_candidates_scanned` counts left candidates visited by lazy
+//!   requests, including failed inverse keys; the promotion-triggering request
+//!   scans none. It excludes the complete builder's pair traversal.
+//!   `affine_promotions` counts complete builds, at most one per residency.
+//!   `affine_final_family_starts` counts entry into AUTO's final L0 family;
+//!   `affine_final_family_exhaustions` counts those traversals returning no
+//!   proof after all entries. Repeated traversals count separately even when
+//!   the complete index is reused. Cold scans are aggregated per request;
+//!   all affine counters are aggregated per function before emission.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
 //!   `union_rows` counts contributing closure rows plus requested extra rows
@@ -83,6 +98,18 @@ struct JoinWork {
     intern_calls: u64,
 }
 
+#[derive(Default)]
+struct AffineWork {
+    attempts: u64,
+    memo_hits: u64,
+    memo_misses: u64,
+    cold_demands: u64,
+    left_candidates_scanned: u64,
+    promotions: u64,
+    final_family_starts: u64,
+    final_family_exhaustions: u64,
+}
+
 struct FunctionWork {
     run: u64,
     name: String,
@@ -94,6 +121,7 @@ struct FunctionWork {
     probes: Sizes,
     closure_cache_hits: u64,
     intern_calls: u64,
+    affine: AffineWork,
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
@@ -142,6 +170,7 @@ pub(super) fn function(name: &str) -> FunctionScope {
             probes: Sizes::default(),
             closure_cache_hits: 0,
             intern_calls: 0,
+            affine: AffineWork::default(),
         }))
     });
     FunctionScope(previous, true)
@@ -235,6 +264,45 @@ pub(super) fn closure_cache_hit() {
     update(|work| work.closure_cache_hits = work.closure_cache_hits.saturating_add(1));
 }
 
+pub(super) fn affine_query(hit: bool) {
+    update(|work| {
+        let affine = &mut work.affine;
+        affine.attempts = affine.attempts.saturating_add(1);
+        if hit {
+            affine.memo_hits = affine.memo_hits.saturating_add(1);
+        } else {
+            affine.memo_misses = affine.memo_misses.saturating_add(1);
+        }
+    });
+}
+
+pub(super) fn affine_cold_demand(left_candidates: usize) {
+    update(|work| {
+        let affine = &mut work.affine;
+        affine.cold_demands = affine.cold_demands.saturating_add(1);
+        affine.left_candidates_scanned = affine
+            .left_candidates_scanned
+            .saturating_add(left_candidates as u64);
+    });
+}
+
+pub(super) fn affine_promotion() {
+    update(|work| work.affine.promotions = work.affine.promotions.saturating_add(1));
+}
+
+pub(super) fn affine_final_family_start() {
+    update(|work| {
+        work.affine.final_family_starts = work.affine.final_family_starts.saturating_add(1);
+    });
+}
+
+pub(super) fn affine_final_family_exhausted() {
+    update(|work| {
+        work.affine.final_family_exhaustions =
+            work.affine.final_family_exhaustions.saturating_add(1);
+    });
+}
+
 impl FunctionWork {
     fn write(&self) {
         use std::fmt::Write as _;
@@ -252,6 +320,24 @@ impl FunctionWork {
         row("function", 0, "join_passes", self.passes.len() as u64);
         row("function", 0, "intern_calls", self.intern_calls);
         row("function", 0, "closure_cache_hits", self.closure_cache_hits);
+        for (metric, value) in [
+            ("affine_attempts", self.affine.attempts),
+            ("affine_memo_hits", self.affine.memo_hits),
+            ("affine_memo_misses", self.affine.memo_misses),
+            ("affine_cold_demands", self.affine.cold_demands),
+            (
+                "affine_left_candidates_scanned",
+                self.affine.left_candidates_scanned,
+            ),
+            ("affine_promotions", self.affine.promotions),
+            ("affine_final_family_starts", self.affine.final_family_starts),
+            (
+                "affine_final_family_exhaustions",
+                self.affine.final_family_exhaustions,
+            ),
+        ] {
+            row("function", 0, metric, value);
+        }
         for (kind, sizes) in [
             ("snapshot", &self.snapshots),
             ("closure", &self.closures),
