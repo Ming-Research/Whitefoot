@@ -548,6 +548,90 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn read_through_distinguishes_previous_and_fresh_loop_snapshots() {
+    let source = format!(
+        "{VALUES}{}",
+        r#"
+fn carried(values: &Box<Slots<Value>>, index: u64) -> result: u64 writes(values.inner[index]) contract {
+  requires index < values^.inner.len;
+} {
+  let last = Value::Number(n: 3_u64);
+  let total = 0_u64;
+  for (i in 0_u64..3_u64) {
+    let next = i +wrap 7_u64;
+    set values^.inner[index] = Value::Number(n: next);
+    let current = values^.inner[index];
+    let old = classify(v: last);
+    set total = total +wrap old;
+    set last = current;
+  }
+  return total;
+}
+
+fn fresh(values: &Box<Slots<Value>>, index: u64) -> result: u64 writes(values.inner[index]) contract {
+  requires index < values^.inner.len;
+} {
+  let total = 0_u64;
+  for (i in 0_u64..3_u64) {
+    let next = i +wrap 7_u64;
+    set values^.inner[index] = Value::Number(n: next);
+    let current = values^.inner[index];
+    let observed = classify(v: current);
+    set total = total +wrap observed;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_new::<Value>(capacity: 1_u64);
+  if values.inner.len < values.inner.cap {
+    let initial = Value::Number(n: 7_u64);
+    place_back(window: &values.inner, value: initial);
+  }
+  if values.inner.len > 0_u64 {
+    let previous = carried(values: &values, index: 0_u64);
+    if previous != 18_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let current = fresh(values: &values, index: 0_u64);
+    if current != 24_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 3_u8);
+}
+"#
+    );
+    let (carried, fresh) = with_ir(source.as_bytes(), |program| {
+        (snapshot(program, "carried"), snapshot(program, "fresh"))
+    });
+    let module = retain_classifier(&emit(source.as_bytes()));
+    assert_snapshot_copy(emitted_function(&module, "carried"), carried, true);
+    let fresh_body = emitted_function(&module, "fresh");
+    assert_snapshot_copy(fresh_body, fresh, false);
+    assert!(
+        fresh_body.contains(&format!("@wf_classify(ptr %v{})", fresh.ordinal())),
+        "{fresh_body}"
+    );
+    // carried observes 3 + 7 + 8, after each source write and re-execution
+    // of the same Load; reading last through the current source instead
+    // observes 3 + 8 + 9.
+    // The pre-loop seed makes last mixed-origin, so this source regression
+    // does not isolate select_read_through's live/family guard: the earlier
+    // origin checks or transfer materialization also preserve this copy.
+    // fresh observes 7 + 8 + 9 with no carry. Removing source_survives's
+    // Load-revisit stop propagates the next iteration's write to its read,
+    // adds a snapshot copy, and fails fresh's no-copy/direct-call assertions.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn snapshot_materialization_is_local_to_the_use_unless_the_source_changed() {
     let source = format!(
         "{VALUES}{}",
