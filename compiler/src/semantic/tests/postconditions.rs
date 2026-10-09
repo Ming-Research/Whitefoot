@@ -3694,7 +3694,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// Asserts that one source is rejected by [FN-9] at a selected return.
 ///
-/// The disposition is deliberately not pinned. [DIAG-3] fixes that it is
+/// The disposition is deliberately not pinned. [DIAG-1] fixes that it is
 /// "exactly `unproved` or `refuted`" and that entry-image unavailability fixes
 /// `unproved`, but which of the two a provable contradiction reaches depends
 /// on the [ENT-4] closure rather than on a rule, and this test is about the

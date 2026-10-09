@@ -130,6 +130,9 @@ fn not_found(error: &std::io::IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: c, origin: o) => {
       return False();
     }

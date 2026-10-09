@@ -209,32 +209,46 @@ impl Reasoning<'_, '_, '_> {
         loop_id: CheckedLoopId,
         invariants: &[CheckedLoopInvariant],
         base_batch: bool,
-        state: &mut AffineFlowState,
+        state: &mut ProofFlowState,
     ) {
-        for (source_ordinal, invariant) in invariants.iter().enumerate() {
+        let mut formed = Vec::with_capacity(invariants.len());
+        for invariant in invariants {
             let target = self.checked_affine_relation_inequality(
                 &invariant.relation,
-                state,
+                &mut state.affine,
                 &mut AffineCheckState::new(),
             );
-            let partner = self
-                .checked_affine_relation_partner(
-                    &invariant.relation,
-                    state,
-                    &mut AffineCheckState::new(),
-                )
-                .and_then(Result::ok);
+            let partner = self.checked_affine_relation_partner(
+                &invariant.relation,
+                &mut state.affine,
+                &mut AffineCheckState::new(),
+            );
             self.vocabulary
                 .invariant_targets
                 .insert(invariant.declaration, target.clone());
-            if base_batch && let Ok(inequality) = target {
+            formed.push((target, partner));
+        }
+        // Formation at the arbitrary header can differ from formation over
+        // preheader value images. Neither domain receives a partial batch.
+        if !base_batch
+            || formed.iter().any(|(target, partner)| {
+                target.is_err() || partner.as_ref().is_some_and(Result::is_err)
+            })
+        {
+            return;
+        }
+        for (source_ordinal, (invariant, (target, partner))) in
+            invariants.iter().zip(formed).enumerate()
+        {
+            if let Ok(inequality) = target {
                 state
+                    .affine
                     .published_invariants
                     .insert(invariant.declaration, inequality.clone());
                 // [INV-1] an `==` target is one batch of two bounds, and both
                 // become assumptions together once the base batch succeeded.
-                for inequality in std::iter::once(inequality).chain(partner) {
-                    state.facts.push(ActiveAffineFact {
+                for inequality in std::iter::once(inequality).chain(partner.and_then(Result::ok)) {
+                    state.affine.facts.push(ActiveAffineFact {
                         inequality,
                         evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
                             SourceLoopInvariantRef {
@@ -245,8 +259,41 @@ impl Reasoning<'_, '_, '_> {
                         )),
                     });
                 }
+                self.establish_invariant_l0(&invariant.relation, &mut state.facts);
             }
         }
+    }
+
+    /// [ENT-3.S16] publish only a proved conclusion's exact source-term
+    /// projection. Ordinary term support supplies kills, joins and snapshots;
+    /// immutable affine value images must not replace these mutable terms.
+    pub(super) fn establish_invariant_l0(
+        &mut self,
+        relation: &CheckedAffineRelation,
+        facts: &mut FactState,
+    ) {
+        let Some(Relation::Bound { left, right, bound }) =
+            self.checked_affine_relation_l0(relation)
+        else {
+            return;
+        };
+        let projected = if relation.equality {
+            // Both directions must be representable before either is added.
+            if bound.checked_neg().is_none() {
+                return;
+            }
+            Relation::Equal {
+                left,
+                right,
+                difference: bound,
+            }
+        } else {
+            Relation::Bound { left, right, bound }
+        };
+        let event = self
+            .vocabulary
+            .proof_event(FlowEventKind::S16, Some(&relation.node_path));
+        facts.establish(&projected, &mut self.vocabulary.derivations, event);
     }
 
     pub(super) fn checked_affine_relation_inequality(

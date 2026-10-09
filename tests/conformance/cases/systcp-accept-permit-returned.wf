@@ -53,6 +53,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -114,7 +117,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   match tcp_listen(factory: &handles, address: &address) {
     Ok(value: bound) => {
       let no_deadline = None<std::time::Instant>();
-      match tcp_accept(factory: &handles, listener: &bound, deadline: no_deadline) {
+      let wait_cancel_1 = std::time::cancel_never();
+      let wait_outcome_1 = tcp_accept(factory: &handles, listener: &bound, deadline: no_deadline, cancel: &wait_cancel_1);
+      std::time::close_cancel_watch(watch: move wait_cancel_1);
+      match move wait_outcome_1 {
         Ok(value: accepted_link) => {
           let AcceptedConnection(connection: link, peer: from) = move accepted_link;
           let TcpConnection(receive: close_receive_29, send: close_send_29) = move link;
@@ -128,7 +134,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             let listener_credit = close_listener(factory: &handles, listener: move bound);
             return exit_status(code: 4_u8);
           }
-          match tcp_accept(factory: &handles, listener: &bound, deadline: no_deadline) {
+          let wait_cancel_2 = std::time::cancel_never();
+          let wait_outcome_2 = tcp_accept(factory: &handles, listener: &bound, deadline: no_deadline, cancel: &wait_cancel_2);
+          std::time::close_cancel_watch(watch: move wait_cancel_2);
+          match move wait_outcome_2 {
             Ok(value: accepted_retry) => {
               let AcceptedConnection(connection: retry, peer: retry_from) = move accepted_retry;
               let TcpConnection(receive: close_receive_30, send: close_send_30) = move retry;

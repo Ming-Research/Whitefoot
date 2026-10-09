@@ -32,7 +32,10 @@ fn watch(factory: HandleFactory, input: InputStream, state: Shared<Turns>) -> re
   let buffer = array_filled::<u8, 16>(value: 0_u8);
   let window = &buffer[0_u64..16_u64];
   let no_deadline = None<std::time::Instant>();
-  match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 16_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 16_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: n) => {
       let unused = n;
     }

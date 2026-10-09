@@ -1,0 +1,22 @@
+fn probe(seed: u64, stop: Bool) -> result: unit pure {
+  doc "Both header equality bounds close the impossible disequality edge after continuing kills remove the initial copies.";
+  let x = seed;
+  let y = seed;
+  loop (
+    invariant tied: x == y
+  ) {
+    if x != y {
+      let impossible = 18446744073709551615_u64 + 1_u64;
+    }
+    if stop {
+      break;
+    }
+    set x = 0_u64;
+    set y = 0_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

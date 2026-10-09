@@ -53,6 +53,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -144,6 +147,9 @@ fn socket_class(error: IoError) -> result: u8 pure {
       return 9_u8;
     }
     DeadlinePassed() => {
+      return 9_u8;
+    }
+    Cancelled() => {
       return 9_u8;
     }
     BrokenPipe(code: c, origin: o) => {
@@ -285,7 +291,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
   let outcome = 0_u8;
   let no_deadline = None<std::time::Instant>();
-  match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = tcp_connect(factory: &handles, address: &address, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match move wait_outcome_1 {
     Ok(value: link) => {
       let TcpConnection(receive: close_receive_9, send: close_send_9) = move link;
       close_receive(factory: &handles, receive: move close_receive_9);
@@ -298,7 +307,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       if exhausted {
         set outcome = 5_u8;
       } else {
-        match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
+        let wait_cancel_2 = std::time::cancel_never();
+        let wait_outcome_2 = tcp_connect(factory: &handles, address: &address, deadline: no_deadline, cancel: &wait_cancel_2);
+        std::time::close_cancel_watch(watch: move wait_cancel_2);
+        match move wait_outcome_2 {
           Ok(value: again) => {
             let TcpConnection(receive: close_receive_10, send: close_send_10) = move again;
             close_receive(factory: &handles, receive: move close_receive_10);

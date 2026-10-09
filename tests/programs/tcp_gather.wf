@@ -75,7 +75,10 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
       break @sending;
     }
     let no_deadline = None<std::time::Instant>();
-    match send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         set sent = next;
       }
@@ -99,11 +102,17 @@ fn fetch(factory: HandleFactory, address: SocketAddress, request: u8) -> result:
   let window = &buffer[0_u64..1_u64];
   let answer = 0_u8;
   let no_deadline = None<std::time::Instant>();
-  match tcp_connect(factory: &factory, address: &address, deadline: no_deadline) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = tcp_connect(factory: &factory, address: &address, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match move wait_outcome_2 {
     Ok(value: link) => {
       match send_all(send: &link.send, source: window, length: 1_u64) {
         Ok(value: delivered) => {
-          match receive_next(receive: &link.receive, destination: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+          let wait_cancel_3 = std::time::cancel_never();
+          let wait_outcome_3 = receive_next(receive: &link.receive, destination: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_3);
+          std::time::close_cancel_watch(watch: move wait_cancel_3);
+          match wait_outcome_3 {
             Ok(value: endpoint) => {
               if endpoint == 1_u64 {
                 set answer = byte_at(store: window, index: 0_u64);

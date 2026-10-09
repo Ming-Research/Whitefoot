@@ -546,8 +546,12 @@ impl Analyzer<'_, '_> {
                     state.facts.origins.insert(*binding, relation);
                 }
                 if judgment.reached {
-                    self.reasoning()
-                        .record_goal_origin(*binding, value, &mut state.facts);
+                    self.reasoning().record_goal_origin(
+                        node_path,
+                        *binding,
+                        value,
+                        &mut state.facts,
+                    );
                 }
                 // Sources S5, S6, S7, and S9 establish at the binding, after
                 // the initializer's own kills [ENT-3, ENT-5].
@@ -1031,6 +1035,8 @@ impl Analyzer<'_, '_> {
                         .affine
                         .published_invariants
                         .insert(proof.declaration, target);
+                    self.reasoning()
+                        .establish_invariant_l0(&proof.target, &mut state.facts);
                 }
                 self.output.source_proofs.push(SourceProofOutcome {
                     node_path: proof.node_path.clone(),
@@ -1498,12 +1504,8 @@ impl Analyzer<'_, '_> {
                     &mut kills,
                 );
                 self.reasoning().apply_loop_kills(state, &kills, None);
-                self.reasoning().activate_loop_invariant_batch(
-                    *id,
-                    invariants,
-                    base_batch,
-                    &mut state.affine,
-                );
+                self.reasoning()
+                    .activate_loop_invariant_batch(*id, invariants, base_batch, state);
                 let head_entry_images = state.entry_images.clone();
                 self.frames.loops.push(LoopFrame {
                     id: *id,
@@ -1701,12 +1703,8 @@ impl Analyzer<'_, '_> {
                     .new_affine_binding_atom(*binder)
                     .expect("a checked counted binder has one u64 affine value");
                 state.affine.values.insert(*binder, header_binder);
-                self.reasoning().activate_loop_invariant_batch(
-                    *id,
-                    invariants,
-                    base_batch,
-                    &mut state.affine,
-                );
+                self.reasoning()
+                    .activate_loop_invariant_batch(*id, invariants, base_batch, state);
 
                 let head = state.clone();
                 let invariant_declarations = invariants
