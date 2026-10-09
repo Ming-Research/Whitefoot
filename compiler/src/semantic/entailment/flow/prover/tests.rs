@@ -497,6 +497,7 @@ fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() 
                 facts: &facts,
                 affine: &affine,
                 closed: Some(&closed),
+                origin_view: OriginView::Pending,
             };
             let (view, index) = assert_affine_index_matches_rebuild(analyzer, context);
             assert!(
