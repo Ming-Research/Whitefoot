@@ -11,7 +11,7 @@ what distinguishes the result from a shared object holding one scalar?
 The selected direction is the owner's A: a basic-type field updated atomically
 under a read-only hold. This selects the problem to solve, not a spelling,
 effect rule, memory model or instruction-width policy. This investigation is
-a proposal checked against Whitefoot `0c71e2c266d59963302006bf2c8b510ec0fec762`, branch
+a proposal checked against Whitefoot `fd9c080b98f2e4b4a73e9a6780a8ed31867a2e92`, branch
 `claude/relaxed-fields`, active specification v0.108. It changes no language
 rule or implementation. No new compilation, concurrency test or performance
 measurement has been run for it.
@@ -24,10 +24,12 @@ specification. Before changing the language, compare the same firn source
 with stamping disabled, stamping under today's entry lock, stamps in a second
 map, and a separate write-on-change statement. These are attribution controls,
 not replacements for the owner's direction. Then compare a surviving relaxed
-candidate against those controls. Include separately repeated images of each
-as twins. The proposal fails its motivating performance criterion if
-GET at pipeline depth 16 on the i9-14900K loses more than the no-stamp twins'
-spread. Faster code with a weaker safety proof does not qualify. The detailed
+candidate against those controls. Separate hold route from stamp writes in
+a complete 2×2 comparison, and give every arm a same-source rebuild twin.
+The proposed depth-16 GET criterion on the i9-14900K requires loss within
+no-stamp twin noise, with a fixed 1% noise ceiling; a 3% residual loss is not
+acceptable. Excess noise means inconclusive, never a larger allowance.
+Faster code with a weaker safety proof does not qualify. The detailed
 protocol and shape-specific rejection conditions below precede any proposed
 implementation or new measurement.
 
@@ -129,17 +131,60 @@ The source makes the mechanism concrete:
   Merely changing “refresh every time” to “refresh when the clock changes”
   inside that same statement therefore leaves the lock selected. Moving the
   conditional refresh to a separate statement is a different control below.
-* `wf_cmap_read_entry` keeps a reader count on the entry; a writer locks the
-  key and waits for readers before accessing the payload. The count also
-  prevents reclamation/movement from invalidating an active reader's node
-  ([compiler/src/backend/concurrent_map.c:702–708,820–840,1176–1218,1256–1285][cmap]).
-  It protects ordinary payload lifetime and stability, not concurrent plain
-  stores by two readers. The candidate's field accesses must all be atomic.
+* Entry nodes do not move: `move_block` transfers the cell's 64-bit value
+  word containing the node address, after waiting for its reader count to
+  reach zero. A reader that discovers a move after counting itself leaves
+  and retries; no payload is relocated
+  ([compiler/src/backend/concurrent_map.c:492–516,1206–1219,1233–1252][cmap]).
+  This is the address-stability premise recorded in the concurrent-map
+  decision ([design/compiler/waiting-contexts/concurrent-map.md:5][cmap-node]).
+* The reader count prevents reclamation/reuse while a reader reaches the
+  node. Entry removal frees under the cell lock; both `try_entry` and
+  `acquire_whole` wait for readers before accessing an existing node
+  ([compiler/src/backend/concurrent_map.c:820–840,1139–1154,1928–1962,2183–2203][cmap]).
+  Shared-map clear/swap requires whole-table exclusion, which waits for all
+  active keyed users ([concurrent_map.c:1293–1315,2400–2409,2590–2598][cmap]).
+  Deletion and eviction therefore need no new reclamation protocol for an
+  aligned scalar store/RMW under a reader pin. The release/acquire handoff
+  below orders that store before a later exclusive access. Ordinary accesses
+  under genuine exclusion need not be atomic merely to avoid a race;
+  concurrent accesses to the leaf under read holds do.
+* **A read hold yields the node's storage, not a copy.** The runtime returns
+  `slot_of`, and the emitter keeps that pointer
+  ([concurrent_map.c:1256–1276][cmap];
+  [keyed_table.c:159–184][keyed-runtime];
+  [emitter/shared.rs:435–468][shared-emitter]). The header's “copies the value
+  out” describes the word map's `wf_cmap_get`, not entry holds
+  ([concurrent_map.h:1–4,29–30][cmap-header]). Missing keys yield the map's
+  shared zero slot, or `.wf_table_none` on the held-entry route
+  ([concurrent_map.c:1062–1080,1276][cmap];
+  [emitter/shared.rs:387–403][shared-emitter]). `None` exposes no payload
+  fields ([spec/kernel-spec.md:2354–2357][spec]): it cannot supply a relaxed
+  leaf to update. A future copying
+  optimization must preserve shared cell identity rather than stamp a copy.
 * “Lock-free read path” is the repository's name for the normal route, not a
   proof that an entire lookup is lock-free: `wf_cmap_read_entry` may wait on a
   writer, help a move and, on `IMPATIENT`, take `wf_cmap_hold`. This existing
   progress mechanism must be distinguished from the forbidden new fallback
-  that implements an unsupported scalar atomic with a hidden lock.
+  that implements an unsupported scalar atomic with a hidden lock. The
+  fallback actually excludes other users, so the scalar access needs no
+  special runtime path there; grouped reads have the same fallback
+  ([concurrent_map.c:1266–1271,2083–2107][cmap]).
+* Nested-map reads through `wf_cmap_held_entry` take no inner reader count:
+  enclosing ownership or a shared outer hold stabilizes the index, while
+  ordinary inner writes require an exclusive whole hold
+  ([concurrent_map.c:2210–2232][cmap]). Relaxed leaves may not weaken that
+  exclusion for inner index changes or node lifetime.
+* Entry storage already supports the required scalar alignment: slot offsets
+  round up to slot alignment, nodes use 16-byte grains, and alignments above
+  16 are refused ([concurrent_map.c:145–150,678–688,711–734,1068–1074][cmap];
+  [compiler/src/target.rs:1243–1274,1734–1759][targets]). This preserves a
+  field's required alignment up to 16 bytes; field size alone does not prove
+  atomic alignment. It is not a general 16-byte atomicity guarantee.
+
+These runtime premises support adding aligned integer atomics without changing
+the map's lifetime/hold protocol. They do not discharge the compiler's
+`noalias`, aggregate-access or event-model obligations below.
 
 The language gap, independent of that compiler, is an entry with a stable
 payload and an independently changing numeric hint. Two contexts should be
@@ -322,8 +367,10 @@ definition remains unverified, especially for repeated polling.
 ### Supported targets versus exercised targets
 
 The closed ABI list is [compiler/src/target.rs:50–104][targets], not the set
-of architectures LLVM can generally compile. The emitter uses the selected
-triple ([compiler/src/backend/emitter.rs:399][emitter]).
+of architectures LLVM can generally compile. Production emission selects the
+host triple ([target.rs:107–134][targets]; [driver.rs:2884–2885][driver];
+[compiler/src/backend/emitter.rs:399][emitter]); the ABI inventory is not
+a cross-compilation interface.
 
 | Admitted triple | Architecture | Evidence of routine coverage in this checkout |
 |---|---|---|
@@ -341,6 +388,53 @@ chooses host Clang and probes IR features, not an atomic-width policy
 ([compiler/src/toolchain.rs:14–61][toolchain]); no per-operation scalar atomic
 qualification was found. Triple admission is not proof of a CPU feature floor.
 
+**No CPU feature floor is fixed by Whitefoot today.** The production driver
+and runtime recipes pass neither `-march` nor `-mcpu`, and the emitter supplies
+neither `target-cpu` nor `target-features` attributes. Their shared optimization
+flags are `-O2 -falign-functions=64`
+([compiler/src/driver.rs:41–56][driver]; [compiler/runtime.mk:20–49][runtime-make];
+[compiler/src/bin/whitefootc.rs:990–1006,1095–1105,1118–1133,1211–1218,1259–1267][native-driver]).
+The absence of those settings was also checked by searching `compiler/src`
+and `compiler/runtime.mk`. Thus Clang defaults are inputs, not a stable
+Whitefoot target contract.
+
+On this checkout's MacBook, a driver-only query of `/usr/bin/clang` (Apple
+Clang 21.0.0, `clang-2100.3.34.2`) reported the following defaults. For each
+listed triple, the command was `clang -### -target <triple> -O2
+-falign-functions=64 -x c -c /dev/null -o /dev/null`; `-###` printed the
+invocation without compiling or linking. These are this toolchain's C-driver
+defaults, not native qualification of the other hosts or final WF binaries.
+
+| Triple | Reported CPU / relevant features |
+|---|---|
+| `aarch64-apple-darwin` | `apple-m1`, including `+v8.5a` and `+lse`; LLVM's Apple-M1 model also includes LSE2 through Armv8.4-A. |
+| `aarch64-unknown-linux-gnu` | `generic`, `+v8a`, no LSE guarantee. |
+| `x86_64-apple-darwin` | `penryn`, whose LLVM model includes `CMPXCHG16B`. |
+| `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` | `x86-64`, whose LLVM baseline does not include `CMPXCHG16B`. |
+
+Feature interpretation: [LLVM 21.1 Apple-M1 alias][llvm-arm-alias],
+[Apple CPU features][llvm-arm-cpus], [Armv8.4 inheritance][llvm-arm-features],
+[Penryn features][llvm-x86-cpus] and [x86-64 baseline][llvm-x86-baseline].
+Defaults can change with Clang releases;
+Apple AArch64 must not be described as the Linux generic Armv8-A floor.
+Linux may use outlined `__aarch64_ldadd*` helpers that select LSE or LL/SC,
+depending on compiler settings and the available libgcc/compiler-rt; that
+link/runtime combination remains unverified here.
+
+**LTO adds a second code-generation boundary.** The driver requests full LTO
+or ThinLTO, with the platform linker on macOS and LLD elsewhere
+([whitefootc.rs:197–214,978–979,1034–1039,1124–1133][native-driver]). LTO
+generates native code during linking ([LLVM LTO design][llvm-lto]). Since WF
+functions lack CPU attributes, the LTO backend's defaults may determine
+atomic lowering; the effective CPU/features, including the macOS linker's
+choice, are unverified. The motivating firn runs use LTO, so checking a C
+driver default or an unlinked `.ll` alone cannot establish their code shape.
+Record linker version/options and inspect the linked binary for each LTO mode
+being qualified. The Windows runtime likewise uses Clang and C11
+`stdatomic.h`, not an assumed MSVC C-frontend atomic policy
+([runtime.mk:9–13,43–49][runtime-make]; [concurrent_map.c:55–59][cmap];
+[compiler/src/toolchain.rs:14–21][toolchain]).
+
 ### Instruction and library guarantees
 
 “Lock-free”, “one atomic memory instruction”, and “one instruction for the
@@ -354,7 +448,7 @@ overlapping accesses.
 | Target family / feature floor | 8/16/32/64-bit load and store | Same-width fetch-add and compare-exchange | 128-bit caveat |
 |---|---|---|---|
 | All three admitted x86-64 ABIs | Aligned accesses can use single `MOV` memory instructions. | Fetch-add can use `LOCK XADD` (or `LOCK ADD` without the old result); CAS uses `LOCK CMPXCHG`. These are atomic memory instructions; moving arguments and producing a Bool/result can add instructions. | `CMPXCHG16B` needs CPU support and 16-byte alignment. Other operations may require a CAS loop. Modern Intel also documents some aligned 16-byte moves as atomic when AVX is enumerated; that is not a guarantee for every x86-64 CPU or Clang target. |
-| Both admitted AArch64 ABIs, conservative Armv8-A baseline | Naturally aligned 8/16/32/64-bit loads/stores have single-access forms (`LDRB/H`, `LDR`, `STRB/H`, `STR`). | Without LSE, use exclusive load/store sequences and retry where required. Lock-free implementations are possible; a single-instruction promise is false. | Pair-exclusive sequences exist, but a load pair is not generically an atomic plain 128-bit load. Qualification depends on the operation and architecture features. |
+| AArch64 without LSE, as in the observed Linux generic Armv8-A default | Naturally aligned 8/16/32/64-bit loads/stores have single-access forms (`LDRB/H`, `LDR`, `STRB/H`, `STR`). | Without LSE, use exclusive load/store sequences and retry where required, possibly in an outlined helper. Lock-free implementations are possible; a single-instruction promise is false. | Pair-exclusive sequences exist, but a load pair is not generically an atomic plain 128-bit load. Qualification depends on the operation and architecture features. |
 | AArch64 with FEAT_LSE explicitly guaranteed | Same as baseline. | `LDADD` and `CAS`, with byte/halfword variants, provide single atomic memory instructions for these widths. | LSE `CASP` supplies pair CAS; it does not imply one-instruction fetch-add or a universally atomic ordinary load/store pair. LSE2 and later features must be considered separately. |
 
 Hardware sources: [Intel SDM volume 3A §10.1.1–10.1.2][intel-atomic],
@@ -364,8 +458,8 @@ Hardware sources: [Intel SDM volume 3A §10.1.1–10.1.2][intel-atomic],
 of library expansion: [LLVM Atomics, “Atomics and Codegen”][llvm-atomic].
 These establish the architecture-level distinction; **actual output for all
 five Whitefoot triples, their CPU flags, alignment and linked runtime is
-unverified**. In particular, do not infer that Apple's default target flags
-and Linux's baseline select identical RMW instructions.
+unverified**. Apple's observed C default has LSE/LSE2; that does not qualify
+the feature settings used when linking attribute-free WF IR.
 
 All admitted ABIs here use 64-bit ordinary pointers, but Whitefoot has no
 writer-visible pointer-width integer; TYPE-1 lists fixed widths
@@ -388,6 +482,19 @@ size/alignment ([N1570 §7.17.5–7.17.8][c11]). LLVM supplies atomic load/store
 Unsupported widths may expand to library calls. Plain or `volatile` access
 does not substitute for an atomic operation ([LLVM Atomics][llvm-atomic]).
 
+The emitter's existing LLVM atomic instruction is the abort latch's seq_cst
+`cmpxchg`, in its ordinary and Windows diagnostic writers
+([emitter.rs:3723,3759][emitter]). Ordinary IR Load/Store use non-atomic
+loads/stores without explicit alignment, including aggregate copies
+([emitter/operations.rs:33–68][operations-emitter];
+[emitter/places.rs:788–843][places-emitter]); “unordered” would instead name
+an LLVM atomic ordering. A relaxed field would add the first source scalar
+atomic operations. It needs explicit IR operations emitting `load atomic`,
+`store atomic` and, if offered, `atomicrmw`, all with `monotonic` ordering and
+qualified alignment. LLVM requires explicit `align` on atomic
+[loads][llvm-load] and [stores][llvm-store]; the no-thin-air obligation may require
+additional ordering beyond those monotonic operations.
+
 Qualification should fix the target features and field layout, require the
 appropriate always-lock-free result for the selected width, and inspect the
 emitted code and linked symbols for each admitted operation. GCC's
@@ -407,7 +514,7 @@ contract and requires inspection.
   target; refuse the unsupported combination explicitly. The expected
   intersection is 8/16/32/64-bit integer load/store. Those same widths can
   have lock-free RMWs on both architectures if LL/SC loops are allowed, but
-  not single-instruction RMWs at the conservative AArch64 floor. Unqualified
+  not single-instruction RMWs at the generic Linux AArch64 floor. Unqualified
   targets do not silently borrow a nearby ABI's answer.
 * **P2: target-qualified operations.** Keep source typing independent of a
   machine; selected-target composition must prove a stated width, alignment
@@ -415,7 +522,10 @@ contract and requires inspection.
   admit single-instruction RMW only on x86-64 and LSE AArch64. It improves
   availability but complicates portable library contracts. Capability data
   must be deterministic target requirements, not a timing probe or the CPU
-  that happened to run the compiler. This fits the existing module/composition
+  that happened to run the compiler. Fix them with explicit `-mcpu`/`-march`
+  settings or per-function `target-cpu`/`target-features`, and verify their
+  propagation through native and LTO code generation; drifting Clang/linker
+  defaults do not satisfy P2. This fits the existing module/composition
   boundary in [design/language.md:15][language-node], but is a new rule.
 
 Neither rule treats 128-bit integers as already present. Neither makes a
@@ -473,10 +583,15 @@ alternative is to define such replacement as exactly one atomic store of T;
 leaving it an ordinary write while allowing a read hold is unsound. Replacing
 or moving the enclosing owner remains an exclusive, quiescent operation;
 its layout/lifetime treatment must preserve the atomic representation.
-Initialization before publication is exclusive; after publication all leaf
-accesses, including in an exclusive block, use that representation. A move
-cannot relocate a cell an active reader still reaches. No references escape
-SHARE-2/REF-3. The type should be usable as an owned local,
+Initialization before publication is exclusive. Recommend uniform atomic
+leaf access after publication, including in exclusive blocks, as a simpler
+initial compiler discipline. This is stricter than the runtime requires:
+proved exclusion and the hold handoff permit ordinary machine accesses with
+no concurrent atomic access. Such a lowering optimization must preserve the
+cell's coherence and ordering contract; it grants no ordinary source-level
+reference to its representation. A move cannot relocate a cell an active
+reader still reaches. No references escape SHARE-2/REF-3.
+The type should be usable as an owned local,
 an aggregate field or an array element with the same scalar meaning; it does
 not itself grant sharing outside the existing handle/hold boundary.
 
@@ -545,6 +660,14 @@ solely over ordinary fields remain available. Whole-owner replacement still
 invalidates ordinary paths, and snapshots cannot establish authority to
 access otherwise unprotected storage.
 
+The guard exclusion also matches the current wake protocol: ending a read
+returns before `table_written`, and grouped read release reports no write
+([keyed_table.c:188–195,232–239][keyed-runtime];
+[concurrent_map.c:2293–2306][cmap]). A relaxed store under that hold wakes no
+watch. Allowing such a leaf in a wait condition later would require read-hold
+completion to notify its watchers as well as a new proof/progress rule;
+hardware atomicity alone would leave sleepers unwoken.
+
 **Reader contract and composition.** Ordinary payload remains stable for the
 hold; each cell access has the proposed scalar semantics above. A relaxed
 leaf stays relaxed even inside a block that also names `Shared<u32>` or
@@ -555,9 +678,18 @@ snapshots or scripts. `Shared<u32>` retains its stronger role described above.
 
 **Cost and risks.** An inline aligned word plus the current reader pin and
 atomic instructions, including any ordering needed by the event model; no
-per-entry cell allocation. Cache-line ownership, false sharing and writes on
-hot keys remain. All shapes admitting mutation under read holds (S1-W, S1-A
-and S3) need the same alias and stability audit:
+per-entry cell allocation. Cache-line ownership and writes on hot keys remain.
+The reader count is in the table cell; the stamp is in the separately stored
+node, so they do not share a cache line in this layout. The candidate's extra
+store instead dirties a node line that can also contain the Option tag, key
+bytes or payload header. Every successful lookup reads the key in `same_key`;
+nodes are carved from per-user chunks in 16-byte grains, so small nodes can
+also share lines with neighbors
+([concurrent_map.c:113–128,145–150,678–688,711–734,795–797,1217][cmap]).
+Which bytes share a line depends on key length and entry layout; neither
+reader-count/stamp false sharing nor node-line contention is a measured
+explanation of the old loss. All shapes admitting mutation under read holds
+(S1-W, S1-A and S3) need the same alias and stability audit:
 
 * `reference_parameter_facts` emits `noalias` for source-signature reference
   parameters of nonwaiting functions other than Run references and the
@@ -567,8 +699,8 @@ and S3) need the same alias and stability audit:
   ([spec/kernel-spec.md:2282–2283][spec]); their signatures receive no exemption
   merely for having a caller that holds a reader pin.
 * [LLVM's parameter `noalias` contract][llvm-noalias] excludes accesses via
-  unrelated pointers to memory modified during the call. Another context's
-  atomic store violates that promise when the helper accesses the cell,
+  unrelated pointers to memory modified by any means during the call.
+  Another context's atomic store violates that promise when the helper accesses the cell,
   despite being data-race-free. Suppress `noalias` on references whose
   referent can contain a relaxed leaf, including aggregates and range
   elements; carry this structural property through generic/exported
@@ -579,6 +711,20 @@ and S3) need the same alias and stability audit:
   during a call. Ordinary payload remains protected. The backend-facts
   decision requires the complete target contract before any attribute is
   emitted ([design/compiler/backend-facts.md:1–7][backend-facts]).
+* `emit_load` emits a whole-type ordinary `load`, including aggregates
+  ([emitter/operations.rs:33–51][operations-emitter]); `copy_storage` emits
+  ordinary `llvm.memcpy`/`llvm.memmove`
+  ([emitter/places.rs:788–843][places-emitter]). A load overlapping a concurrent
+  atomic store can yield `undef` for the racing bytes under
+  [LLVM's bytewise memory model][llvm-memory]; it is not a valid scalar
+  snapshot. This does not imply every unrelated field becomes undefined.
+  Forbid plain aggregate loads/copies that touch a live relaxed leaf under
+  shared access. Project ordinary fields separately; any permitted snapshot
+  must atomically load each relaxed leaf and claim no cross-field instant.
+  Keep S1 cells noncopyable; specify S3's aggregate copy meaning before
+  admitting it. Audit matching, argument/result materialization, memcpy,
+  memmove and widened/vectorized accesses, not just explicit field reads.
+  Quiescent owner moves remain subject to the exclusion rule above.
 
 Read-hold mutation must not inherit whole-referent `readonly`, `memory(read)`,
 immutable-load or equivalent assumptions:
@@ -685,10 +831,11 @@ atomic slot = &keyspace[key] {
 }
 ```
 
-Every load and store of the designated leaf would be atomic, including
-accesses outside map entries under ordinary ownership and accesses through
-helpers. Ordinary owner replacement remains exclusive. `readonly` cannot
-serve as this marker: it already controls assignment across a module
+Every load and store of the designated leaf would have atomic semantics,
+including accesses outside map entries under ordinary ownership and through
+helpers. S1's uniform atomic lowering recommendation and optional proved
+exclusive-access lowering apply here too. Ordinary owner replacement remains
+exclusive. `readonly` cannot serve as this marker: it already controls assignment across a module
 boundary, not concurrent access ([spec/kernel-spec.md:416][spec];
 [design/language/data-model/readonly-field.md:1][readonly-node]).
 
@@ -874,69 +1021,122 @@ Evidence of small cost on one CPU never overrides these conditions.
 | S4 | Reject if two upgrading readers can deadlock, any replay duplicates an observable effect or consumes an owner twice, validation follows an unsafe racing read, or continue-after-upgrade uses stale references/facts. It also fails direction A if refresh still requires the entry lock, even if conditional refresh improves one benchmark. |
 
 The performance comparison is **prospective** and must not inherit unrelated
-differences between the old Firn-wf base/head builds:
+differences between the old Firn-wf base/head builds. Its direct attribution
+panel has two independent factors, with one fixed entry layout:
+
+| Hold route | No stamp store | Stamp store |
+|---|---|---|
+| Reader pin | R0: no-stamp baseline | R1: relaxed candidate |
+| Entry lock | L0: forced lock, no stamp | L1: identical atomic stamp under the lock |
+
+R0/L0 isolate route cost without a store; R1/L1 isolate it with a store.
+R0/R1 and L0/L1 isolate store cost under each route. Compare those paired
+contrasts to expose interaction instead of attributing the entire R0/L1
+loss to locking. Keep stamp calculation and all other work equal within
+this panel. Retain today's ordinary locked-stamp implementation as a separate
+control if its generated access differs from L1. Every arm, including L0,
+L1 and that existing implementation, gets a twin.
 
 1. **Before a language change**, pin Whitefoot, Firn-wf, Halo-wf, Redis benchmark
-   version, compiler/Clang flags and LTO settings. Use one firn source with
-   only the experimental stamp choice varied; keep entry layout the same for the direct cost
-   comparison. Also compare to actual firn main without stamping to expose
-   total layout cost. Retain an actual-stamping/old-lock control and add the
-   second-map and separate write-on-change controls above on that same source.
-   Their representation/semantic differences must be reported separately
-   from the fixed-layout on/off comparison. Vary only the named control;
-   the previous journal/helper/layout differences are not acceptable inputs
-   to a new stamp-cost attribution. Evaluate the lossy buffer separately as
-   a policy alternative. Run and interpret these controls before amending
-   the language, then qualify and add the relaxed candidate.
+   version, Clang/linker versions, flags and one identical LTO mode for all
+   arms. Use one firn source with only the named experimental factors varied;
+   keep entry layout fixed. Also compare actual firn main without stamping
+   to expose total layout cost. Run R0/L0, the current locked-stamp control,
+   and the second-map and separate write-on-change controls first; only after
+   semantic/target qualification add R1/L1 and complete the panel. Report the
+   second-map and separate-statement representation/semantic differences
+   separately; evaluate buffering as a policy alternative. A forced-route
+   prototype must change only the final hold selection and its corresponding
+   release, not the block's effects, references, arithmetic or representation.
+   Changing `readonly_atomic_roots` alone is not that experiment:
+   `borrow_may_write` also consumes it ([storage.rs:437–442][storage-lower]).
+   Inspect IR and linked code to show that the paired route arms differ only
+   in the hold calls/flags and their consequences; otherwise reject the
+   attribution as confounded.
 2. Use the CI `14900k` runner, confirm it is idle and coordinate a long run.
-   Record OS, CPU/microcode, affinity, client/server core placement, frequency
-   policy, key/value sizes, key distribution, dataset occupancy, client count
-   and warmup. Reuse the motivating workload's settings once recovered from
-   its artifacts; do not invent the settings missing from this record.
-3. Begin with the smallest useful timed sample and inspect its spread before
-   choosing a batch. Interleave no-stamp/base, its twin, each stamp control
-   and its twin, and later the candidate and candidate-twin with balanced
-   ordering. Test one and two server CPUs at depth 16 separately; depth 1
-   and SET are controls.
-4. Before that batch fix the estimator: for each workload cell, let epsilon
-   be the median absolute fractional throughput difference between paired
-   no-stamp twins. Let loss be one minus the median paired candidate/base
-   throughput ratio. The criterion is loss <= epsilon in **each** depth-16
-   CPU cell. Also require repeatable twin estimates; if their spread cannot
-   distinguish the hypotheses, lengthen/repeat and report inconclusive rather
-   than widen a tolerance after seeing the candidate. Report candidate twins
-   as a second noise control, not a license to raise epsilon. This estimator
-   is proposed here; it was not retrospectively applied to the older table.
-5. Inspect the GET lowering and profile: actual stamp stores must execute;
-   the candidate must retain reader acquisition/release without selecting the
-   ordinary entry write route for that field. Same-source falsifiers are
-   forcing the old lock route with identical stamp arithmetic/layout, and
-   removing only the candidate store. If removing the lock does not recover
-   cost, or if removing the store does, distinguish lock cost from remaining
-   coherence/arithmetic cost. Recompute attribution instead of claiming the
-   old profile explains the new result.
+   Record OS, CPU/microcode, frequency policy, actual driver count, key/value
+   sizes, distribution, dataset occupancy, client count and warmup. Pin server
+   and client to disjoint physical P-cores, with no E-cores or shared SMT
+   siblings; use one logical CPU per physical core and identical placement
+   across arms. Recover the motivating settings from artifacts before
+   replicating them. Measure 1, 2, 4 and 8 server P-cores separately, with
+   uniform and hot-key workloads at depth 16; retain depth 1 and SET controls.
+   The [14900K has eight P-cores][14900k], so an eight-core server leaves none
+   for a disjoint local client: that cell needs a separate CI-controlled
+   P-core client host. Until available it remains unmeasured, not replaced
+   with E-cores or an SMT-sharing client. Keep client placement/topology fixed
+   across the scaling panel or report separate panels. Verify one driver for
+   the one-core case: without overlapping entry holders it measures path
+   length rather than inter-driver contention. Two-core uniform access may
+   also reveal little contention; it cannot establish hot-key scaling.
+3. Define a **twin** as an independent same-source, same-settings rebuild in
+   separate clean build and ThinLTO-cache directories, then interleave runs
+   of both images. Record SHA-256 binary hashes, cache state and build commands.
+   Bit-identical twins measure run noise only; differing images also expose
+   build/layout variation, which must be reported rather than conflated.
+   The old firn record says it reran each image; its numbers are not evidence
+   of independent rebuild variation ([memory-limit/README.md:128–135][firn-evidence]).
+   Begin with two one-second no-stamp/twin pairs as a small timing/noise pilot.
+   Use that spread to choose and record the final run duration before timing
+   the candidate. Exclude the pilot from the decision batch. Fix **ten paired
+   blocks per arm and workload cell**, each containing all arms and twins
+   with balanced ordering; do not stop early or add pairs after seeing a
+   favorable candidate result.
+4. Fix the estimator and limits now. In each cell, epsilon is the median of
+   `abs(R0_twin/R0 - 1)` over the ten blocks; loss is the larger of
+   `1 - median(R1/R0)` and `1 - median(R1_twin/R0_twin)`, paired by block.
+   A pass requires loss <= epsilon and epsilon <= **0.01** in every measured
+   depth-16 uniform/hot-key CPU cell. As a repeatability screen, every arm's
+   median absolute twin difference must be <= 0.01, and the first-five versus
+   last-five estimates of epsilon and of each candidate loss must differ by
+   <= 0.01. Failure of any noise/repeatability screen is **inconclusive**;
+   with those screens satisfied, loss > epsilon rejects the motivating
+   performance claim. Report all raw ratios and spread, not only medians.
+   The old no-stamp ratios differ from 1 by 3.1% and 2.7%; they do not supply
+   this paired estimator, and noise that large could not pass this protocol.
+   **A 3% residual loss is unacceptable under this proposed criterion.** If
+   inconclusive, diagnose the noise and prerecord a new duration/batch before
+   rerunning the complete panel; retain the first outcome and never widen
+   the 1% ceiling. These thresholds are prospective research recommendations,
+   not an owner-approved performance requirement or a retrospective verdict.
+5. Inspect GET lowering and profile: actual stamp stores must execute; R1
+   must retain reader acquisition/release without selecting the entry write
+   route for that field. The complete panel supplies both same-source
+   falsifiers: force the lock with and without the store, and remove only
+   the store under each route. If removing the lock does not recover cost,
+   or removing the store does, separate route cost from arithmetic/coherence
+   cost and their interaction. Collect `perf c2c`/HITM samples in separate
+   attribution runs, with node/field offsets, key lengths and cache-line
+   addresses, to distinguish table-cell traffic from dirty node lines and
+   neighboring nodes. Check PMU/event availability first; missing counters
+   leave coherence attribution unverified, not zero. Profiles do not replace
+   the unprofiled paired throughput panel.
 6. Exercise LRU and LFU separately under uniform, hot-key and Zipf access;
    record the control-specific stale/change/drop/drain observations above.
-   For each control predict the separating observation before its run:
-   moving the same writes to a second-map lock tests the payload-lock claim;
-   write-on-change tests whether actual change frequency repays a relookup;
-   buffering tests whether tolerated policy loss repays batching. Record an
-   outcome that would reject each explanation, including negligible recovery
-   outside twin spread or a policy-quality failure. A target probe must
-   establish both scalar code shape and the chosen no-thin-air ordering
-   before a performance claim. The language need not beat every data
-   structure; results apply only to measured operations and workloads.
+   Predict the separating observation before each control's run: second-map
+   writes test the payload-lock claim, write-on-change tests whether change
+   frequency repays a relookup, and buffering tests whether tolerated policy
+   loss repays batching. Record a falsifier for each, including negligible
+   recovery outside twin spread or a policy-quality failure. A target probe
+   must establish scalar code shape, alignment and the chosen no-thin-air
+   ordering in the **linked binary**, including LTO-generated instructions
+   and helper symbols, alongside `.ll` inspection. Results apply only to
+   measured operations, workloads, CPU counts and client topology; missing
+   four/eight-core cells preclude a claim covering those counts.
 
 Semantic validation precedes candidate throughput: the specified lost-update,
 multi-target and IRIW outcomes; forbidden coherence regressions, thin-air
-cycles and stale loads after reader-to-writer handoff; rejection of mixed
-raw/atomic access and invalid guards/proofs; ordinary-payload stability under
-replacement/deletion/resize; cross-module helpers and inspection that their
+cycles and stale loads after reader-to-writer handoff; rejection of racing
+raw/atomic access, unqualified aggregate snapshots and invalid guards/proofs;
+ordinary-payload stability under replacement/deletion/resize;
+cross-module helpers and inspection that their
 relaxed-containing reference parameters carry no `noalias`; wrapping boundary
 and no-lost-update RMW; aliasing targets, multi-target ordinary invariants,
-and aggregate movement. An independent event model should be the oracle,
-with runtime sanitizers/stress
-as additional implementation evidence, not a proof of the memory model.
+and aggregate movement. Include missing-key, nested-map and forced whole-hold
+fallback cases, and inspect matching/copies for plain loads or memory
+intrinsics overlapping a relaxed leaf. An independent event model should be
+the oracle, with runtime sanitizers/stress as additional implementation
+evidence, not a proof of the memory model.
 Negative cases must fail for the intended rule. Native CI must qualify the
 missing ABI/feature combinations before “all supported targets” is claimed.
 Formal cases would live under conformance/program/runtime ownership when the
@@ -1002,7 +1202,8 @@ for a shape. These are open research decisions, not approvals or spec edits.
 7. **May relaxed cells be used as wait conditions or publication flags?**
    Recommend no in the first design: use existing guarded Shared state for
    synchronization, and specify snapshots only for scalar hints. A broader
-   choice must add a visibility/progress/publication model and proofs.
+   choice must add a visibility/progress/publication model and proofs, plus
+   notifications on read-hold completion for any admitted wait conditions.
    Confidence 3/5: the safety boundary is clear; useful reliable polling may
    justify more later.
 8. **Must relaxed values exclude cyclic thin-air justification?** Recommend
@@ -1029,7 +1230,9 @@ five admitted target ABIs versus narrower routine CI coverage; the earlier
 atomic-field and retry refusals; and the difference between scalar atomicity
 and a Shared transaction. The Firn-wf numbers above are verified as a faithful
 transcription of its pinned research record, not independently reproduced.
-The source review also establishes the missing alias-attribute obligation,
+The source review also establishes the alias-attribute and aggregate-access
+obligations, stable node addresses and direct slot access, the read release's
+lack of guard notification, the absence of fixed CPU-feature settings,
 the need for relaxed load/load conflicts, and the ENT-2/TYPE-11/guard exclusion
 points. The event model and control protocol are proposals, not results.
 
@@ -1043,7 +1246,10 @@ criterion. No acceptance, performance success or implementation completion
 is claimed for any candidate. Next run the existing-language same-source
 controls, and evaluate the proposed event model and target qualification plan
 for the owner's semantic choices, before changing language rules. No build,
-test suite or benchmark was run for this documentation revision.
+test suite or benchmark was run for this documentation revision. The local
+Clang `-###` query only inspected driver defaults; it compiled and linked
+nothing. Effective LTO CPU/features and Linux outlined-atomic dependencies
+remain part of target qualification, not conclusions of that query.
 
 ## Sources
 
@@ -1071,10 +1277,19 @@ Whitefoot qualification results.
 [atomic-lower]: ../../../compiler/src/lowering/builder/atomic.rs
 [storage-lower]: ../../../compiler/src/lowering/builder/storage.rs
 [cmap]: ../../../compiler/src/backend/concurrent_map.c
+[cmap-node]: ../../../design/compiler/waiting-contexts/concurrent-map.md
+[cmap-header]: ../../../compiler/src/backend/concurrent_map.h
+[keyed-runtime]: ../../../compiler/src/backend/keyed_table.c
+[shared-emitter]: ../../../compiler/src/backend/emitter/shared.rs
+[operations-emitter]: ../../../compiler/src/backend/emitter/operations.rs
+[places-emitter]: ../../../compiler/src/backend/emitter/places.rs
 [targets]: ../../../compiler/src/target.rs
 [emitter]: ../../../compiler/src/backend/emitter.rs
 [backend-facts]: ../../../design/compiler/backend-facts.md
 [toolchain]: ../../../compiler/src/toolchain.rs
+[driver]: ../../../compiler/src/driver.rs
+[runtime-make]: ../../../compiler/runtime.mk
+[native-driver]: ../../../compiler/src/bin/whitefootc.rs
 [gate]: ../../../.github/workflows/gate.yml
 [io-ci]: ../../../.github/workflows/io-hosts.yml
 [release-ci]: ../../../.github/workflows/compiler-release.yml
@@ -1094,6 +1309,15 @@ Whitefoot qualification results.
 [c11]: https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf
 [llvm-order]: https://llvm.org/docs/LangRef.html#atomic-memory-ordering-constraints
 [llvm-noalias]: https://llvm.org/docs/LangRef.html#noalias
+[llvm-memory]: https://llvm.org/docs/LangRef.html#memory-model-for-concurrent-operations
+[llvm-load]: https://llvm.org/docs/LangRef.html#load-instruction
+[llvm-store]: https://llvm.org/docs/LangRef.html#store-instruction
+[llvm-lto]: https://llvm.org/docs/LinkTimeOptimization.html
+[llvm-arm-alias]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/AArch64/AArch64Processors.td#L1211-L1213
+[llvm-arm-cpus]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/AArch64/AArch64Processors.td#L872-L881
+[llvm-arm-features]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/AArch64/AArch64Features.td#L783-L791
+[llvm-x86-cpus]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/X86/X86.td#L1628-L1645
+[llvm-x86-baseline]: https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Target/X86/X86.td#L753-L758
 [rc11]: https://people.mpi-sws.org/~dreyer/papers/scfix/paper.pdf
 [llvm-atomic]: https://llvm.org/docs/Atomics.html#atomics-and-codegen
 [intel-atomic]: https://cdrdv2-public.intel.com/835754/253668-sdm-vol-3a.pdf
@@ -1102,3 +1326,4 @@ Whitefoot qualification results.
 [arm-order]: https://developer.arm.com/community/arm-community-blogs/b/tools-software-ides-blog/posts/armv8-sequential-consistency
 [gcc-atomic]: https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html
 [clang-atomic]: https://clang.llvm.org/doxygen/stdatomic_8h_source.html
+[14900k]: https://www.intel.com/content/www/us/en/products/sku/236773/intel-core-i9-processor-14900k-36m-cache-up-to-6-00-ghz/specifications.html
