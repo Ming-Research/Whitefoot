@@ -662,6 +662,18 @@ writes invalidate the source. Calls use retained read-only reference-formal
 facts; unknown contracts, waiting calls and unclassified operations remain
 barriers. Effects on a proved separate root do not block placement.
 
+Halo's retained `prepare` snapshot was rejected because `metamethod`'s
+`reads(name)` range had no read-only formal fact, and its constant text slice
+(`ConstantAddress` → `SliceFromRun` → `SliceRange`) had an unknown root: the
+call falsely dirtied the stack source before a later observation of `v`.
+Lowering now retains the no-declared-write fact for ordinary references,
+ranges and runs, and the call barrier consumes it for both reference source
+modes. This follows CALL-1 and REF-4 without assuming range disjointness;
+writing ranges still invalidate overlapping sources. The maintained backend
+case pairs parameter and constant text ranges with an overlapping range
+write. Its source passed the authorized prebuilt compiler's `--check`;
+copy placement and native execution remain pending.
+
 An own argument whose type consists entirely of inline scalars, structural
 struct/enum fields or fixed arrays/windows cannot reach another allocation.
 It therefore contributes no source invalidation, even if an unknown producer

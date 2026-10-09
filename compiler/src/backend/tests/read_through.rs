@@ -454,6 +454,228 @@ fn read_through_snapshot_placement_preserves_old_values_and_call_boundaries() {
 }
 
 #[test]
+fn read_through_distinguishes_readonly_ranges_from_overlapping_range_writes() {
+    let source = format!(
+        "{VALUES}{}",
+        r#"
+const method_name: Array<u8, 6> = "__call";
+
+fn read_name(v: Value, name: &[u8]) -> result: u64 reads(name) {
+  let tag = classify(v: v);
+  if name^.len > 0_u64 {
+    let byte = name^[0_u64];
+    let word = cvt::<u8, u64>(byte);
+    return tag +wrap word;
+  }
+  return tag;
+}
+
+fn parameter_name(values: &Box<Slots<Value>>, index: u64, name: &[u8], cold: Bool) -> result: u64 reads(values), reads(name) contract {
+  requires index < values^.inner.len;
+} {
+  let v = values^.inner[index];
+  let hot = classify(v: v);
+  if cold {
+    let observed = read_name(v: v, name: name);
+    let later = classify(v: v);
+    let combined = hot +wrap observed;
+    return combined +wrap later;
+  }
+  return hot;
+}
+
+fn constant_name(values: &Box<Slots<Value>>, index: u64, cold: Bool) -> result: u64 reads(values) contract {
+  requires index < values^.inner.len;
+} {
+  let v = values^.inner[index];
+  let hot = classify(v: v);
+  if cold {
+    let observed = read_name(v: v, name: &method_name[0_u64..6_u64]);
+    let later = classify(v: v);
+    let combined = hot +wrap observed;
+    return combined +wrap later;
+  }
+  return hot;
+}
+
+fn write_range(v: Value, destination: &[Value], index: u64) -> result: u64 writes(destination[index]) contract {
+  requires index < destination^.len;
+} {
+  set destination^[index] = Value::Number(n: 99_u64);
+  return classify(v: v);
+}
+
+fn overlapping_range(values: &Box<Slots<Value>>, index: u64, cold: Bool) -> result: u64 writes(values.inner) contract {
+  requires index < values^.inner.len;
+  ensures values^.inner.len == entry(values)^.inner.len;
+} {
+  let v = values^.inner[index];
+  let hot = classify(v: v);
+  if cold {
+    let observed = write_range(v: v, destination: &values^.inner[0_u64..values^.inner.len], index: index);
+    let later = classify(v: v);
+    let combined = hot +wrap observed;
+    return combined +wrap later;
+  }
+  return hot;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_new::<Value>(capacity: 1_u64);
+  if values.inner.len < values.inner.cap {
+    let initial = Value::Number(n: 7_u64);
+    place_back(window: &values.inner, value: initial);
+  }
+  if values.inner.len > 0_u64 {
+    let bytes = array_filled::<u8, 1>(value: 5_u8);
+    let name = &bytes[0_u64..1_u64];
+    let hot = False();
+    let cold = True();
+    let parameter_hot = parameter_name(values: &values, index: 0_u64, name: name, cold: hot);
+    if parameter_hot != 7_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let parameter_cold = parameter_name(values: &values, index: 0_u64, name: name, cold: cold);
+    if parameter_cold != 26_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    let empty = &bytes[0_u64..0_u64];
+    let parameter_empty = parameter_name(values: &values, index: 0_u64, name: empty, cold: cold);
+    if parameter_empty != 21_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    let constant_hot = constant_name(values: &values, index: 0_u64, cold: hot);
+    if constant_hot != 7_u64 {
+      return std::process::exit_status(code: 4_u8);
+    }
+    let constant_cold = constant_name(values: &values, index: 0_u64, cold: cold);
+    if constant_cold != 116_u64 {
+      return std::process::exit_status(code: 5_u8);
+    }
+    let writing_hot = overlapping_range(values: &values, index: 0_u64, cold: hot);
+    if writing_hot != 7_u64 {
+      return std::process::exit_status(code: 6_u8);
+    }
+    let writing_cold = overlapping_range(values: &values, index: 0_u64, cold: cold);
+    if writing_cold != 21_u64 {
+      return std::process::exit_status(code: 7_u8);
+    }
+    let replacement = classify(v: values.inner[0_u64]);
+    if replacement != 99_u64 {
+      return std::process::exit_status(code: 8_u8);
+    }
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 9_u8);
+}
+"#
+    );
+    let names = ["parameter_name", "constant_name", "overlapping_range"];
+    let addresses = with_ir(source.as_bytes(), |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "constant_name")
+            .expect("constant-range caller");
+        let definition = |value| {
+            function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result, operation, ..
+                    } if *result == value => Some(operation),
+                    _ => None,
+                })
+                .expect("constant range producer")
+        };
+        let name = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation:
+                        IrOperation::Call {
+                            function,
+                            arguments,
+                        },
+                    ..
+                } if program.functions()[*function as usize].name() == "read_name" => {
+                    Some(arguments[1])
+                }
+                _ => None,
+            })
+            .expect("constant name argument");
+        let IrOperation::SliceRange { slice, .. } = definition(name) else {
+            panic!("the constant name must be a sliced range");
+        };
+        let IrOperation::SliceFromRun { run } = definition(*slice) else {
+            panic!("the constant array must form the range");
+        };
+        assert!(matches!(
+            definition(*run),
+            IrOperation::ConstantAddress { .. }
+        ));
+        names.map(|name| snapshot(program, name))
+    });
+    // Keep both the classifier and the range consumers out of line so host
+    // inlining cannot hide the barrier or repair a broken snapshot boundary.
+    let module = super::owned_places::retain_calls(&emit(source.as_bytes()));
+    for (name, address) in names[..2].iter().zip(&addresses[..2]) {
+        let body = emitted_function(&module, name);
+        assert_no_copy(body);
+        assert_snapshot_copy(body, *address, false);
+        let classifier = format!("@wf_classify(ptr %v{})", address.ordinal());
+        assert_eq!(body.matches(&classifier).count(), 2, "{body}");
+        assert!(
+            body.contains(&format!("@wf_read_name(ptr %v{},", address.ordinal())),
+            "the cold consumer must also read through: {body}"
+        );
+    }
+    let writing = emitted_function(&module, "overlapping_range");
+    let copy = snapshot_copy_line(writing, addresses[2]);
+    let first_read = writing
+        .lines()
+        .position(|line| line.contains("@wf_classify("))
+        .expect("observation before the branch");
+    assert!(
+        copy < first_read,
+        "retain the original Load copy: {writing}"
+    );
+    assert_eq!(
+        llvm_block_at(writing, copy),
+        llvm_block_at(writing, first_read)
+    );
+    let writer = emitted_function(&module, "write_range");
+    assert!(
+        writer.contains("@wf_classify(ptr %wf.arg.v0)"),
+        "the writer must observe its incoming argument after the write: {writer}"
+    );
+    let optimized = host_optimized_module(&module);
+    for name in &names[..2] {
+        let body = emitted_function(&optimized, name);
+        assert_no_copy(body);
+        assert_element_argument(body, false);
+        assert!(body.contains("@wf_read_name("), "{body}");
+    }
+    // Before the range-formal fact and call-barrier fixes, either unknown
+    // range root dirties values; the later classifier forces an eager copy,
+    // failing both positive raw no-copy assertions. Reverting either edit
+    // alone has the same failure. Exempting writing ranges fails the original
+    // capture assertion; copying only for the writing call fails its required
+    // placement before the first classifier. The native oracle requires all
+    // three observations to see old value 7 (total 21) and the source to be 99.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn read_through_snapshot_stays_in_one_dispatch_part() {
     let source = format!(
         "{VALUES}{}",

@@ -489,7 +489,9 @@ fn lower_function<'program>(
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
-        if parameter.mode == CheckedMode::Reference
+        // Every reference kind, ranges and runs included, keeps the fact that
+        // its declared effects never write through it [CALL-1, REF-4].
+        if parameter.mode.is_reference()
             && !function
                 .declared_state_writes
                 .iter()

@@ -592,14 +592,12 @@ impl<'a> SnapshotFacts<'a> {
                         {
                             continue;
                         }
-                        let readonly = signature.parameters().get(position)
-                            == Some(&IrSourceMode::Reference)
-                            && callee
-                                .parameters()
-                                .get(position)
-                                .is_some_and(|(formal, _)| {
-                                    callee.readonly_reference_parameters.contains(formal)
-                                });
+                        let readonly = matches!(
+                            signature.parameters().get(position),
+                            Some(IrSourceMode::Reference | IrSourceMode::Range)
+                        ) && callee.parameters().get(position).is_some_and(
+                            |(formal, _)| callee.readonly_reference_parameters.contains(formal),
+                        );
                         if !readonly && !self.scalar(*argument) && self.may_alias(*argument, root) {
                             return Ok(true);
                         }
