@@ -1,4 +1,4 @@
-# Kernel Specification v0.114
+# Kernel Specification v0.113
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -784,7 +784,7 @@ An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
 The release graph of a type `T` has as its nodes the types reachable from `T` through fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
 A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], or a `Shared<T>` or `SharedRead<T>` handle [SHARE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
+A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9] is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
 The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
 One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
 A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
@@ -869,9 +869,8 @@ A `Box<T>` release is its content's compiler-derived release followed by one com
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
-A `Shared<T>` or `SharedRead<T>` release is [SHARE-1]'s handle release.
 A `const` item [CONST-2] is never released.
-Every other frame-resident owned value [STOR-1] has no release action of its own.
+Every other frame-resident owned value [STOR-1] has no release action.
 
 A host handle [PRE-2] has no fields, so its release is empty; every other opaque struct [TYPE-2] takes the release its fields give it under this rule, the storage shapes and `Box` taking the actions above.
 An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
@@ -2536,10 +2535,10 @@ pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
-An opaque struct a host module declares with fields, `Instant`, `CancelState`, `CancelSource` or `CancelWatch`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
+An opaque struct a host module declares with fields, `Instant` or `CancelState`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-`CancelSource` and `CancelWatch` are opaque structs whose private fields hold, respectively, a `Shared<CancelState>` and a `SharedRead<CancelState>` of one shared cancellation state. Their capabilities and field-wise release follow [PROV-6]. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Dropping a source or watch releases only its shared handle and neither fires nor clears the state; the explicit `close_cancel_source` and `close_cancel_watch` consume and drop their argument; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch retaining a private shared state for which no source is made available, so its state and every view of it remain false. These handles consume no host handle credit.
+`CancelSource` and `CancelWatch` are independently owned handles of one shared cancellation state, of type `CancelState`. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Closing a source or watch releases only that handle and neither fires nor clears the state; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch whose state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
 `MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
@@ -2577,12 +2576,10 @@ public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 
-public opaque struct CancelSource {
-  state: Shared<CancelState>;
+public opaque nodrop struct CancelSource {
 }
 
-public opaque struct CancelWatch {
-  state: SharedRead<CancelState>;
+public opaque nodrop struct CancelWatch {
 }
 
 public opaque struct CancelState {
@@ -2601,9 +2598,9 @@ public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) wait
 
 public fn cancel_never() -> result: CancelWatch pure doc "Returns a watch that never fires.";
 
-public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Consumes and drops this source handle without firing it; remaining source handles, watches and shared views retain the state.";
+public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Releases this source handle without firing it; remaining source handles, watches and shared views retain the state.";
 
-public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Consumes and drops this watch handle, including a never-firing watch.";
+public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Releases this watch handle, including a never-firing watch.";
 ```
 
 `std::io`, the record `io/module.wfm`:
