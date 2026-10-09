@@ -2743,6 +2743,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::ConcurrentHashMapClear { table } => {
                 self.emit_keyed_table_clear(result, *table)
             }
+            IrOperation::ConcurrentHashMapReleaseReserve { table } => {
+                self.emit_keyed_table_release_reserve(result, *table)
+            }
             IrOperation::TableLockEntry {
                 record,
                 table,

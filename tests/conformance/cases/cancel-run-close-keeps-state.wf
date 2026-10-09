@@ -1,0 +1,64 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn cancelled(watch: &std::time::CancelWatch, clock: &std::time::Clock) -> result: Bool reads(watch), writes(clock) waits {
+  let start = std::time::now(clock: clock);
+  let future = std::time::instant_after(instant: start, nanoseconds: 1000000000_u64);
+  let outcome = std::time::sleep_until(deadline: future, cancel: watch);
+  match outcome {
+    Ok(value: slept) => {
+      return False();
+    }
+    Err(error: stopped) => {
+      return True();
+    }
+  }
+}
+
+fn reaches_deadline(watch: &std::time::CancelWatch, clock: &std::time::Clock) -> result: Bool reads(watch), writes(clock) waits {
+  let start = std::time::now(clock: clock);
+  let future = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+  let outcome = std::time::sleep_until(deadline: future, cancel: watch);
+  let after = std::time::now(clock: clock);
+  let reached = std::time::instant_reached(deadline: future, instant: after);
+  match outcome {
+    Ok(value: slept) => {
+      return reached;
+    }
+    Err(error: stopped) => {
+      return False();
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let source = std::time::cancel_source();
+  let shared = std::time::cancel_share(source: &source);
+  let discarded = std::time::cancel_watch(source: &source);
+  std::time::close_cancel_watch(watch: move discarded);
+  std::time::close_cancel_source(source: move source);
+  let retained = std::time::cancel_watch(source: &shared);
+  let fired_sibling = std::time::cancel_watch(source: &shared);
+  let unfired = reaches_deadline(watch: &retained, clock: &clock);
+  std::time::cancel_fire(source: &shared);
+  std::time::close_cancel_watch(watch: move fired_sibling);
+  std::time::close_cancel_source(source: move shared);
+  let stopped = cancelled(watch: &retained, clock: &clock);
+  std::time::close_cancel_watch(watch: move retained);
+  let orphan_source = std::time::cancel_source();
+  let orphan_watch = std::time::cancel_watch(source: &orphan_source);
+  std::time::close_cancel_source(source: move orphan_source);
+  let orphan_unfired = reaches_deadline(watch: &orphan_watch, clock: &clock);
+  std::time::close_cancel_watch(watch: move orphan_watch);
+  let retained_correct = band(unfired, stopped);
+  let correct = band(retained_correct, orphan_unfired);
+  if correct {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

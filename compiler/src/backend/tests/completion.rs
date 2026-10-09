@@ -645,12 +645,12 @@ fn a_native_ring_carries_opens_and_closes_under_one_kind_rule() {
         "the kind check reads the mode of the descriptor the open produced: \
          {decision}"
     );
-    // Every submit routes through one dispatcher, which asks the ring whether
-    // it has a form for this kind before it reaches the bounded adapter. The
+    // Ordinary and watched submits share the bound-aware dispatcher, which
+    // asks whether the ring has a form for this kind before the bounded adapter. The
     // question is asked before the record is offered, so a kind the ring does
     // not carry is never refused after the operation was already the ring's.
     let dispatch = bridge
-        .split_once("static void wf_bridge_dispatch(wf_completion_record *record) {")
+        .split_once("static void wf_bridge_dispatch_bound(")
         .expect("one dispatcher")
         .1
         .split_once("\n}\n")
