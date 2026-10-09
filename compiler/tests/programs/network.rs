@@ -459,6 +459,7 @@ fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
 fn cancellation_ends_waits_without_losing_bytes_on_both_routes() {
     let program = build_program(&compile_program("cancellation.wf"));
     for native_ring in [true, false] {
+        println!("cancellation route: native ring {native_ring}");
         let port = free_port();
         let text = port.to_string();
         let child = program.spawn_on_route_with(
