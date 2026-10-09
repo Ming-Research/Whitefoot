@@ -2346,6 +2346,48 @@ for a shape. These are open research decisions, not approvals or spec edits.
    ownership and aggregate-replacement rules remain unverified. A demonstrated
    need for B together with a sound replacement rule could reopen the choice.
 
+## Owner rulings (2026-10-09)
+
+On the shared status board on 2026-10-09 the owner chose option A on seven of
+the decision cards above; decision 4 (how a callable exposes relaxed access)
+remains open, with the owner asking why loads of one cell conflict (answered
+on the card: a cell another context can change keeps per-cell coherence only
+if two loads keep source order).
+
+- **Decision 2 (`firn-rf-split`), A:** run the same-source controls first --
+  stamps in a second map keyed the same way, and a separate write only when
+  the stamp changes, against the locked stamp and no stamp -- and accept the
+  semantic change only if they do not recover the cost, together with the
+  mixed event model's proof.
+- **Decision 3 (`firn-rf-shape`), A:** an inline `Relaxed<T>` type (S1),
+  paired with S1-W, not a field modifier or a separately allocated handle.
+- **Decision 5 (`firn-rf-thinair`), A:** values are never invented; the
+  acyclic program-order/reads-from rule holds, with its ordering cost on weakly
+  ordered multicore.
+- **Decision 6 (`firn-rf-targets`), A:** explicit per-target capabilities,
+  native-width aligned load/store as the minimum, read-modify-write by
+  capability and refused at composition when absent, never a hidden lock;
+  bounded interrupt masking admissible on a single-core runtime that proves
+  privilege, mask coverage and latency. The owner noted this needs care when
+  Whitefoot lowers to MCUs; the board item `firn-wf-mcu-atomics` records it.
+- **Decision 7 (`firn-rf-firn`), A:** load/store LRU and LFU first, LFU's lost
+  increments judged by the predeclared Zipf hit-rate criterion.
+- **Decision 8 (`firn-rf-wait`), A:** no wait conditions or publication flags
+  on relaxed cells in the first design. The owner's ground for refusing B:
+  Whitefoot promises freedom from deadlock, and the atomic statement's lock
+  ordering exists so that two contexts never wait in opposite orders; allowing
+  waits on relaxed cells would reopen exactly that, since two waits in
+  different orders could deadlock.
+- **Decision 9 (`firn-rf-replace`), A:** no whole replacement, swap included,
+  through any reference; only an owned binding may replace the cell. The
+  owner asked whether this is another special case. It is a new rule that the
+  current rules do not imply (OP-11 lets any noncopy value be exchanged, and
+  opaque, private fields and nodrop do not prevent it); it is needed because
+  S1-W's rows cannot distinguish an atomic store from an ordinary whole
+  write. The specification should state it as a general type property, values
+  of the type change through references only by the type's own operations,
+  with `Relaxed<T>` its first user.
+
 ## What is established and what remains unverified
 
 Established by source inspection: the current rule conflict; the absence of
