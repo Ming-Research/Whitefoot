@@ -2205,6 +2205,7 @@ mod range_argument_kill_tests {
 
     fn view_source() -> CheckedRangeSource {
         CheckedRangeSource::Range(CheckedRangeRoot {
+            formation: None,
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),

@@ -11,13 +11,51 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.113: releasing a map's reserve through the memory meter
+## 2026-10-09 v0.118: releasing a map's reserve through the memory meter
 
 Rules: changed PRE-1, PRE-2, SHARE-1
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller": the release takes the memory meter and writes it, `reads(map), writes(meter)` ("choose A", translated); and option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process": it moves to `std::process` as `release_map_reserve`, host functions may declare type parameters, and the prelude function `shared_map_release_reserve` is removed ("choose A", translated).
 
 Summary: PRE-1 removes `shared_map_release_reserve`, the last entry of the declaration preorder, so no other ordinal moves. PRE-2 adds `release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter)` to `std::process` and states that a host function may declare type parameters under the ordinary generic rules, every instantiation using the one definition the build supplies. SHARE-1 names the moved function; what it says of the release is unchanged. Selection ground: v0.111's `writes(map)` kept the call out of guards but made every caller up a server's command path write the store, while an atomic statement changes the same map under `reads`; the release's answer is a drop in the heap reading, so it writes the meter as `heap_in_use` does, which also keeps it out of guards, and the meter's type lives in `std::process`, which the prelude does not reference.
+
+## 2026-10-09 v0.117: segment and page selectors as direct bases
+
+Rules: changed OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2, ENT-3
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese: after Snowghost's request that `s[i].len` and `s[i][j]` be admitted and the card asking how far the direct forms should extend, recommended option A, reads and writes for `Segments` segments and `Paged` pages alike: "choose A" (translated); then, after the card that presented the OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2 and ENT-3 changes, the two design decisions and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: A run-selecting place, a segment subscript `s[i]` of a `Segments` or a page subscript `p.pages[k]` of a `Paged`, may be used without `&` as the base of its `len` read and of a further element subscript, whose element place is an ordinary element place; it denotes exactly the place its borrow resolves to, with the same bounds, effects, overlap and parallel permission, and every other use of the run-selecting place stays an OP-4 error. A page step that ends a page-reference borrow keeps per-formation proof identity because its extent is captured at formation; segment steps, direct page selections and every page step followed by a further step compare as index steps because they capture nothing and `p.len` writes kill their length terms. Forming `&p.pages[k]` publishes that its `len` equals the direct page length in the formation's entry state. The selection ground is the natural form Snowghost writes for its grid splice, previously refused in favor of a borrow before every length read or element access.
+
+## 2026-10-09 v0.116: no merging or reordering of waiting calls
+
+Rules: changed EFF-3
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated): EFF-3's licence applies only to calls that do not wait.
+
+Summary: EFF-3 licensed deduplicating and reordering any `pure`, non-allocating call with equal arguments, while a `pure waits` function may change shared objects whose changes take effect in the execution's order (WAIT-2, SHARE-3) and appear in no row (SHARE-2); the two rules conflicted with no stated priority. The licence now excludes waiting calls. No compiler behaviour changes today, since the backend derives no function attributes from rows; the rule closes the hazard before it does. Selection ground: found while answering the owner's question about Shared and effect rows on the relaxed-fields research (#301).
+## 2026-10-09 v0.115: scientific float spelling
+
+Rules: changed FORM-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated): change the specification so that a candidate with an exponent has an integer component of one digit 1–9, then select by byte count and lexicographic order.
+
+Summary: FORM-5's canonical float spelling now considers only decimals whose integer component is one nonzero digit when an exponent is present, then keeps the fewest-bytes, least-bytes selection. Before, a zero integer component won every tie (500 was `0.5e3`) and the compiler, which never generated that form, refused it, so no spelling of 500 satisfied both; a longer integer component could also be shortest (`12.345e9`). Now 500 is `5.0e2` and 12345000000 is `1.2345e10`. Selection ground: Firn-wf reported the mismatch while writing `500.0`-valued constants, and scientific notation is the form writers produce.
+## 2026-10-09 v0.114: copied cells and helper-call updates in indexed reductions
+
+Rules: changed PAR-2
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: An indexed operation update's accumulator operand may be one fresh, immutable, single-use copy of the same cell made earlier in the same block (`let old = R[e]; let next = old op x; set R[e] = next;`), with no root access or write to the subscript's or contribution's support in between. A call is an update of an indexed family when its reference argument reaches the root and the callee carries an indexed summary for that parameter: its whole body uses the parameter only for measure reads and admitted updates of families below its referent, through an acyclic chain of such calls; the caller's family takes the summary's kind. A family is identified by its resolved storage place and cell projection, so updates through different references to one storage are one family with one operation. The callee's net effect is a multiset of cell contributions under the family operation, or a set of cells receiving its constant, reading no root contents, so per-cell recombination stays exact. The selection ground is the pre-registered criterion: Snowghost's recount admitted 17 of its 32 histogram-like loops, exactly the six predicted beyond v0.107's 11 ([results](../research/investigations/indexed-reductions/DESIGN.md#copied-cells-and-helper-calls)).
+
+## 2026-10-09 v0.113: guards observe cancellation through read-only shared handles
+
+Rules: changed TYPE-2, TYPE-9, TYPE-11, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, PRE-2
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text (the read-only shared handle `SharedRead<T>`, `cancel_state` returning a read-only view of the cancellation state, and `cancel_fire` becoming a waiting operation that wakes guards) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: `SharedRead<T>` is a retaining read-only handle made from a `Shared<T>` by `shared_read` and shared by `shared_read_share`; it may be an atomic statement's target and its guard may read through it, while writes, whole replacement, `swap` and consuming transfer through it, or through any alias, projection, map selection or call row whose resolved state root it is, are refused (SHARE-2). `cancel_state(watch)` returns `SharedRead<CancelState>` over the watch's cancellation state, whose `fired` stays true after firing and false for `cancel_never`, so a guard such as `bor(ready, fired)` waits until either holds. `cancel_fire` declares `waits`: in atomic order it changes the state from unfired to fired, wakes contexts parked on guards that read it and still ends host waits as v0.110 specifies; firing inside an atomic statement or from a nonwaiting function is refused. The selection ground is firn's stop path, where a guarded wait for the script engine could not be ended by cancellation; a cancellation-specific target and cancellation interrupting a pending statement were rejected for adding host-specific admission or a nonexecuting outcome.
 
 ## 2026-10-09 v0.112: range facts below elements, ordinary obligations owed to the range judgment, range type invariants
 

@@ -52,7 +52,7 @@ use super::model::{
     NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
-use super::permission_ledger::{LedgerSource, render_ledger};
+use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
 use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
@@ -255,6 +255,8 @@ struct LocalBinding {
     /// Compiler-updated counted binders are readable source bindings but are
     /// never writer-controlled storage [SET-1, OWN-11].
     compiler_updated: bool,
+    /// SHARE-2 authority of this atomic state root; aliases retain the root.
+    read_only_state: bool,
     /// [REF-1] what this binding names when it is a reference variable: its
     /// path set, its kind, and its [REF-2] validity. `None` is storage of its
     /// own.
@@ -1386,7 +1388,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         for (function, judged) in functions.iter_mut().zip(ranges) {
             function.range_facts.certified = judged.certified;
         }
-        let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        let mut permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        prepare_storage_ledger(
+            &mut permission,
+            &PermissionLedgerSource {
+                tree: &self.types.declarations.tree,
+            },
+        )?;
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
         for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
@@ -2116,6 +2124,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             live: true,
             loop_depth: 0,
             compiler_updated: false,
+            read_only_state: false,
             // [REF-1] a reference parameter arrives naming the caller's path
             // by substitution [EFF-5]; inside this body the parameter name is
             // that path, so its set anchors at itself and every resolution
@@ -2525,13 +2534,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 self.install_expression_call_requirements(check_context, start, requirements)?;
                 self.install_expression_call_requirements(check_context, end, requirements)?;
             }
+            CheckedExpression::RangeMeasure { root, .. } => {
+                if let Some(formation) = root.formation.as_deref_mut() {
+                    self.install_expression_call_requirements(
+                        check_context,
+                        formation,
+                        requirements,
+                    )?;
+                }
+            }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
             | CheckedExpression::Binding { .. }
             | CheckedExpression::ArrayMeasure { .. }
             | CheckedExpression::BufferMeasure { .. }
             | CheckedExpression::ContainerMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::BorrowAddressed { .. }
             | CheckedExpression::DerefAddressed { .. }
             | CheckedExpression::Project { .. } => {}
@@ -2586,6 +2603,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
+                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                        ),
+                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
                             Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,

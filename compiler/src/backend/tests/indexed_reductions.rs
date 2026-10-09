@@ -7,6 +7,131 @@ use std::process::Command;
 
 const PROGRAM: &[u8] = include_bytes!("../../../../tests/programs/parallel/indexed_reductions.wf");
 
+const CALL_PROGRAM: &[u8] = include_bytes!("../../../../tests/programs/parallel/indexed_calls.wf");
+
+#[test]
+fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() {
+    let directory = test_directory();
+    let sequential_directory = test_directory();
+    let sequential = build_linked_executable(&emit(CALL_PROGRAM), None, &[], &sequential_directory);
+    let reference = Command::new(&sequential)
+        .env("WF_WORKERS", "1")
+        .bounded_output()
+        .expect("run sequential helper-call oracle");
+    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
+    assert!(reference.stderr.is_empty(), "{reference:?}");
+    let module = observed_with(
+        &emit_with_overlap(CALL_PROGRAM),
+        &[
+            "call_histogram",
+            "slots_histogram",
+            "call_marks",
+            "shared_call_fields",
+            "nested_helper_fields",
+            "measure_guarded_calls",
+            "empty_call_fields",
+            "nested_alias",
+        ],
+    );
+    let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
+    for zero in [false, true] {
+        let mut command = Command::new(&executable);
+        command.env("WF_WORKERS", "4");
+        if zero {
+            command.env("WF_TEST_ZERO", "1");
+        }
+        let output = command.bounded_output().expect("run helper-call observer");
+        assert_eq!(output.status.code(), Some(0), "zero={zero}: {output:?}");
+        assert_eq!(output.stdout, reference.stdout);
+        let report = String::from_utf8_lossy(&output.stderr);
+        let allocations: u32 = report
+            .split_once("indexed allocations=")
+            .expect("allocation counter")
+            .1
+            .split_once(' ')
+            .expect("allocation count delimiter")
+            .0
+            .parse()
+            .expect("numeric allocation count");
+        if zero {
+            assert_eq!(allocations, 0, "{report}");
+            // The first seven tags total 13 leaves; each alias shape adds 1 outer + 16 inner: 13 + 2 * 17 = 47.
+            assert!(
+                report.contains("indexed allocations=0 leaves=47\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=1,1,1,1,5,2,2,34\n"),
+                "{report}"
+            );
+        } else {
+            // Ten nonnested roots cost five allocations each (directory
+            // plus four blocks). The nested root costs five plus four inner
+            // splits of five. Sibling families must share each allocation.
+            // Alias shapes add 17 * 5 block allocations and 17 dense slabs: 75 + 85 + 17 = 177.
+            assert_eq!(allocations, 177, "{report}");
+            // Budget 2 gives four leaves per 16-iteration alias loop: 52 + 2 * (4 + 16 * 4) = 188.
+            assert!(
+                report.contains("indexed allocations=177 leaves=188\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=4,4,4,4,20,8,8,136\n"),
+                "{report}"
+            );
+        }
+    }
+    // Fail directories and leaf blocks, including later roots of one
+    // multi-root split. The observer checks the acquired prefixes are freed.
+    for fail in (1..=5).chain([16, 17, 20, 21, 25]) {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", "4")
+            .env("WF_TEST_FAIL", fail.to_string())
+            .bounded_output()
+            .expect("fail a private directory or block acquisition");
+        assert_eq!(output.status.code(), Some(90), "failure {fail}: {output:?}");
+    }
+    std::fs::remove_dir_all(directory).expect("remove helper-call observer artifacts");
+    std::fs::remove_dir_all(sequential_directory).expect("remove sequential helper-call artifacts");
+}
+
+#[test]
+fn indexed_aliases_execute_one_private_storage_per_resolved_root() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
+    let directory = test_directory();
+    let executable = observed_executable(
+        source,
+        &["calls", "direct", "fields_reversed", "fields", "mixed"],
+        &directory,
+    );
+    for zero in [false, true] {
+        let report = run_observed(&executable, zero);
+        if zero {
+            assert!(
+                report.contains("indexed allocations=0 leaves=5\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=1,1,1,1,1,0,0,0\n"),
+                "{report}"
+            );
+        } else {
+            // One dense family allocation, plus four root directories each
+            // with four leaf blocks. Aliased sibling fields share a block.
+            assert!(
+                report.contains("indexed allocations=21 leaves=20\n"),
+                "{report}"
+            );
+            assert!(
+                report.contains("indexed loops=4,4,4,4,4,0,0,0\n"),
+                "{report}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("remove alias observer artifacts");
+}
+
 #[test]
 fn indexed_ir_contains_private_fill_ordered_combine_and_release() {
     let module = emit_with_overlap(PROGRAM);
@@ -783,7 +908,8 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
             "{function}: a leaf never allocates for itself"
         );
         assert_eq!(
-            super::emitted_body(&module, function).contains(".allocation = call ptr @wf__heap_take"),
+            super::emitted_body(&module, function)
+                .contains(".allocation = call ptr @wf__heap_take"),
             outer_allocates_in_caller,
             "{function}"
         );
@@ -946,6 +1072,7 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
         &directory,
     );
     let report = run_observed(&executable, false);
+    // Budget 2 gives 2^2 leaves per 262144-iteration loop: 4 * 4 = 16; only three use indexed slabs.
     assert!(
         report.contains("indexed allocations=3 leaves=16\n"),
         "{report}"
@@ -955,6 +1082,7 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
         "{report}"
     );
     let report = run_observed(&executable, true);
+    // Budget 0 gives 4 * 1 = 4 leaves and no slabs; the 8-iteration verification loop has returns and never splits.
     assert!(
         report.contains("indexed allocations=0 leaves=4\n"),
         "{report}"
@@ -980,7 +1108,9 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
     }
     let fields = super::emitted_body(&module, "field_values");
     assert_eq!(
-        fields.matches(".allocation = call ptr @wf__heap_take").count(),
+        fields
+            .matches(".allocation = call ptr @wf__heap_take")
+            .count(),
         2
     );
     assert!(fields.contains(".field = select i1"), "{fields}");

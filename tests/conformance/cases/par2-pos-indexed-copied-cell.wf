@@ -1,0 +1,36 @@
+fn reduce() -> result: u64 pure {
+  doc "A copied cell must preserve the indexed update contract.";
+  let counts = array_filled::<u64, 4>(value: 5_u64);
+  for (i in 0_u64..8_u64) {
+    let e = i % 2_u64;
+    let old = counts[e];
+    let next = old +wrap 1_u64;
+    set counts[e] = next;
+  }
+  return counts[0_u64] +wrap counts[3_u64];
+}
+
+fn copied_direct() -> result: u64 pure {
+  doc "A copied cell must preserve the indexed update contract.";
+  let counts = array_filled::<u64, 4>(value: 5_u64);
+  for (i in 0_u64..8_u64) {
+    let e = i % 2_u64;
+    let old = counts[e];
+    let unrelated = i +wrap 3_u64;
+    set counts[e] = 1_u64 +wrap old;
+  }
+  return counts[0_u64] +wrap counts[3_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Both copied-cell shapes preserve colliding updates and untouched cells.";
+  let temporary_result = reduce();
+  let direct_result = copied_direct();
+  if temporary_result != 14_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if direct_result != 14_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -452,20 +452,20 @@ fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
     }
 }
 
-/// A fired watch ends a parked receive and sleep; fired-before-wait also
-/// cancels, never watches transfer normally, and an unfired watch preserves
-/// deadline expiry. Silent peers stay open, so EOF cannot satisfy the case.
+/// One source ends a guarded atomic statement and a receive without a deadline;
+/// a fired watch also ends sleep, and fired-before-wait
+/// cancels. Never watches transfer normally, and an unfired watch preserves
+/// deadline expiry. Timer/work races disarm and join promptly; two cancellation
+/// states order an ordinary Instant target acquired after the guard targets.
+/// Silent peers stay open, so EOF cannot satisfy the case.
 #[test]
 fn cancellation_ends_waits_without_losing_bytes_on_both_routes() {
     let program = build_program(&compile_program("cancellation.wf"));
     for native_ring in [true, false] {
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route_with(
-            native_ring,
-            &[("WF_DRIVERS", "1")],
-            &[text.as_bytes()],
-        );
+        let child =
+            program.spawn_on_route_with(native_ring, &[("WF_DRIVERS", "1")], &[text.as_bytes()]);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "native ring: {native_ring}");
     }

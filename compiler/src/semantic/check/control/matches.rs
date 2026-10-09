@@ -748,6 +748,7 @@ impl<'unit> Checker<'_, 'unit> {
                         live: true,
                         loop_depth,
                         compiler_updated: false,
+                        read_only_state: false,
                         reference,
                         refinement_witnesses,
                         call_value: false,

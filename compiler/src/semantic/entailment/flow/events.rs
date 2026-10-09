@@ -148,6 +148,15 @@ impl Input<'_, '_> {
             return false;
         }
         let mut descriptor = support.clone();
+        // [MSR-1, MSR-2] a direct page length reads the owner's current len.
+        // Removing its canonical page step makes writes(window.len), as in
+        // place_back and take_back, reach that support; a whole-owner write,
+        // as in grow_paged, reaches it through ordinary prefix overlap.
+        if matches!(descriptor.path.last(), Some(PlaceStep::Page(offset))
+            if offset.is_current_spelling())
+        {
+            descriptor.path.pop();
+        }
         descriptor
             .path
             .push(PlaceStep::Measure(measure.support_word()));
@@ -163,10 +172,9 @@ impl Input<'_, '_> {
         let resolved = self.places.resolve(support.root, &support.path);
         !resolved.is_empty()
             && resolved.iter().all(|place| {
-                matches!(
-                    place.path.last(),
-                    Some(PlaceStep::Range(_) | PlaceStep::Page(_))
-                )
+                matches!(place.path.last(), Some(PlaceStep::Range(_)))
+                    || matches!(place.path.last(), Some(PlaceStep::Page(offset))
+                    if !offset.is_current_spelling())
             })
     }
 
@@ -197,10 +205,7 @@ impl Input<'_, '_> {
         event: &KillEvent,
     ) -> bool {
         support.path.iter().any(|step| {
-            let PlaceStep::Index(offset) = step else {
-                return false;
-            };
-            let Some(binding) = offset.support() else {
+            let Some(binding) = step.measure_offset_support() else {
                 return false;
             };
             let read = ResolvedPlace::binding(binding);
@@ -572,12 +577,7 @@ impl Input<'_, '_> {
                 }
             }
             CheckedSetTarget::RangeIndex(target) => {
-                let mut spelled = ResolvedPlace::spelled(
-                    PlaceRoot::Binding(target.root.binding),
-                    is_holder(target.root.binding),
-                    Vec::new(),
-                );
-                spelled.path.extend(target.place_path());
+                let spelled = target.proof_place();
                 KillEvent::Write {
                     place: self.resolve(&spelled),
                     element: true,
@@ -649,8 +649,9 @@ impl Vocabulary {
                 };
                 rooted
                     || place.path.iter().any(|projection| {
-                        matches!(projection, PlaceStep::Index(offset)
-                            if offset.support().is_some_and(|binding| exited.contains(&binding)))
+                        projection
+                            .measure_offset_support()
+                            .is_some_and(|binding| exited.contains(&binding))
                     })
             }
         }
@@ -836,8 +837,9 @@ impl Reasoning<'_, '_, '_> {
             holders.iter().any(|holder| exited.contains(holder))
                 || matches!(place.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
                 || place.path.iter().any(|projection| {
-                    matches!(projection, PlaceStep::Index(offset)
-                        if offset.support().is_some_and(|binding| exited.contains(&binding)))
+                    projection
+                        .measure_offset_support()
+                        .is_some_and(|binding| exited.contains(&binding))
                 })
         })
     }

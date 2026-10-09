@@ -18,6 +18,7 @@ mod frames;
 mod frontier;
 mod handler_words;
 mod indexed;
+mod indexed_blocks;
 mod integer;
 mod operations;
 mod paged;
@@ -1122,6 +1123,8 @@ enum FunctionSlot {
     OwnedValue(usize),
     ArrayFillIndex(IrValueId),
     Address(IrValueId),
+    IndexedDirectory(IrValueId),
+    IndexedReference(IrValueId, usize),
     /// The slot a register-returned definition's public entry gives its
     /// body to construct the result in.
     Result,
@@ -1261,6 +1264,33 @@ impl FunctionFramePlan {
                             TargetStorageType::integer(64),
                             None,
                         )?;
+                    }
+                    IrOperation::IndexedBlocks { .. } => {
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            FunctionSlot::IndexedDirectory(*result),
+                            TargetStorageType::source(IrType::Address(IrAddressed::Unit)),
+                            None,
+                        )?;
+                    }
+                    IrOperation::IndexedReference { original, roots } => {
+                        let Some(IrType::Address(referent)) = function.value_type(*original) else {
+                            return Err(BackendFailure::InvalidIr);
+                        };
+                        for (index, (_, ty)) in
+                            indexed_blocks::reference_slots(program, referent.ty(), roots)?
+                                .iter()
+                                .enumerate()
+                        {
+                            push_function_slot(
+                                &mut specifications,
+                                &mut ordered,
+                                FunctionSlot::IndexedReference(*result, index),
+                                TargetStorageType::source(*ty),
+                                None,
+                            )?;
+                        }
                     }
                     IrOperation::AddressOf { referent, .. } => {
                         let storage = TargetStorageType::source(referent.ty());
@@ -2666,6 +2696,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
                 self.emit_slice_range(result, ty, *slice, *start, *end, None)
+            }
+            IrOperation::IndexedBlocks { address } => {
+                self.emit_indexed_blocks(result, ty, *address)
+            }
+            IrOperation::IndexedBlock { blocks } => self.emit_indexed_block(result, *blocks),
+            IrOperation::IndexedReference { original, roots } => {
+                self.emit_indexed_reference(result, *original, roots)
             }
             IrOperation::IndexedRange {
                 slice,

@@ -50,8 +50,17 @@ static void finish_operation(int state) {
 }
 
 static void end_bound(int cancelled, wf_value *source, const wf_deadline *deadline) {
-    if (cancelled) wf__body_cancel_fire(source);
-    else while (wf_file_monotonic_ns() < deadline->value.words[0]) Sleep(1);
+    if (cancelled) {
+        wf_context firing = {0};
+        wf_host_operation call = {0};
+        uint8_t result;
+        firing.driver = &wf_driver_root;
+        wf_context_current = &firing;
+        CHECK(wf__body_cancel_fire_start(&result, source, &call) == 3);
+        CHECK(wf__context_wait(&call, &frame) == 0);
+        wf__body_cancel_fire_finish(&result, source, &call);
+        wf_context_current = &wf_context_root;
+    } else while (wf_file_monotonic_ns() < deadline->value.ticks) Sleep(1);
 }
 
 static void drain_prefix(SOCKET peer, uint64_t count) {
@@ -144,7 +153,7 @@ static void bounded_send(int cancelled) {
     const wf_value *bound_watch = cancelled ? &watch : &never;
     wf_deadline deadline = {0};
     deadline.tag = WF_OPTION_SOME;
-    deadline.value.words[0] = wf_file_monotonic_ns() + UINT64_C(1000000000);
+    deadline.value.ticks = wf_file_monotonic_ns() + UINT64_C(1000000000);
     const wf_deadline *bound_deadline = cancelled ? NULL : &deadline;
     int state = wf__body_send_once_start(&sent, &client.ok.value.send,
         &buffer, 0, COUNT, bound_deadline, bound_watch, operation());
@@ -188,7 +197,7 @@ static void bounded_send(int cancelled) {
     uint64_t filled = fill_path(connection, bytes, COUNT);
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
-    deadline.value.words[0] = wf_file_monotonic_ns() + UINT64_C(1000000000);
+    deadline.value.ticks = wf_file_monotonic_ns() + UINT64_C(1000000000);
     state = wf__body_send_once_start(&sent, &client.ok.value.send,
         &buffer, 0, COUNT, bound_deadline, bound_watch, operation());
     CHECK(operation()->record.route == WF_COMPLETION_ROUTE_FILE_ADAPTER);

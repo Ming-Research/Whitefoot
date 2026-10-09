@@ -315,10 +315,18 @@ fn fire_later(source: std::time::CancelSource, clock: Clock) -> result: unit pur
   return unit;
 }
 
+fn parked_guard(stop: SharedRead<std::time::CancelState>) -> result: Bool pure waits {
+  atomic cancellation = &stop when cancellation^.fired {
+    return cancellation^.fired;
+  }
+}
+
 fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(clock), writes(server.receive) waits {
   let source = std::time::cancel_source();
   let firing_source = std::time::cancel_share(source: &source);
   let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  let guarded = spawn parked_guard(stop: move stop);
   std::time::close_cancel_source(source: move source);
   let firing_clock = std::time::clock_share(clock: clock);
   let firing = spawn fire_later(source: move firing_source, clock: move firing_clock);
@@ -328,7 +336,8 @@ fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(c
   std::time::close_cancel_watch(watch: move watch);
   let cancelled = cancelled_read(outcome: outcome);
   let unchanged = bytes[0_u64] == 204_u8;
-  return band(cancelled, unchanged);
+  let host_correct = band(cancelled, unchanged);
+  return band(host_correct, guarded);
 }
 
 fn cancelled_sleep(clock: &Clock) -> result: Bool writes(clock) waits {
@@ -350,6 +359,96 @@ fn cancelled_sleep(clock: &Clock) -> result: Bool writes(clock) waits {
       return bnot(reached);
     }
   }
+}
+
+fn deadline_timer(deadline: Instant, source: std::time::CancelSource, disarm: std::time::CancelWatch) -> result: Bool pure waits {
+  let outcome = sleep_until(deadline: deadline, cancel: &disarm);
+  std::time::close_cancel_watch(watch: move disarm);
+  let elapsed = match outcome {
+    Ok(value: slept) => {
+      std::time::cancel_fire(source: &source);
+      give True();
+    }
+    Err(error: cancelled) => {
+      give False();
+    }
+  }
+  std::time::close_cancel_source(source: move source);
+  return elapsed;
+}
+
+fn deadline_competition(clock: &Clock, ready: Bool) -> result: Bool writes(clock) waits {
+  let timer_source = std::time::cancel_source();
+  let timer_watch = std::time::cancel_watch(source: &timer_source);
+  let timeout = std::time::cancel_state(watch: &timer_watch);
+  std::time::close_cancel_watch(watch: move timer_watch);
+  let disarm_source = std::time::cancel_source();
+  let disarm_watch = std::time::cancel_watch(source: &disarm_source);
+  let work = shared_new::<Bool>(value: ready);
+  let delay = if ready {
+    give 60000000000_u64;
+  } else {
+    give 10000000_u64;
+  }
+  let begin = now(clock: clock);
+  let deadline = instant_after(instant: begin, nanoseconds: delay);
+  let timer_elapsed = spawn deadline_timer(deadline: deadline, source: move timer_source, disarm: move disarm_watch);
+  let saw_timeout = False();
+  atomic item = &work, timer = &timeout when bor(item^, timer^.fired) {
+    set saw_timeout = timer^.fired;
+  }
+  std::time::cancel_fire(source: &disarm_source);
+  std::time::close_cancel_source(source: move disarm_source);
+  let joined = timer_elapsed;
+  let ended = now(clock: clock);
+  let reached = instant_reached(deadline: deadline, instant: ended);
+  if ready {
+    let quiet_timer = bnot(joined);
+    let ready_won = bnot(saw_timeout);
+    let correct = band(quiet_timer, ready_won);
+    let prompt = bnot(reached);
+    return band(correct, prompt);
+  }
+  return band(saw_timeout, joined);
+}
+
+fn publish_states(state: Shared<Instant>, stamp: Instant, first: std::time::CancelSource, second: std::time::CancelSource) -> result: unit pure waits {
+  atomic item = &state {
+    set item^ = stamp;
+  }
+  std::time::cancel_fire(source: &first);
+  std::time::cancel_fire(source: &second);
+  std::time::close_cancel_source(source: move first);
+  std::time::close_cancel_source(source: move second);
+  return unit;
+}
+
+fn coherent_states(clock: &Clock) -> result: Bool writes(clock) waits {
+  let first_source = std::time::cancel_source();
+  let second_source = std::time::cancel_source();
+  let first_watch = std::time::cancel_watch(source: &first_source);
+  let second_watch = std::time::cancel_watch(source: &second_source);
+  let first_view = std::time::cancel_state(watch: &first_watch);
+  let second_view = std::time::cancel_state(watch: &second_watch);
+  std::time::close_cancel_watch(watch: move first_watch);
+  std::time::close_cancel_watch(watch: move second_watch);
+  let initial = now(clock: clock);
+  let next = instant_after(instant: initial, nanoseconds: 1_u64);
+  let ordinary = shared_new::<Instant>(value: initial);
+  let writer = shared_share::<Instant>(shared: &ordinary);
+  spawn publish_states(state: move writer, stamp: next, first: move first_source, second: move second_source);
+  let coherent = False();
+  atomic first_state = &first_view, second_state = &second_view, later_state = &ordinary when band(first_state^.fired, second_state^.fired) {
+    let before = first_state^.fired;
+    let stamp = later_state^;
+    let after = first_state^.fired;
+    let stable = band(before, after);
+    let published = instant_reached(deadline: next, instant: stamp);
+    let no_later = instant_reached(deadline: stamp, instant: next);
+    let exact = band(published, no_later);
+    set coherent = band(stable, exact);
+  }
+  return coherent;
 }
 
 fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
@@ -442,6 +541,23 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   if bytes[0_u64] == 78_u8 {
   } else {
     return 21_u8;
+  }
+  let ready = True();
+  let work_won = deadline_competition(clock: clock, ready: ready);
+  if work_won {
+  } else {
+    return 22_u8;
+  }
+  let unready = False();
+  let timer_won = deadline_competition(clock: clock, ready: unready);
+  if timer_won {
+  } else {
+    return 23_u8;
+  }
+  let coherent = coherent_states(clock: clock);
+  if coherent {
+  } else {
+    return 24_u8;
   }
   return 0_u8;
 }

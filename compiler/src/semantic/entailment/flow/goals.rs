@@ -47,9 +47,8 @@ impl Input<'_, '_> {
             return Some(GoalExpression::Datum(GoalDatum::Place {
                 root,
                 projections: path
-                    .path
-                    .iter()
-                    .map(goal_projection_of_step)
+                    .proof_steps()
+                    .map(|step| goal_projection_of_step(&step))
                     .collect::<Option<Vec<_>>>()?,
                 ty: expression.ty(),
             }));
@@ -359,8 +358,7 @@ impl Input<'_, '_> {
             }
             // [MSR-1, REF-4] the one measure a range reference has.
             CheckedExpression::RangeMeasure { measure, root } => {
-                let argument =
-                    goal_binding_place(root.binding, Vec::new(), root.element_type);
+                let argument = self.goal_place_datum(&root.proof_place(), root.element_type)?;
                 build_operation(
                     // Clause formation uses the ordinary measured-place
                     // row. A body read must have that same structural goal
@@ -381,11 +379,7 @@ impl Input<'_, '_> {
                 if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let measured = place.measured()?;
-                let argument = goal_binding_place(
-                    place.root.binding,
-                    place.goal_projections(),
-                    place.ty,
-                );
+                let argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
                 build_operation(
                     GoalOperation::ContainerMeasure {
                         measure: *measure,
@@ -403,11 +397,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { place, .. }
                 if admitted_partial && place.path.is_empty() =>
             {
-                let collection = goal_binding_place(
-                    place.root.binding,
-                    Vec::new(),
-                    place.root.element_type,
-                );
+                let collection = self.goal_place_datum(&place.root.proof_place(), place.root.element_type)?;
                 build_operation(
                     GoalOperation::RunIndex {
                         measured: MeasuredKind::Range,
@@ -502,9 +492,8 @@ impl Input<'_, '_> {
         ty: CheckedType,
     ) -> Option<GoalExpression> {
         let projections = place
-            .path
-            .iter()
-            .map(goal_projection_of_step)
+            .proof_steps()
+            .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
             PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
@@ -592,7 +581,9 @@ impl Input<'_, '_> {
             }
             // [MSR-1] the same element selection a written subscript makes;
             // the offset is what the reader substitutes, not the type.
-            GoalProjection::FormalSubscript { .. } => element_type(input, self.context.elements),
+            GoalProjection::FormalSubscript { .. } | GoalProjection::FormalPage { .. } => {
+                element_type(input, self.context.elements)
+            }
         }
     }
 
@@ -651,18 +642,22 @@ impl Input<'_, '_> {
                     .body_projections(PlaceRoot::Binding(binding), projections)
                     .iter()
                     .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal } => self
+                        GoalProjection::FormalSubscript { ordinal }
+                        | GoalProjection::FormalPage { ordinal } => self
                             .function
                             .parameters
                             .get(*ordinal as usize)
                             .map(|offset| {
-                                GoalProjection::Subscript(
-                                    CapturedValue::new(
-                                        CaptureId::source(u32::MAX),
-                                        CapturedTerm::Binding(offset.binding),
-                                    )
-                                    .goal_identity(),
+                                let offset = CapturedValue::new(
+                                    CaptureId::source(u32::MAX),
+                                    CapturedTerm::Binding(offset.binding),
                                 )
+                                .goal_identity();
+                                if matches!(projection, GoalProjection::FormalPage { .. }) {
+                                    GoalProjection::Page(offset)
+                                } else {
+                                    GoalProjection::Subscript(offset)
+                                }
                             }),
                         other => Some(*other),
                     })
@@ -1685,8 +1680,8 @@ pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection
             field: *field,
         }),
         PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
-        // A page, like a range, retains its formation identity: its length
-        // is captured then, even if another formation selects the same page.
+        // [ENT-2] retain the supplied page identity: borrowed pages carry
+        // their formation capture; direct selectors are already canonical.
         PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
         // [REF-4] a range step's endpoint captures identify the formation
         // whose immutable affine image gives the anonymous range its length.
