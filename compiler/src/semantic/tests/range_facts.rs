@@ -2073,18 +2073,33 @@ fn a_ring_is_not_an_element_projection_base() {
 
 #[test]
 fn range_facts_discharge_page_and_segment_borrow_bounds_at_their_sites() {
-    for (storage, bound, borrowed, expected) in [
-        ("Paged<u8>", "data^.pages.len", "data^.pages[i]", None),
+    // [EFF-2] forming a page borrow reads nothing of its base, while a
+    // segment borrow reads the run's segment table, `data.len`.
+    for (storage, row, bound, borrowed, expected) in [
         (
             "Paged<u8>",
+            "reads(indices)",
+            "data^.pages.len",
+            "data^.pages[i]",
+            None,
+        ),
+        (
+            "Paged<u8>",
+            "reads(indices)",
             "data^.len",
             "data^.pages[i]",
             Some(SemanticRule::Op4),
         ),
-        ("Segments<u8>", "data^.len", "data^[i]", None),
+        (
+            "Segments<u8>",
+            "reads(data.len), reads(indices)",
+            "data^.len",
+            "data^[i]",
+            None,
+        ),
     ] {
         let source = field_range_program(&format!(
-            "fn inspect(data: &{storage}, indices: &Array<u64, 1>) -> result: unit reads(indices) contract {{
+            "fn inspect(data: &{storage}, indices: &Array<u64, 1>) -> result: unit {row} contract {{
   requires forall valid(k in 0_u64..1_u64): indices^[k] < {bound};
 }} {{
   let i = indices^[0_u64];
