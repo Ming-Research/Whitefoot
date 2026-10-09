@@ -3,8 +3,8 @@
 Status: the owner selected the Proposal, lowering A (private copies combined
 in leaf order), and choice 3 (scalar and indexed accumulators in one body).
 Choice 2 (constant idempotent marks) is deferred. Permission and the private-range
-lowering path are implemented on the work branch. Compilation, execution and
-CI verification remain pending. The Criterion below is unchanged.
+lowering path merged to main as v0.102 (#274). The Criterion below is
+unchanged; its results are under Results.
 
 ## Question
 
@@ -113,6 +113,27 @@ Recorded before any implementation or measurement:
   (denied), and a mixed affine element and indexed reduction on one root
   (denied).
 
+## Results
+
+Measured after the rule and lowering A merged (main `691ea8106`, v0.102):
+
+- **Permission: fails.** Snowghost-wf counted its 32 G-indexed loops with
+  release `wf-691ea8106920` (branch `research/par-count-274` at `80345cb`,
+  write-up `research/investigations/storage-layout/par-classification/g-indexed-274.md`,
+  runs 37833206599 and 37830969997): 0 permitted as written and 0 with local
+  helper narrowing. The blockers are spellings, not the rule's safety
+  conditions: constant marks (about 7), an update computed into a
+  single-assignment temporary before the `set` (about 5), a `len` read of the
+  indexed root (1), integer or Bool fields of record cells (2 together with
+  constant marks), and helper calls whose bodies use the temporary form (3);
+  about 14 sites are not order-independent reductions at all. Snowghost's
+  estimate is 13 to 15 sites with the first four extensions, still short of
+  16. The owner decides the follow-up on the status board.
+- **Performance: holds.** On the i9-14900K, 8 workers against sequential:
+  2.38 times at 256 cells (every one of 10 paired rounds at least 2.15) and
+  1.88 times at 4096 cells ([measurement](../../experiments/indexed-reduction-timing/README.md#results)).
+- **Soundness:** the conformance cases listed above are on main.
+
 ## Owner selections
 
 1. Lowering strategy: A selected. B and C remain comparison alternatives.
@@ -172,9 +193,5 @@ truly too wide. The
 whole-program oracle checks colliding histogram updates, positive minima,
 negative maxima, odd wrapping products, untouched cells and an independent
 scalar count against fixed expected values and a sequential build. These
-checks have not been run in this worktree: the owner prohibits local builds,
-compilation, tests and lint, and prohibits committing or pushing this round.
-CI must establish the emitted IR's validity and the native observations before
-this implementation is qualified. The performance and downstream permission
-criteria above remain unmeasured. Paged remains deferred until PR #263 lands
-on main; it is not a type or storage path in this checkout.
+checks pass in the gate of #274's merged head; the criterion results are under
+Results above. Paged remains deferred until PR #263 lands on main.
