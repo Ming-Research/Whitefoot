@@ -1127,10 +1127,9 @@ impl Reasoning<'_, '_, '_> {
             .operands
             .iter()
             .map(|operand| {
-                Some((
-                    self.postcondition_relation_term(&operand.datum, results, returns)?,
-                    operand.displacement,
-                ))
+                let term = self.postcondition_relation_term(&operand.datum, results, returns)?;
+                let (term, constant) = self.vocabulary.terms.constant_part(term);
+                Some((term, operand.displacement.checked_add(constant)?))
             })
             .collect::<Option<Vec<_>>>()?;
         let [first, second] = operands.as_slice() else {
@@ -1146,19 +1145,15 @@ impl Reasoning<'_, '_, '_> {
                 right: second.0,
                 difference: gap,
             }),
-            NormalizedRelation::NotEqual => Some(if first.0 <= second.0 {
-                Relation::Distinct {
-                    left: first.0,
-                    right: second.0,
-                    difference: gap,
-                }
-            } else {
-                Relation::Distinct {
-                    left: second.0,
-                    right: first.0,
-                    difference: gap.checked_neg()?,
-                }
-            }),
+            NormalizedRelation::NotEqual => {
+                let (left, right, difference) =
+                    super::super::state::distinct_key(first.0, second.0, gap);
+                Some(Relation::Distinct {
+                    left,
+                    right,
+                    difference,
+                })
+            }
             NormalizedRelation::UpperBound {
                 left,
                 right,
@@ -1696,6 +1691,23 @@ impl Reasoning<'_, '_, '_> {
                 .then(|| self.goal_operand(actual))
                 .flatten();
         }
+        if mode.is_range() && projections.is_empty() && measure == Some(CheckedMeasure::Length) {
+            // [REF-4, ENT-3.S12] the actual is any place naming a range: a
+            // holder, an inline formation's captured path, a segment or a
+            // page. Each reads that range's own length, the term its
+            // formation or binding relates, not a measure of the element
+            // type or of the source storage.
+            let GoalExpression::Datum(datum) = actual else {
+                return None;
+            };
+            let path = self.input.goal_place_path(datum)?;
+            return Some(self.place_measure_term(
+                CheckedMeasure::Length,
+                path,
+                MeasuredKind::Range,
+                None,
+            ));
+        }
         let (root, projections) = self.input.call_parameter_place(actual, projections)?;
         if let Some(measure) = measure {
             // [TYPE-8, REF-4] the callee's own parameter kind supplies the
@@ -1986,7 +1998,8 @@ impl Reasoning<'_, '_, '_> {
                     exit_state: term_operand.datum.is_exit_state(),
                 });
             }
-            operands.push((term, term_operand.displacement));
+            let (term, constant) = self.vocabulary.terms.constant_part(term);
+            operands.push((term, term_operand.displacement.checked_add(constant)?));
         }
         let [first, second] = operands.as_slice() else {
             return None;
@@ -2001,18 +2014,12 @@ impl Reasoning<'_, '_, '_> {
                 difference: gap,
             },
             NormalizedRelation::NotEqual => {
-                if first.0 <= second.0 {
-                    Relation::Distinct {
-                        left: first.0,
-                        right: second.0,
-                        difference: gap,
-                    }
-                } else {
-                    Relation::Distinct {
-                        left: second.0,
-                        right: first.0,
-                        difference: gap.checked_neg()?,
-                    }
+                let (left, right, difference) =
+                    super::super::state::distinct_key(first.0, second.0, gap);
+                Relation::Distinct {
+                    left,
+                    right,
+                    difference,
                 }
             }
             NormalizedRelation::UpperBound {
@@ -2634,20 +2641,12 @@ pub(super) fn replace_relation_term(relation: &Relation, from: TermId, to: TermI
             right,
             difference,
         } => {
-            let (left, right) = (replace(*left), replace(*right));
-            // Ordering the pair reverses the difference with it.
-            if left <= right {
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference: *difference,
-                }
-            } else {
-                Relation::Distinct {
-                    left: right,
-                    right: left,
-                    difference: -difference,
-                }
+            let (left, right, difference) =
+                super::super::state::distinct_key(replace(*left), replace(*right), *difference);
+            Relation::Distinct {
+                left,
+                right,
+                difference,
             }
         }
     }

@@ -184,7 +184,7 @@ pub(crate) struct Synthesis {
     /// they are appended after every source function.
     base: u32,
     functions: Vec<Option<IrFunction>>,
-    /// How many functions each source function's splits have synthesized,
+    /// How many helpers each source function has synthesized,
     /// which numbers the next one's symbol within that function alone.
     local: HashMap<String, u32>,
     ledger: Vec<String>,
@@ -205,7 +205,7 @@ impl Synthesis {
         }
     }
 
-    /// Reserves one synthesized function of `parent`'s splits: its ordinal,
+    /// Reserves one synthesized helper of `parent`: its ordinal,
     /// and the stable part of its symbol, which numbers it among `parent`'s
     /// own, so that an unchanged function's helpers keep their symbols when
     /// another function gains or loses a split [MOD-8].

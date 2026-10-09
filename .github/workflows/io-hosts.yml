@@ -196,6 +196,11 @@ jobs:
           echo "--- native adapter probe: exit status: ${status} ---"
           exit "$status"
 
+      - name: Bound Windows helper sends to a silent peer
+        run: |
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 \
+            "$RUNNER_TEMP/completion/windows-bounded-send-test.exe"
+
       - name: Run ordinary values through the production native bodies
         run: |
           probe_dir="$RUNNER_TEMP/completion/ordinary-values"

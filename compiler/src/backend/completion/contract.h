@@ -360,7 +360,14 @@ typedef struct wf_completion_record {
     _Atomic unsigned issued;
     int opened_descriptor;
     unsigned open_outcome;
-    int open_error;
+    /* A file open and a watched wait are disjoint request kinds. The
+     * driver's wait reason shares the open diagnostic's word, preserving
+     * the 160-byte record. Submit initializes it before publication; only
+     * the owning driver writes wait_cancelled, through the call's finish. */
+    union {
+        int open_error;
+        unsigned wait_cancelled;
+    };
     /* The intrusive link of the file adapter's pending list.  The queue is
      * threaded through the records themselves, so it has no capacity of its
      * own and cannot refuse an operation (design §7). */

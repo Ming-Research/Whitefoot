@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.110: cross-context cancellation of host waits
+
+Rules: changed PRE-2
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot cross-context cancellation" that asked to approve PR #296's specification text and design nodes (PRE-2's cancellation sources and watches, the `cancel` parameter on the eight waiting host functions, `IoError::Cancelled` and its outcome rules, and design/language/system-interface/context-cancellation.md) with "agree" (translated), after choosing shape S1 on the board card firn-cancel-shape and direction A on cross-context cancellation, and agreeing that guard observation of cancellation moves to the stacked PR #304.
+
+Summary: `std::time` gains `CancelSource` and `CancelWatch`, nodrop handles of one cancellation state that `cancel_fire` fires permanently and `cancel_never` never fires, and every host function that bounds its wait by a deadline takes `cancel: &CancelWatch` right after it (`write_once`, `read_next`, `tcp_accept`, `tcp_connect`, `receive_next`, `send_once`, `stop_next`, and `sleep_until`, now returning `Result<unit, unit>`). A firing before the host has produced the outcome completes the wait as `Cancelled` (`IoError::Cancelled`) with nothing transferred; an outcome already produced wins, and a deadline racing a firing gives either as an execution input. The selection ground is firn's orderly stop, which polled every wait with a deadline of at most a second and could not end a wait without one; a prototype measured on the i9-14900K kept firn's throughput within 0.984 to 1.022 of polling and stopped about twenty times sooner (research/investigations/context-cancellation/README.md). Guard observation of cancellation is the stacked PR #304's.
+
+## 2026-10-09 v0.109: offset disequalities, invariant L0 facts and origin transport
+
+Rules: added ENT-3.S16, ENT-4.OT; changed ENT-2, ENT-3, ENT-4, ENT-5, ENT-6, MSR-4, FN-8, INV-1, CALL-6
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve checker completion (#286)'s specification changes and the design decisions of the automatic-facts and origin-transport nodes" with "agreed" (translated). The choices it records were the owner's earlier: offset disequalities and invariant difference bounds in L0 on the status board item for Q148; accepting that three explicit certificates become PRF-1 redundancy rejects ("choose A", status board, 2026-10-08, translated); and query-local origin equivalence in the session of 2026-10-08 ("Q1, Q2, Q3 agreed", translated).
+
+Summary: An L0 disequality carries an offset, `t1 - t2 != c`, normalized with constants through Z, so `cursor <= 4` and `cursor != 4` derive `cursor <= 3`; ENT-4's closure, derivability and negation and ENT-5's joins follow the offset, the joins keeping only finite candidates. ENT-3.S16 lets a proved header or local invariant whose normalized conclusion is exactly a difference bound also establish that ordinary L0 fact, with ordinary support, kills and joins. ENT-4.OT forms a query-local view in which a `let` binding and its defining right-hand side are one proposition while the binding holds it under ENT-3, built on the holds definition approved for v0.104, transporting signed proofs in both directions and publishing no flow fact; ENT-6, MSR-4, FN-8, INV-1 and CALL-6 read that view, cite S16 or use ENT-4's contradiction judgment. Selection ground: an interpreter loop with an equality sentinel test, and computed Boolean or parity bindings, otherwise needed source workarounds the checker could prove unnecessary.
+
 ## 2026-10-08 v0.108: address-stable paged storage
 
 Rules: changed GRAM-3, GRAM-5, GIVE-1, TYPE-2, TYPE-6, TYPE-7, TYPE-8, TYPE-9, TYPE-10, OWN-1, OWN-7, REF-1, REF-4, PROV-6, STOR-1, STOR-3, STOR-6, STOR-8, WIN-1, WIN-2, OP-4, OP-9, OP-10, OP-13, OP-14, OP-15, EFF-1, EFF-5, PAR-2, PRE-1, ENT-2, MSR-1, MSR-2, CALL-3, INV-1, RANGE-1

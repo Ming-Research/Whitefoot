@@ -1,0 +1,22 @@
+fn need(bytes: &[u8]) -> r: unit pure contract {
+  define parity = iand(bytes^.len, 1_u64);
+  requires parity == 0_u64;
+} {
+  doc "Consume the exact Boolean goal.";
+  return unit;
+}
+
+fn witness() -> r: unit pure {
+  doc "The bound on an evaluated value proves its valid defining expression.";
+  let bytes = array_filled::<u8, 2>(value: 0_u8);
+  let view = &bytes[0_u64..2_u64];
+  let length = view^.len;
+  let parity = iand(length, 1_u64);
+  need(bytes: view);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "All function requirements are checked without executing the witness.";
+  return std::process::exit_status(code: 0_u8);
+}
