@@ -13,6 +13,13 @@ Owner-approved: In the session of 2026-10-06 and 2026-10-07, written in Chinese,
 
 Summary: Storage whose slots never move and whose index is one ordinary step is a language shape, `Paged<T>` in `Box` content, instead of a library page tree with quotient and remainder facts, returned references or visitors, because a caller then forms every place itself and the existing index, separation and parallel-permission rules apply unchanged. Runs (`&Run<T>`) are a distinct parameter-only reference kind, pages a selector giving contiguous `&[T]`, and B is fixed by the language stride ceiling so it is the same on every target. The lowering keeps one owner pointer to a header-first cell holding the length, capacity, directory capacity and page pointers, re-approved after the C3 attribution: Snowghost's like-for-like port measured the whole layout stage within noise of its hand-written pages on the i9-14900K, the earlier 9% coming from a pooled-store port design; a directory floor and lazily allocated pages were measured and rejected, cutting page faults without saving time. Overlap lowering keeps a growth of the Paged cell apart from borrows of its cell, elements, pages and runs through the general released-and-borrowed-place boundary, without a Paged-specific cut; Paged allocations are counted through the heap wrappers.
 
+## 2026-10-09 Proof queries demand the affine index
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design decision 'proof queries build the index on demand' (see the latest log)" with "agreed" (translated), after selecting direction A2 of the wide-match checking investigation (Q155).
+
+Summary: Ordinary affine queries and certificates keep one function-local memo of unchanged states; on a miss they pair only candidates whose coefficient vector a DIRECT or residual query needs and enumerate the final AUTO family lazily in its first-occurrence order, so endpoints, bounds and parents equal the full rebuild's, which the tests keep as their oracle. Reuse alone recovered about 10% of the natural wasm interpreter's check on the M5; demanding the index cuts that check to 0.215 of its base on the 14900K, while the constant-assignment series, whose cost is the join, is unchanged ([check-time](../research/investigations/check-time/DESIGN.md#14900k-timing-results)). Eager all-pair rebuilding, target-overlap pruning and cross-event winner repair were refused.
 ## 2026-10-09 Handler words for whole-program dispatch families
 
 Nodes: compiler/match-dispatch-lowering
