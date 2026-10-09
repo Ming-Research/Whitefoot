@@ -10,7 +10,6 @@ fn probe(limit: u64, flag: Bool) -> result: u64 pure {
     let marker = 0_u8;
     set value = limit;
   }
-  return value;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

@@ -80,7 +80,7 @@ fn main() -> status: std::process::ExitStatus pure {
         SemanticRule::Give1,
         SemanticIssueKind::EmptyDeliverySet {
             binding: "picked".to_owned(),
-            mechanical_fix: "every arm leaves by `return` or `break`, so no value reaches `picked`: drop `let picked =`, write the `match` as a statement, and delete the statements after it in this block, which no path reaches".to_owned(),
+            mechanical_fix: "no arm supplies a value to `picked`: drop `let picked =`, write the `match` as a statement, and delete the statements after it in this block, which no path reaches".to_owned(),
         },
     );
 }

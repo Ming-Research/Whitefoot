@@ -1546,16 +1546,14 @@ impl Analyzer<'_, '_> {
                 let frame = self.frames.loops.pop();
                 let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
                 let has_breaks = !breaks.is_empty();
-                // The continuation is the join over the break edges; with no
-                // break it is the contradictory all-derivable state, matching
-                // an unreachable-in-truth continuation the conservative graph
-                // keeps reachable [ENT-5].
+                // [FN-1, ENT-5] only breaks resolved to this loop reach its
+                // continuation; an empty join has no continuing path.
                 *state = self.join_with_transport(&breaks, &[]);
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
                 record_continuing(&mut state.continuing, &outer_continuing);
-                true
+                has_breaks
             }
             CheckedStatement::CountedRange {
                 id,
