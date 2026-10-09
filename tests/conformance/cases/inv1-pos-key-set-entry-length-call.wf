@@ -1,4 +1,4 @@
-fn refresh(slots: &Entries<u8>, access_keys: &KeySet, index: u64) -> result: unit reads(access_keys), writes(slots) contract {
+fn refresh(slots: &Entries<u8>, access_keys: &KeySet, index: u64) -> result: unit writes(slots) contract {
   requires slots^.len == access_keys^.len;
   requires index < slots^.len;
   ensures slots^.len == entry(slots)^.len;
