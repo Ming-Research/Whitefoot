@@ -98,6 +98,10 @@ mod tests {
         let mut remaining = source.to_owned();
         for (signature, allocator) in [
             ("void *wf__heap_take(uint64_t bytes) {", "malloc"),
+            (
+                "void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {",
+                "realloc",
+            ),
             ("void wf__heap_give(void *block, uint64_t bytes) {", "free"),
         ] {
             let start = remaining.find(signature).expect("counted heap entry point");

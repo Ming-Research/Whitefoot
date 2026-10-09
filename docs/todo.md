@@ -1110,8 +1110,9 @@ rarely insert at the same place.
   materially affect a measured consumer or lowering work reaches those paths.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
+  capacity Box is one pointer to one header-first allocation; `grow`
+  reallocates it, selected on Halo's measured table growth only (one consumer,
+  one machine), so its cost in other consumers stays unmeasured. A one-word owner, one allocation and header
   placement are distinct choices: a fat descriptor can also own one element
   allocation and make measure reads direct, while widening transport and
   capture storage. Neither alternative is established as generally faster.
@@ -3733,6 +3734,20 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The grow initialization oracle recognizes a runtime offset without proving
+  it is past the retained prefix.** In
+  `compiler/src/backend/tests/cost_shape.rs`, `fresh_allocation_for_fill`
+  accepts a `wf__heap_retake` root when any derived `getelementptr` index is
+  an SSA value; an unrelated offset that is zero or inside the old filled
+  prefix also meets that structural condition. This limitation is inherited
+  from the realloc oracle: its positive result alone does not establish the
+  no-refill claim. Keep that requested root handling during counted-retake
+  integration; follow up by tracing the offset to the preserved length or
+  requiring an independent retained-prefix observation. Validate with a
+  negative control whose runtime offset falls inside the prefix, alongside
+  the existing appended-tail and repeated-fill cases. Reopen before using
+  this oracle as evidence for a changed grow-fill lowering.
 
 - **`make -C compiler format` depends on the host's stable rustfmt.**
   `compiler/rust-toolchain.toml` pins only the `stable` channel, and

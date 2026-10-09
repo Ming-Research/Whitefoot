@@ -9,7 +9,8 @@ use super::test_directory;
 use std::process::Command;
 
 /// Exercise the real counted allocation ABI with allocation and release on
-/// different threads. Script the negative sampled-total boundary separately:
+/// different threads, including growth, unchanged size and shrinkage on the
+/// receiving thread. Script the negative sampled-total boundary separately:
 /// it is the arithmetic a concurrent scan can see, not a claimed snapshot.
 /// Near-wrap lifetime deltas also retain an exact modular sum across zero.
 #[test]
@@ -48,6 +49,12 @@ int memory_probe(void) {
     if (pthread_create(&peer, NULL, allocate_on_peer, NULL) != 0) return 1;
     if (pthread_join(peer, &block) != 0 || block == NULL) return 2;
     if (wf__heap_in_use() != before + 8) return 3;
+    block = wf__heap_retake(block, 8, 24);
+    if (block == NULL || wf__heap_in_use() != before + 24) return 15;
+    block = wf__heap_retake(block, 24, 24);
+    if (block == NULL || wf__heap_in_use() != before + 24) return 16;
+    block = wf__heap_retake(block, 24, 8);
+    if (block == NULL || wf__heap_in_use() != before + 8) return 17;
     wf__heap_give(block, 8);
     if (wf__heap_in_use() != before) return 4;
     /* With no context or pool allocation the pool is empty. The peer's +8

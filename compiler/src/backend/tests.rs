@@ -545,8 +545,11 @@ fn build_linked_executable_inner(
     let mut staged_units = Vec::new();
     let needs_heap = llvm.contains("@wf__heap_take(")
         || llvm.contains("@wf__heap_give(")
+        || llvm.contains("@wf__heap_retake(")
         || host.is_some_and(|source| {
-            source.contains("wf__heap_take(") || source.contains("wf__heap_give(")
+            source.contains("wf__heap_take(")
+                || source.contains("wf__heap_give(")
+                || source.contains("wf__heap_retake(")
         });
     if defines.is_empty() && library_defines.is_empty() {
         // These inputs and options are immutable for this test executable.
