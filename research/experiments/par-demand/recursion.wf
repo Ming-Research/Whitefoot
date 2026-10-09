@@ -1,14 +1,21 @@
 fn fib(n: u64) -> result: u64 pure {
-  if n < 2_u64 { return n; }
-  let a = fib(n: n -wrap 1_u64);
-  let b = fib(n: n -wrap 2_u64);
+  if n < 2_u64 {
+    return n;
+  }
+  let one = n -wrap 1_u64;
+  let two = n -wrap 2_u64;
+  let a = fib(n: one);
+  let b = fib(n: two);
   return a +wrap b;
 }
+
 fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
   let i = 0_u64;
   let total = seed;
   loop @repeat {
-    if i == repetitions { break @repeat; }
+    if i == repetitions {
+      break @repeat;
+    }
     let value = fib(n: extent);
     set total = total +wrap value;
     set i = i +wrap 1_u64;

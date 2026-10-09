@@ -22,7 +22,8 @@ fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
     let hi = lo +wrap extent;
     if lo <= hi {
       if hi <= cells.inner.len {
-        let done = mark(cells: &cells, lo: lo, hi: hi, salt: n +wrap seed);
+        let salt = n +wrap seed;
+        let done = mark(cells: &cells, lo: lo, hi: hi, salt: salt);
       }
     }
     set lo = lo +wrap 7_u64;
@@ -31,7 +32,9 @@ fn workload(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
   let checksum = 0_u64;
   let at = 0_u64;
   loop @read {
-    if at >= cells.inner.len { break @read; }
+    if at >= cells.inner.len {
+      break @read;
+    }
     set checksum = checksum +wrap cells.inner[at];
     set at = at +wrap 1_u64;
   }
