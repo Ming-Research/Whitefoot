@@ -60,7 +60,8 @@ use parallel::{
     HandedOut, LoopSplitSite, ParallelThunks, parallel_pool_query_declaration,
     parallel_pool_query_fallback, parallel_recursion_budget_declaration,
     parallel_recursion_budget_fallback, parallel_runtime_declarations, parallel_runtime_fallback,
-    parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
+    parallel_split_budget_declaration, parallel_split_budget_fallback,
+    parallel_split_work_declaration, parallel_split_work_fallback, sequential_clone_set,
     sequential_clone_symbol,
 };
 
@@ -560,6 +561,11 @@ fn emit_module(
                 parallel_split_budget_declaration()?
             } else {
                 parallel_split_budget_fallback()?
+            });
+            text.append(if windows {
+                parallel_split_work_declaration()
+            } else {
+                parallel_split_work_fallback()
             });
         }
         if thunks.queries_recursion_budget() {

@@ -140,6 +140,12 @@ static int lanes;
 #define WF_PAR_SPLIT_WORK_UNIT 150000ul
 #endif
 static unsigned long split_work = WF_PAR_SPLIT_WORK_UNIT;
+/* The same unit, read directly by an emitted split site: a site whose span
+ * times weight is below it calls its chunk without asking
+ * wf__par_split_budget, which would answer zero
+ * (research/investigations/loop-split-grain). It is set before the first
+ * lane query returns, and no split site runs before that. */
+uint64_t wf__par_split_work_unit = WF_PAR_SPLIT_WORK_UNIT;
 static unsigned long report_wanted;
 int wf__sched_report(char *buffer, size_t capacity) {
     if (!WF_SCHED_STATS || !report_wanted || !buffer || !capacity) return 0;
@@ -160,6 +166,7 @@ static void initialize(void) {
     wf__sched_setting("WF_WORKERS", WF_SCHED_MAX_THREADS, &requested);
     lanes = requested >= 2 ? (int)requested : 0;
     wf__sched_setting("WF_SPLIT_WORK", 1000000000ul, &split_work);
+    wf__par_split_work_unit = split_work;
     wf__sched_setting("WF_SCHED_REPORT", 2ul, &report_wanted);
     unsigned long ceiling = wf__sched_helper_ceiling();
     if (ceiling) wf__sched_setting("WF_IO_HELPERS", ceiling, &helpers);
@@ -169,5 +176,5 @@ int wf__sched_lanes(void) {
     wf__sched_once(&initialized, initialize);
     return lanes;
 }
-uint64_t wf__sched_split_work(void) { return split_work; }
+uint64_t wf__sched_split_work(void) { return wf__par_split_work_unit; }
 void wf__runtime_start(void) { (void)wf__sched_lanes(); }

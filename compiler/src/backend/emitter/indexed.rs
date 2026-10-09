@@ -23,7 +23,7 @@ struct PrivateRoot {
 impl FunctionEmitter<'_, '_> {
     /// Scheduling arithmetic saturates; allocation arithmetic below fails
     /// through STOR-8 instead. Overflow must never make a costly split cheap.
-    fn indexed_saturating(
+    pub(super) fn indexed_saturating(
         &mut self,
         opcode: &str,
         left: &str,

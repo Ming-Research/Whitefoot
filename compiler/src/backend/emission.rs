@@ -69,6 +69,11 @@ impl FunctionBody {
         self.parts.push(BodyPart::Block { label, entry });
     }
 
+    /// The label of the block instructions are being written into.
+    pub(crate) fn current_label(&self) -> Option<&str> {
+        self.current_label.as_deref()
+    }
+
     pub(crate) fn incoming(&mut self, value: String, predecessor: IrBlockId) {
         self.parts.push(BodyPart::Incoming { value, predecessor });
     }
@@ -347,6 +352,33 @@ impl Module {
             .push(ModulePart::Declaration(signature.name.clone()));
         self.declarations
             .insert(signature.name.clone(), signature.declaration());
+    }
+    /// An external global variable of LLVM type `ty`, named like a function
+    /// declaration so that every fragment naming it declares it.
+    pub(crate) fn declare_global(&mut self, name: &str, ty: &str) {
+        self.parts.push(ModulePart::Declaration(name.to_owned()));
+        self.declarations.insert(
+            name.to_owned(),
+            Declaration {
+                text: format!("@{name} = external global {ty}"),
+                references: References::default(),
+            },
+        );
+    }
+    /// A weak global variable: the runtime's strong definition replaces it at
+    /// link time, and a module linked without the runtime reads `value`.
+    pub(crate) fn weak_global(&mut self, name: &str, ty: &str, value: &str) {
+        self.define(Entity {
+            name: name.to_owned(),
+            header: format!("@{name} = weak global {ty} {value}"),
+            hidden_header: format!("@{name} = weak global {ty} {value}"),
+            declaration: format!("@{name} = external global {ty}"),
+            declaration_references: References::default(),
+            body: String::new(),
+            linkage: Linkage::Weak,
+            global: true,
+            references: References::default(),
+        });
     }
     pub(crate) fn declare_named(&mut self, signature: Signature) {
         let parameters = signature

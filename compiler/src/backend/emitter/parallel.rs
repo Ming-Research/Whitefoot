@@ -288,6 +288,27 @@ pub(super) fn parallel_split_budget_fallback() -> Result<Module, BackendFailure>
     Ok(module)
 }
 
+/// The runtime's work unit, which a split site compares its priced span with
+/// before asking for an allowance, and a non-Windows module's own weak value.
+///
+/// With no runtime linked no pool starts and no split site runs, so the value
+/// is never read; zero would only send a site to the query, whose own weak
+/// answer is zero as well. Windows leaves the external global unresolved
+/// until native link, as it does the queries.
+pub(super) fn parallel_split_work_fallback() -> Module {
+    let mut module = Module::default();
+    module.weak_global("wf__par_split_work_unit", "i64", "0");
+    module.text("\n");
+    module
+}
+
+/// The fail-closed Windows declaration of the runtime's work unit.
+pub(super) fn parallel_split_work_declaration() -> Module {
+    let mut module = Module::default();
+    module.declare_global("wf__par_split_work_unit", "i64");
+    module
+}
+
 /// The runtime's answer to "how many levels of this recursive component may
 /// still hand work out", and a non-Windows module's own weak answer of "none".
 ///
@@ -825,22 +846,91 @@ impl FunctionEmitter<'_, '_> {
         } else {
             split.weight.to_string()
         };
+        writeln!(
+            self.output,
+            "  {width} = sub i64 {upper}, {lower}\n  \
+             {ascending} = icmp ugt i64 {upper}, {lower}\n  \
+             {span} = select i1 {ascending}, i64 {width}, i64 0"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.parallel.queries_split_budget = true;
+
+        // A span priced below the runtime's work unit is one the query answers
+        // with a zero allowance whatever the pool's state, and a splitter given
+        // zero calls the chunk: this site calls the chunk itself, as the
+        // sequential world does, and leaves every allowance as the query would
+        // set it. The query counts a zero weight as one; the price does too.
+        let priced = match weight.parse::<u64>() {
+            Ok(constant) => constant.max(1).to_string(),
+            Err(_) => {
+                let zero = format!("%{}", self.next_temporary()?);
+                let nonzero = format!("%{}", self.next_temporary()?);
+                writeln!(
+                    self.output,
+                    "  {zero} = icmp eq i64 {weight}, 0\n  {nonzero} = select i1 {zero}, i64 1, i64 {weight}"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                nonzero
+            }
+        };
+        let work = self.indexed_saturating("umul", &span, &priced)?;
+        let id = self.next_temporary()?;
+        let direct = format!("split.{id}.direct");
+        let query = format!("split.{id}.query");
+        let join = format!("split.{id}.join");
+        {
+            self.output.symbol("wf__par_split_work_unit");
+            writeln!(
+                self.output,
+                "  %split.{id}.unit = load i64, ptr @wf__par_split_work_unit, align 8\n  \
+                 %split.{id}.small = icmp ult i64 {work}, %split.{id}.unit\n  \
+                 br i1 %split.{id}.small, label %{direct}, label %{query}"
+            )
+        }
+        .map_err(|_| BackendFailure::TextEmission)?;
+        let chunk = self
+            .program
+            .functions()
+            .get(split.chunk as usize)
+            .ok_or(BackendFailure::InvalidIr)?;
+        let chunk = self.callee_symbol(split.chunk, chunk.name());
+        let direct_value = format!("%split.{id}.direct.value");
+        let queried_value = format!("%split.{id}.query.value");
+        self.output.open_block(direct.clone());
+        self.emit_split_call_into(&direct_value, result, abi.result(), &chunk, arguments.clone())?;
+        writeln!(self.output, "  br label %{join}").map_err(|_| BackendFailure::TextEmission)?;
+
+        self.output.open_block(query);
         {
             self.output.symbol("wf__par_split_budget");
             writeln!(
                 self.output,
-                "  {width} = sub i64 {upper}, {lower}\n  \
-             {ascending} = icmp ugt i64 {upper}, {lower}\n  \
-             {span} = select i1 {ascending}, i64 {width}, i64 0\n  \
-             {budget} = call i64 @wf__par_split_budget(i64 {span}, i64 {weight})"
+                "  {budget} = call i64 @wf__par_split_budget(i64 {span}, i64 {weight})"
             )
         }
         .map_err(|_| BackendFailure::TextEmission)?;
-        self.parallel.queries_split_budget = true;
         let private = self.emit_indexed_prepare(split, &span, &weight, &budget, &mut arguments)?;
         arguments.push(format!("i64 {}", private.budget));
-        self.emit_split_call(result, abi.result(), &callee, arguments)?;
-        self.emit_indexed_finish(split, private)
+        self.emit_split_call_into(&queried_value, result, abi.result(), &callee, arguments)?;
+        self.emit_indexed_finish(split, private)?;
+        let queried = self
+            .output
+            .current_label()
+            .ok_or(BackendFailure::InvalidIr)?
+            .to_owned();
+        writeln!(self.output, "  br label %{join}").map_err(|_| BackendFailure::TextEmission)?;
+
+        self.output.open_block(join);
+        let result_abi = abi.result();
+        if result_abi.uses_destination() && self.is_memory_only(result_abi.ty())? {
+            return Ok(());
+        }
+        writeln!(
+            self.output,
+            "  {} = phi {result_type} [ {direct_value}, %{direct} ], [ {queried_value}, %{queried} ]",
+            value_name(result)
+        )
+        .map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Scheduling arithmetic is total even when the priced source branch
@@ -991,6 +1081,19 @@ impl FunctionEmitter<'_, '_> {
         result: IrValueId,
         result_abi: ResultAbi,
         callee: &str,
+        arguments: Vec<String>,
+    ) -> Result<(), BackendFailure> {
+        self.emit_split_call_into(&value_name(result), result, result_abi, callee, arguments)
+    }
+
+    /// The split call with its value, unless the result is memory-only,
+    /// defined under `name`; `result` supplies the destination.
+    fn emit_split_call_into(
+        &mut self,
+        name: &str,
+        result: IrValueId,
+        result_abi: ResultAbi,
+        callee: &str,
         mut arguments: Vec<String>,
     ) -> Result<(), BackendFailure> {
         let result_type = self.output.type_name(self.program, result_abi.ty())?;
@@ -1016,7 +1119,7 @@ impl FunctionEmitter<'_, '_> {
                     self.output,
                     "  call void @{callee}({})\n  {} = load {result_type}, ptr {destination}",
                     arguments.join(", "),
-                    value_name(result)
+                    name
                 )
             }
             .map_err(|_| BackendFailure::TextEmission);
@@ -1026,7 +1129,7 @@ impl FunctionEmitter<'_, '_> {
             writeln!(
                 self.output,
                 "  {} = call {result_type} @{callee}({})",
-                value_name(result),
+                name,
                 arguments.join(", ")
             )
         }
