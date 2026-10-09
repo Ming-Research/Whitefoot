@@ -1,17 +1,19 @@
-fn scatter_twin(order: &[u64], twin: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(twin), writes(out) contract {
+fn scatter_twin(order: &[u64], twin: &[u64], copy: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(copy), writes(out) contract {
   requires pos^.len == out^.len;
   requires twin^.len == order^.len;
+  requires copy^.len == twin^.len;
+  requires forall again(k in 0_u64..copy^.len): copy^[k] == twin^[k];
   requires forall same(k in 0_u64..twin^.len): twin^[k] == order^[k];
   requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
 } {
-  doc "Without written instances, the reads of order that same's instances name form no instance of inv, so nothing separates two iterations' writes.";
-  let count = twin^.len;
+  doc "The loop reads copy; again's instances name reads of twin, same's second-round instances name reads of order, and those form no third-round instance of inv, so nothing separates two iterations' writes.";
+  let count = copy^.len;
   for (
     k in 0_u64..count,
     apart(i, j) {
     }
   ) {
-    let e = twin^[k];
+    let e = copy^[k];
     if e < out^.len {
       set out^[e] = k;
     }

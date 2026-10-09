@@ -785,16 +785,26 @@ fn the_instance_ceiling_counts_the_instances_a_fact_forms() {
 
 #[test]
 fn the_instance_ceiling_counts_both_rounds_without_recounting_duplicates() {
-    // Each first-round read cells[k] adds cells[k + 200] through relay.
+    // Each first-round read cells[c] instantiates relay at c, whose read
+    // cells[next[c]] selects one new value of each binder in round two.
     // 127 guarded reads plus the owed read give 128 tuples in round one
     // and 256 in their union with round two; 128 guards give 258 instead.
     for reads in [127, 128] {
         let source = String::from_utf8(guarded_reads(reads, false))
             .unwrap()
-            .replace(
+            .replacen(
+                "fn probe(cells: &[u64]) -> result: u64 reads(cells)",
+                "fn probe(cells: &[u64], next: &[u64]) -> result: u64 reads(cells), reads(next)",
+                1,
+            )
+            .replacen(
                 "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;",
-                "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;\n  requires forall relay(k in 0_u64..200_u64): cells^[k] == cells^[k + 200_u64];",
+                "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+  requires next^.len == cells^.len;
+  requires forall relay(k in 0_u64..cells^.len) when next^[k] < cells^.len: cells^[next^[k]] == cells^[k];",
+                1,
             );
+        assert!(source.contains("forall relay(") && source.contains("next: &[u64]"));
         let outcome = undischarged(source.as_bytes());
         if reads == 127 {
             assert_eq!(outcome, None);
