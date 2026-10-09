@@ -108,7 +108,18 @@ static void bounded_send(int cancelled) {
     finish_operation(state);
     wf__body_send_once_finish(&sent, &client.ok.value.send,
         &buffer, 0, COUNT, bound_deadline, bound_watch, operation());
-    CHECK(sent.tag == 0 && sent.ok.value > 0 && sent.ok.value < COUNT);
+    /* send_once's Ok carries the index after the last byte sent, at most the
+     * range's end: Winsock may buffer the whole range in one nonblocking
+     * send, so a full count is as ordinary as a shorter prefix. */
+    if (sent.tag != 0 || sent.ok.value == 0 || sent.ok.value > COUNT) {
+        fprintf(stderr, "windows-bounded-send:%d: tag %u value %llu error %u\n",
+                __LINE__, (unsigned)sent.tag, (unsigned long long)sent.ok.value,
+                (unsigned)sent.err.error.tag);
+        exit(1);
+    }
+    printf("windows-bounded-send: %s bound kept %llu of %d bytes sent\n",
+           cancelled ? "cancellation" : "deadline",
+           (unsigned long long)sent.ok.value, (int)COUNT);
     drain_prefix(peer, sent.ok.value);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
