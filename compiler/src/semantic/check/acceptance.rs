@@ -395,13 +395,14 @@ impl<'unit> TypeContext<'unit> {
     /// judgment answering none, are the checker and the engine disagreeing,
     /// and the function is not accepted.
     pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
-        self.entailment_rejection_after_range(function, &[])
+        self.entailment_rejection_after_range(function, &[], &[])
     }
 
     pub(super) fn entailment_rejection_after_range(
         &self,
         function: &CheckedFunction,
         discharged: &[usize],
+        inconclusive: &[usize],
     ) -> Result<(), CheckStop> {
         let entailment = &function.entailment;
         if entailment.answers.len() != function.obligations.len()
@@ -417,7 +418,9 @@ impl<'unit> TypeContext<'unit> {
             .zip(&entailment.answers)
             .enumerate()
         {
-            if discharged.contains(&index) {
+            // The range walk reports a capability gap or structural ceiling
+            // separately; neither is an ordinary unproved-source verdict.
+            if discharged.contains(&index) || inconclusive.contains(&index) {
                 continue;
             }
             let Some(answer) = *answer else {
@@ -456,7 +459,7 @@ impl<'unit> TypeContext<'unit> {
                 self.undischarged_issue(function, record, answer)?,
             ));
         }
-        if entailment.answers.iter().any(Option::is_none) {
+        if inconclusive.is_empty() && entailment.answers.iter().any(Option::is_none) {
             return Err(SemanticCompilerFailure::ObligationContract.into());
         }
         Ok(())

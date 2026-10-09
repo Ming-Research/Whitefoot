@@ -73,6 +73,15 @@ pub(super) struct Recording {
     pub(super) unplaced: Vec<Unplaced>,
 }
 
+/// Only a representable, precisely judged open goal is an ordinary rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeferredAnswer {
+    Pending,
+    Proved,
+    Unproved,
+    Inconclusive,
+}
+
 pub(super) struct Walker<'program> {
     pub(super) functions: &'program [&'program CheckedFunction],
     nominals: &'program [CheckedNominal],
@@ -88,7 +97,10 @@ pub(super) struct Walker<'program> {
     /// checker follows.
     pub(super) imprecise: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
-    pub(super) deferred: Vec<(usize, Option<bool>)>,
+    pub(super) deferred: Vec<(usize, DeferredAnswer)>,
+    /// Whether each visited or excluded control-flow region was ever entered
+    /// by a real walk. Dry walks cannot discharge an obligation.
+    reachability: BTreeMap<NodePath, bool>,
     /// Nonzero while a loop body is walked only to learn what it writes.
     dry: usize,
     recording: Option<Recording>,
@@ -174,7 +186,7 @@ impl<'program> Walker<'program> {
         functions: &'program [&'program CheckedFunction],
         nominals: &'program [CheckedNominal],
         function: &'program CheckedFunction,
-        deferred: Vec<(usize, Option<bool>)>,
+        deferred: Vec<(usize, DeferredAnswer)>,
         constants: &'program [super::super::model::CheckedConstant],
         scope: JudgmentScope,
         prelude: &'program BTreeSet<crate::DeclarationId>,
@@ -184,6 +196,7 @@ impl<'program> Walker<'program> {
             nominals,
             function,
             deferred,
+            reachability: BTreeMap::new(),
             constants,
             scope,
             prelude,
@@ -261,12 +274,20 @@ impl<'program> Walker<'program> {
         }
         let body = function.body.as_deref().unwrap_or_default();
         self.block(state, body);
-        // A deferred record for which this walk has no site handler is a
-        // missing compiler capability, never an ordinary unproved verdict.
-        for (index, answer) in &self.deferred {
-            if answer.is_none() {
+        // An excluded region owes nothing. A site with no handler on a live
+        // path is a capability gap, never a proof or an ordinary rejection.
+        for (index, answer) in &mut self.deferred {
+            if *answer == DeferredAnswer::Pending {
+                let site = &function.obligations[*index].site;
+                if self.reachability.iter().any(|(region, entered)| {
+                    !entered && site.components().starts_with(region.components())
+                }) {
+                    *answer = DeferredAnswer::Proved;
+                    continue;
+                }
+                *answer = DeferredAnswer::Inconclusive;
                 self.issues.push(RangeIssue::Unsupported {
-                    node: function.obligations[*index].site.clone(),
+                    node: site.clone(),
                     feature: UnsupportedSemanticFeature::RangeOrdinaryGoal,
                 });
             }
@@ -533,10 +554,63 @@ impl<'program> Walker<'program> {
 
     pub(super) fn block(&mut self, state: State, statements: &[CheckedStatement]) -> Option<State> {
         let mut state = state;
-        for statement in statements {
-            state = self.statement(state, statement)?;
+        for (index, statement) in statements.iter().enumerate() {
+            self.statement_reachability(statement, true);
+            let prior_issues = self.issues.len();
+            let Some(after) = self.statement(state, statement) else {
+                // A return, transfer or state-excluded continuation owes
+                // nothing after it. A stopped walk does not prove that the
+                // continuation is unreachable.
+                if self.imprecise.is_none()
+                    && !self.issues[prior_issues..]
+                        .iter()
+                        .any(|issue| matches!(issue, RangeIssue::Unsupported { .. }))
+                {
+                    for excluded in &statements[index + 1..] {
+                        self.statement_reachability(excluded, false);
+                    }
+                }
+                return None;
+            };
+            state = after;
         }
         Some(state)
+    }
+
+    fn statement_reachability(&mut self, statement: &CheckedStatement, entered: bool) {
+        match statement {
+            CheckedStatement::Let { node_path, .. }
+            | CheckedStatement::DestructuringLet { node_path, .. }
+            | CheckedStatement::PropagateLet { node_path, .. }
+            | CheckedStatement::Set { node_path, .. }
+            | CheckedStatement::Evaluate { node_path, .. }
+            | CheckedStatement::DropExpression { node_path, .. }
+            | CheckedStatement::Return { node_path, .. }
+            | CheckedStatement::ValueMatchLet { node_path, .. }
+            | CheckedStatement::Give { node_path, .. }
+            | CheckedStatement::Loop { node_path, .. }
+            | CheckedStatement::CountedRange { node_path, .. }
+            | CheckedStatement::Break { node_path, .. }
+            | CheckedStatement::Continue { node_path, .. }
+            | CheckedStatement::Atomic { node_path, .. } => {
+                self.region_reachability(node_path, entered);
+            }
+            CheckedStatement::Proof(proof) => {
+                self.region_reachability(&proof.node_path, entered);
+            }
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            } => {
+                if let Some(node) = scrutinee.carrier() {
+                    self.region_reachability(node, entered);
+                }
+                if !entered {
+                    for arm in arms {
+                        self.region_reachability(&arm.node_path, false);
+                    }
+                }
+            }
+        }
     }
 
     fn statement(&mut self, mut state: State, statement: &CheckedStatement) -> Option<State> {
@@ -807,6 +881,67 @@ impl<'program> Walker<'program> {
         }
     }
 
+    fn region_reachability(&mut self, node: &NodePath, entered: bool) {
+        if self.dry == 0 && !self.deferred.is_empty() {
+            *self.reachability.entry(node.clone()).or_default() |= entered;
+        }
+    }
+
+    /// The storage a reference-mode match selects [OWN-13]. Projection
+    /// below a dereference extends that view without reading a snapshot.
+    fn match_view(&mut self, state: &mut State, scrutinee: &CheckedExpression) -> View {
+        match scrutinee {
+            CheckedExpression::ProjectValue { value, field, .. } => {
+                match self.match_view(state, value) {
+                    View::Element {
+                        container,
+                        indices,
+                        mut projection,
+                    } => {
+                        if let Some(path) = &mut projection {
+                            path.push(CheckedRangeProjection::Field(*field));
+                        }
+                        View::Element {
+                            container,
+                            indices,
+                            projection,
+                        }
+                    }
+                    View::Place(location) => View::Place(location.child(Step::Field(*field))),
+                    _ => View::Unknown,
+                }
+            }
+            CheckedExpression::DerefAddressed { binding, .. } => match state.values.get(binding) {
+                Some(Value::Ref(view)) => view.clone(),
+                _ => View::Unknown,
+            },
+            CheckedExpression::RangeIndex { place, .. } => match self.range_element(state, place) {
+                Some((container, indices, projection)) => View::Element {
+                    container,
+                    indices,
+                    projection,
+                },
+                None => View::Unknown,
+            },
+            CheckedExpression::ReadStorage { root, .. } => {
+                self.view_of(state, root.root, &root.path)
+            }
+            CheckedExpression::Binding { .. } | CheckedExpression::Project { .. } => {
+                match self.eval(state, scrutinee) {
+                    Value::Ref(view) => view,
+                    Value::Owned(location) => View::Place(location),
+                    _ => View::Unknown,
+                }
+            }
+            _ => {
+                // Evaluate effects and ordinary obligations, but never use an
+                // aggregate snapshot as the address of a borrowed payload.
+                let _ = self.eval(state, scrutinee);
+                View::Unknown
+            }
+        }
+    }
+
     /// Walks the arms of one `match` or `if`, each from its own fork of
     /// `state`, and returns the live ones.
     fn arms(
@@ -818,27 +953,13 @@ impl<'program> Walker<'program> {
     ) -> Vec<State> {
         // A match borrows the selected storage for reference-mode payloads.
         // Reading an aggregate first would give those binders its snapshot.
-        let value = match scrutinee {
-            _ if matches!(enum_type, CheckedEnumType::Bool) => self.eval(state, scrutinee),
-            CheckedExpression::DerefAddressed { binding, .. } => state
-                .values
-                .get(binding)
-                .cloned()
-                .unwrap_or(Value::Ref(View::Unknown)),
-            CheckedExpression::RangeIndex { place, .. } => {
-                Value::Ref(match self.range_element(state, place) {
-                    Some((container, indices, projection)) => View::Element {
-                        container,
-                        indices,
-                        projection,
-                    },
-                    None => View::Unknown,
-                })
-            }
-            CheckedExpression::ReadStorage { root, .. } => {
-                Value::Ref(self.view_of(state, root.root, &root.path))
-            }
-            _ => self.eval(state, scrutinee),
+        let value = if arms
+            .iter()
+            .any(|arm| arm.binders.iter().any(|binder| binder.mode.is_reference()))
+        {
+            Value::Ref(self.match_view(state, scrutinee))
+        } else {
+            self.eval(state, scrutinee)
         };
         // A by-value binder of storage the match does not consume is a copy
         // of the payload, as a `let` of it would be.
@@ -852,6 +973,7 @@ impl<'program> Walker<'program> {
                 };
                 for arm in arms {
                     let truth = arm.tag == 1;
+                    self.region_reachability(&arm.node_path, !cond.excludes(truth));
                     if cond.excludes(truth) {
                         continue;
                     }
@@ -889,6 +1011,10 @@ impl<'program> Walker<'program> {
                     _ => (None, None, None),
                 };
                 for arm in arms {
+                    self.region_reachability(
+                        &arm.node_path,
+                        !known.is_some_and(|variant| variant != arm.tag),
+                    );
                     if known.is_some_and(|variant| variant != arm.tag) {
                         continue;
                     }
@@ -958,18 +1084,6 @@ impl<'program> Walker<'program> {
                                 })
                             }
                             Value::Ref(View::Unknown | View::Run { .. }) => Some(View::Unknown),
-                            // These older read forms have no address retained by
-                            // the walk. A borrowed payload must forget on write,
-                            // never silently write the aggregate's snapshot.
-                            _ if binder.mode.is_reference()
-                                && matches!(
-                                    scrutinee,
-                                    CheckedExpression::ArrayIndex { .. }
-                                        | CheckedExpression::BufferIndex { .. }
-                                ) =>
-                            {
-                                Some(View::Unknown)
-                            }
                             _ => None,
                         };
                         let bound = if let Some(view) = element {
@@ -2349,14 +2463,14 @@ impl<'program> Walker<'program> {
             | CheckedIntegerOperation::ShiftRightExact => {
                 let goal = integer_type(result)
                     .and_then(|ty| ordinary::integer_domain(operation, ty, &values));
-                self.ordinary_condition(
+                self.ordinary_counterexamples(
                     state,
                     carrier,
                     &ObligationSubject::Source {
                         family: ObligationFamily::IntegerDomain,
                         conjunct: 0,
                     },
-                    goal.as_ref(),
+                    goal,
                     Some(&[]),
                 );
                 self.opaque_of(result)
@@ -2406,8 +2520,8 @@ impl<'program> Walker<'program> {
             };
             if self.has_ordinary(call, &subject) {
                 let goal =
-                    self.goal_condition_with(state, &requirement.template.root, callee, &values);
-                self.ordinary_condition(state, call, &subject, goal.as_ref(), Some(&[]));
+                    self.goal_comparisons_with(state, &requirement.template.root, callee, &values);
+                self.ordinary_goal(state, call, &subject, goal.as_deref(), Some(&[]));
             }
         }
         // [RANGE-3] the callee's range requirements, at the call.

@@ -1190,7 +1190,7 @@ impl<'unit> Checker<'_, 'unit> {
     pub(super) fn validate_generic_templates(
         &mut self,
         check_context: &CheckContext<'_>,
-    ) -> Result<(), CheckStop> {
+    ) -> Result<Option<CheckStop>, CheckStop> {
         if !self.analysis.generic_requirements.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1206,7 +1206,7 @@ impl<'unit> Checker<'_, 'unit> {
             .iter()
             .all(|template| template.generic_parameters.is_empty())
         {
-            return Ok(());
+            return Ok(None);
         }
         let concrete_view = self.types.view.clone();
         let concrete_allocations = concrete_view
@@ -1285,7 +1285,7 @@ impl<'unit> Checker<'_, 'unit> {
         self.install_call_requirements(check_context, &mut phase_a)?;
         self.types.form_obligation_records(&mut phase_a)?;
         let callees = self.types.entailment_callees(&phase_a)?;
-        self.validate_generic_body_entailment(
+        let range_stop = self.validate_generic_body_entailment(
             &mut phase_a,
             &canonical_generic_signatures,
             &callees,
@@ -1300,7 +1300,7 @@ impl<'unit> Checker<'_, 'unit> {
         let retained_concrete = self.activate_schema_written_instances(check_context)?;
         self.analysis.postcondition_selectors.clear();
         self.admit_postcondition_selectors_including(check_context, &retained_concrete)?;
-        Ok(())
+        Ok(range_stop)
     }
 
     /// The symbolic discovery walk already found every written source call.

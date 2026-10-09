@@ -951,8 +951,7 @@ fn an_unproved_postcondition_names_the_exit_that_owes_it() {
     }
 }
 
-// These fixtures exercise the selected range-field proposal before its
-// specification amendment; they do not change conformance verdicts.
+// Wrap range-field fixtures in a complete program with a trivial entry point.
 fn field_range_program(body: &str) -> Vec<u8> {
     format!(
         "{body}\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -2217,6 +2216,34 @@ fn reference_match_payload_writes_reach_the_container() {
             .as_slice(),
             false,
         ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-field-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-field-call.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-neg-match-deref-deep-field-write.wf"
+            )
+            .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-match-deref-field-read.wf"
+            )
+            .as_slice(),
+            false,
+        ),
     ] {
         with_semantics(source, |outcome| match (rejected, outcome) {
             (false, SemanticOutcome::Complete(_)) => {}
@@ -2311,19 +2338,32 @@ fn range_integer_domains_refuse_their_boundary_twins() {
 }
 
 #[test]
-fn range_requirements_preserve_boolean_combinations_of_comparisons() {
-    for (goal, accepted) in [
-        ("band(below, different)", true),
-        ("bor(one, seven)", true),
-        ("bnot(either)", true),
-        ("bxor(below, seven)", true),
-        ("band(below, two)", false),
-        ("bor(two, seven)", false),
+fn range_requirements_accept_only_conjunctions_of_comparisons() {
+    for (goal, expected) in [
+        ("below", Some(true)),
+        ("band(below, different)", Some(true)),
+        ("band(below, both)", Some(true)),
+        ("band(below, two)", Some(false)),
+        ("bor(one, seven)", None),
+        ("bnot(either)", None),
+        ("bxor(below, seven)", None),
+        ("bor(two, seven)", None),
+        ("band(below, oneorseven)", None),
+        ("band(below, nottwo)", None),
+        ("band(below, exclusive)", None),
     ] {
         let source = field_range_program(&format!(
-            "fn need(x: u64) -> result: unit pure contract {{\n  define below = x < 4_u64;\n  define different = x != 2_u64;\n  define one = x == 1_u64;\n  define two = x == 2_u64;\n  define seven = x == 7_u64;\n  define either = bor(two, seven);\n  requires {goal};\n}} {{\n  return unit;\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    need(x: x);\n  }}\n  return unit;\n}}\n"
+            "fn need(x: u64) -> result: unit pure contract {{\n  define below = x < 4_u64;\n  define different = x != 2_u64;\n  define one = x == 1_u64;\n  define two = x == 2_u64;\n  define seven = x == 7_u64;\n  define either = bor(two, seven);\n  define both = band(different, one);\n  define oneorseven = bor(one, seven);\n  define nottwo = bnot(two);\n  define exclusive = bxor(one, seven);\n  requires {goal};\n}} {{\n  return unit;\n}}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n}} {{\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    need(x: x);\n  }}\n  return unit;\n}}\n"
         ));
-        field_range_verdict(&source, (!accepted).then_some(SemanticRule::Fn8));
+        match expected {
+            Some(accepted) => {
+                field_range_verdict(&source, (!accepted).then_some(SemanticRule::Fn8));
+            }
+            None => super::assert_unsupported(
+                &source,
+                crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
+            ),
+        }
     }
 }
 
@@ -2419,9 +2459,111 @@ fn an_unvisited_page_element_bound_is_an_explicit_capability() {
 }
 
 #[test]
-fn a_disjunction_is_proved_without_selecting_one_disjunct() {
+fn a_disjunction_requiring_both_disjuncts_is_unsupported() {
     let source = field_range_program(
         "fn need(x: u64) -> result: unit pure contract {\n  define below = x < 2_u64;\n  define above = x > 2_u64;\n  requires bor(below, above);\n} {\n  return unit;\n}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall different(k in 0_u64..xs^.len): xs^[k] != 2_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    need(x: x);\n  }\n  return unit;\n}\n",
+    );
+    super::assert_unsupported(
+        &source,
+        crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
+    );
+}
+
+#[test]
+fn a_boolean_requirement_leaf_is_unsupported_even_when_its_value_is_a_comparison() {
+    let source = field_range_program(
+        "fn need(flag: Bool) -> result: unit pure contract {\n  requires flag;\n} {\n  return unit;\n}\n\nfn probe(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let flag = x == 1_u64;\n    need(flag: flag);\n  }\n  return unit;\n}\n",
+    );
+    super::assert_unsupported(
+        &source,
+        crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
+    );
+}
+
+#[test]
+fn range_comparison_conjunction_conformance() {
+    with_semantics(
+        include_bytes!("../../../../tests/conformance/cases/range3-pos-ordinary-conjunction.wf"),
+        |outcome| {
+            assert!(
+                matches!(outcome, SemanticOutcome::Complete(_)),
+                "{outcome:?}"
+            )
+        },
+    );
+}
+
+/// The bad return is checked on a path independent of the unsupported
+/// conversion. FN-9 is not a deferred family and must remain the verdict.
+#[test]
+fn a_nondeferrable_error_precedes_an_unsupported_deferred_goal() {
+    for generic in ["", "<T>"] {
+        let source = field_range_program(&format!(
+            "fn probe{generic}(xs: &[u64], flag: Bool) -> result: u64 reads(xs) contract {{\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n  ensures result == 0_u64;\n}} {{\n  if flag {{\n    return 1_u64;\n  }}\n  if 0_u64 < xs^.len {{\n    let x = xs^[0_u64];\n    let converted = cvt::<u64, f32>(x);\n  }}\n  return 0_u64;\n}}\n"
+        ));
+        field_range_verdict(&source, Some(SemanticRule::Fn9));
+    }
+}
+
+/// Both functions participate. An unsupported function visited first must
+/// not hide a representable ordinary goal the other function refutes.
+#[test]
+fn an_unproved_ordinary_goal_precedes_another_functions_capability_gap() {
+    let source = field_range_program(
+        "fn unsupported(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall one(k in 0_u64..xs^.len): xs^[k] == 1_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let converted = cvt::<u64, f32>(x);\n  }\n  return unit;\n}\n\nfn wrong(xs: &[u64]) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  if 0_u64 < xs^.len {\n    let x = xs^[0_u64];\n    let quotient = 9_u64 / x;\n  }\n  return unit;\n}\n",
+    );
+    for generic in [false, true] {
+        let source = String::from_utf8(source.clone()).unwrap();
+        let source = if generic {
+            source.replace("fn unsupported(xs:", "fn unsupported<T>(xs:")
+        } else {
+            source
+        };
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("{outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Op2, "{issue:?}");
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(
+                source.as_bytes()[start..].starts_with(b"9_u64 / x"),
+                "{issue:?}"
+            );
+        });
+    }
+}
+
+/// Ordinary entailment leaves the dead arm's bounds/conversion open; the
+/// range state knows the constructed variant and excludes that arm.
+#[test]
+fn deferred_obligations_in_an_excluded_variant_arm_hold_vacuously() {
+    for operation in ["xs^[i]", "cvt::<u64, f32>(i)"] {
+        let source = field_range_program(&format!(
+            "enum Route {{\n  Live();\n  Dead();\n}}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {{\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n}} {{\n  let route = Route::Live();\n  match route {{\n    Live() => {{\n    }}\n    Dead() => {{\n      let value = {operation};\n    }}\n  }}\n  return unit;\n}}\n"
+        ));
+        field_range_verdict(&source, None);
+    }
+}
+
+/// The dry walk initially excludes Dead, but the written variant is
+/// forgotten at the real header. A dry exclusion cannot discharge its
+/// reachable page bound, for which the real walk has no site handler.
+#[test]
+fn a_dry_walk_exclusion_does_not_hide_a_live_unhandled_site() {
+    let source = field_range_program(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nfn probe(data: &Paged<u64>, indices: &Array<u64, 1>) -> result: unit reads(data), reads(indices) contract {\n  requires 0_u64 < data^.pages.len;\n  requires forall zero(k in 0_u64..1_u64): indices^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  for (k in 0_u64..2_u64) {\n    match route {\n      Live() => {\n      }\n      Dead() => {\n        let page = &data^.pages[0_u64];\n        let i = indices^[0_u64];\n        let value = page^[i];\n      }\n    }\n    set route = Route::Dead();\n  }\n  return unit;\n}\n",
+    );
+    super::assert_unsupported(
+        &source,
+        crate::UnsupportedSemanticFeature::RangeOrdinaryGoal,
+    );
+}
+
+#[test]
+fn a_state_excluded_match_continuation_discharges_its_deferred_sites() {
+    let source = field_range_program(
+        "enum Route {\n  Live();\n  Dead();\n}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n      return unit;\n    }\n    Dead() => {\n    }\n  }\n  let value = xs^[i];\n  return unit;\n}\n",
     );
     field_range_verdict(&source, None);
 }

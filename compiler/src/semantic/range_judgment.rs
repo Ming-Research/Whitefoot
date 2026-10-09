@@ -89,6 +89,9 @@ pub(crate) struct RangeJudgment {
     pub(crate) issues: Vec<RangeIssue>,
     pub(crate) certified: Vec<CertifiedLoop>,
     pub(crate) discharged: Vec<usize>,
+    /// Records whose unsupported goal or structural ceiling is reported by
+    /// `issues`; they cannot supply an ordinary unproved-source diagnostic.
+    pub(crate) inconclusive: Vec<usize>,
 }
 
 /// Range clauses are formed in both scopes [RANGE-1]. Deferred ordinary
@@ -240,7 +243,7 @@ pub(crate) fn judge_program(
             let unproved = walker
                 .deferred
                 .iter()
-                .any(|(_, answer)| *answer != Some(true));
+                .any(|(_, answer)| *answer != walk::DeferredAnswer::Proved);
             let issues = match walker.imprecise.take() {
                 Some(node) if !walker.issues.is_empty() || unproved => {
                     vec![RangeIssue::Unsupported {
@@ -255,8 +258,17 @@ pub(crate) fn judge_program(
                 certified: walker.certified,
                 discharged: walker
                     .deferred
-                    .into_iter()
-                    .filter_map(|(index, answer)| (answer == Some(true)).then_some(index))
+                    .iter()
+                    .filter_map(|(index, answer)| {
+                        (*answer == walk::DeferredAnswer::Proved).then_some(*index)
+                    })
+                    .collect(),
+                inconclusive: walker
+                    .deferred
+                    .iter()
+                    .filter_map(|(index, answer)| {
+                        (*answer == walk::DeferredAnswer::Inconclusive).then_some(*index)
+                    })
                     .collect(),
             }
         })
@@ -264,7 +276,7 @@ pub(crate) fn judge_program(
 }
 
 /// Collect every deferrable record; unrelated debt never disables the walk.
-fn deferred_records(function: &CheckedFunction) -> Vec<(usize, Option<bool>)> {
+fn deferred_records(function: &CheckedFunction) -> Vec<(usize, walk::DeferredAnswer)> {
     use super::entailment::ObligationFamily;
     use super::obligations::ObligationSubject;
     let mut pending = Vec::new();
@@ -283,7 +295,9 @@ fn deferred_records(function: &CheckedFunction) -> Vec<(usize, Option<bool>)> {
                     | ObligationFamily::ConversionDomain,
                 ..
             }
-            | ObligationSubject::LoopInvariant { .. } => pending.push((index, None)),
+            | ObligationSubject::LoopInvariant { .. } => {
+                pending.push((index, walk::DeferredAnswer::Pending))
+            }
             ObligationSubject::SourceProof => {
                 let super::obligations::RecordAnswer::SourceProof(proof) = answer else {
                     continue;
@@ -301,9 +315,11 @@ fn deferred_records(function: &CheckedFunction) -> Vec<(usize, Option<bool>)> {
                 {
                     continue;
                 }
-                pending.push((index, None));
+                pending.push((index, walk::DeferredAnswer::Pending));
             }
-            ObligationSubject::CallRequirement { .. } => pending.push((index, None)),
+            ObligationSubject::CallRequirement { .. } => {
+                pending.push((index, walk::DeferredAnswer::Pending))
+            }
             _ => {}
         }
     }

@@ -1148,7 +1148,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.collect_type_invariants(check_context)?;
         self.judge_constant_invariants(&items)?;
         self.admit_postcondition_selectors(check_context)?;
-        self.validate_generic_templates(check_context)?;
+        // A symbolic range capability or ceiling cannot hide a definite
+        // ordinary error in the concrete functions checked below.
+        let generic_range_stop = self.validate_generic_templates(check_context)?;
         if self.types.signatures.iter().any(|signature| {
             self.types.view.contains_function(signature.id) && signature.formal_parameter.is_some()
         }) {
@@ -1261,20 +1263,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             super::range_judgment::JudgmentScope::Concrete,
             self.types.declarations.resolved,
         );
-        if self.reject_entailment
-            && let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
-                matches!(
-                    issue,
-                    super::range_judgment::RangeIssue::Unsupported { .. }
-                        | super::range_judgment::RangeIssue::Undischarged {
-                            capacity: Some(_),
-                            ..
-                        }
-                )
-            })
-        {
-            return Err(self.range_issue(issue));
-        }
         if self.reject_entailment {
             let mut rejections = Vec::new();
             let mut rejected = vec![false; baseline_functions.len()];
@@ -1289,7 +1277,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 match self
                     .types
-                    .entailment_rejection_after_range(function, &ranges[index].discharged)
+                    .entailment_rejection_after_range(
+                        function,
+                        &ranges[index].discharged,
+                        &ranges[index].inconclusive,
+                    )
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -1322,6 +1314,23 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             if let Some((_, _, _, issue)) = rejections.into_iter().next() {
                 return Err(CheckStop::Issue(issue));
             }
+        }
+        if let Some(stop) = generic_range_stop {
+            return Err(stop);
+        }
+        if self.reject_entailment
+            && let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+                matches!(
+                    issue,
+                    super::range_judgment::RangeIssue::Unsupported { .. }
+                        | super::range_judgment::RangeIssue::Undischarged {
+                            capacity: Some(_),
+                            ..
+                        }
+                )
+            })
+        {
+            return Err(self.range_issue(issue));
         }
         drop(baseline_functions);
         if optimistic_batch {
@@ -2117,7 +2126,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         functions: &mut [CheckedFunctionInventory],
         canonical: &[(usize, DeclarationId)],
         callees: &[EntailmentCallee],
-    ) -> Result<(), CheckStop> {
+    ) -> Result<Option<CheckStop>, CheckStop> {
         let optimistic_batch = functions.iter().any(|checked| {
             !checked.function.postconditions.is_empty()
                 || Checker::statements_contain_value_if(
@@ -2151,7 +2160,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             }
         }
         if !self.reject_entailment {
-            return Ok(());
+            return Ok(None);
         }
         for checked in functions.iter_mut() {
             checked.function.body_disposition = checked.function.entailment.body_disposition;
@@ -2168,6 +2177,17 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             super::range_judgment::JudgmentScope::Symbolic,
             self.types.declarations.resolved,
         );
+        for (index, declaration) in canonical {
+            let checked = functions
+                .get(*index)
+                .filter(|checked| checked.function.declaration == *declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            self.types.entailment_rejection_after_range(
+                &checked.function,
+                &ranges[*index].discharged,
+                &ranges[*index].inconclusive,
+            )?;
+        }
         if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
             matches!(
                 issue,
@@ -2178,20 +2198,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     }
             )
         }) {
-            return Err(self.range_issue(issue));
+            return Ok(Some(self.range_issue(issue)));
         }
-        for (index, declaration) in canonical {
-            let checked = functions
-                .get(*index)
-                .filter(|checked| checked.function.declaration == *declaration)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types
-                .entailment_rejection_after_range(&checked.function, &ranges[*index].discharged)?;
+        for (index, _) in canonical {
             if let Some(issue) = ranges[*index].issues.first() {
                 return Err(self.range_issue(issue));
             }
         }
-        Ok(())
+        Ok(None)
     }
     /// The functions whose bodies symbolic validation must analyze: the
     /// canonical instances and everything their calls reach, by the same
