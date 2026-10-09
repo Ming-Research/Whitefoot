@@ -43,6 +43,9 @@ fn is_busy(problem: std::io::IoError) -> result: Bool pure {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: code_13, origin: origin_13) => {
       return False();
     }
@@ -135,6 +138,9 @@ fn is_deadline(problem: std::io::IoError) -> result: Bool pure {
     DeadlinePassed() => {
       return True();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: code_13, origin: origin_13) => {
       return False();
     }
@@ -210,7 +216,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       let start = std::time::now(clock: &clock);
       let end = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
       let deadline = Some<Instant>(value: end);
-      match std::process::stop_next(factory: &factory, listener: &listener, deadline: deadline) {
+      let wait_cancel_1 = std::time::cancel_never();
+      let wait_outcome_1 = std::process::stop_next(factory: &factory, listener: &listener, deadline: deadline, cancel: &wait_cancel_1);
+      std::time::close_cancel_watch(watch: move wait_cancel_1);
+      match wait_outcome_1 {
         Ok(value: unexpected) => {
           set code = 3_u8;
         }

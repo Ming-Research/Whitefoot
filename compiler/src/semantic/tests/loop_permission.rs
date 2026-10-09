@@ -2273,7 +2273,9 @@ fn a_direct_read_state_transition_writes_enclosing_storage() {
   let total = 0_u64;
   for @scan (i in 0_u64..4_u64) {
     let no_deadline = None<std::time::Instant>();
-    let outcome = std::io::read_next(factory: factory, input: input, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline);
+    let wait_cancel_1 = std::time::cancel_never();
+    let outcome = std::io::read_next(factory: factory, input: input, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
     set total = total +wrap 1_u64;
   }
   return unit;

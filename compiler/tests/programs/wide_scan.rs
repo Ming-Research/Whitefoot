@@ -67,7 +67,10 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
       break @publish;
     }
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: accepted) => {
         set sent = accepted;
       }

@@ -1,4 +1,4 @@
-# Kernel Specification v0.107
+# Kernel Specification v0.106
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2483,9 +2483,8 @@ A host module has no implementation record, and its interface record is exactly 
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
 An opaque struct a host module declares with fields, `Instant` alone, has the representation and capabilities its fields give it [PROV-6]; its fields are private to a module with no implementation record [MOD-6], and only a host function returns one.
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
-The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-`CancelSource` and `CancelWatch` are independently owned handles of one cancellation state. `cancel_source` creates that state unfired; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_fire` permanently fires the state, and repeated firings have no further effect. Closing a source or watch releases only that handle and does not fire the state; the state remains live while any source or watch retains it. `cancel_never` returns a watch that never fires. These handles consume no host handle credit. Operations through related handles are ordered only as [HOST-1] orders them; a firing observed through a watch is an input of the execution [WAIT-2].
-A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
+The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(d)` has completed, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
+A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 `MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
@@ -2518,36 +2517,15 @@ public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure
 
 public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
 
-public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result<unit, unit> reads(cancel) waits doc "Returns Ok with unit when the monotonic clock reaches deadline, or Err with unit when cancel ends the wait.";
+public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
-
-public opaque nodrop struct CancelSource {
-}
-
-public opaque nodrop struct CancelWatch {
-}
-
-public fn cancel_source() -> result: CancelSource pure doc "Creates an unfired cancellation state and returns its source handle.";
-
-public fn cancel_share(source: &CancelSource) -> result: CancelSource reads(source) doc "Returns another source handle for the same cancellation state.";
-
-public fn cancel_watch(source: &CancelSource) -> result: CancelWatch reads(source) doc "Returns a watch retaining source's cancellation state independently of its source handles.";
-
-public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) doc "Permanently fires source's cancellation state; repeated firings have no further effect.";
-
-public fn cancel_never() -> result: CancelWatch pure doc "Returns a watch that never fires.";
-
-public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Releases this source handle without firing it; remaining source and watch handles retain the state.";
-
-public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Releases this watch handle, including a never-firing watch.";
 ```
 
 `std::io`, the record `io/module.wfm`:
 
 ```
 alias Instant = pkg::time::Instant;
-alias CancelWatch = pkg::time::CancelWatch;
 
 public opaque nocopy struct HandleFactory {
 }
@@ -2572,7 +2550,6 @@ public enum IoError {
   Unsupported(public code: u32, public origin: u8);
   TimedOut(public code: u32, public origin: u8);
   DeadlinePassed();
-  Cancelled();
   BrokenPipe(public code: u32, public origin: u8);
   WriteZero(public code: u32, public origin: u8);
   UnexpectedEnd(public code: u32, public origin: u8);
@@ -2598,19 +2575,19 @@ public enum ReadStop {
 
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 
-public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, IoError> reads(cancel), reads(source), writes(factory), writes(output) waits contract {
+public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) waits contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written, and DeadlinePassed or Cancelled reports that the wait ended with no byte written.";
+} doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written, and DeadlinePassed reports that deadline passed with no byte written.";
 
-public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadStop> reads(cancel), writes(factory), writes(input), writes(destination) waits contract {
+public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, ReadEnd reports the end of the input, and DeadlinePassed or Cancelled reports that the wait ended with no byte read.";
+} doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, ReadEnd reports the end of the input, and DeadlinePassed reports that deadline passed with no byte read.";
 ```
 
 `std::text`, the record `text/module.wfm`:
@@ -2792,7 +2769,6 @@ alias HandleFactory = pkg::io::HandleFactory;
 alias IoError = pkg::io::IoError;
 alias ReadStop = pkg::io::ReadStop;
 alias Instant = pkg::time::Instant;
-alias CancelWatch = pkg::time::CancelWatch;
 
 public opaque nocopy struct SocketAddress {
 }
@@ -2822,23 +2798,23 @@ public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u
 
 public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
 
-public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<AcceptedConnection, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed or Cancelled reports that the wait ended with no connection accepted.";
+public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) waits doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed reports that deadline passed with no connection accepted.";
 
-public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<TcpConnection, IoError> reads(cancel), reads(address), writes(factory) waits doc "Opens a TCP connection to address; DeadlinePassed or Cancelled reports that the wait ended with no connection opened.";
+public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) waits doc "Opens a TCP connection to address; DeadlinePassed reports that deadline passed with no connection opened.";
 
-public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadStop> reads(cancel), writes(receive), writes(destination) waits contract {
+public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(receive), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, ReadEnd reports that the peer finished sending, and DeadlinePassed or Cancelled reports that the wait ended with no byte received.";
+} doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, ReadEnd reports that the peer finished sending, and DeadlinePassed reports that deadline passed with no byte received.";
 
-public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, IoError> reads(cancel), reads(source), writes(send) waits contract {
+public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(send) waits contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed or Cancelled reports that the wait ended with no byte sent.";
+} doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed reports that deadline passed with no byte sent.";
 
 public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
 
@@ -2854,7 +2830,6 @@ public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<u
 ```
 alias IoError = pkg::io::IoError;
 alias Instant = pkg::time::Instant;
-alias CancelWatch = pkg::time::CancelWatch;
 alias HandleFactory = pkg::io::HandleFactory;
 alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
@@ -2897,7 +2872,7 @@ public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the stat
 
 public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
 
-public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<StopKind, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
 
 public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
 

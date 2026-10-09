@@ -8565,7 +8565,7 @@ fn range_contract_source(contract: &str, body: &str) -> String {
 fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -8583,7 +8583,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
 fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -8610,7 +8610,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
 fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -8657,7 +8657,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
 fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline);\n    }\n  }\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let wait_cancel_1 = std::time::cancel_never();\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n      std::time::close_cancel_watch(watch: move wait_cancel_1);\n    }\n  }\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8702,7 +8702,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
 fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8730,7 +8730,10 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 3_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -8746,7 +8749,10 @@ fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 4_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -8868,7 +8874,9 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   requires 3_u64 <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   match outcome {
     Ok(value: written) => {
       let sample = table[written];
@@ -8884,7 +8892,9 @@ fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sour
   requires limit <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline);
+  let wait_cancel_2 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
   set limit = 9_u64;
   match outcome {
     Ok(value: written) => {

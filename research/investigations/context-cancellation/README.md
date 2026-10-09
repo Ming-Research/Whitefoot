@@ -71,7 +71,7 @@ ended waits observe.
 
 The owner selected A (Firn ledger Q223) and asked that its shape weigh each
 alternative's costs and benefits and keep performance in view before it is
-chosen. The sections below are that work; nothing is chosen yet.
+chosen. The sections below record that comparison; the Decision section records the selection.
 
 ## The mechanism under every shape
 
@@ -208,3 +208,16 @@ match the expiry context's 100 ms sleep, which the prototype leaves
 unwatched; a `sleep_until` that names a watch would remove it. The first
 measurement (run 37872419934) is not used: its idle clients were not
 confirmed connected and both builds then waited on a 100 ms signal poll.
+
+## Decision
+
+The owner chose S1 on board card `firn-cancel-shape`: an explicit watch on
+all host waits that already take a deadline, and on `sleep_until`, with
+`cancel_never` for a must-finish wait. The implementation reuses find at
+fire, retains explicit source/watch ownership and distinguishes `Cancelled`
+from `DeadlinePassed`. File-system operations remain outside this change;
+no cancellation query or atomic-guard integration is added. The
+[decision node](../../../design/language/system-interface/context-cancellation.md)
+records the shape, mechanism and rejected alternatives. The Results above
+support parity with polling on the measured firn workload, not zero cost
+against unbounded receives in every cell.

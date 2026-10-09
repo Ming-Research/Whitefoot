@@ -166,6 +166,8 @@ static void text_probe(void) {
 }
 
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
+static const wf_value wf_probe_never = {{0}};
+
 typedef void (*wf_probe_read)(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
@@ -483,13 +485,13 @@ static void tcp_probe(wf_inputs *inputs) {
         listener.err.error.origin);
     assert(listener.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&first_client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&first_client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(first_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 2);
-    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(first_server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
-    wf__body_tcp_connect(&second_client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&second_client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(second_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 4);
-    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(second_server.tag == 0);
     assert(WF_PROBE_INPUT_BUDGET == before - 5);
     crossed_a.receive = first_server.ok.value.connection.receive;
@@ -500,14 +502,14 @@ static void tcp_probe(wf_inputs *inputs) {
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
     wf__body_close_send(&closed, &inputs->handles, &crossed_a.send); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
-    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &other_factory, &crossed_b.send); check_close(&closed);
     assert(other_factory.words[0] == 1 && WF_PROBE_INPUT_BUDGET == before - 5);
@@ -545,9 +547,9 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     wf__body_tcp_listen(&listener, &inputs->handles, &address);
     assert(listener.tag == 0);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(client.tag == 0);
-    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
     descriptor = server.ok.value.connection.send.words[0];
     memset(&call, 0, sizeof(call));
@@ -587,19 +589,19 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
      * The just-released lowest slot must therefore be reused, on both the
      * POSIX table and Windows CRT registry, without an open-until-reused loop.
      * Fresh bidirectional IO checks that its half-close state was reset. */
-    wf__body_tcp_connect(&replacement, &call.factory, &address, NULL);
+    wf__body_tcp_connect(&replacement, &call.factory, &address, NULL, &wf_probe_never);
     assert(replacement.tag == 0 && call.factory.words[0] == 0);
     assert(replacement.ok.value.receive.words[0] == descriptor);
-    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(replacement_server.tag == 0);
-    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &inputs->handles, &replacement.ok.value.send); check_close(&closed);
     wf__body_close_receive(&closed, &inputs->handles, &replacement.ok.value.receive); check_close(&closed);
@@ -900,14 +902,14 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
     wf_value first, second, deadline, later, latest;
-    uint8_t unit = 1;
+    wf_sleep_result slept;
     wf__body_now(&first, &inputs->clock);
     wf__body_now(&second, &inputs->clock);
     assert(wf__body_nanoseconds_from(&second, &first) == 0);
     wf__body_instant_after(&deadline, &second, 2000000u);
     assert(!wf__body_instant_reached(&deadline, &second));
-    wf__body_sleep_until(&unit, &deadline);
-    assert(unit == 0);
+    wf__body_sleep_until(&slept, &deadline, &wf_probe_never);
+    assert(slept.tag == 0);
     wf__body_now(&later, &inputs->clock);
     assert(wf__body_instant_reached(&deadline, &later));
     assert(wf__body_nanoseconds_from(&second, &later) >= 2000000u);
@@ -921,10 +923,10 @@ static void time_probe(wf_inputs *inputs) {
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);
-typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *);
+typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_value *);
 typedef void (*wf_probe_stop_close)(wf_close_result *, wf_value *, const wf_value *);
 extern void wf_test_public_stop_listen(wf_open_result *, wf_value *, const wf_value *);
-extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *);
+extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_value *);
 extern void wf_test_public_close_stop_listener(wf_close_result *, wf_value *, const wf_value *);
 
 #if defined(__linux__)
@@ -990,10 +992,10 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     for (unsigned index = 0; index < 1025; ++index) wf__stop_observe(index % 2);
     for (unsigned index = 0; index < 1025; ++index) {
         /* An already-produced request wins even against an expired deadline. */
-        next(&received, &factory, &opened.ok.value, &expired);
+        next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
         assert(received.tag == 0 && received.ok.value == index % 2);
     }
-    next(&received, &factory, &opened.ok.value, &expired);
+    next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
     assert(received.tag == 1 && received.err.error.tag == WF_IO_DEADLINE_PASSED);
     wf_completion_record pending;
     wf__completion_stop_next_submit(&pending);
@@ -1010,14 +1012,14 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     wf__stop_observe(0);
     wf__completion_file_join(&pending, &kind, &error);
     assert(kind == -1 && wf__completion_deadline_passed(&pending));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 0);
     wf__stop_observe(1);
     close_listener(&closed, &factory, &opened.ok.value);
     assert(closed.tag == 0 && factory.words[0] == 1);
     open_listener(&opened, &factory, &inputs->stops);
     assert(opened.tag == 0);
-    next(&received, &factory, &opened.ok.value, &expired);
+    next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
     assert(received.tag == 1 && received.err.error.tag == WF_IO_DEADLINE_PASSED);
 #if defined(_WIN32)
     /* Exercise the actual callback's lifetime, independently of Windows'
@@ -1031,7 +1033,7 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
         call.event = events[index];
         atomic_init(&call.returned, 0);
         assert(wf_prim_thread_start(&thread, stop_handler_thread, &call, 0) == 0);
-        next(&received, &factory, &opened.ok.value, NULL);
+        next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
         assert(received.tag == 0 && received.ok.value == 1);
         assert(atomic_load_explicit(&call.returned, memory_order_acquire) == 0);
         close_listener(&closed, &factory, &opened.ok.value);
@@ -1041,10 +1043,10 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
         while (!atomic_load_explicit(&call.returned, memory_order_acquire)) wf_prim_yield();
     }
     assert(wf__stop_console_handler(CTRL_C_EVENT));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 0);
     assert(wf__stop_console_handler(CTRL_BREAK_EVENT));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1);
 #endif
     close_listener(&closed, &factory, &opened.ok.value);

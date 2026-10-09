@@ -29,6 +29,102 @@ alias tcp_accept = std::net::tcp_accept;
 alias tcp_connect = std::net::tcp_connect;
 alias tcp_listen = std::net::tcp_listen;
 
+fn is_cancelled(error: &IoError) -> result: Bool reads(error) {
+  doc "Whether an operation ended on its cancellation watch.";
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    Cancelled() => {
+      return True();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return False();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
 fn deadline_passed(error: &IoError) -> result: Bool reads(error) {
   doc "Whether an operation's outcome is the passing of its own deadline [PRE-2].";
   match error^ {
@@ -138,17 +234,6 @@ fn read_stop_deadline(stop: &ReadStop) -> result: Bool reads(stop) {
   }
 }
 
-fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
-  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
-  let room = store^.len;
-  let inside = index < room;
-  if inside {
-    let value = store^[index];
-    return value;
-  }
-  return 0_u8;
-}
-
 fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
   let port = 0_u16;
@@ -181,14 +266,6 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn nap(until: Instant) -> result: unit pure waits {
-  doc "Sleeps in a context of its own until the instant.";
-  let wait_cancel_1 = std::time::cancel_never();
-  sleep_until(deadline: until, cancel: &wait_cancel_1);
-  std::time::close_cancel_watch(watch: move wait_cancel_1);
-  return unit;
-}
-
 fn close_connection(factory: &HandleFactory, connection: TcpConnection) -> result: unit writes(factory) waits {
   doc "Closes both halves of a connection.";
   let TcpConnection(receive: receive, send: send) = move connection;
@@ -197,26 +274,151 @@ fn close_connection(factory: &HandleFactory, connection: TcpConnection) -> resul
   return unit;
 }
 
-fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
-  doc "Receives with a deadline while the peer is silent, then shows the connection lost nothing and that a sleeping context and a bounded receive both end.";
-  let bytes = slots_new::<u8, 1>();
-  place_back(window: &bytes, value: 0_u8);
-  let started = now(clock: clock);
-  let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
-  let bound = Some<Instant>(value: soon);
-  let destination = &bytes[0_u64..1_u64];
-  let wait_cancel_2 = std::time::cancel_never();
-  let wait_outcome_2 = receive_next(receive: &server^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: bound, cancel: &wait_cancel_2);
-  std::time::close_cancel_watch(watch: move wait_cancel_2);
-  match wait_outcome_2 {
-    Ok(value: received) => {
-      return 20_u8;
+fn cancelled_read(outcome: Result<u64, ReadStop>) -> result: Bool pure {
+  match outcome {
+    Ok(value: count) => {
+      return False();
     }
     Err(error: stop) => {
-      let passed = read_stop_deadline(stop: &stop);
-      if passed {
+      match stop {
+        ReadEnd() => {
+          return False();
+        }
+        ReadFailed(error: failure) => {
+          return is_cancelled(error: &failure);
+        }
+      }
+    }
+  }
+}
+
+fn fire_later(source: std::time::CancelSource, clock: Clock) -> result: unit pure waits {
+  let never = std::time::cancel_never();
+  let begin = now(clock: &clock);
+  let wake = instant_after(instant: begin, nanoseconds: 50000000_u64);
+  sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  std::time::cancel_fire(source: &source);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(clock), writes(server.receive) waits {
+  let source = std::time::cancel_source();
+  let firing_source = std::time::cancel_share(source: &source);
+  let watch = std::time::cancel_watch(source: &source);
+  std::time::close_cancel_source(source: move source);
+  let firing_clock = std::time::clock_share(clock: clock);
+  let firing = spawn fire_later(source: move firing_source, clock: move firing_clock);
+  let bytes = array_filled::<u8, 1>(value: 204_u8);
+  let unlimited = None<Instant>();
+  let outcome = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let cancelled = cancelled_read(outcome: outcome);
+  let unchanged = bytes[0_u64] == 204_u8;
+  return band(cancelled, unchanged);
+}
+
+fn cancelled_sleep(clock: &Clock) -> result: Bool writes(clock) waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let firing_clock = std::time::clock_share(clock: clock);
+  let begin = now(clock: clock);
+  let distant = instant_after(instant: begin, nanoseconds: 60000000000_u64);
+  let firing = spawn fire_later(source: move source, clock: move firing_clock);
+  let outcome = sleep_until(deadline: distant, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let ended = now(clock: clock);
+  let reached = instant_reached(deadline: distant, instant: ended);
+  match outcome {
+    Ok(value: slept) => {
+      return False();
+    }
+    Err(error: cancelled) => {
+      return bnot(reached);
+    }
+  }
+}
+
+fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
+  let parked = parked_receive(server: server, clock: clock);
+  if parked {
+  } else {
+    return 10_u8;
+  }
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  let bytes = array_filled::<u8, 1>(value: 204_u8);
+  let unlimited = None<Instant>();
+  let early = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let early_cancelled = cancelled_read(outcome: early);
+  if early_cancelled {
+  } else {
+    return 11_u8;
+  }
+  if bytes[0_u64] == 204_u8 {
+  } else {
+    return 12_u8;
+  }
+  let never = std::time::cancel_never();
+  let message = array_filled::<u8, 1>(value: 78_u8);
+  let sent = send_once(send: &client^.send, source: &message[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &never);
+  let sent_ok = match sent {
+    Ok(value: next) => {
+      give next == 1_u64;
+    }
+    Err(error: send_error) => {
+      give False();
+    }
+  };
+  if sent_ok {
+  } else {
+    std::time::close_cancel_watch(watch: move never);
+    return 13_u8;
+  }
+  let normal = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  match normal {
+    Ok(value: count) => {
+      if count == 1_u64 {
       } else {
-        return 21_u8;
+        return 14_u8;
+      }
+    }
+    Err(error: read_error) => {
+      return 15_u8;
+    }
+  }
+  if bytes[0_u64] == 78_u8 {
+  } else {
+    return 16_u8;
+  }
+  let rested = cancelled_sleep(clock: clock);
+  if rested {
+  } else {
+    return 17_u8;
+  }
+  let pending_source = std::time::cancel_source();
+  let pending_watch = std::time::cancel_watch(source: &pending_source);
+  std::time::close_cancel_source(source: move pending_source);
+  let begin = now(clock: clock);
+  let soon = instant_after(instant: begin, nanoseconds: 10000000_u64);
+  let bound = Some<Instant>(value: soon);
+  let timed = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: bound, cancel: &pending_watch);
+  std::time::close_cancel_watch(watch: move pending_watch);
+  match timed {
+    Ok(value: received) => {
+      return 18_u8;
+    }
+    Err(error: stop) => {
+      let deadline_won = read_stop_deadline(stop: &stop);
+      if deadline_won {
+      } else {
+        return 19_u8;
       }
     }
   }
@@ -224,104 +426,17 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   let reached = instant_reached(deadline: soon, instant: after);
   if reached {
   } else {
-    return 22_u8;
+    return 20_u8;
   }
-  set bytes[0_u64] = 120_u8;
-  let source = &bytes[0_u64..1_u64];
-  let no_deadline = None<Instant>();
-  let wait_cancel_3 = std::time::cancel_never();
-  let wait_outcome_3 = send_once(send: &client^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_3);
-  std::time::close_cancel_watch(watch: move wait_cancel_3);
-  match wait_outcome_3 {
-    Ok(value: sent) => {
-      if sent != 1_u64 {
-        return 23_u8;
-      }
-    }
-    Err(error: problem) => {
-      return 24_u8;
-    }
-  }
-  set bytes[0_u64] = 0_u8;
-  let later = now(clock: clock);
-  let generous = instant_after(instant: later, nanoseconds: 5000000000_u64);
-  let wide = Some<Instant>(value: generous);
-  let again = &bytes[0_u64..1_u64];
-  let wait_cancel_4 = std::time::cancel_never();
-  let wait_outcome_4 = receive_next(receive: &server^.receive, destination: again, start: 0_u64, end: 1_u64, deadline: wide, cancel: &wait_cancel_4);
-  std::time::close_cancel_watch(watch: move wait_cancel_4);
-  match wait_outcome_4 {
-    Ok(value: received) => {
-      if received != 1_u64 {
-        return 25_u8;
-      }
-    }
-    Err(error: stop) => {
-      return 26_u8;
-    }
-  }
-  if bytes[0_u64] != 120_u8 {
-    return 27_u8;
-  }
-  let begin = now(clock: clock);
-  let wake = instant_after(instant: begin, nanoseconds: 30000000_u64);
-  let napped = spawn nap(until: wake);
-  let cutoff = instant_after(instant: begin, nanoseconds: 60000000_u64);
-  let short = Some<Instant>(value: cutoff);
-  let third = &bytes[0_u64..1_u64];
-  let wait_cancel_5 = std::time::cancel_never();
-  let wait_outcome_5 = receive_next(receive: &server^.receive, destination: third, start: 0_u64, end: 1_u64, deadline: short, cancel: &wait_cancel_5);
-  std::time::close_cancel_watch(watch: move wait_cancel_5);
-  match wait_outcome_5 {
-    Ok(value: received) => {
-      return 28_u8;
-    }
-    Err(error: stop) => {
-      let passed = read_stop_deadline(stop: &stop);
-      if passed {
-      } else {
-        return 29_u8;
-      }
-    }
-  }
-  let rested = napped;
-  let finished = now(clock: clock);
-  let slept = instant_reached(deadline: wake, instant: finished);
-  if slept {
+  if bytes[0_u64] == 78_u8 {
   } else {
-    return 30_u8;
+    return 21_u8;
   }
   return 0_u8;
 }
 
 fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAddress, clock: &Clock) -> result: u8 reads(address), writes(factory), writes(listener), writes(clock) waits {
-  doc "Accepts with a deadline while no client connects, then connects to itself and converses.";
-  let started = now(clock: clock);
-  let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
-  let bound = Some<Instant>(value: soon);
-  let wait_cancel_6 = std::time::cancel_never();
-  let wait_outcome_6 = tcp_accept(factory: factory, listener: listener, deadline: bound, cancel: &wait_cancel_6);
-  std::time::close_cancel_watch(watch: move wait_cancel_6);
-  match move wait_outcome_6 {
-    Ok(value: stray) => {
-      let AcceptedConnection(connection: connection, peer: unused_peer) = move stray;
-      close_connection(factory: factory, connection: move connection);
-      return 10_u8;
-    }
-    Err(error: problem) => {
-      let passed = deadline_passed(error: &problem);
-      if passed {
-      } else {
-        return 11_u8;
-      }
-    }
-  }
-  let after = now(clock: clock);
-  let reached = instant_reached(deadline: soon, instant: after);
-  if reached {
-  } else {
-    return 12_u8;
-  }
+  doc "Connects to its own listener and exercises cancellation without closing the peer.";
   let no_deadline = None<Instant>();
   let wait_cancel_7 = std::time::cancel_never();
   let wait_outcome_7 = tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_7);
@@ -352,7 +467,7 @@ fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAdd
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Listens on the loopback port the first argument names and shows that a passed deadline ends an accept and a receive with nothing transferred, while the connection keeps every byte sent afterwards [PRE-2].";
+  doc "Checks cancellation and deadlines on a loopback connection whose peer stays open.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   close_directory_write(factory: &handles, directory: move cwd_write);

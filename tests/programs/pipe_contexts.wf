@@ -19,7 +19,10 @@ fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) ->
     }
     let window = &buffer[0_u64..4096_u64];
     let no_deadline = None<std::time::Instant>();
-    match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 4096_u64, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 4096_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: n) => {
         set count = count +wrap n;
       }
@@ -45,7 +48,10 @@ fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> r
     let window = &chunk[count..262144_u64];
     let rest = 262144_u64 - count;
     let no_deadline = None<std::time::Instant>();
-    match write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: rest, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: rest, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: n) => {
         set count = count +wrap n;
       }
