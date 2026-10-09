@@ -1,6 +1,6 @@
 # Cancellation observed by atomic guards
 
-A study for the PR stacked on Whitefoot #296 (cross-context cancellation): how an atomic statement's guard observes a cancellation, as the owner's direction A requires and #296 deferred with the owner's agreement. It is a proposal at #296's head b3f742f6a; nothing here is selected until the owner rules on the board card `firn-cancel-guard-shape`.
+A study for the PR stacked on Whitefoot #296 (cross-context cancellation): how an atomic statement's guard observes a cancellation, as the owner's direction A requires and #296 deferred with the owner's agreement. The study was written against #296's head b3f742f6a. On 2026-10-09 the owner selected option A on board card `firn-cancel-guard-shape`: general `SharedRead<T>`, a retained `CancelState` view and waiting `cancel_fire`. The specification text and implementation still require review and CI evidence.
 
 **1. Guards may read more than their targets, but only target state currently participates in guard wakeups.**
 
@@ -245,3 +245,14 @@ The investigation correctly identified the reusable wakeup mechanism. Its statem
 None disproves direction A. Together they mean the stacked PR needs an owner-selected shared-observation design and an explicit decision about waiting fire. A query plus driver wakeups would leave the gap open.
 
 The independent read-only review confirmed these issues, particularly the whole-state exchange witness and the hidden firing-lock cycle. The proposed implementation’s layout, fairness, platform behavior, and costs remain unverified until it exists and runs in CI.
+**Implementation findings and evidence still required.**
+
+The fielded-opaque representation was a prerequisite defect: nominal completion classified every opaque declaration as fieldless, so a public `CancelState.fired` could not be selected. TYPE-2 and PRE-2 already require fields to determine representation and capabilities. The general correction retains fields on every fielded opaque, keeps its constructor refused, and brings the existing `Instant` and `Option<Instant>` native layouts into agreement. This selects no new language rule. Existing clock/deadline cases and the new state-view cases must validate the change in CI.
+
+The implementation reuses shared acquisition and guard watches. A native waiting start can request acquisition of a shared unit; its suspension retries that acquisition on wake, and its nonwaiting finish publishes the transition and releases the unit. Ordinary host completions keep their existing finish continuation. This is a private waiting ABI extension implementing the selected waiting fire, not an additional source operation or outcome.
+
+Cancellation allocations now include the shared-unit header and guard-visible Bool beside the host atomic mirror. Firing can contend with observing statements. No contention, allocation-cost or performance measurement has run. No local build or test is authorized for this work; all execution evidence remains for CI.
+
+Read-only authority follows resolved state paths, as SHARE-2 specifies; it does not revoke independent handles stored as data. SHARE-1 therefore states the absence of a SharedRead-to-Shared conversion, rather than claiming that ordinary read-only calls cannot copy a stored mutable capability. The owner-selected path restriction and existing effect-call judgment remain unchanged.
+
+The authored evidence now includes both timer-versus-work outcomes with explicit disarming before the timer result is joined, and two cancellation states followed by an ordinary Shared<Instant> target. CancelState sorts before Instant in the existing qualified-type order, so the latter exercises later acquisition. The lifetime case drops the originating mutable handle before entering the statement and replaces its last program view while the statement retains its captured target. These cases are pending CI, not observed results.

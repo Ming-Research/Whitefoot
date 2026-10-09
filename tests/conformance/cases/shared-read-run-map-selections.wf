@@ -1,0 +1,45 @@
+const names: Array<u8, 1> =[97_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let owner = shared_map_new::<u8>(capacity: 1_u64);
+  let view = shared_read::<ConcurrentHashMap<u8>>(shared: &owner);
+  let key = &names[0_u64..1_u64];
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: key);
+  atomic entry = &owner[key] {
+    set entry^ = Some<u8>(value: 9_u8);
+  }
+  let seen = 0_u8;
+  atomic whole = &owner, selected = &view[key], selected_set = &view[keys] {
+    let count = map_count::<u8>(map: whole);
+    if count != 1_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    match selected^ {
+      Some(value: value) => {
+        set seen = value^;
+      }
+      None() => {
+      }
+    }
+    if selected_set^.len != 1_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  atomic read_whole = &view {
+    match read_whole^[key] {
+      Some(value: held) => {
+        if held^ != seen {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+      None() => {
+        return std::process::exit_status(code: 4_u8);
+      }
+    }
+  }
+  if seen != 9_u8 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

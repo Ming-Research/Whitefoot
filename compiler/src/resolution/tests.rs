@@ -2709,10 +2709,11 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
         ("Slots", vec![5, 6]),
         ("Paged", vec![22, 23]),
         ("Shared", vec![31, 32]),
-        ("ConcurrentHashMap", vec![34, 35]),
-        ("KeySet", vec![37, 38]),
-        ("Bool", vec![44]),
-        ("Overflow", vec![59, 60]),
+        ("SharedRead", vec![34, 35]),
+        ("ConcurrentHashMap", vec![37, 38]),
+        ("KeySet", vec![40, 41]),
+        ("Bool", vec![47]),
+        ("Overflow", vec![62, 63]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2806,7 +2807,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[28].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[29].1, "T");
     assert_eq!(first[30].1, "inner");
-    // The shared-object handle, the keyed table, the key set and the keyed
+    // The shared-object handles, the keyed table, the key set and the keyed
     // entries [SHARE-1] close the opaque phase: each nominal, its refused
     // constructor, its type parameter and its readonly measure field.
     assert_eq!(first[31].1, "Shared");
@@ -2814,63 +2815,68 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[32].1, "Shared");
     assert_eq!(first[32].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[33].1, "T");
-    assert_eq!(first[34].1, "ConcurrentHashMap");
-    assert_eq!(first[34].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[35].1, "ConcurrentHashMap");
-    assert_eq!(first[35].2, Some(DeclarationClass::StructConstructor));
-    assert_eq!(first[36].1, "V");
-    assert_eq!(first[37].1, "KeySet");
+    assert_eq!(first[34].1, "SharedRead");
+    assert_eq!(first[35].1, "SharedRead");
+    assert_eq!(first[36].1, "T");
+    assert_eq!(first[37].1, "ConcurrentHashMap");
     assert_eq!(first[37].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[39].1, "len");
-    assert_eq!(first[40].1, "Entries");
+    assert_eq!(first[38].1, "ConcurrentHashMap");
+    assert_eq!(first[38].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[39].1, "V");
+    assert_eq!(first[40].1, "KeySet");
     assert_eq!(first[40].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[42].1, "V");
-    assert_eq!(first[43].1, "len");
+    assert_eq!(first[42].1, "len");
+    assert_eq!(first[43].1, "Entries");
+    assert_eq!(first[43].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[45].1, "V");
+    assert_eq!(first[46].1, "len");
     // Then each enum with its variants and their fields, then `Int`,
     // `Float` and the reference-kind name `Run` [TYPE-8], then the
     // construction functions [OP-13], then the window operations in written
     // order, `grow_paged` and `paged_page_len` among them [OP-10, OP-13], then
     // `swap` [OP-11],
-    // `shared_new`, `shared_share`, `shared_map_new`, `map_count`,
-    // `map_scan`, `map_clear`, `key_set_new`, `key_set_insert` and
-    // `key_set_read_key` [SHARE-1] and `free_empty` [OP-14], each with its
+    // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
+    // `shared_read_share`, `map_count`, `map_scan`, `map_clear`, the key set rows and
+    // `free_empty` [OP-14], each with its
     // type, const and value parameters in declared order and then its range
     // postconditions' names and bound variables [RANGE-1].
-    assert_eq!(first[44].1, "Bool");
-    assert_eq!(first[66].1, "Int");
-    assert_eq!(first[67].1, "Float");
-    assert_eq!(first[68].1, "Run");
-    assert_eq!(first[68].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[69].1, "box_new");
-    assert_eq!(first[88].1, "box_segments_filled");
-    assert_eq!(first[103].1, "box_paged_new");
-    assert_eq!(first[114].1, "place_back");
-    assert_eq!(first[149].1, "grow_paged");
-    assert_eq!(first[153].1, "paged_page_len");
-    assert_eq!(first[164].1, "swap");
-    assert_eq!(first[168].1, "shared_new");
-    assert_eq!(first[171].1, "shared_map_new");
-    assert_eq!(first[174].1, "shared_share");
-    assert_eq!(first[177].1, "map_count");
-    assert_eq!(first[180].1, "map_scan");
-    assert_eq!(first[186].1, "map_clear");
-    assert_eq!(first[189].1, "key_set_new");
-    assert_eq!(first[191].1, "key_set_insert");
-    assert_eq!(first[194].1, "key_set_read_key");
-    assert_eq!(first[198].1, "free_empty");
+    assert_eq!(first[47].1, "Bool");
+    assert_eq!(first[69].1, "Int");
+    assert_eq!(first[70].1, "Float");
+    assert_eq!(first[71].1, "Run");
+    assert_eq!(first[71].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[72].1, "box_new");
+    assert_eq!(first[91].1, "box_segments_filled");
+    assert_eq!(first[106].1, "box_paged_new");
+    assert_eq!(first[117].1, "place_back");
+    assert_eq!(first[152].1, "grow_paged");
+    assert_eq!(first[156].1, "paged_page_len");
+    assert_eq!(first[167].1, "swap");
+    assert_eq!(first[171].1, "shared_new");
+    assert_eq!(first[174].1, "shared_map_new");
+    assert_eq!(first[177].1, "shared_share");
+    assert_eq!(first[180].1, "shared_read");
+    assert_eq!(first[183].1, "shared_read_share");
+    assert_eq!(first[186].1, "map_count");
+    assert_eq!(first[189].1, "map_scan");
+    assert_eq!(first[195].1, "map_clear");
+    assert_eq!(first[198].1, "key_set_new");
+    assert_eq!(first[200].1, "key_set_insert");
+    assert_eq!(first[203].1, "key_set_read_key");
+    assert_eq!(first[207].1, "free_empty");
     // The opaque phase holds the five storage shapes, the cell, the
-    // shared-object handle, the keyed table, the key set and the keyed
-    // entries, 44 records: `Array` contributes five, `Slots` six, `Ring`
-    // seven, `Segments` four, `Paged` five, `Box` four, `Shared`,
+    // shared-object handles, the keyed table, the key set and the keyed
+    // entries, 47 records: `Array` contributes five, `Slots` six, `Ring`
+    // seven, `Segments` four, `Paged` five, `Box` four, `Shared`, `SharedRead`,
     // `ConcurrentHashMap` and `KeySet` three each and `Entries` four. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 201 records where it held 397: v0.84's range
+    // inventory holds 210 records where it held 397: v0.84's range
     // postconditions of `box_array_filled` and `box_segments_filled` add
     // their fact names and bound variables, seven records [RANGE-1], v0.94's
     // `map_scan`, `map_clear` and `key_set_read_key` add thirteen [SHARE-1],
     // and v0.95's `Paged`, `Run`, `box_paged_new`, `grow_paged` and
-    // `paged_page_len` add fifteen.
-    assert_eq!(first.len(), 201);
+    // `paged_page_len` add fifteen; SharedRead and its conversion and sharing add nine.
+    assert_eq!(first.len(), 210);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
@@ -2884,7 +2890,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 201, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 210, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2901,7 +2907,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 198)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 207)
             );
         },
     );

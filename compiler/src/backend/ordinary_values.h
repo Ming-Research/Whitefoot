@@ -84,10 +84,12 @@ WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
 #undef WF_RESULT_UNION
-/* `Option<Instant>`: one payload-carrying variant keeps the product layout,
+/* `Instant` has its declared u64 field's representation. `Option<Instant>`:
+ * one payload-carrying variant keeps the product layout,
  * the tag and then the instant, whose first word is its reading in
  * nanoseconds of the monotonic clock. */
-typedef struct { uint32_t tag; wf_value value; } wf_deadline;
+typedef struct { uint64_t ticks; } wf_instant;
+typedef struct { uint32_t tag; wf_instant value; } wf_deadline;
 typedef struct { uint32_t tag; uint64_t value; } wf_optional_bytes;
 /* Result<unit, unit> fits the return registers and keeps both payloads. */
 typedef struct { uint32_t tag; uint8_t value; uint8_t error; } wf_sleep_result;
@@ -116,7 +118,7 @@ _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnectio
 _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                offsetof(wf_accept_result, err.error) == 4 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
-_Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
+_Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
 _Static_assert(sizeof(wf_inputs) == 352, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
@@ -132,7 +134,7 @@ _Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
 void wf__body_cancel_source(wf_value *result);
 void wf__body_cancel_share(wf_value *result, const wf_value *source);
 void wf__body_cancel_watch(wf_value *result, const wf_value *source);
-void wf__body_cancel_fire(const wf_value *source);
+void *wf__body_cancel_state(const wf_value *watch);
 void wf__body_cancel_never(wf_value *result);
 void wf__body_close_cancel_source(const wf_value *source);
 void wf__body_close_cancel_watch(const wf_value *watch);
@@ -187,12 +189,12 @@ uint64_t wf__body_heap_in_use(wf_value *meter);
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);
-void wf__body_now(wf_value *result, wf_value *clock);
-void wf__body_instant_after(wf_value *result, const wf_value *instant, uint64_t nanoseconds);
-uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *later);
-_Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant);
+void wf__body_now(wf_instant *result, wf_value *clock);
+void wf__body_instant_after(wf_instant *result, const wf_instant *instant, uint64_t nanoseconds);
+uint64_t wf__body_nanoseconds_from(const wf_instant *earlier, const wf_instant *later);
+_Bool wf__body_instant_reached(const wf_instant *deadline, const wf_instant *instant);
 int64_t wf__body_unix_nanoseconds(const wf_value *clock);
-void wf__body_sleep_until(wf_sleep_result *result, const wf_value *deadline, const wf_value *cancel);
+void wf__body_sleep_until(wf_sleep_result *result, const wf_instant *deadline, const wf_value *cancel);
 
 void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops);
 void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,

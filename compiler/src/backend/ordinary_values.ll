@@ -18,8 +18,9 @@
 ; `.finish`, each with the function's own parameters and then the running
 ; context's operation block: the start submits the operation into that block
 ; or answers at once, returning 0 when it wrote the result, 1 when its
-; operation has already completed and 2 when it is still pending, and the
-; finish reads the completed record into the result. The waiting function that calls them
+; operation has already completed, 2 when it is still pending, or 3 when
+; shared-unit acquisition must be retried after each wake. The finish reads
+; the completed record or updates and releases the acquired shared unit. The waiting function that calls them
 ; suspends between the two (design/compiler/waiting-contexts.md).
 
 declare void @wf__body_host_copy_bytes(ptr, ptr, ptr, i64, i64)
@@ -660,18 +661,22 @@ entry:
 
 declare void @wf__body_now(ptr, ptr)
 
-define void @wf_std.time.now(ptr %result, ptr %clock) align 64 {
+define { i64 } @wf_std.time.now(ptr %clock) align 64 {
 entry:
+  %result = alloca { i64 }, align 8
   call void @wf__body_now(ptr %result, ptr %clock)
-  ret void
+  %value = load { i64 }, ptr %result
+  ret { i64 } %value
 }
 
 declare void @wf__body_instant_after(ptr, ptr, i64)
 
-define void @wf_std.time.instant_after(ptr %result, ptr %instant, i64 %nanoseconds) align 64 {
+define { i64 } @wf_std.time.instant_after(ptr %instant, i64 %nanoseconds) align 64 {
 entry:
+  %result = alloca { i64 }, align 8
   call void @wf__body_instant_after(ptr %result, ptr %instant, i64 %nanoseconds)
-  ret void
+  %value = load { i64 }, ptr %result
+  ret { i64 } %value
 }
 
 declare i64 @wf__body_nanoseconds_from(ptr, ptr)
@@ -903,11 +908,25 @@ entry:
   ret void
 }
 
-declare void @wf__body_cancel_fire(ptr)
-define i8 @wf_std.time.cancel_fire(ptr %source) align 64 {
+declare ptr @wf__body_cancel_state(ptr)
+define ptr @wf_std.time.cancel_state(ptr %watch) align 64 {
 entry:
-  call void @wf__body_cancel_fire(ptr %source)
-  ret i8 0
+  %state = call ptr @wf__body_cancel_state(ptr %watch)
+  ret ptr %state
+}
+
+declare i32 @wf__body_cancel_fire_start(ptr, ptr, ptr)
+define i32 @wf_std.time.cancel_fire.start(ptr %result, ptr %source, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_cancel_fire_start(ptr %result, ptr %source, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_cancel_fire_finish(ptr, ptr, ptr)
+define void @wf_std.time.cancel_fire.finish(ptr %result, ptr %source, ptr %operation) align 64 {
+entry:
+  call void @wf__body_cancel_fire_finish(ptr %result, ptr %source, ptr %operation)
+  ret void
 }
 
 declare void @wf__body_close_cancel_source(ptr)

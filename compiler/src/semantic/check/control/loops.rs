@@ -588,6 +588,7 @@ impl<'unit> Checker<'_, 'unit> {
                     live: true,
                     loop_depth: scope.loops.len() + 1,
                     compiler_updated: true,
+                    read_only_state: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
                     call_value: false,

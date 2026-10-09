@@ -755,6 +755,10 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<TypedExpression, CheckStop> {
         let mut liveness = Ok(());
         for member in &place.resolved.members {
+            if options.explicit_move {
+                self.types
+                    .reject_shared_read_write(source_place, member, bindings)?;
+            }
             if liveness.is_ok() {
                 liveness = self.check_commit_place_live(member, node, false);
             }
@@ -912,6 +916,14 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
                 options,
             );
+        }
+        if options.explicit_move
+            && let CheckedIndexedPlace::Range(range) = &indexed
+        {
+            for member in &range.resolved.members {
+                self.types
+                    .reject_shared_read_write(place, member, bindings)?;
+            }
         }
         let element_type = indexed.element_type(self)?;
         let (range_path, selected_type, carried) =

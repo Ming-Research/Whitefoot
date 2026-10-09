@@ -860,10 +860,14 @@ impl FunctionEmitter<'_, '_> {
         nominal: IrNominalId,
         object: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if ty != IrType::Nominal(nominal) || self.value_type(object) != Some(ty) {
+        let Some(IrType::Nominal(source)) = self.value_type(object) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if ty != IrType::Nominal(nominal)
+            || self.shared_state(source)? != self.shared_state(nominal)?
+        {
             return Err(BackendFailure::InvalidIr);
         }
-        self.shared_state(nominal)?;
         self.names(&["wf__shared_share"]);
         writeln!(
             self.output,
