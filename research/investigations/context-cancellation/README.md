@@ -163,3 +163,48 @@ measured from the firing to the last join.
 
 The shape is then chosen on the writer's terms above, with the prototype's
 spelling in firn as the worked example, and comes to the owner as a card.
+
+## Results
+
+The prototype is Whitefoot branch `exp/cancel-proto` (find at fire behind
+S1: `CancelSource`, `CancelWatch`, `cancel_never` in `std::time`,
+`receive_next_until` and `tcp_accept_until` in `std::net`, a fired watch
+ending the wait as `DeadlinePassed`), released as `wf-exp-f5602b2240e4`.
+Four firn builds on that one compiler, Firn-wf branches `exp/cancel-firn-*`:
+`poll`, today's firn (one-second receive and accept deadlines, a 100 ms
+signal wait); `watch`, receives and the accept loop name a watch the stop
+signal fires, with no deadline unless an idle limit is set, and the signal
+wait has none; `never`, receives name `cancel_never()`; `none`, receives
+carry neither.
+
+Throughput (Firn-wf run
+[37873234213](https://github.com/Ming-Research/Firn-wf/actions/runs/37873234213),
+i9-14900K, redis-benchmark `set` and `get` at depths 16 and 1 on one and two
+server CPUs, 4 interleaved passes of 10 s, `none` measured twice as the
+noise control). The twin differed from `none` by 0 to 3.2%.
+
+- `watch` against `poll`: 0.984 to 1.022 in all eight cells, inside the
+  noise. The second criterion holds.
+- `never` against `none`: inside the noise in seven cells; at one CPU,
+  depth 16, `get` it is 0.950. In that cell `poll`, `watch` and `never`
+  all ran at 1.83 to 1.93 million requests a second and `none` alone at
+  1.98 to 2.01 million, so the gap separates a receive carrying any bound
+  from one carrying none; today's polling already pays it. The first
+  criterion fails in that cell, for that reason.
+
+Stopping (Firn-wf run
+[37876555665](https://github.com/Ming-Research/Firn-wf/actions/runs/37876555665),
+i9-14900K, 10 trials per line, 50 client connections confirmed connected
+before each SIGTERM, busy with redis-benchmark `set` or idle). Time from
+SIGTERM to the process's exit:
+
+| build | busy | idle |
+|---|---|---|
+| poll | 1,045 to 1,098 ms, median 1,046 | 1,053 to 1,058 ms, median 1,057 |
+| watch | 45 to 97 ms, median 45 | 50 to 53 ms, median 51 |
+
+The watch build stops about twenty times sooner. Its remaining 45 to 50 ms
+match the expiry context's 100 ms sleep, which the prototype leaves
+unwatched; a `sleep_until` that names a watch would remove it. The first
+measurement (run 37872419934) is not used: its idle clients were not
+confirmed connected and both builds then waited on a 100 ms signal poll.
