@@ -251,11 +251,18 @@ impl Checker<'_, '_> {
             self.body
                 .record_reference_origins(target.binding, &reference.paths);
         }
+        // Each target's aliases as the header relates them: a body that
+        // rebinds a target's reference leaves the writes it made through the
+        // target's root that target's writes.
+        let header_aliases = targets
+            .iter()
+            .map(|target| targets_alias_declarations(&declarations, &block_bindings, target.binding))
+            .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
         let (mut guard, mut checked) = checked?;
-        for (target, place) in targets.iter_mut().zip(&places) {
+        for ((target, place), aliases) in targets.iter_mut().zip(&places).zip(&header_aliases) {
             if !guard
                 .as_ref()
                 .is_some_and(|g| expression_mentions(&g.0, target.binding))
@@ -273,8 +280,6 @@ impl Checker<'_, '_> {
                     },
                 );
             }
-            let aliases =
-                targets_alias_declarations(&declarations, &block_bindings, target.binding);
             target.reads = !checked
                 .effects
                 .writes
