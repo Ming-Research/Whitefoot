@@ -130,6 +130,7 @@ impl CallTransport {
 /// write reaches [CALL-1, CALL-2, CALL-3].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntailmentCallee {
+    pub(crate) range_boundary: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Per parameter, the `epsuffix*` of every declared `writes` entry
@@ -170,6 +171,7 @@ impl EntailmentCallee {
                 .collect()
         };
         Self {
+            range_boundary: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -425,8 +427,7 @@ pub(crate) struct BoundsRequest {
     pub(crate) bound: i128,
     /// The requested normalized form. The bounds and overflow families
     /// request the difference bound `left - right <= bound`; the division
-    /// family requests the disequality `left != right`, whose `bound` cell
-    /// is unused and recorded as zero [ENT-6].
+    /// family requests the offset disequality `left - right != bound` [ENT-6].
     pub(crate) distinct: bool,
 }
 
@@ -740,6 +741,31 @@ pub(crate) struct LoopInvariantOutcome {
     pub(crate) base_evidence: LoopRelationEvidence,
     /// Complete ordered input inventory, including contradictory edges.
     pub(crate) inputs: Vec<LoopInvariantInput>,
+    /// A counted loop's relation restated at one element, for the repair of
+    /// a subscript at the binder that fails formation.
+    pub(crate) element: Option<CountedElementRelation>,
+}
+
+/// [INV-1, RANGE-1] a counted loop's header relation with a fresh bound
+/// variable standing for the binder wherever it occurs. Over the processed
+/// prefix or over every element of the subscripted run it is the range form
+/// of the per-element fact the header relation states at the binder.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CountedElementRelation {
+    pub(crate) binder: BindingId,
+    /// The binder's source spelling, the processed prefix's end.
+    pub(crate) binder_name: String,
+    /// The counted range's lower endpoint, the processed prefix's start.
+    pub(crate) lower: String,
+    /// The bound variable, a name no binding or declaration spells.
+    pub(crate) variable: String,
+    /// The requirement's fact name, distinct from the invariant's so both
+    /// forms can stand together.
+    pub(crate) requirement: String,
+    /// Every free binding of the suggested requirement is a parameter.
+    pub(crate) requirement_in_scope: bool,
+    /// The relation with the bound variable for the binder.
+    pub(crate) relation: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -759,6 +785,10 @@ pub(crate) struct LoopInductionInput {
 pub(crate) struct LoopFormationFailure {
     pub(crate) site: NodePath,
     pub(crate) required: String,
+    /// The failed subscript's offset when it is one source binding.
+    pub(crate) offset: Option<BindingId>,
+    /// The subscripted run's current length, such as `rows^.len`.
+    pub(crate) extent: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1081,10 +1111,12 @@ pub(crate) enum CallGoalDisposition {
     Unproved,
 }
 
-/// Every direct derivation ground retained for one call judgment, in the
-/// fixed order documented on [`CallGoalOutcome::evidence`].
+/// The ordinary derivation grounds or origin-transport outcome retained for
+/// one call judgment, as documented on [`CallGoalOutcome::evidence`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CallGoalEvidence {
+    OriginTransportPositive,
+    OriginTransportNegative,
     AllDerivable,
     OpaquePositive,
     ExactL0Projection,
@@ -1121,12 +1153,13 @@ pub(crate) struct CallGoalOutcome {
     /// This remains zero for a legal zero-argument call with a requirement.
     pub(crate) argument_count: u32,
     pub(crate) disposition: CallGoalDisposition,
-    /// Deterministic complete evidence. Contradictory states retain only
-    /// `AllDerivable`; positive opaque and projection grounds follow in that
-    /// order, followed by positive integer-domain normalization, Boolean
-    /// introduction, and the fixed affine comparison route; negative opaque,
-    /// negated projection, and negative normalization follow in the same
-    /// order.
+    /// Deterministic evidence from the ordinary proof routes, retained when
+    /// they prove the goal or origin transport leaves its disposition unchanged.
+    /// Contradictory states retain only `AllDerivable`; otherwise ordinary
+    /// evidence follows opaque, projection, normalization, Boolean introduction,
+    /// and affine order, positive before negative. A changed signed disposition
+    /// in the query's origin view retains only `OriginTransportPositive` or
+    /// `OriginTransportNegative`, or `AllDerivable` for a contradiction there.
     pub(crate) evidence: Vec<CallGoalEvidence>,
     /// One exact positive or contradiction root for a discharged call.
     /// Refuted and unproved calls carry none.

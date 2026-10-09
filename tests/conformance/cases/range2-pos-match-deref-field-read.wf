@@ -1,0 +1,35 @@
+enum Flow {
+  Open(block: u64);
+  Close(block: u64);
+}
+
+struct Holder {
+  e: Flow;
+}
+
+fn need(order: &[Holder]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..order^.len): order^[k].e.Open.block == 0_u64;
+} {
+  return unit;
+}
+
+fn forward(order: &[Holder]) -> result: unit reads(order) contract {
+  requires forall held(k in 0_u64..order^.len): order^[k].e.Open.block == 0_u64;
+} {
+  if 0_u64 < order^.len {
+    let r = &order^[0_u64];
+    match r^.e {
+      Open(block: b) => {
+        let seen = b^;
+      }
+      Close(block: b) => {
+      }
+    }
+  }
+  need(order: order);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

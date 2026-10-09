@@ -211,7 +211,7 @@ impl Records<'_> {
                 for written_use in &proof.uses {
                     match &written_use.source {
                         CheckedProofUseSource::Relation(relation) => self.affine_relation(relation),
-                        CheckedProofUseSource::Named(_) => {}
+                        CheckedProofUseSource::Named(_) | CheckedProofUseSource::Range(_) => {}
                     }
                 }
                 let rule = if proof.uses.is_empty() {

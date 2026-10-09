@@ -197,6 +197,14 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
+    /// A run and the adjacent-pair recovery can reach the same boundary.
+    /// Report that source conflict once, also across physical instances.
+    pub(super) fn note_storage_conflict(&mut self, line: String) {
+        if !self.ledger.contains(&line) {
+            self.ledger.push(line);
+        }
+    }
+
     pub(crate) fn new(base: u32) -> Self {
         Self {
             base,
@@ -1515,87 +1523,16 @@ fn prune_capture_parameters(
     reconstruction_count: usize,
     retained: &[IrValueId],
 ) -> Result<Vec<bool>, LoweringFailure> {
-    let mut dependencies = vec![Vec::new(); function.values.len()];
-    let mut pending = function.parameters[..3]
+    let mut roots = function.parameters[..3]
         .iter()
         .map(|(value, _)| *value)
         .collect::<Vec<_>>();
-    pending.extend_from_slice(retained);
-    for (block_index, block) in function.blocks.iter().enumerate() {
-        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-            if block_index == 0 && instruction_index < reconstruction_count {
-                let IrInstruction::Define {
-                    result, operation, ..
-                } = instruction
-                else {
-                    return Err(LoweringFailure::InvalidCheckedProgram);
-                };
-                dependencies[result.index()] = operation.operands();
-            } else {
-                pending.extend(instruction.operands());
-            }
-        }
-        if let IrTerminator::Jump {
-            target,
-            arguments,
-            drops,
-        } = &block.terminator
-        {
-            let target = function
-                .blocks
-                .get(target.index())
-                .ok_or(LoweringFailure::InvalidCheckedProgram)?;
-            if arguments.len() != target.parameters.len() {
-                return Err(LoweringFailure::InvalidCheckedProgram);
-            }
-            for ((parameter, _), argument) in target.parameters.iter().zip(arguments) {
-                dependencies[parameter.index()].push(*argument);
-            }
-            pending.extend(drops.iter().map(|drop| drop.operand()));
-        } else {
-            pending.extend(block.terminator.operands());
-        }
-    }
-    let mut needed = vec![false; function.values.len()];
-    while let Some(value) = pending.pop() {
-        if !needed[value.index()] {
-            needed[value.index()] = true;
-            pending.extend(dependencies[value.index()].iter().copied());
-        }
-    }
+    roots.extend_from_slice(retained);
+    let needed = super::parameters::prune_block_parameters(function, reconstruction_count, &roots)?;
     let captures = function.parameters[3..]
         .iter()
         .map(|(value, _)| needed[value.index()])
         .collect();
-    let block_parameters = function
-        .blocks
-        .iter()
-        .map(|block| {
-            block
-                .parameters
-                .iter()
-                .map(|(value, _)| needed[value.index()])
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    for (block_index, block) in function.blocks.iter_mut().enumerate() {
-        block.parameters.retain(|(value, _)| needed[value.index()]);
-        if let IrTerminator::Jump {
-            target, arguments, ..
-        } = &mut block.terminator
-        {
-            let mut keep = block_parameters[target.index()].iter();
-            arguments.retain(|_| *keep.next().expect("checked jump arity"));
-        }
-        if block_index == 0 {
-            let mut index = 0;
-            block.instructions.retain(|instruction| {
-                let reconstruction = index < reconstruction_count;
-                index += 1;
-                !reconstruction || matches!(instruction, IrInstruction::Define { result, .. } if needed[result.index()])
-            });
-        }
-    }
     function
         .parameters
         .retain(|(value, _)| needed[value.index()]);

@@ -20,7 +20,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   let payload = &bytes[0_u64..5_u64];
   let no_deadline = None<std::time::Instant>();
-  match write_once(factory: &entry_factory, output: &out, source: payload, start: 0_u64, end: 5_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &entry_factory, output: &out, source: payload, start: 0_u64, end: 5_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       let complete = written == 5_u64;
       if complete {

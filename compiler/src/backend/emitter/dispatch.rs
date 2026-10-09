@@ -152,6 +152,28 @@ fn successors(block: &IrBlock) -> Vec<usize> {
     }
 }
 
+/// Conservative storage boundaries, before target-dependent split selection.
+/// A possible split's header is excluded because its instructions may be
+/// hoisted into the enclosing activation. Arm and enclosing blocks each keep
+/// their own identity even when a target ultimately emits the function whole.
+pub(in crate::backend) fn storage_parts(
+    function: &IrFunction,
+) -> Result<Vec<Option<usize>>, BackendFailure> {
+    let (plan, _) = find(function, &reachable(function)?);
+    let mut parts = vec![Some(0); function.blocks().len()];
+    if let Some(plan) = plan {
+        parts[plan.header.index()] = None;
+        for (part, (_, blocks)) in plan.arms.iter().enumerate() {
+            for (block, member) in blocks.iter().enumerate() {
+                if *member {
+                    parts[block] = Some(part + 1);
+                }
+            }
+        }
+    }
+    Ok(parts)
+}
+
 /// The blocks reachable from `starts` without entering `header`.
 fn reach(function: &IrFunction, starts: &[usize], header: usize) -> Vec<bool> {
     let mut seen = vec![false; function.blocks().len()];
@@ -532,7 +554,7 @@ impl FunctionFramePlan {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let frame_type = format!("{{ {} }}", fields.join(", "));
-        let align = self.target.layout().align();
+        let align = self.target.struct_layout().align();
         let mut text = String::new();
         if enclosing {
             writeln!(text, "  %wf.frame = alloca {frame_type}, align {align}")

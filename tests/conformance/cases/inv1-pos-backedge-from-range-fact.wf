@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(targets: &[u64], code: &[u8], leave: Bool) -> result: unit reads(targets) contract {
+  requires 0_u64 < code^.len;
+  requires targets^.len == code^.len;
+  requires forall ok(j in 0_u64..targets^.len): targets^[j] < code^.len;
+} {
+  doc "Follows jump targets from the first position until told to leave; every target stays inside the code.";
+  let pc = 0_u64;
+  loop (
+    invariant inside: pc < code^.len
+  ) {
+    if leave {
+      break;
+    }
+    set pc = targets^[pc];
+    continue;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

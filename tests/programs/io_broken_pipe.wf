@@ -15,7 +15,10 @@ fn main(inputs: Inputs) -> result: ExitStatus pure waits {
   place_back(window: &bytes, value: 65_u8);
   let window = &bytes[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       return exit_status(code: 44_u8);
     }
@@ -58,6 +61,9 @@ fn main(inputs: Inputs) -> result: ExitStatus pure waits {
           return exit_status(code: 43_u8);
         }
         DeadlinePassed() => {
+          return exit_status(code: 43_u8);
+        }
+        Cancelled() => {
           return exit_status(code: 43_u8);
         }
         BrokenPipe(code: error_code, origin: error_origin) => {

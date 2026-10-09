@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Block {
+  entry_slot: u32;
+  normal_y: i32;
+}
+
+enum Flow {
+  Open(block: u32);
+  Close(block: u32);
+}
+
+fn translate_owner_suffix(order: &[Flow], targets: &[Block], first: u64, delta: i32) -> result: unit reads(order), writes(targets) contract {
+  requires forall inv(k in first..order^.len) when order^[k].Open.block < targets^.len: targets^[order^[k].Open.block].entry_slot == k;
+} {
+  doc "The stored inverse covers the Open payload while the write goes through the Close payload.";
+  let count = order^.len;
+  for (
+    k in first..count,
+    apart(i, j) {
+    }
+  ) {
+    let item = order^[k];
+    match item {
+      Open(block: b) => {
+      }
+      Close(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < targets^.len {
+          set targets^[at].normal_y = targets^[at].normal_y +sat delta;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

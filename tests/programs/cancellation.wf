@@ -1,0 +1,641 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias IoError = std::io::IoError;
+alias ReadStop = std::io::ReadStop;
+alias SocketAddress = std::net::SocketAddress;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpListener = std::net::TcpListener;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_directory_write = std::fs::close_directory_write;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias instant_after = std::time::instant_after;
+alias instant_reached = std::time::instant_reached;
+alias now = std::time::now;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias sleep_until = std::time::sleep_until;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_connect = std::net::tcp_connect;
+alias tcp_listen = std::net::tcp_listen;
+
+fn is_cancelled(error: &IoError) -> result: Bool reads(error) {
+  doc "Whether an operation ended on its cancellation watch.";
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    Cancelled() => {
+      return True();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return False();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
+fn deadline_passed(error: &IoError) -> result: Bool reads(error) {
+  doc "Whether an operation's outcome is the passing of its own deadline [PRE-2].";
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return True();
+    }
+    Cancelled() => {
+      return False();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return False();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
+fn read_stop_deadline(stop: &ReadStop) -> result: Bool reads(stop) {
+  doc "Whether a receive ended because its deadline passed.";
+  match stop^ {
+    ReadEnd() => {
+      return False();
+    }
+    ReadFailed(error: failure) => {
+      let passed = deadline_passed(error: failure);
+      return passed;
+    }
+  }
+}
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u16>(value);
+      let scaled = port *wrap 10_u16;
+      set port = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return port;
+}
+
+fn close_connection(factory: &HandleFactory, connection: TcpConnection) -> result: unit writes(factory) waits {
+  doc "Closes both halves of a connection.";
+  let TcpConnection(receive: receive, send: send) = move connection;
+  close_receive(factory: factory, receive: move receive);
+  close_send(factory: factory, send: move send);
+  return unit;
+}
+
+fn cancelled_read(outcome: Result<u64, ReadStop>) -> result: Bool pure {
+  match outcome {
+    Ok(value: count) => {
+      return False();
+    }
+    Err(error: stop) => {
+      match stop {
+        ReadEnd() => {
+          return False();
+        }
+        ReadFailed(error: failure) => {
+          return is_cancelled(error: &failure);
+        }
+      }
+    }
+  }
+}
+
+fn fire_later(source: std::time::CancelSource, clock: Clock) -> result: unit pure waits {
+  let never = std::time::cancel_never();
+  let begin = now(clock: &clock);
+  let wake = instant_after(instant: begin, nanoseconds: 50000000_u64);
+  sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  std::time::cancel_fire(source: &source);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn parked_guard(stop: SharedRead<std::time::CancelState>) -> result: Bool pure waits {
+  atomic cancellation = &stop when cancellation^.fired {
+    return cancellation^.fired;
+  }
+}
+
+fn parked_receive(server: &TcpConnection, clock: &Clock) -> result: Bool reads(clock), writes(server.receive) waits {
+  let source = std::time::cancel_source();
+  let firing_source = std::time::cancel_share(source: &source);
+  let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  let guarded = spawn parked_guard(stop: move stop);
+  std::time::close_cancel_source(source: move source);
+  let firing_clock = std::time::clock_share(clock: clock);
+  let firing = spawn fire_later(source: move firing_source, clock: move firing_clock);
+  let bytes = array_filled::<u8, 1>(value: 204_u8);
+  let unlimited = None<Instant>();
+  let outcome = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let cancelled = cancelled_read(outcome: outcome);
+  let unchanged = bytes[0_u64] == 204_u8;
+  let host_correct = band(cancelled, unchanged);
+  return band(host_correct, guarded);
+}
+
+fn cancelled_sleep(clock: &Clock) -> result: Bool writes(clock) waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let firing_clock = std::time::clock_share(clock: clock);
+  let begin = now(clock: clock);
+  let distant = instant_after(instant: begin, nanoseconds: 60000000000_u64);
+  let firing = spawn fire_later(source: move source, clock: move firing_clock);
+  let outcome = sleep_until(deadline: distant, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let ended = now(clock: clock);
+  let reached = instant_reached(deadline: distant, instant: ended);
+  match outcome {
+    Ok(value: slept) => {
+      return False();
+    }
+    Err(error: cancelled) => {
+      return bnot(reached);
+    }
+  }
+}
+
+fn deadline_timer(deadline: Instant, source: std::time::CancelSource, disarm: std::time::CancelWatch) -> result: Bool pure waits {
+  let outcome = sleep_until(deadline: deadline, cancel: &disarm);
+  std::time::close_cancel_watch(watch: move disarm);
+  let elapsed = match outcome {
+    Ok(value: slept) => {
+      std::time::cancel_fire(source: &source);
+      give True();
+    }
+    Err(error: cancelled) => {
+      give False();
+    }
+  }
+  std::time::close_cancel_source(source: move source);
+  return elapsed;
+}
+
+fn deadline_competition(clock: &Clock, ready: Bool) -> result: Bool writes(clock) waits {
+  let timer_source = std::time::cancel_source();
+  let timer_watch = std::time::cancel_watch(source: &timer_source);
+  let timeout = std::time::cancel_state(watch: &timer_watch);
+  std::time::close_cancel_watch(watch: move timer_watch);
+  let disarm_source = std::time::cancel_source();
+  let disarm_watch = std::time::cancel_watch(source: &disarm_source);
+  let work = shared_new::<Bool>(value: ready);
+  let delay = if ready {
+    give 60000000000_u64;
+  } else {
+    give 10000000_u64;
+  }
+  let begin = now(clock: clock);
+  let deadline = instant_after(instant: begin, nanoseconds: delay);
+  let timer_elapsed = spawn deadline_timer(deadline: deadline, source: move timer_source, disarm: move disarm_watch);
+  let saw_timeout = False();
+  atomic item = &work, timer = &timeout when bor(item^, timer^.fired) {
+    set saw_timeout = timer^.fired;
+  }
+  std::time::cancel_fire(source: &disarm_source);
+  std::time::close_cancel_source(source: move disarm_source);
+  let joined = timer_elapsed;
+  let ended = now(clock: clock);
+  let reached = instant_reached(deadline: deadline, instant: ended);
+  if ready {
+    let quiet_timer = bnot(joined);
+    let ready_won = bnot(saw_timeout);
+    let correct = band(quiet_timer, ready_won);
+    let prompt = bnot(reached);
+    return band(correct, prompt);
+  }
+  return band(saw_timeout, joined);
+}
+
+fn publish_states(state: Shared<Instant>, stamp: Instant, first: std::time::CancelSource, second: std::time::CancelSource) -> result: unit pure waits {
+  atomic item = &state {
+    set item^ = stamp;
+  }
+  std::time::cancel_fire(source: &first);
+  std::time::cancel_fire(source: &second);
+  std::time::close_cancel_source(source: move first);
+  std::time::close_cancel_source(source: move second);
+  return unit;
+}
+
+fn coherent_states(clock: &Clock) -> result: Bool writes(clock) waits {
+  let first_source = std::time::cancel_source();
+  let second_source = std::time::cancel_source();
+  let first_watch = std::time::cancel_watch(source: &first_source);
+  let second_watch = std::time::cancel_watch(source: &second_source);
+  let first_view = std::time::cancel_state(watch: &first_watch);
+  let second_view = std::time::cancel_state(watch: &second_watch);
+  std::time::close_cancel_watch(watch: move first_watch);
+  std::time::close_cancel_watch(watch: move second_watch);
+  let initial = now(clock: clock);
+  let next = instant_after(instant: initial, nanoseconds: 1_u64);
+  let ordinary = shared_new::<Instant>(value: initial);
+  let writer = shared_share::<Instant>(shared: &ordinary);
+  spawn publish_states(state: move writer, stamp: next, first: move first_source, second: move second_source);
+  let coherent = False();
+  atomic first_state = &first_view, second_state = &second_view, later_state = &ordinary when band(first_state^.fired, second_state^.fired) {
+    let before = first_state^.fired;
+    let stamp = later_state^;
+    let after = first_state^.fired;
+    let stable = band(before, after);
+    let published = instant_reached(deadline: next, instant: stamp);
+    let no_later = instant_reached(deadline: stamp, instant: next);
+    let exact = band(published, no_later);
+    set coherent = band(stable, exact);
+  }
+  return coherent;
+}
+
+fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
+  let parked = parked_receive(server: server, clock: clock);
+  if parked {
+  } else {
+    return 10_u8;
+  }
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  let bytes = array_filled::<u8, 1>(value: 204_u8);
+  let unlimited = None<Instant>();
+  let early = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let early_cancelled = cancelled_read(outcome: early);
+  if early_cancelled {
+  } else {
+    return 11_u8;
+  }
+  if bytes[0_u64] == 204_u8 {
+  } else {
+    return 12_u8;
+  }
+  let never = std::time::cancel_never();
+  let message = array_filled::<u8, 1>(value: 78_u8);
+  let sent = send_once(send: &client^.send, source: &message[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &never);
+  let sent_ok = match sent {
+    Ok(value: next) => {
+      give next == 1_u64;
+    }
+    Err(error: send_error) => {
+      give False();
+    }
+  }
+  if sent_ok {
+  } else {
+    std::time::close_cancel_watch(watch: move never);
+    return 13_u8;
+  }
+  let normal = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unlimited, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  match normal {
+    Ok(value: count) => {
+      if count == 1_u64 {
+      } else {
+        return 14_u8;
+      }
+    }
+    Err(error: read_error) => {
+      return 15_u8;
+    }
+  }
+  if bytes[0_u64] == 78_u8 {
+  } else {
+    return 16_u8;
+  }
+  let rested = cancelled_sleep(clock: clock);
+  if rested {
+  } else {
+    return 17_u8;
+  }
+  let pending_source = std::time::cancel_source();
+  let pending_watch = std::time::cancel_watch(source: &pending_source);
+  std::time::close_cancel_source(source: move pending_source);
+  let begin = now(clock: clock);
+  let soon = instant_after(instant: begin, nanoseconds: 10000000_u64);
+  let bound = Some<Instant>(value: soon);
+  let timed = receive_next(receive: &server^.receive, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: bound, cancel: &pending_watch);
+  std::time::close_cancel_watch(watch: move pending_watch);
+  match timed {
+    Ok(value: received) => {
+      return 18_u8;
+    }
+    Err(error: stop) => {
+      let deadline_won = read_stop_deadline(stop: &stop);
+      if deadline_won {
+      } else {
+        return 19_u8;
+      }
+    }
+  }
+  let after = now(clock: clock);
+  let reached = instant_reached(deadline: soon, instant: after);
+  if reached {
+  } else {
+    return 20_u8;
+  }
+  if bytes[0_u64] == 78_u8 {
+  } else {
+    return 21_u8;
+  }
+  let ready = True();
+  let work_won = deadline_competition(clock: clock, ready: ready);
+  if work_won {
+  } else {
+    return 22_u8;
+  }
+  let unready = False();
+  let timer_won = deadline_competition(clock: clock, ready: unready);
+  if timer_won {
+  } else {
+    return 23_u8;
+  }
+  let coherent = coherent_states(clock: clock);
+  if coherent {
+  } else {
+    return 24_u8;
+  }
+  return 0_u8;
+}
+
+fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAddress, clock: &Clock) -> result: u8 reads(address), writes(factory), writes(listener), writes(clock) waits {
+  doc "Connects to its own listener and exercises cancellation without closing the peer.";
+  let no_deadline = None<Instant>();
+  let wait_cancel_7 = std::time::cancel_never();
+  let wait_outcome_7 = tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_7);
+  std::time::close_cancel_watch(watch: move wait_cancel_7);
+  match move wait_outcome_7 {
+    Ok(value: client) => {
+      let wait_cancel_8 = std::time::cancel_never();
+      let wait_outcome_8 = tcp_accept(factory: factory, listener: listener, deadline: no_deadline, cancel: &wait_cancel_8);
+      std::time::close_cancel_watch(watch: move wait_cancel_8);
+      match move wait_outcome_8 {
+        Ok(value: accepted) => {
+          let AcceptedConnection(connection: server, peer: unused_peer) = move accepted;
+          let status = converse(client: &client, server: &server, clock: clock);
+          close_connection(factory: factory, connection: move client);
+          close_connection(factory: factory, connection: move server);
+          return status;
+        }
+        Err(error: problem) => {
+          close_connection(factory: factory, connection: move client);
+          return 13_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 14_u8;
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Checks cancellation and deadlines on a loopback connection whose peer stays open.";
+  let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  close_directory_write(factory: &handles, directory: move cwd_write);
+  close_directory(factory: &handles, directory: move cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let carried = 0_u64;
+  match arg_get(args: &args, position: 1_u64) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      set carried = 0_u64;
+    }
+  }
+  if carried == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let port = parse_port(digits: window, length: carried);
+  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  match tcp_listen(factory: &handles, address: &address) {
+    Ok(value: listener) => {
+      let status = exercise(factory: &handles, listener: &listener, address: &address, clock: &clock);
+      close_listener(factory: &handles, listener: move listener);
+      return exit_status(code: status);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 3_u8);
+    }
+  }
+}

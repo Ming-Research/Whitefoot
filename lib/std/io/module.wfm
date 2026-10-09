@@ -1,4 +1,5 @@
 alias Instant = pkg::time::Instant;
+alias CancelWatch = pkg::time::CancelWatch;
 
 public opaque nocopy struct HandleFactory {
 }
@@ -23,6 +24,7 @@ public enum IoError {
   Unsupported(public code: u32, public origin: u8);
   TimedOut(public code: u32, public origin: u8);
   DeadlinePassed();
+  Cancelled();
   BrokenPipe(public code: u32, public origin: u8);
   WriteZero(public code: u32, public origin: u8);
   UnexpectedEnd(public code: u32, public origin: u8);
@@ -48,16 +50,16 @@ public enum ReadStop {
 
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 
-public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) waits contract {
+public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, IoError> reads(cancel), reads(source), writes(factory), writes(output) waits contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written, and DeadlinePassed reports that deadline passed with no byte written.";
+} doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written, and DeadlinePassed or Cancelled reports that the wait ended with no byte written.";
 
-public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) waits contract {
+public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadStop> reads(cancel), writes(factory), writes(input), writes(destination) waits contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
-} doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, ReadEnd reports the end of the input, and DeadlinePassed reports that deadline passed with no byte read.";
+} doc "Reads bytes of input into destination from start toward end with one host read; Ok carries the index after the last byte read, ReadEnd reports the end of the input, and DeadlinePassed or Cancelled reports that the wait ended with no byte read.";

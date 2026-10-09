@@ -441,6 +441,8 @@ pub(super) enum RequiredReferent {
     Enum,
     /// An index root requires directly indexable storage [OP-4].
     IndexableStorage,
+    /// A measure place selects a row of the measure table [MSR-1].
+    MeasuredStorage,
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -1997,7 +1999,16 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(self
             .state_path(place, bindings)?
             .into_iter()
-            .map(EffectPath::from)
+            .map(|path| EffectPath {
+                path,
+                // Keep this before state_path truncates a dynamic selector.
+                // Descendant covers cannot establish where a payload lies.
+                inside_payload: place
+                    .path
+                    .iter()
+                    .take_while(|step| !matches!(step, PlaceStep::Descendant(_)))
+                    .any(|step| matches!(step, PlaceStep::Payload { .. })),
+            })
             .collect())
     }
 
@@ -2286,8 +2297,12 @@ impl<'unit> TypeContext<'unit> {
             // [TYPE-7] missing `^`.
             RequiredReferent::IndexableStorage => matches!(
                 ty,
-                CheckedType::Array { .. } | CheckedType::Buffer { .. } | CheckedType::Window { .. }
+                CheckedType::Array { .. }
+                    | CheckedType::Buffer { .. }
+                    | CheckedType::Window { .. }
+                    | CheckedType::Entries { .. }
             ),
+            RequiredReferent::MeasuredStorage => ty.measured().is_some(),
         })
     }
     /// [REF-2] applies one access's invalidation to every live reference in

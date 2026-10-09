@@ -28,6 +28,10 @@
 #define WF_CMAP_GIVE(block, bytes) wf__runtime_give((block), (bytes))
 #define WF_CMAP_YIELD() wf__runtime_yield()
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
+#define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
+#endif
+#ifndef WF_CMAP_HEAP_CHANGE
+#define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
 #endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;
@@ -141,6 +145,8 @@ void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width,
     wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
 }
 
+uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_reserve((wf_cmap *)table); }
+
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */
 void wf__keyed_table_free(void *table) {
@@ -162,25 +168,13 @@ void *wf__table_lock_entry(void *table, const unsigned char *key, uint64_t lengt
     wf_cmap_user *u = wf_cmap_user_at(map, wf__driver_index());
     int held = wf_cmap_holds_whole(u);
     entry->user = u;
-    entry->read = read != 0u;
+    entry->read = (read & 1u) != 0u;
     entry->held = (uint32_t)held;
-    if (read != 0u) {
-        void *slot = (void *)wf_cmap_read_entry(u, key, length, held, &entry->inner);
-        if ((read & 2u) != 0 && entry->inner.cell == NULL && !held && !entry->inner.upgraded) {
-            /* Beside another object, absence must remain stable until release. */
-            atomic_store_explicit(&u->active, 0, memory_order_release);
-            wf_cmap_hold(u);
-            entry->inner.upgraded = 1;
-            u->patience = UINT64_MAX;
-            cell *c = NULL;
-            struct table *t;
-            int r = read_entry(u, tag_of(key, length), key, length, &c, &t);
-            entry->inner.cell = r == FOUND ? c : NULL;
-            entry->inner.table = t;
-            slot = r == FOUND ? slot_of(map, node_at(c)) : map->none;
-        }
-        return slot;
-    }
+    /* Flags: shared read, stable absence, non-inserting exclusive access. */
+    if (entry->read)
+        return access_existing_entry(u, key, length, held, &entry->inner, 0, (read & 2u) != 0);
+    if ((read & 4u) != 0)
+        return wf_cmap_lock_present_entry(u, key, length, held, (read & 2u) != 0, &entry->inner);
     return wf_cmap_lock_entry(u, key, length, held, &entry->inner);
 }
 
@@ -191,8 +185,10 @@ void wf__table_unlock_entry(wf_table_entry *entry, uint32_t present) {
         wf_cmap_unread_entry(u, &entry->inner, (int)entry->held);
         return;
     }
+    int had_cell = entry->inner.cell != NULL;
     wf_cmap_unlock_entry(u, &entry->inner, (int)entry->held, present != 0u);
-    table_written(u->map);
+    if (had_cell)
+        table_written(u->map);
 }
 
 void wf__table_hold_begin(void *hold, void *table) { wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }

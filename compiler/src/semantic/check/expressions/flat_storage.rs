@@ -385,6 +385,155 @@ impl<'unit> Checker<'_, 'unit> {
         })
     }
 
+    /// Form the run element without reading its descriptor. Executed measure
+    /// reads attach effects afterwards; erased affine factors retain only
+    /// the place and its ordinary subscript obligations [INV-1, OP-4].
+    #[allow(clippy::too_many_arguments)]
+    fn form_range_element_place(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        range: &CheckedRangePlace,
+        anchor: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<(CheckedRangeElementPlace, CarriedOperands), CheckStop> {
+        let offset_node = self
+            .types
+            .declarations
+            .tree
+            .subscript_offset(anchor)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let mut probe = bindings.clone();
+        let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
+        self.check_place_offset(offset_node, &offset)?;
+        let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+            return self
+                .types
+                .declarations
+                .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
+        };
+        let captured = self.body.note_capture(captured, bindings);
+        let (path, ty, carried) = self.resolve_storage_path(
+            context,
+            suffixes,
+            range.element_type,
+            bindings,
+            loop_depth,
+            true,
+        )?;
+        Ok((
+            CheckedRangeElementPlace {
+                root: range.root.clone(),
+                offset: offset.expression,
+                captured,
+                path,
+                ty,
+                obligation: self.types.declarations.tree.path(anchor)?.clone(),
+                target_domain: CheckedTargetDomainObligation::ElementAddress,
+            },
+            CarriedOperands {
+                effects: offset.effects.union(carried.effects),
+                accesses: offset
+                    .accesses
+                    .into_iter()
+                    .chain(carried.accesses)
+                    .collect(),
+            },
+        ))
+    }
+
+    /// Resolve an erased measure factor through the same run-element place
+    /// former as an executed measure read, without adding a descriptor read.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::semantic::check) fn check_proof_measure_place(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        place: NodeId,
+        operand: NodeId,
+        base: &[NodeId],
+        measure: CheckedMeasure,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+        root_role: LexicalUseRole,
+        required: RequiredReferent,
+    ) -> Result<(CheckedExpression, Option<DeclarationId>), CheckStop> {
+        for (index, suffix) in base.iter().enumerate() {
+            if self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(*suffix)?
+                .is_none()
+            {
+                continue;
+            }
+            if !matches!(
+                self.types.place_prefix_selected_kind(
+                    context.check_context,
+                    place,
+                    &base[..index],
+                    bindings,
+                    root_role,
+                )?,
+                Some(super::super::types::SelectedPlaceType::Range(_))
+            ) {
+                break;
+            }
+            let root = self.check_storage_place_rooted(
+                context,
+                place,
+                bindings,
+                &base[..index],
+                *suffix,
+                loop_depth,
+                root_role,
+                RequiredReferent::IndexableStorage,
+            )?;
+            if let CheckedIndexedPlace::Range(range) = root {
+                let (element, _) = self.form_range_element_place(
+                    context,
+                    &range,
+                    *suffix,
+                    &base[index + 1..],
+                    bindings,
+                    loop_depth,
+                )?;
+                let measured = element
+                    .measured()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                if matches!(measure.cell(measured), MeasureCell::Absent) {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Type5,
+                        place,
+                        SemanticIssueKind::type_mismatch(
+                            "a measured place whose measure table has this row",
+                            self.types.checked_type_name(element.ty)?,
+                        ),
+                    );
+                }
+                return Ok((
+                    CheckedExpression::RangeElementMeasure {
+                        carrier: self.types.declarations.tree.path(place)?.clone(),
+                        measure,
+                        place: Box::new(element),
+                    },
+                    Some(range.declaration),
+                ));
+            }
+            break;
+        }
+        let root = self.check_storage_place_rooted(
+            context, place, bindings, base, place, loop_depth, root_role, required,
+        )?;
+        let declaration = root.root_declaration();
+        Ok((
+            self.types
+                .measure_of_indexed_place(measure, root, operand)?,
+            declaration,
+        ))
+    }
+
     /// [OP-15, MSR-1] one measure member read over a written place whose path
     /// carries a subscript, such as `rows[0_u64].len`.
     ///
@@ -432,34 +581,17 @@ impl<'unit> Checker<'_, 'unit> {
             .into_element_storage()?;
         let indexed = match indexed {
             CheckedIndexedPlace::Range(range) => {
-                let offset_node = self
-                    .types
-                    .declarations
-                    .tree
-                    .subscript_offset(anchor)?
-                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                let mut probe = bindings.clone();
-                let offset =
-                    self.check_atom(context, offset_node, &mut probe, options.loop_depth)?;
-                self.check_place_offset(offset_node, &offset)?;
-                let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
-                    return self
-                        .types
-                        .declarations
-                        .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
-                };
-                let captured = self.body.note_capture(captured, bindings);
-                let (mut path, mut selected_type, carried) = self.resolve_storage_path(
+                let (mut element, carried) = self.form_range_element_place(
                     context,
+                    &range,
+                    anchor,
                     &base[subscript + 1..],
-                    range.element_type,
                     bindings,
                     options.loop_depth,
-                    true,
                 )?;
                 if page_count {
                     if matches!(
-                        selected_type,
+                        element.ty,
                         CheckedType::Window {
                             shape: super::super::super::model::WindowShape::Paged,
                             ..
@@ -470,12 +602,13 @@ impl<'unit> Checker<'_, 'unit> {
                         let member = self.types.elaborate_place_member(
                             check_context,
                             suffixes[suffixes.len() - 2],
-                            selected_type,
+                            element.ty,
                         )?;
-                        path.push(member.storage_step());
-                        selected_type = member.ty();
+                        element.path.push(member.storage_step());
+                        element.ty = member.ty();
                     }
                 }
+                let selected_type = element.ty;
                 let Some(measured) = measured_kind_of(selected_type) else {
                     return self.check_index_use(
                         context, use_node, place, suffixes, subscript, bindings, options,
@@ -501,14 +634,14 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
                 let mut resolved = range.resolved;
-                resolved.append_step(PlaceStep::Index(captured));
-                for step in path.iter().map(CheckedPlaceStep::place_step) {
+                resolved.append_step(PlaceStep::Index(element.captured));
+                for step in element.path.iter().map(CheckedPlaceStep::place_step) {
                     resolved.append_step(step);
                 }
                 for member in &resolved.members {
                     self.check_commit_place_live(member, use_node, false)?;
                 }
-                let mut effects = offset.effects.union(carried.effects);
+                let mut effects = carried.effects;
                 for member in &resolved.members {
                     for path in
                         self.effect_paths_for_descriptor(use_node, member, bindings, measure)?
@@ -516,10 +649,9 @@ impl<'unit> Checker<'_, 'unit> {
                         effects.add_read(path);
                     }
                 }
-                let mut accesses = offset
+                let mut accesses = carried
                     .accesses
                     .into_iter()
-                    .chain(carried.accesses)
                     .map(PlaceAccess::operand)
                     .collect::<Vec<_>>();
                 accesses.extend(resolved.members.into_iter().map(|place| PlaceAccess {
@@ -530,15 +662,7 @@ impl<'unit> Checker<'_, 'unit> {
                     expression: CheckedExpression::RangeElementMeasure {
                         carrier: self.types.declarations.tree.path(use_node)?.clone(),
                         measure,
-                        place: Box::new(CheckedRangeElementPlace {
-                            root: range.root,
-                            offset: offset.expression,
-                            captured,
-                            path,
-                            ty: selected_type,
-                            obligation: self.types.declarations.tree.path(anchor)?.clone(),
-                            target_domain: CheckedTargetDomainObligation::ElementAddress,
-                        }),
+                        place: Box::new(element),
                     },
                     mode: CheckedMode::Own,
                     reference: None,
@@ -755,6 +879,10 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<TypedExpression, CheckStop> {
         let mut liveness = Ok(());
         for member in &place.resolved.members {
+            if options.explicit_move {
+                self.types
+                    .reject_shared_read_write(source_place, member, bindings)?;
+            }
             if liveness.is_ok() {
                 liveness = self.check_commit_place_live(member, node, false);
             }
@@ -1660,15 +1788,13 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_indexed_place(context, place, bindings, &suffixes, place, loop_depth)
     }
 
-    /// One indexable place written through an explicit `^` [TYPE-7].
+    /// One indexable or measured place written through an explicit `^` [TYPE-7].
     ///
     /// The `^` names a reference's referent, so the place is resolved by
     /// the ordinary [REF-1] walk and the written suffixes continue it. The
-    /// v0.59 companion of this function also had to answer for a view
-    /// descriptor reached through a holder; views are gone, so one indexable
-    /// container place is the whole answer.
+    /// caller selects [OP-4] indexability or the [MSR-1] measure table.
     #[allow(clippy::too_many_arguments)]
-    fn check_dereferenced_indexed_place(
+    fn check_dereferenced_storage_place(
         &mut self,
         context: FunctionContext<'_, '_>,
         node: NodeId,
@@ -1676,6 +1802,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
         root_role: LexicalUseRole,
+        required: RequiredReferent,
     ) -> Result<CheckedIndexedPlace, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let position = self
@@ -1758,16 +1885,11 @@ impl<'unit> Checker<'_, 'unit> {
                     offsets,
                 }))
             }
-            // [OP-4] the indexable bases, reached through `^` exactly as
-            // an inline one is: a run is one measured place wherever it is
-            // reached from [MSR-1]. The `Entries` an entry binding names
-            // is reached only so [SHARE-2].
-            _ if matches!(
-                ty,
-                CheckedType::Array { .. }
-                    | CheckedType::Window { .. }
-                    | CheckedType::Entries { .. }
-            ) || self.table_entry_type(ty).is_some() =>
+            // Measures use the same [MSR-1] type-to-row mapping as clauses;
+            // a subscript still requires an [OP-4] indexable base.
+            _ if self.types.satisfies_referent_requirement(ty, required)?
+                || (required == RequiredReferent::IndexableStorage
+                    && self.table_entry_type(ty).is_some()) =>
             {
                 Ok(CheckedIndexedPlace::Container(CheckedContainerPlace {
                     root: CheckedContainerRoot {
@@ -1794,8 +1916,8 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// Checks "pbase plus the given suffix run" as one place of indexable
     /// storage. A subscript passes the chain before its own `psuffix` and
-    /// anchors its wrong-base judgment there [OP-4]; a measure member passes
-    /// the chain before that member and anchors at the place node.
+    /// anchors its wrong-base judgment there [OP-4]. Measure factors use
+    /// `check_storage_place_rooted` with the [MSR-1] requirement instead.
     pub(in crate::semantic::check) fn check_indexed_place(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -1805,7 +1927,7 @@ impl<'unit> Checker<'_, 'unit> {
         anchor: NodeId,
         loop_depth: usize,
     ) -> Result<CheckedIndexedPlace, CheckStop> {
-        self.check_indexed_place_rooted(
+        self.check_storage_place_rooted(
             context,
             node,
             bindings,
@@ -1813,16 +1935,17 @@ impl<'unit> Checker<'_, 'unit> {
             anchor,
             loop_depth,
             LexicalUseRole::PlaceBase,
+            RequiredReferent::IndexableStorage,
         )
     }
 
-    /// The same walk with the root's lexical role named.
+    /// The same walk with the root's lexical role and required storage named.
     ///
     /// An `affine_factor` names its measure place in a proof position, whose
     /// root carries that position's own use role [INV-1, PRF-1]; every other
     /// caller is an ordinary place base [GRAM-5].
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::semantic::check) fn check_indexed_place_rooted(
+    pub(in crate::semantic::check) fn check_storage_place_rooted(
         &mut self,
         context: FunctionContext<'_, '_>,
         node: NodeId,
@@ -1831,6 +1954,7 @@ impl<'unit> Checker<'_, 'unit> {
         anchor: NodeId,
         loop_depth: usize,
         root_role: LexicalUseRole,
+        required: RequiredReferent,
     ) -> Result<CheckedIndexedPlace, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let pbase = self
@@ -1840,13 +1964,14 @@ impl<'unit> Checker<'_, 'unit> {
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         if self.types.declarations.tree.reference_step(base_suffixes)? == Some(0) {
-            return self.check_dereferenced_indexed_place(
+            return self.check_dereferenced_storage_place(
                 context,
                 node,
                 base_suffixes,
                 bindings,
                 loop_depth,
                 root_role,
+                required,
             );
         }
         if !self.types.declarations.tree.children(pbase)?.is_empty() {
@@ -1882,16 +2007,14 @@ impl<'unit> Checker<'_, 'unit> {
                     loop_depth,
                     true,
                 )?;
-                // A borrow holder written where its indexable referent is
+                // A borrow holder written where its storage referent is
                 // required is the [TYPE-7] implicit read; a borrow of
-                // something no `index` could reach falls through to the
+                // something outside the required domain falls through to the
                 // operand's own mismatch below.
                 if local.mode != CheckedMode::Own
-                    && self.types.reads_implicitly_through_holder(
-                        true,
-                        ty,
-                        RequiredReferent::IndexableStorage,
-                    )?
+                    && self
+                        .types
+                        .reads_implicitly_through_holder(true, ty, required)?
                 {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type7,
@@ -2006,11 +2129,9 @@ impl<'unit> Checker<'_, 'unit> {
             // [OP-4]'s indexable bases, and its content is the ordinary field
             // step `b.inner` [TYPE-9]. The refusal is therefore [OP-4]'s
             // non-indexable base.
-            _ if self.types.reads_implicitly_through_holder(
-                false,
-                ty,
-                RequiredReferent::IndexableStorage,
-            )? =>
+            _ if self
+                .types
+                .reads_implicitly_through_holder(false, ty, required)? =>
             {
                 self.types.declarations.issue_node(
                     SemanticRule::Op4,
@@ -2021,12 +2142,10 @@ impl<'unit> Checker<'_, 'unit> {
                     ),
                 )
             }
-            // [MSR-1] gives each storage shape a measure-table row and [OP-4]
-            // makes it an indexable base, as it does the `Entries` an
-            // entry binding names [SHARE-2].
-            CheckedType::Array { .. }
-            | CheckedType::Window { .. }
-            | CheckedType::Entries { .. } => {
+            // [MSR-1] includes measured values with no [OP-4] element
+            // access, notably KeySet and Segments. Resolve their measure
+            // places through the contract path's type-to-row mapping too.
+            _ if self.types.satisfies_referent_requirement(ty, required)? => {
                 let (Some(binding), Some(declaration)) = (binding, declaration) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };

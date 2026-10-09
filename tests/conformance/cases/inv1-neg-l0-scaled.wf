@@ -1,0 +1,15 @@
+fn probe(x: u64) -> result: unit pure contract {
+  requires 2_u64 * x <= 8_u64;
+} {
+  doc "A scaled conclusion remains affine even though integer tightening could derive an L0-shaped consequence.";
+  invariant affine_only: 2_u64 * x <= 8_u64;
+  if x == 4_u64 {
+    return unit;
+  }
+  invariant unavailable: x <= 3_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

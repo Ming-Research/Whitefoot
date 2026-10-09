@@ -32,6 +32,62 @@ use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
 #[test]
+fn a_set_member_carries_its_call_rhs_storage_effects() {
+    let source = br#"fn replace(cell: &Box<u64>) -> result: u64 writes(cell) {
+  let fresh = box_new::<u64>(value: 1_u64);
+  set cell^ = move fresh;
+  return 1_u64;
+}
+
+fn ignore(cell: &Box<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn consume(value: Box<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn pair() -> result: unit pure {
+  let p = box_new::<u64>(value: 0_u64);
+  let x = 0_u64;
+  set x = replace(cell: &p);
+  ignore(cell: &p);
+  consume(value: move p);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "pair", "a set statement", "ignore");
+    assert!(pair.verdict.is_eligible(), "{pair:?}");
+    assert!(pair.first.call.is_none(), "Set remains a non-call member");
+    let release = pair
+        .first
+        .storage_effects
+        .conflict(
+            &super::super::places::UnprovedSeparations,
+            &pair.second.storage_effects,
+        )
+        .expect("the RHS writes an owner that the following call borrows");
+    assert_eq!(release.releasing, PairSide::First);
+    assert_eq!(release.released.place, release.borrowed.place);
+    let consume = &pair_of(&table, "pair", "ignore", "consume").second;
+    let borrow = pair
+        .first
+        .storage_effects
+        .conflict(
+            &super::super::places::UnprovedSeparations,
+            &consume.storage_effects,
+        )
+        .expect("the RHS borrows the owner that consume releases");
+    assert_eq!(borrow.releasing, PairSide::Second);
+    assert_eq!(borrow.released.place, borrow.borrowed.place);
+}
+
+#[test]
 fn conditional_call_permission_includes_the_condition_and_call() {
     let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;

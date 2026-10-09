@@ -1,6 +1,8 @@
 //! [INV-1] loop invariants: the checked affine forms of an invariant,
 //! its base and backedge batches, and its recorded outcome.
 
+use super::super::CountedElementRelation;
+use super::render::BinderSpelling;
 use super::*;
 
 impl Reasoning<'_, '_, '_> {
@@ -209,32 +211,46 @@ impl Reasoning<'_, '_, '_> {
         loop_id: CheckedLoopId,
         invariants: &[CheckedLoopInvariant],
         base_batch: bool,
-        state: &mut AffineFlowState,
+        state: &mut ProofFlowState,
     ) {
-        for (source_ordinal, invariant) in invariants.iter().enumerate() {
+        let mut formed = Vec::with_capacity(invariants.len());
+        for invariant in invariants {
             let target = self.checked_affine_relation_inequality(
                 &invariant.relation,
-                state,
+                &mut state.affine,
                 &mut AffineCheckState::new(),
             );
-            let partner = self
-                .checked_affine_relation_partner(
-                    &invariant.relation,
-                    state,
-                    &mut AffineCheckState::new(),
-                )
-                .and_then(Result::ok);
+            let partner = self.checked_affine_relation_partner(
+                &invariant.relation,
+                &mut state.affine,
+                &mut AffineCheckState::new(),
+            );
             self.vocabulary
                 .invariant_targets
                 .insert(invariant.declaration, target.clone());
-            if base_batch && let Ok(inequality) = target {
+            formed.push((target, partner));
+        }
+        // Formation at the arbitrary header can differ from formation over
+        // preheader value images. Neither domain receives a partial batch.
+        if !base_batch
+            || formed.iter().any(|(target, partner)| {
+                target.is_err() || partner.as_ref().is_some_and(Result::is_err)
+            })
+        {
+            return;
+        }
+        for (source_ordinal, (invariant, (target, partner))) in
+            invariants.iter().zip(formed).enumerate()
+        {
+            if let Ok(inequality) = target {
                 state
+                    .affine
                     .published_invariants
                     .insert(invariant.declaration, inequality.clone());
                 // [INV-1] an `==` target is one batch of two bounds, and both
                 // become assumptions together once the base batch succeeded.
-                for inequality in std::iter::once(inequality).chain(partner) {
-                    state.facts.push(ActiveAffineFact {
+                for inequality in std::iter::once(inequality).chain(partner.and_then(Result::ok)) {
+                    state.affine.facts.push(ActiveAffineFact {
                         inequality,
                         evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
                             SourceLoopInvariantRef {
@@ -245,8 +261,41 @@ impl Reasoning<'_, '_, '_> {
                         )),
                     });
                 }
+                self.establish_invariant_l0(&invariant.relation, &mut state.facts);
             }
         }
+    }
+
+    /// [ENT-3.S16] publish only a proved conclusion's exact source-term
+    /// projection. Ordinary term support supplies kills, joins and snapshots;
+    /// immutable affine value images must not replace these mutable terms.
+    pub(super) fn establish_invariant_l0(
+        &mut self,
+        relation: &CheckedAffineRelation,
+        facts: &mut FactState,
+    ) {
+        let Some(Relation::Bound { left, right, bound }) =
+            self.checked_affine_relation_l0(relation)
+        else {
+            return;
+        };
+        let projected = if relation.equality {
+            // Both directions must be representable before either is added.
+            if bound.checked_neg().is_none() {
+                return;
+            }
+            Relation::Equal {
+                left,
+                right,
+                difference: bound,
+            }
+        } else {
+            Relation::Bound { left, right, bound }
+        };
+        let event = self
+            .vocabulary
+            .proof_event(FlowEventKind::S16, Some(&relation.node_path));
+        facts.establish(&projected, &mut self.vocabulary.derivations, event);
     }
 
     pub(super) fn checked_affine_relation_inequality(
@@ -440,8 +489,9 @@ impl Judging<'_, '_, '_> {
         invariants: &[CheckedLoopInvariant],
         base: &[RelationBatch],
         batches: &[InductionBatch],
-        counted_binder: Option<BindingId>,
+        counted: Option<(BindingId, &CheckedExpression)>,
     ) {
+        let counted_binder = counted.map(|(binder, _)| binder);
         for (index, invariant) in invariants.iter().enumerate() {
             let first_failure = batches
                 .iter()
@@ -465,11 +515,55 @@ impl Judging<'_, '_, '_> {
                 base_target: self
                     .input
                     .render_checked_invariant_relation(&invariant.relation, None),
-                backedge_target: self
-                    .input
-                    .render_checked_invariant_relation(&invariant.relation, counted_binder),
+                backedge_target: self.input.render_checked_invariant_relation(
+                    &invariant.relation,
+                    counted_binder.map(BinderSpelling::Next),
+                ),
                 base_evidence: base[index].evidence.clone(),
                 inputs,
+                element: counted.map(|(binder, lower)| {
+                    let variable = self.input.fresh_name("k");
+                    let admitted = |binding| {
+                        binding == binder
+                            || self
+                                .input
+                                .function
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter.binding == binding)
+                    };
+                    let requirement_in_scope = invariant
+                        .relation
+                        .left
+                        .postorder()
+                        .chain(invariant.relation.right.postorder())
+                        .all(|expression| match &expression.kind {
+                            CheckedAffineExpressionKind::Local { binding, .. } => {
+                                admitted(*binding)
+                            }
+                            CheckedAffineExpressionKind::Measure(value) => {
+                                let mut in_scope = true;
+                                crate::semantic::permission::visit_read_bindings(
+                                    value,
+                                    &mut |binding| in_scope &= admitted(binding),
+                                );
+                                in_scope
+                            }
+                            _ => true,
+                        });
+                    CountedElementRelation {
+                        requirement_in_scope,
+                        requirement: self.input.fresh_name(&format!("{}_all", invariant.name)),
+                        binder,
+                        binder_name: self.input.binding_name(binder),
+                        lower: self.input.render_expression(lower),
+                        relation: self.input.render_checked_invariant_relation(
+                            &invariant.relation,
+                            Some(BinderSpelling::Bound(binder, &variable)),
+                        ),
+                        variable,
+                    }
+                }),
                 proof: LoopInvariantProof {
                     base: base[index].disposition == TargetDisposition::Proved,
                     step: (!batches.is_empty()).then_some(first_failure.is_none()),

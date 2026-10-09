@@ -21,8 +21,9 @@ use super::super::super::model::{
 use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
 use super::super::state::{
-    DerivationId, DerivationNode, FactState, FlowEventId, FlowEventKind, ImplicitBoundKind,
-    Relation, close, implicit_bound_between, ordered,
+    DerivationId, DerivationNode, DistinctKey, FactState, FlowEventId, FlowEventKind,
+    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between,
+    zero_distinct_candidate,
 };
 use super::super::term::{
     CountedCaptureSide, MeasurePlacement, PlaceRoot, PlaceStep, ResolvedPlace, TermId, TermKind,
@@ -37,7 +38,7 @@ use super::*;
 use std::rc::Rc;
 /// Which term one evaluated value's [ENT-3] image is established on: the
 /// place a `let` binder introduces, the compiler-owned commit value of one
-/// `set` occurrence, or a checked integer conversion's private success
+/// `set` or `give` occurrence, or a checked integer conversion's private success
 /// payload [ENT-2, ENT-5].
 /// These destinations use the same admitted source image; a conditional
 /// payload interprets it only inside its own success context.
@@ -1680,7 +1681,8 @@ struct CarriedMeasures {
 impl Vocabulary {
     /// The [GIVE-1] carrier of one `give`: a direct non-consuming bare atom
     /// is its own carrier term, and a typed integer literal or integer-typed
-    /// named const is delivered through the give's evaluated value [ENT-5].
+    /// named const or computed integer uses the give's evaluated value.
+    /// Computed shapes still need an ENT-3 let source to form an image.
     pub(super) fn eligible_delivery_terms(
         &mut self,
         value: &CheckedExpression,
@@ -1703,7 +1705,14 @@ impl Vocabulary {
             | CheckedExpression::NamedConstant {
                 value: CheckedValue::Integer { .. },
                 ..
-            } => DeliveryCarrier::Constant,
+            } => DeliveryCarrier::Evaluated,
+            CheckedExpression::NumericConversion {
+                mode: CheckedConversionMode::Exact,
+                source: CheckedNumericType::Integer(_),
+                destination: CheckedNumericType::Integer(_),
+                ..
+            } => DeliveryCarrier::Evaluated,
+            _ if operation_shape(value).is_some() => DeliveryCarrier::Evaluated,
             _ => return None,
         };
         Some((carrier, fragment))
@@ -1954,14 +1963,14 @@ impl Vocabulary {
     fn delivery_image_distinct_bound(
         &self,
         image: &FactState,
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         receiver: TermId,
     ) -> Option<(TermId, TermId, DeliveryImageBound)> {
-        [pair, (pair.1, pair.0)]
+        [pair, (pair.1, pair.0, pair.2.saturating_neg())]
             .into_iter()
-            .find_map(|(left, right)| {
+            .find_map(|(left, right, difference)| {
                 let edge = self.delivery_image_bound(image, (left, right), receiver)?;
-                (edge.bound() <= -1).then_some((left, right, edge))
+                (edge.bound() <= difference.saturating_sub(1)).then_some((left, right, edge))
             })
     }
 
@@ -2037,7 +2046,7 @@ impl Vocabulary {
         &mut self,
         edge: DeliveryImageBound,
         (left, right): (TermId, TermId),
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         receiver: TermId,
     ) -> DerivationId {
         let (strict, give) = match self.delivery_image_transitive(edge, (left, right), receiver) {
@@ -2066,12 +2075,17 @@ impl Vocabulary {
             Err((_, transitive, give)) => (transitive, give),
         };
         let other = if pair.0 == receiver { pair.1 } else { pair.0 };
-        let carrier_pair = ordered(give.carrier, other);
+        let carrier_pair = if pair.0 == receiver {
+            distinct_key(give.carrier, other, pair.2)
+        } else {
+            distinct_key(other, give.carrier, pair.2)
+        };
         let parent = self
             .derivations
             .intern(DerivationNode::DisequalityFromStrictBound {
                 left: carrier_pair.0,
                 right: carrier_pair.1,
+                difference: carrier_pair.2,
                 parent: strict,
             });
         self.derivations.intern(DerivationNode::PostconditionGive {
@@ -2081,7 +2095,7 @@ impl Vocabulary {
             relation: Box::new(Relation::Distinct {
                 left: pair.0,
                 right: pair.1,
-                difference: 0,
+                difference: pair.2,
             }),
             event: give.event,
             parent,
@@ -2283,7 +2297,10 @@ impl Vocabulary {
             target.establish_from_proof(&relation, proof, &self.derivations);
         }
 
-        // [ENT-5] each disequality held by all. An image holds a disequality
+        // [ENT-5] finite candidates held by all: established offsets in a
+        // contributing image, and zero-offset pairs derived in every image.
+        // Derived-only nonzero exclusions are not candidates.
+        // An image holds a disequality
         // when it stores it or a strict bound of its own derives it [ENT-4],
         // a bound held through the receiver's Z bound and the other term's
         // implicit bound included; images store only the disequalities among
@@ -2316,10 +2333,10 @@ impl Vocabulary {
         ) && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
         {
             for other in self.terms.ids() {
-                if other == receiver || other == ZERO {
+                if other == ZERO || !zero_distinct_candidate(&self.terms, receiver, other) {
                     continue;
                 }
-                let pair = ordered(receiver, other);
+                let pair = distinct_key(receiver, other, 0);
                 if candidates.contains(&pair) {
                     continue;
                 }
@@ -2360,20 +2377,23 @@ impl Vocabulary {
                     .iter()
                     .flatten()
                     .any(|proof| self.derivations.depends_on_postcondition_call(*proof));
-            if [pair, (pair.1, pair.0)].into_iter().any(|(left, right)| {
-                self.delivery_join_implied(
-                    target,
-                    (left, right),
-                    -1,
-                    context.receiver,
-                    call_dependent,
-                ) || target
-                    .bounds
-                    .candidate_minimum((left, right), |proof| {
-                        call_dependent || !self.derivations.depends_on_postcondition_call(proof)
-                    })
-                    .is_some_and(|bound| bound <= -1)
-            }) {
+            if [pair, (pair.1, pair.0, pair.2.saturating_neg())]
+                .into_iter()
+                .any(|(left, right, difference)| {
+                    self.delivery_join_implied(
+                        target,
+                        (left, right),
+                        difference.saturating_sub(1),
+                        context.receiver,
+                        call_dependent,
+                    ) || target
+                        .bounds
+                        .candidate_minimum((left, right), |proof| {
+                            call_dependent || !self.derivations.depends_on_postcondition_call(proof)
+                        })
+                        .is_some_and(|bound| bound <= difference.saturating_sub(1))
+                })
+            {
                 continue;
             }
             if ordinary_only
@@ -2401,7 +2421,7 @@ impl Vocabulary {
             let relation = Relation::Distinct {
                 left: pair.0,
                 right: pair.1,
-                difference: 0,
+                difference: pair.2,
             };
             let proof = self
                 .derivations
@@ -2887,33 +2907,43 @@ impl Analyzer<'_, '_> {
             fragment,
         ));
         // [ENT-5] a bare atom is its own carrier term. A literal or named
-        // const is first evaluated to the give's value v, at which
-        // [ENT-3.S5]'s literal row establishes `v = value(d)` exactly as at a
-        // `let`; the edge then delivers what `let v = d; give v;` delivers,
-        // the edge's own bounds on other terms included.
-        let (carrier_term, constant_facts) = match carrier {
+        // const or computed expression is bound to the give's value v by
+        // the ordinary let sources. The edge then delivers what
+        // `let v = d; give v;` delivers, including the edge's bounds on
+        // other terms. A shape with no admitted source forms no image.
+        let (carrier_term, evaluated_facts) = match carrier {
             DeliveryCarrier::Atom(atom) => (atom, None),
-            DeliveryCarrier::Constant => {
-                let constant = self
-                    .reasoning()
-                    .copy_source(value)
-                    .expect("a typed integer literal or named const reads as one constant term");
-                let given = self
-                    .vocabulary
-                    .given_value_term(context.statement, value)
-                    .expect("an eligible give delivers one fragment integer");
+            DeliveryCarrier::Evaluated => {
                 let mut facts = source.facts.clone();
-                self.vocabulary.establish_copy_equality(
+                let _ = self.establish_value_image(
                     context.statement,
-                    given,
-                    constant,
+                    ValueImage::Commit(context.statement),
+                    value,
                     &mut facts,
                     &mut None,
                 );
+                let given = self
+                    .vocabulary
+                    .interned_commit_value_term(context.statement, value);
+                // S7 establishes nothing at a contradictory point, so it
+                // need not have interned the given value. That edge still
+                // contributes a contradictory image, neutral at the join.
+                if given.is_none()
+                    && !self
+                        .delivery_closure(&facts, carrier, receiver)
+                        .contradictory()
+                {
+                    return ProofFlowState::default();
+                }
+                let given = given.unwrap_or_else(|| {
+                    self.vocabulary
+                        .given_value_term(context.statement, value)
+                        .expect("an eligible give delivers one fragment integer")
+                });
                 (given, Some(facts))
             }
         };
-        let carried = constant_facts.as_ref().unwrap_or(&source.facts);
+        let carried = evaluated_facts.as_ref().unwrap_or(&source.facts);
         let facts = self.delivery_closure(carried, carrier, receiver);
         let event = self
             .vocabulary
@@ -2981,7 +3011,7 @@ impl Analyzer<'_, '_> {
     /// The closed state one give edge reads its carrier's relations from.
     /// Every edge withholds the fresh receiver, including edges visited after
     /// an earlier give interned the same stable term: a bare atom's closure
-    /// excludes it, and a constant's given value, whose one new equality the
+    /// excludes it, and an evaluated value, whose new relations the
     /// ordinary closure inserts incrementally, relates to it only through its
     /// implicit bounds, which the edge skips [ENT-5].
     fn delivery_closure(
@@ -2998,7 +3028,7 @@ impl Analyzer<'_, '_> {
                 &mut self.vocabulary.derivations,
                 receiver,
             )),
-            DeliveryCarrier::Constant => close(
+            DeliveryCarrier::Evaluated => close(
                 facts,
                 &self.vocabulary.terms,
                 &self.vocabulary.goals,
@@ -3144,20 +3174,12 @@ pub(super) fn substitute_delivery_relation(
             right,
             difference,
         } => {
-            let (left, right) = (replace(*left), replace(*right));
-            // Ordering the pair reverses the difference with it.
-            if left <= right {
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference: *difference,
-                }
-            } else {
-                Relation::Distinct {
-                    left: right,
-                    right: left,
-                    difference: -difference,
-                }
+            let (left, right, difference) =
+                distinct_key(replace(*left), replace(*right), *difference);
+            Relation::Distinct {
+                left,
+                right,
+                difference,
             }
         }
     }
