@@ -70,11 +70,23 @@ pub(super) fn emit_union_declarations(
         module.named_type(view_name(nominal, variant.tag()), body, references);
     }
     let payload = layout
-        .size()
+        .handler_offset()
+        .unwrap_or(layout.size())
         .checked_sub(4)
         .ok_or(BackendFailure::InvalidIr)?;
     let aligning = view_name(nominal, layout.aligning_variant());
-    let body = format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}");
+    let body = if let Some(offset) = layout.handler_offset() {
+        // Byte storage avoids imposing pointer alignment on a 4-aligned
+        // enum. Pointer loads and stores name the actual word alignment.
+        let bytes = u64::from(nominal.handler_words) * 8;
+        let tail = layout
+            .size()
+            .checked_sub(offset + bytes)
+            .ok_or(BackendFailure::InvalidIr)?;
+        format!("{{ i32, [{payload} x i8], [{bytes} x i8], [{tail} x i8], [0 x %{aligning}] }}")
+    } else {
+        format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}")
+    };
     let mut references = References::default();
     references.types.insert(aligning);
     module.named_type(format!("wf.t.{}", nominal.link_name()), body, references);
@@ -121,6 +133,39 @@ pub(super) fn variant_field_gep(
 }
 
 impl FunctionEmitter<'_, '_> {
+    /// Address one family's word using the layout plan's common storage.
+    pub(super) fn handler_word_pointer(
+        &mut self,
+        nominal: IrNominalId,
+        address: &str,
+        word: usize,
+    ) -> Result<String, BackendFailure> {
+        if word >= self.nominal(nominal)?.handler_words as usize {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let layout = crate::target::union_enum_layout(self.target, self.program, nominal)
+            .map_err(BackendFailure::TargetLayout)?;
+        let offset = layout.handler_offset().ok_or(BackendFailure::InvalidIr)?
+            + u64::try_from(word).map_err(|_| BackendFailure::CounterOverflow)? * 8;
+        let pointer = self.next_temporary()?;
+        writeln!(
+            self.output,
+            "  %{pointer} = getelementptr inbounds i8, ptr {address}, i64 {offset}"
+        )?;
+        Ok(format!("%{pointer}"))
+    }
+
+    /// Actual alignment, shared by constructors and dispatch loads.
+    pub(super) fn handler_word_alignment(
+        &self,
+        nominal: IrNominalId,
+    ) -> Result<u64, BackendFailure> {
+        crate::target::union_enum_layout(self.target, self.program, nominal)
+            .map_err(BackendFailure::TargetLayout)?
+            .handler_alignment()
+            .ok_or(BackendFailure::InvalidIr)
+    }
+
     /// The address of payload field `field` of variant `variant` in the enum
     /// value at `address`.
     pub(super) fn variant_field_pointer(
