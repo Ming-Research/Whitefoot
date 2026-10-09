@@ -1716,6 +1716,183 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
     });
 }
 
+/// Payload writes preserve None; whole writes (including aliases and call
+/// rows) must retain the inserting path. A row naming only a payload field of
+/// the whole entry, passed on through a second helper, is a payload write:
+/// firn's GET reaches its access stamp that way. The dynamic key prefix must not
+/// erase the payload evidence, and unioning a whole write must not lose it.
+#[test]
+fn keyed_atomic_insertion_flags_follow_resolved_writes() {
+    let source = br#"struct Counter {
+  stamp: u64;
+}
+
+const key: Array<u8, 1> =[97_u8];
+
+fn replace(slot: &Option<Counter>) -> result: unit writes(slot) {
+  set slot^ = None<Counter>();
+  return unit;
+}
+
+fn payload(value: &Counter) -> result: unit writes(value.stamp) {
+  set value^.stamp = 3_u64;
+  return unit;
+}
+
+fn bump(slot: &Option<Counter>) -> result: unit reads(slot), writes(slot.Some.value.stamp) {
+  match slot^ {
+    Some(value: v) => {
+      set v^.stamp = 1_u64;
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn bump_through(slot: &Option<Counter>) -> result: unit reads(slot), writes(slot.Some.value.stamp) {
+  bump(slot: slot);
+  return unit;
+}
+
+fn present(slot: &Option<Counter>) -> result: Bool reads(slot) {
+  match slot^ {
+    Some(value: unused) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Counter>(capacity: 1_u64);
+  let k = &key[0_u64..1_u64];
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => {
+        set v^.stamp = v^.stamp +wrap 1_u64;
+      }
+      None() => {
+      }
+    }
+  }
+  atomic t = &store[k] {
+    let value = Counter(stamp: 0_u64);
+    set t^ = Some<Counter>(value: value);
+  }
+  atomic t = &store[k] {
+    set t^ = None<Counter>();
+  }
+  atomic t = &store[k] {
+    replace(slot: t);
+  }
+  atomic t = &store[k] {
+    let ref_value = &t^;
+    set ref_value^ = None<Counter>();
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => {
+        let stamp = v^.stamp;
+      }
+      None() => {
+      }
+    }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => {
+        let ref_value = &v^.stamp;
+        set ref_value^ = 2_u64;
+      }
+      None() => {
+        let value = Counter(stamp: 0_u64);
+        set t^ = Some<Counter>(value: value);
+      }
+    }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => {
+        let ref_value = &v^.stamp;
+        set ref_value^ = 2_u64;
+      }
+      None() => {
+      }
+    }
+  }
+  atomic t = &store[k] {
+    match t^ {
+      Some(value: v) => {
+        payload(value: v);
+      }
+      None() => {
+      }
+    }
+  }
+  atomic t = &store[k] {
+    bump_through(slot: t);
+  }
+  atomic t = &store[k] when present(slot: t) {
+    let ref_value = &t^;
+  }
+  let wrappers = shared_map_new::<Option<Counter>>(capacity: 1_u64);
+  atomic t = &store[k], u = &wrappers[k] {
+    let value = Counter(stamp: 1_u64);
+    set t^ = Some<Counter>(value: value);
+    match u^ {
+      Some(value: v) => {
+        set t = &v^;
+        set t^ = None<Counter>();
+      }
+      None() => {
+        return std::process::exit_status(code: 0_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let flags = function(program, "main")
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::TableLockEntry { read, inserts, .. },
+                    ..
+                } => Some((*read, *inserts)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let (single, rebound) = flags.split_at(11);
+        assert_eq!(
+            single,
+            [
+                (false, false),
+                (false, true),
+                (false, true),
+                (false, true),
+                (false, true),
+                (true, false),
+                (false, true),
+                (false, false),
+                (false, false),
+                (false, false),
+                (false, true),
+            ]
+        );
+        // A target whose reference the body rebinds keeps the whole-entry
+        // write it made before; the other target's write stays in its payload.
+        let mut rebound = rebound.to_vec();
+        rebound.sort_unstable();
+        assert_eq!(rebound, [(false, false), (false, true)]);
+    });
+}
+
 #[test]
 fn table_borrows_materialize_only_writable_roots() {
     let source = br#"const names: Array<u8, 2> =[97_u8, 98_u8];

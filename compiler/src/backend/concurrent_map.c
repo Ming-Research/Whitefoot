@@ -73,6 +73,7 @@
 #endif
 
 #include "concurrent_map.h"
+#include <assert.h>
 
 /* The map's test drives interleavings through these points: a writer that
  * is about to claim an empty or removed cell for an entry's key, and one
@@ -1175,6 +1176,15 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
     wf_cmap *map = u->map;
     cell *c = entry->cell;
     table *t = entry->table;
+    if (c == NULL) {
+        /* The checker proved that this statement cannot replace None. */
+        assert(!present);
+        if (entry->upgraded)
+            wf_cmap_unhold(u);
+        else if (!held)
+            atomic_store_explicit(&u->active, 0, memory_order_release);
+        return;
+    }
     /* Counted before the unlock: a mover waiting for this cell sums the
      * counts once it has the cell, into the next table's base. */
     count(u, 0, (int64_t)(present != 0) - (int64_t)(entry->fresh == 0));
@@ -1205,8 +1215,8 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
         atomic_store_explicit(&u->active, 0, memory_order_release);
 }
 
-/* Finds key, whose hash is tag, in t for a statement that only reads its
- * entry: FOUND with the reader counted on the entry's cell in *out, ABSENT,
+/* Finds key, whose hash is tag, without claiming an absent entry: FOUND
+ * with a reader counted on *out, or its cell locked when exclusive, ABSENT,
  * or IMPATIENT once its waits and retries exhaust u's patience. A reader
  * counts itself and then reads the key word again, and a writer locks the
  * key word and then waits for the count to fall to zero, all sequentially
@@ -1218,7 +1228,7 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
  * is read only when no move had, and a move that begins later waits for the
  * count. */
 static int read_in(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char *key, uint64_t length,
-                   cell **out) {
+                   cell **out, int exclusive) {
     uint64_t i = start_of(t, tag);
     uint64_t left = t->capacity;
     unsigned round = 0;
@@ -1229,6 +1239,23 @@ static int read_in(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char 
         if (bare == EMPTY)
             return ABSENT;
         if (bare == tag && (k & PENDING) == 0) {
+            if (exclusive) {
+                int r = try_entry(u, t, c, k, key, length, &round);
+                if (r == -2)
+                    return MOVED;
+                if (r < 0) {
+                    if (impatient(u, 0))
+                        return IMPATIENT;
+                    continue;
+                }
+                if (r > 0) {
+                    *out = c;
+                    return FOUND;
+                }
+                left--;
+                i = (i + 1) & t->mask;
+                continue;
+            }
             if (k & LOCKED) {
                 u->waited += wait_for_cell(&round);
                 if (impatient(u, 0))
@@ -1263,11 +1290,11 @@ static int read_in(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char 
  * answer stands only if no move began before it was given, since a writer
  * may change the key in the next table once a move has begun. */
 static int read_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, uint64_t length, cell **out,
-                      table **in) {
+                      table **in, int exclusive) {
     for (;;) {
         table *t = use_current(u);
         if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
-            int r = read_in(u, t, tag, key, length, out);
+            int r = read_in(u, t, tag, key, length, out, exclusive);
             if (r == IMPATIENT)
                 return r;
             if (r == FOUND)
@@ -1276,8 +1303,12 @@ static int read_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
                 *in = t;
                 return r;
             }
-            if (r == FOUND)
-                atomic_fetch_sub_explicit(&(*out)->value, READER_ONE, memory_order_release);
+            if (r == FOUND) {
+                if (exclusive)
+                    unlock(*out, tag);
+                else
+                    atomic_fetch_sub_explicit(&(*out)->value, READER_ONE, memory_order_release);
+            }
         }
         finish_move(u->map, t);
         if (impatient(u, 1))
@@ -1285,8 +1316,10 @@ static int read_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
     }
 }
 
-const void *wf_cmap_read_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
-                               wf_cmap_entry *entry) {
+/* Both kinds of existing-entry access share retries and stable-absence
+ * upgrade. An exclusive hit uses exactly the writer's cell lock. */
+static void *access_existing_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
+                                   wf_cmap_entry *entry, int exclusive, int stable_absence) {
     if (!held)
         enter_keyed(u);
     uint64_t tag = tag_of(key, length);
@@ -1294,18 +1327,28 @@ const void *wf_cmap_read_entry(wf_cmap_user *u, const unsigned char *key, uint64
     table *t;
     u->waited = 0;
     u->patience = held ? UINT64_MAX : WF_CMAP_PATIENCE(u);
-    int r = read_entry(u, tag, key, length, &c, &t);
-    entry->upgraded = r == IMPATIENT;
-    if (r == IMPATIENT) {
+    int r = read_entry(u, tag, key, length, &c, &t, exclusive);
+    entry->upgraded = r == IMPATIENT || (r == ABSENT && stable_absence && !held);
+    if (entry->upgraded) {
         atomic_store_explicit(&u->active, 0, memory_order_release);
         wf_cmap_hold(u);
         u->patience = UINT64_MAX;
-        r = read_entry(u, tag, key, length, &c, &t);
+        r = read_entry(u, tag, key, length, &c, &t, exclusive);
     }
     entry->cell = r == FOUND ? c : NULL;
     entry->table = t;
     entry->fresh = 0;
     return r == FOUND ? slot_of(u->map, node_at(c)) : u->map->none;
+}
+
+const void *wf_cmap_read_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
+                               wf_cmap_entry *entry) {
+    return access_existing_entry(u, key, length, held, entry, 0, 0);
+}
+
+void *wf_cmap_lock_present_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
+                                 int stable_absence, wf_cmap_entry *entry) {
+    return access_existing_entry(u, key, length, held, entry, 1, stable_absence);
 }
 
 void wf_cmap_unread_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held) {
@@ -2087,7 +2130,7 @@ static int read_set(wf_cmap_user *u, wf_cmap_holding *hold) {
                 wf_cmap_held *e = ranked(keys, i);
                 if (!e->leads) { e->slot = leader->slot; continue; }
                 cell *c = NULL;
-                int r = read_in(u, t, e->tag, e->key, e->length, &c);
+                int r = read_in(u, t, e->tag, e->key, e->length, &c, 0);
                 if (r == FOUND) { e->cell = c; e->slot = slot_of(u->map, node_at(c)); leader = e; }
                 if (r == ABSENT || r == IMPATIENT) { unread_set(hold); return 0; }
                 if (r == MOVED) break;

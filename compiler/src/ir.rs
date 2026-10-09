@@ -1276,7 +1276,7 @@ pub enum IrOperation {
         table: IrValueId,
     },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
-    /// table `table`, creating it holding `None` when absent, and keeps the
+    /// table `table`, creating it holding `None` when absent only if `inserts`, and keeps the
     /// lock in `record`; with `read`, beside the other statements that only
     /// read it. Defines `Unit`; [`Self::TableEntrySlot`] reads the entry's
     /// address.
@@ -1285,6 +1285,7 @@ pub enum IrOperation {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     },
     /// The address of the entry the lock in `record` holds, an `Option<V>` of
