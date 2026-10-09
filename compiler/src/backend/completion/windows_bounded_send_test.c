@@ -2,13 +2,15 @@
  * bound (a real watch firing, or a passed deadline) while a send is running
  * on the helper, before the driver harvests it.
  *
- * The first phase builds the state a blocking send cannot leave: the path is
- * filled with raw nonblocking sends until WSAEWOULDBLOCK, the bounded send is
- * submitted and claimed by its helper, and only then does the peer read the
- * prefill, so the helper's poll reports writability while the peer is about
- * to go silent for good. A blocking whole-range send then waits for a reader
- * that never comes and hits the watchdog after the bound ends; a bounded send
- * ends with a prefix it transferred or with the bound's error.
+ * The first phase aims at the state Winsock's contract lets a blocking send
+ * stay in: the path is filled with raw nonblocking sends until
+ * WSAEWOULDBLOCK, the bounded send is submitted and claimed by its helper,
+ * and only then does the peer read the prefill, so the helper's poll reports
+ * writability while the peer is about to go silent for good. A bounded send
+ * ends with a prefix it transferred or with the bound's error. On
+ * windows-latest loopback the pre-fix blocking send also completed here (it
+ * was accepted whole), so this phase covers the bounded path's outcome and
+ * does not discriminate the old one.
  *
  * The second phase submits a bounded send to a full path that never drains;
  * nothing can go, so only the bound's error is correct.

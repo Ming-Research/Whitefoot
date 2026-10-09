@@ -225,9 +225,18 @@ against unbounded receives in every cell.
 ## Windows helper sends
 
 Review of [cross-context cancellation PR #296](https://github.com/Ming-Research/Whitefoot/pull/296)
-found that polling for writability before a blocking `send` did not make
-the helper interruptible: a large send could remain inside Winsock after
-the watch fired or the deadline passed. The fix makes only bounded helper
+found that polling for writability before a blocking `send` does not make
+the helper interruptible by its contract: Winsock documents that a blocking
+send may wait for buffer space, so a large send could remain inside Winsock
+after the watch fired or the deadline passed. The hang was not reproduced:
+on windows-latest loopback with `SO_SNDBUF` 4096, the pre-fix blocking path
+accepted a whole 8 MiB send issued once the poll reported writability, and
+ended both a full never-drained path's cancellation and its deadline with
+nothing sent (io-hosts run 37898948304, a temporary probe of the pre-fix
+`file_windows.c`; the fixed head's run 37899118918 logged the same counts).
+The fix rests on the documented contract, not on an observed hang, and
+`windows_bounded_send_test.c` covers bounded sends ending at their bound
+without discriminating the old path. The fix makes only bounded helper
 sends nonblocking, retries `WSAEWOULDBLOCK` through the existing 50 ms bound
 checks, and returns the first successful byte count, including a short
 prefix. The runtime does not try to finish the suffix, so a later bound
