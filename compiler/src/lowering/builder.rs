@@ -1300,8 +1300,9 @@ impl<'program> IrBuilder<'program> {
                     id,
                     body,
                     backedge_drops,
+                    continues,
                     ..
-                } => self.lower_loop(*id, body, backedge_drops, give_target.clone())?,
+                } => self.lower_loop(*id, body, backedge_drops, *continues, give_target.clone())?,
                 CheckedStatement::CountedRange {
                     id,
                     node_path,

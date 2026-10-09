@@ -266,7 +266,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn ordinary_loop_without_a_break_has_a_contradictory_continuation() {
+fn ordinary_loop_without_a_break_rejects_its_dead_operation() {
     let source = br#"fn repeat_forever() -> result: unit pure {
   let value = 0_u64;
   loop (
@@ -282,29 +282,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("a break-free loop must retain its unreachable continuation: {outcome:?}");
-        };
-        let function = checked
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "repeat_forever")
-            .expect("repeat_forever exists");
-        let [invariant] = function.entailment.loop_invariants.as_slice() else {
-            panic!("the loop retains one header invariant");
-        };
-        assert!(invariant.proof.base);
-        assert_eq!(invariant.proof.step, Some(true));
-        let division = function
-            .entailment
-            .obligations
-            .iter()
-            .find(|obligation| obligation.family == ObligationFamily::IntegerDomain)
-            .expect("the structurally retained continuation checks its division");
-        assert!(division.discharged);
-    });
+    super::assert_rule(
+        source,
+        SemanticRule::Fn1,
+        SemanticIssueKind::UnreachableStatement,
+    );
 }
 
 #[test]
@@ -2689,7 +2671,6 @@ fn a_body_probe_after_a_guarded_replacement_reads_the_transported_header_relatio
     }
     invariant reprove: hi <= spare;
   }
-  return hi;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2732,7 +2713,6 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
     }
     invariant reprove: hi <= spare;
   }
-  return hi;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2797,10 +2777,57 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
 }
 
 #[test]
+fn break_free_inner_return_has_matching_empty_induction_inputs() {
+    use super::super::obligations::ObligationSubject;
+
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/inv1-pos-ordinary-break-free-inner-return.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the vacuous header inventory must match its proof: {outcome:?}");
+        };
+        let main = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main was checked");
+        let [invariant] = main.entailment.loop_invariants.as_slice() else {
+            panic!("main has one header invariant");
+        };
+        let records = main
+            .obligations
+            .iter()
+            .filter(|record| matches!(record.subject, ObligationSubject::LoopInvariant { .. }))
+            .collect::<Vec<_>>();
+        let [record] = records.as_slice() else {
+            panic!("main has one header inventory record");
+        };
+        let ObligationSubject::LoopInvariant { inputs } = &record.subject else {
+            unreachable!("selected the loop invariant record");
+        };
+        let proof_inputs = invariant
+            .inputs
+            .iter()
+            .map(|input| input.input.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(record.site, invariant.node_path);
+        assert_eq!(inputs, &proof_inputs);
+        assert!(inputs.is_empty(), "the returning inner loop has no backedge");
+        assert!(invariant.proof.base);
+        assert_eq!(invariant.proof.step, None);
+    });
+}
+
+#[test]
 fn arm_releases_preserve_each_nested_induction_input() {
-    for header in [
-        "loop (\n    invariant limit: x <= 1_u64\n  )",
-        "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+    for (header, after) in [
+        ("loop (\n    invariant limit: x <= 1_u64\n  )", ""),
+        (
+            "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+            "\n  return unit;",
+        ),
     ] {
         for tail in ["", "\n    continue;"] {
             let source = format!(
@@ -2817,8 +2844,7 @@ fn arm_releases_preserve_each_nested_induction_input() {
     }} else {{
       set x = 0_u64;
     }}{tail}
-  }}
-  return unit;
+  }}{after}
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{

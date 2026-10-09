@@ -75,7 +75,6 @@ fn sift_rise<interface Order<T, E>>(queue: &Queue<Order<T, E>>, count: u64, env:
     exchange_at::<T>(heap: &queue^.heap, left: parent, right: at);
     set at = parent;
   }
-  return unit;
 }
 
 fn sift_sink<interface Order<T, E>>(queue: &Queue<Order<T, E>>, count: u64, env: &E) -> result: unit reads(env), writes(queue.heap) contract {
@@ -113,7 +112,6 @@ fn sift_sink<interface Order<T, E>>(queue: &Queue<Order<T, E>>, count: u64, env:
     exchange_at::<T>(heap: &queue^.heap, left: at, right: best);
     set at = best;
   }
-  return unit;
 }
 
 fn push<interface Order<T, E>>(queue: &Queue<Order<T, E>>, value: T, env: &E) -> result: unit reads(env), writes(queue.heap) contract {

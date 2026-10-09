@@ -2140,9 +2140,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(module)
     }
 
-    /// Source checking retains the conservative continuation of every loop
-    /// [FN-1]. An executable loop with no break has no edge to that block,
-    /// which may nevertheless carry lowered parameters and more dead CFG.
+    /// Lowering may allocate predecessor-free exits, including the sealed
+    /// exit of a break-free loop [FN-1], with unused block parameters.
     /// Emit only the entry-reachable graph: a predecessor-free phi is not
     /// LLVM, and a dead cycle must not supply an incoming value to a live phi.
     fn reachable_blocks(&self) -> Result<Vec<bool>, BackendFailure> {

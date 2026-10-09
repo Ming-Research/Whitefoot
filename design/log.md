@@ -12,6 +12,14 @@ Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
 Owner-approved: On the status board on 2026-10-08, written in Chinese, after the card that presented Snowghost's count of 0 of 32 candidate loops permitted by v0.102's indexed reductions and recommended keeping the rule and admitting a len read of the indexed root, a single-assignment temporary, constant marks, integer or Bool fields of record cells and unsigned `+sat`, then recounting: "choose A" (translated), which superseded the earlier "choose A" deferring constant marks; in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: Indexed accumulators also admit a len read of the root, one single-use temporary, unsigned `+sat`, constant marks and record-field families, instead of only the spelling `set R[e] = R[e] op x`, which Snowghost's loops did not use. A split carries each family's kind (a reduction with its identity, or a mark with its constant) and its cell projection (element stride and field offset); marks reduce into private Bool masks and store the constant where any leaf marked the cell, and field families reduce into dense private slabs combined into each record's field, all slabs counted through the heap wrappers.
+## 2026-10-09 A break-free loop has no normal successor
+
+Nodes: language/loop-completion, compiler/checker-facts
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: An ordinary loop keeps a normal successor exactly when a break resolves to it, and a final loop without one delivers a value initializer by divergence, because a return-only or endless loop cannot fall through and a required trailing `return` invents a path with no execution; giving every ordinary loop a conservative fallthrough edge was refused. The checker records each loop's continuation once on the checked loop, and proof reachability, the invariant induction inventory and lowering read it rather than rediscovering exits from labels.
+
 ## 2026-10-09 Proof queries demand the affine index
 
 Nodes: compiler/proof-query-context
