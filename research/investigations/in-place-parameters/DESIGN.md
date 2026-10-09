@@ -393,13 +393,13 @@ will be made from hosted-runner code inspection.
 The temporary `inplace-lets` job, now removed, was a manual experiment option
 of `compute-bench.yml`; its definition is in this branch's history at
 [`0a0776ce9`](https://github.com/Ming-Research/Whitefoot/blob/0a0776ce9/.github/workflows/compute-bench.yml).
-It used hosted `ubuntu-24.04`, installs the exact LLVM major in
-`.github/llvm-major` by the gate's setup, builds the compiler with the `gate`
-profile under `run-check.pl compiler/build`, and processes the no-write
-control first, then the other four witnesses. Each is emitted with
-`whitefootc --emit-llvm -o <name>.ll`; the same `/usr/bin/clang` emits
+It used hosted `ubuntu-24.04`, installed the exact LLVM major in
+`.github/llvm-major` by the gate's setup, built the compiler with the `gate`
+profile under `run-check.pl compiler/build`, and processed the no-write
+control first, then the other witnesses. Each was emitted with
+`whitefootc --emit-llvm -o <name>.ll`; the same `/usr/bin/clang` emitted
 `<name>.opt.ll` and `<name>.s` from that untouched input at `-O2` for
-`x86_64-unknown-linux-gnu`. There are no forced call boundaries or IR edits.
+`x86_64-unknown-linux-gnu`, with no forced call boundaries or IR edits.
 
 The summary counts actual memcpy and memmove calls separately in the raw
 and optimized **reader function**, excluding declarations and other
