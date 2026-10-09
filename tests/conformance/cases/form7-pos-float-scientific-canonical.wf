@@ -1,0 +1,11 @@
+fn large_value() -> x: f64 pure {
+  return 1.2345e10_f64;
+}
+
+fn hundred_value() -> x: f64 pure {
+  return 1.0e2_f64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

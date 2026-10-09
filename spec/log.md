@@ -11,6 +11,13 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.115: scientific float spelling
+
+Rules: changed FORM-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated): change the specification so that a candidate with an exponent has an integer component of one digit 1–9, then select by byte count and lexicographic order.
+
+Summary: FORM-5's canonical float spelling now considers only decimals whose integer component is one nonzero digit when an exponent is present, then keeps the fewest-bytes, least-bytes selection. Before, a zero integer component won every tie (500 was `0.5e3`) and the compiler, which never generated that form, refused it, so no spelling of 500 satisfied both; a longer integer component could also be shortest (`12.345e9`). Now 500 is `5.0e2` and 12345000000 is `1.2345e10`. Selection ground: Firn-wf reported the mismatch while writing `500.0`-valued constants, and scientific notation is the form writers produce.
 ## 2026-10-09 v0.114: copied cells and helper-call updates in indexed reductions
 
 Rules: changed PAR-2
