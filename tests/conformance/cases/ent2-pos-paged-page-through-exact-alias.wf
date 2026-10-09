@@ -1,0 +1,48 @@
+fn small(cell: &u64) -> result: u64 reads(cell) contract {
+  requires cell^ < 10_u64;
+} {
+  return cell^;
+}
+
+fn first_page_length(p: &Paged<u64>) -> result: u64 reads(p) {
+  doc "A page bound uses the exact storage alias; a cell guard and its call goal retain the same page formation.";
+  let view = &p^;
+  if p^.pages.len > 0_u64 {
+    let page = &view^.pages[0_u64];
+    if page^.len > 0_u64 {
+      let cell = &page^[0_u64];
+      if cell^ < 10_u64 {
+        let value = small(cell: cell);
+        if value == 7_u64 {
+          return page^.len;
+        }
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn first_run_value(part: &Run<u64>) -> result: u64 reads(part) {
+  doc "A cell borrowed from a run carries the same exact path into a call requirement.";
+  if part^.len > 0_u64 {
+    let cell = &part^[0_u64];
+    if cell^ < 10_u64 {
+      return small(cell: cell);
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  place_back(window: &p.inner, value: 7_u64);
+  let count = first_page_length(p: &p.inner);
+  if count != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let value = first_run_value(part: &p.inner[0_u64..1_u64]);
+  if value != 7_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

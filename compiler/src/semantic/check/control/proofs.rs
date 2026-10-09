@@ -16,8 +16,8 @@ use super::super::super::entailment::affine::{
 };
 use super::super::super::model::{
     CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation, CheckedExpression,
-    CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
-    CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType,
+    CheckedMeasure, CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
+    CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType, WindowShape,
 };
 use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
@@ -599,6 +599,65 @@ impl<'unit> Checker<'_, 'unit> {
         // one measure-member `psuffix`. The relation evaluates nothing and
         // reads no storage, so the factor reaches the resolved place and the
         // measure row and stops there: no access, no effect, and no goal.
+        // [MSR-1, TYPE-10] `p.pages.len` of a `Paged` is a measure term whose
+        // place is `p` itself: `pages` is a selector, not a member, so the
+        // prefix it follows is the measured place.
+        if suffixes.len() >= 2
+            && self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[suffixes.len() - 2])?
+                == ".pages"
+            && self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[suffixes.len() - 1])?
+                == ".len"
+        {
+            let base = &suffixes[..suffixes.len() - 2];
+            if let Some(SelectedPlaceType::Value(CheckedType::Window {
+                shape: WindowShape::Paged,
+                ..
+            })) = self.types.place_prefix_selected_kind(
+                check_context,
+                place,
+                base,
+                bindings,
+                owner.value_role(),
+            )? {
+                let measured = self.check_indexed_place_rooted(
+                    context,
+                    place,
+                    bindings,
+                    base,
+                    place,
+                    loop_depth,
+                    owner.value_role(),
+                )?;
+                if let Some(declaration) = measured.root_declaration()
+                    && !allowed_values.contains(&declaration)
+                {
+                    return self.types.declarations.invalid_affine_proof(
+                        owner,
+                        node,
+                        "an affine relation reads a value outside its admitted entry state",
+                        "measure a value that exists before this proof point",
+                    );
+                }
+                let expression =
+                    self.types
+                        .measure_of_indexed_place(CheckedMeasure::Pages, measured, atom)?;
+                return Ok((
+                    CheckedAffineExpression {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
+                        kind: CheckedAffineExpressionKind::Measure(Box::new(expression)),
+                    },
+                    None,
+                ));
+            }
+        }
         if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)? {
             let base = &suffixes[..suffixes.len() - 1];
             if let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(

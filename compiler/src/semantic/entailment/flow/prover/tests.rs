@@ -26,6 +26,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     };
     let function = CheckedFunction {
         formal_hypothesis: false,
+        prelude_element: None,
         id: crate::semantic::model::FunctionId(0),
         declaration: crate::DeclarationId::from_index(0).unwrap(),
         module: crate::ModuleId::BUNDLE_ROOT,
@@ -69,6 +70,38 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     check(&mut analyzer);
 }
 
+#[test]
+fn measure_term_forms_pages_only_for_paged() {
+    for (measured, has_pages) in [
+        (MeasuredKind::RuntimeRing, false),
+        (MeasuredKind::RuntimeSlots, false),
+        (MeasuredKind::Paged, true),
+    ] {
+        with_analyzer(|analyzer| {
+            let path = ResolvedPlace::binding(BindingId(0));
+            analyzer
+                .reasoning()
+                .measure_term(CheckedMeasure::Length, path.clone(), measured, None);
+            for measure in [
+                CheckedMeasure::Length,
+                CheckedMeasure::Capacity,
+                CheckedMeasure::Head,
+                CheckedMeasure::Pages,
+            ] {
+                assert_eq!(
+                    analyzer
+                        .vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, path.clone()))
+                        .is_some(),
+                    measure != CheckedMeasure::Pages || has_pages,
+                    "{measured:?}: {measure:?}",
+                );
+            }
+        });
+    }
+}
+
 /// The oracle is the unchanged full pair enumeration, called without the
 /// memo. Compare both ordered witnesses and every exact-vector boundary
 /// query, so losing even an image that another AUTO route can recover fails.
@@ -83,6 +116,7 @@ fn assert_affine_index_matches_rebuild(
         &mut analyzer.vocabulary.derivations,
     );
     let full = affine_l0_index(&candidates, &closed, &mut AffineCheckState::new());
+    assert_affine_promotion_matches_rebuild(&candidates, &closed, &full);
     let (actual_closed, actual) = analyzer.reasoning().affine_query_view(context);
     assert!(Rc::ptr_eq(&closed, &actual_closed));
     // Demand exact vectors in reverse order first. The final family's order
@@ -92,13 +126,13 @@ fn assert_affine_index_matches_rebuild(
         assert_eq!(
             actual
                 .entry(entry.inequality.terms(), &closed, &mut check)
-                .as_ref(),
+                .as_deref(),
             Some(entry)
         );
     }
     let mut entries = Vec::new();
     while let Some(entry) = actual.ordered_entry(entries.len(), &closed, &mut check) {
-        entries.push(entry);
+        entries.push(entry.clone());
     }
     assert_eq!(entries, full.entries);
     let by_terms: WordHashMap<Box<[AffineCoefficient]>, usize> = entries
@@ -140,6 +174,137 @@ fn assert_affine_index_matches_rebuild(
     (closed, actual)
 }
 
+/// Each trigger must produce the eager map, even when exact requests visit
+/// vectors in a different order, repeat a cached absence, or ask for a new
+/// absent residual after promotion. Run this over the same alias, overflow,
+/// state-change and inventory fixtures as the memo differential above.
+fn assert_affine_promotion_matches_rebuild(
+    candidates: &[AffineL0Candidate],
+    closed: &ClosedState,
+    full: &AffineL0Index,
+) {
+    let mut check = AffineCheckState::new();
+    let absent = AffineForm::term(AffineTermId::from_index(u32::MAX));
+    assert!(candidates.iter().all(|candidate| {
+        candidate
+            .value
+            .terms()
+            .iter()
+            .all(|term| term.term() != absent.unit_term().unwrap())
+    }));
+    let mut demands = full
+        .entries
+        .iter()
+        .map(|entry| entry.inequality.terms().to_vec())
+        .collect::<Vec<_>>();
+    // Ensure at least N unique requests, including when aliases leave fewer
+    // than N present vectors. Two more guarantee new absences after promotion.
+    for factor in 1..=candidates.len() + 2 {
+        demands.push(
+            absent
+                .scale(factor as i128, &mut check)
+                .unwrap()
+                .terms()
+                .to_vec(),
+        );
+    }
+    let forward = (0..demands.len()).collect::<Vec<_>>();
+    let reverse = forward.iter().copied().rev().collect::<Vec<_>>();
+    let mut interleaved = Vec::new();
+    for first in 0..demands.len().div_ceil(2) {
+        interleaved.push(first);
+        let last = demands.len() - 1 - first;
+        if first != last {
+            interleaved.push(last);
+        }
+    }
+    for order in [&forward, &reverse, &interleaved] {
+        for family_trigger in [false, true] {
+            let index = LazyAffineL0Index::new(candidates.to_vec());
+            let prefix = if family_trigger {
+                candidates.len().saturating_sub(1).min(2)
+            } else {
+                0
+            };
+            for (position, &demand) in order.iter().enumerate() {
+                if family_trigger && position == prefix {
+                    assert!(index.complete.borrow().is_none());
+                    assert_eq!(
+                        index.ordered_entry(0, closed, &mut check).as_deref(),
+                        full.entries.first()
+                    );
+                    assert!(index.complete.borrow().is_some(), "family entry promotes");
+                }
+                let terms = &demands[demand];
+                let expected = full
+                    .by_terms
+                    .get(terms.as_slice())
+                    .map(|&i| &full.entries[i]);
+                assert_eq!(index.entry(terms, closed, &mut check).as_deref(), expected);
+                let work = check.used();
+                assert_eq!(index.entry(terms, closed, &mut check).as_deref(), expected);
+                assert_eq!(check.used(), work, "warm hits must not rebuild witnesses");
+                let promoted = if family_trigger {
+                    position >= prefix
+                } else {
+                    position + 1 >= candidates.len()
+                };
+                assert_eq!(index.complete.borrow().is_some(), promoted);
+                if promoted {
+                    assert!(
+                        index.exact.borrow().is_empty(),
+                        "complete misses stay map lookups"
+                    );
+                } else {
+                    assert_eq!(index.exact.borrow().len(), position + 1);
+                }
+            }
+            let complete = index.complete.borrow();
+            let complete = complete.as_ref().unwrap();
+            assert_eq!(complete.entries, full.entries);
+            assert_eq!(complete.by_terms, full.by_terms);
+            // Repeated family walks and residual lookups may coexist with a
+            // borrowed entry and must not rebuild or mutate the complete map.
+            let target = AffineInequality::from_bounded_forms(
+                &absent,
+                &AffineForm::constant(0),
+                0,
+                &mut check,
+            )
+            .unwrap();
+            let work = check.used();
+            for _ in 0..2 {
+                for (ordinal, expected) in full.entries.iter().enumerate() {
+                    let entry = index.ordered_entry(ordinal, closed, &mut check).unwrap();
+                    assert_eq!(&*entry, expected);
+                    let exact = index
+                        .entry(entry.inequality.terms(), closed, &mut check)
+                        .unwrap();
+                    assert!(std::ptr::eq(&*entry, &*exact), "warm entries are borrowed");
+                    assert!(index.entry(absent.terms(), closed, &mut check).is_none());
+                    // A residual containing the fresh atom cannot be an L0
+                    // image. Overflowed residuals keep their ordinary skip.
+                    if let Ok(residual) = AffineInequality::residual_after(
+                        &target,
+                        &entry.inequality,
+                        &mut AffineCheckState::new(),
+                    ) {
+                        assert!(!full.by_terms.contains_key(residual.terms()));
+                        assert!(index.entry(residual.terms(), closed, &mut check).is_none());
+                        assert!(index.exact.borrow().is_empty());
+                    }
+                }
+                assert!(
+                    index
+                        .ordered_entry(full.entries.len(), closed, &mut check)
+                        .is_none()
+                );
+            }
+            assert_eq!(check.used(), work, "promotion happens only once");
+        }
+    }
+}
+
 /// Inject the original full rebuild into the same proof-family traversal.
 /// All lookups (including absent vectors) use that complete result; no lazy
 /// pair search is allowed to repair a missing oracle entry.
@@ -147,26 +312,14 @@ fn full_affine_query_index(
     candidates: Vec<AffineL0Candidate>,
     full: &AffineL0Index,
 ) -> LazyAffineL0Index {
-    let count = candidates.len();
     LazyAffineL0Index {
         candidates,
         by_image: WordHashMap::default(),
-        exact: RefCell::new(
-            full.entries
-                .iter()
-                .map(|entry| (entry.inequality.terms().into(), Some(entry.clone())))
-                .collect(),
-        ),
-        ordered: RefCell::new(AffineL0Order {
-            left: count,
-            right: 0,
-            terms: full
-                .entries
-                .iter()
-                .map(|entry| entry.inequality.terms().into())
-                .collect(),
-            seen: WordHashSet::default(),
-        }),
+        exact: RefCell::default(),
+        complete: RefCell::new(Some(AffineL0Index {
+            entries: full.entries.clone(),
+            by_terms: full.by_terms.clone(),
+        })),
     }
 }
 
@@ -344,6 +497,7 @@ fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() 
                 facts: &facts,
                 affine: &affine,
                 closed: Some(&closed),
+                origin_view: OriginView::Pending,
             };
             let (view, index) = assert_affine_index_matches_rebuild(analyzer, context);
             assert!(
@@ -538,7 +692,7 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             analyzer.vocabulary.affine_l0_cache = None;
             let (closed, primed) = analyzer.reasoning().affine_query_view(context);
             assert!(primed.exact.borrow().is_empty());
-            assert!(primed.ordered.borrow().terms.is_empty());
+            assert!(primed.complete.borrow().is_none());
             let observed = analyzer
                 .reasoning()
                 .affine_target_proof(&target, &assumptions, context)
@@ -593,10 +747,14 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
                 .is_some()
         );
         assert_eq!(index.exact.borrow().len(), 1);
-        let order = index.ordered.borrow();
-        assert_eq!((order.left, order.right), (0, 0));
-        assert!(order.terms.is_empty());
-        drop(order);
+        assert!(index.complete.borrow().is_none());
+        {
+            let mut check = AffineCheckState::new();
+            let first = index.entry(a.terms(), &closed, &mut check).unwrap();
+            let repeated = index.entry(a.terms(), &closed, &mut check).unwrap();
+            assert!(std::ptr::eq(&*first, &*repeated), "lazy warm hits are borrowed");
+            assert_eq!(check.used(), 0);
+        }
         let absent = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
         for _ in 0..2 {
             assert!(
@@ -613,7 +771,7 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
 }
 
 #[test]
-fn affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners() {
+fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winners() {
     with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
         let mut affine = AffineFlowState::default();
         let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
@@ -653,6 +811,11 @@ fn affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners()
                 .affine_target_proof(&target, &[], context)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed.is_some(), upper == 0);
+            assert!(
+                lazy.complete.borrow().is_some(),
+                "success and exhaustion promote"
+            );
+            assert!(lazy.exact.borrow().is_empty());
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
                 closed: Rc::clone(&closed),
                 index: Rc::new(full_affine_query_index(candidates.clone(), &full)),
@@ -896,4 +1059,97 @@ fn finite_lower_component_uses_the_original_right_term_for_step_six() {
         assert_eq!(unknown.disposition, ProofDisposition::Unknown);
         assert!(unknown.derivation.is_none());
     });
+}
+
+// Before the repair, the first request panics while folding MAX + 1.
+// This tests the existing checked-folding policy, not a source verdict.
+#[test]
+fn offset_request_folding_uses_the_existing_checked_constant_domain() {
+    let mut terms = TermTable::new();
+    let one = terms.intern(TermKind::Constant(1));
+    let x = terms.intern(TermKind::Place(
+        ResolvedPlace::binding(BindingId(0)),
+        IntegerType::I64,
+    ));
+    let mut requests = [
+        BoundsRequest {
+            left: Some(x),
+            right: one,
+            bound: i128::MAX,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(one),
+            right: x,
+            bound: i128::MIN,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(x),
+            right: ZERO,
+            bound: i128::MIN,
+            distinct: true,
+        },
+    ];
+    normalize_distinct_requests(&mut requests, &terms);
+    assert!(request_relation(&requests[0]).is_none());
+    assert!(request_relation(&requests[1]).is_none());
+    assert_eq!(
+        request_relation(&requests[2]),
+        Some(Relation::Distinct {
+            left: ZERO,
+            right: x,
+            difference: i128::MAX,
+        })
+    );
+}
+
+// The replacement crosses term ordering without changing the mathematical
+// relation. Previously both transport helpers evaluated -MIN unchecked.
+#[test]
+fn offset_extremes_survive_delivery_and_call_term_replacement() {
+    let first = TermId(1);
+    let second = TermId(2);
+    let replacement = TermId(3);
+    for (offset, reversed) in [
+        (i128::MIN, i128::MAX),
+        (i128::MIN + 1, i128::MAX),
+        (i128::MAX - 1, i128::MIN + 2),
+        (i128::MAX, i128::MIN + 1),
+    ] {
+        for (left, right, expected) in [
+            (
+                first,
+                second,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: reversed,
+                },
+            ),
+            (
+                second,
+                first,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: offset,
+                },
+            ),
+        ] {
+            let relation = Relation::Distinct {
+                left,
+                right,
+                difference: offset,
+            };
+            assert_eq!(
+                sources::substitute_delivery_relation(&relation, first, replacement),
+                expected
+            );
+            assert_eq!(
+                postconditions::replace_relation_term(&relation, first, replacement),
+                expected
+            );
+        }
+    }
 }

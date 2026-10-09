@@ -11,20 +11,6 @@ rarely insert at the same place.
 
 ## Numeric conversions and value evidence
 
-- **Validate matching operation origins across named call arguments.** With
-  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
-  `reduced == 1_u8` keeps the direct comparison and the fully expanded
-  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
-  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
-  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
-  through a parameter or passing the matching literal avoids this boundary.
-  Assess whether consistent call-side origin normalization would recover
-  useful proofs without enumerating intermediate expansion combinations.
-  Require matching aliases, replaced inputs, joins and bounded proof cost;
-  any additional accepted route needs its own specification decision. Defer
-  from the modular conversion operation, which adds no proof family; reopen
-  when a real caller needs this named-value form.
-
 - **Select a total float-to-integer conversion policy.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
   identifies cumbersome total float-to-integer compositions; rounding into a
@@ -94,9 +80,17 @@ rarely insert at the same place.
   eager-join differential. Dense single-input snapshots, image formation and
   inventory scans remain deferred until their elapsed share warrants an
   experiment. Reopen with that profile, or when a real program meets the
-  series' growth. An exhausted final AUTO family can still demand
-  quadratically many vectors, each scanning the candidate list; no measured
-  input has shown it.
+  series' growth. Halo's check regressed 13% with the demanded index
+  ([Halo-wf bisect run 37880685345](https://github.com/Ming-Research/Halo-wf/actions/runs/37880685345)).
+  An exhausted final AUTO family could demand quadratically many vectors,
+  each scanning all candidates, with additional scans for absent residuals.
+  Promotion to the complete index on final-family entry or after N cold
+  demands for N candidates addresses that cubic construction; measured on
+  the 14900K it brings Halo's check to 0.835 of the demanded-index base and
+  keeps the wasm interpreter's gain (0.991)
+  ([promotion](../research/investigations/check-time/DESIGN.md#promotion-after-halos-regression)).
+  The per-function affine work counters distinguish cold scans, memo reuse,
+  promotions and exhausted families.
 
 - **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
   rewriting Halo's interpreter as plain `loop { match }` raised its source
@@ -113,10 +107,10 @@ rarely insert at the same place.
   repeated checks of unchanged functions. Validate each with a same-source
   base/twin/head timing of Halo's check on the 14900K through CI, unchanged
   conformance and corpus verdicts, and the full-rebuild differentials.
-  The lazy index cut the v2h interpreter's check to 0.215 of its base;
-  Halo's check has not been timed with it. Reopen when that change reaches
-  main and Halo's check is timed with it, or sooner if Halo's check passes
-  10 s.
+  With promotion Halo's `pkg::vm` check takes 8.6 s on the 14900K, below
+  the 9.1-9.2 s before the demanded index; its dominant remaining checking
+  cost is still unprofiled. Reopen with a profile of Halo's check, or when
+  it grows past 10 s again.
 
 - **RANGE-2's unplaced write forgets every location, the range walk only
   every exposed one.** "An `atomic_stmt` and every write the walk cannot
@@ -154,22 +148,19 @@ rarely insert at the same place.
   repeated checks of the interpreter, or another program meets the same
   growth.
 
-- **A disequality with a constant does not tighten a bound.** Under the
-  header `invariant bounded: cursor <= 4_u64`, the body
-  `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
-  is refused [INV-1], while the guard `if 4_u64 <= cursor { break; }` is
-  accepted (compiler at 026074111). The false edge holds
-  `cursor != 4`, but [ENT-4]'s atomic disequality is `t1 != t2` between two
-  terms and a constant operand folds through Z (`a <= 7` is `a - Z <= 7`),
-  so `cursor != 4` gives L0 no fact that closure rule (2), which tightens
-  `t1 - t2 <= 0` with `t1 != t2` to `t1 - t2 <= -1`, can use. Impact: a loop
-  that stops at a sentinel tested with `==`, the form a writer reaches for
-  first, loses its bound. Change, a language decision (Q148): an L0
-  disequality may carry a constant offset, `t1 - t2 != c`, and rule (2)
-  tightens `t1 - t2 <= c` to `t1 - t2 <= c - 1` and `t2 - t1 <= -c` to
-  `t2 - t1 <= -c - 1`. Validate with the witness accepted, the same body
-  refused when the guard tests 3 instead of 4, and joins keeping a common
-  offset disequality. Reopen when the owner rules on Q148.
+- **Common nonzero exclusions derived on every join input (Q160, deferred).**
+  Q160 selects ENT-5's finite candidate rule for ordinary and delivery joins.
+  Inputs proving `x <= 3` and `x >= 5` both derive `x - Z != 4`, but neither
+  establishes it, so their join does not retain that exclusion and a later
+  `x <= 4` cannot tighten to `x <= 3` from it. The alternative is an
+  interval-exclusion fact retaining every common derivable exclusion.
+  Its cost is a new fact representation and closure, support, transport,
+  join and derivation-record rules: gaps such as `x <= 3` / `x >= 100`
+  have arbitrarily many excluded offsets, so enumerating integers is not
+  suitable. No program has needed that fact yet. Reopen when a program
+  needs a nonzero exclusion that every input only derives. Validate a
+  future extension against the finite candidate boundary conformance cases,
+  large gaps, later strengthening, delivery, kills and retained derivations.
 
 - **A header relation about the current element of a whole-table counted
   loop is refused.** Over `for (i in 0_u64..n, invariant fits:
@@ -801,6 +792,41 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **Range facts cannot read a field below an element.** RANGE-1 admits
+  integer elements but refuses a field such as items[k].position, so a proof
+  about records needs a separate integer array. Snowghost's c4 probe is the
+  minimal witness in the [paged-storage investigation](../research/investigations/paged-storage/DESIGN.md#evidence-from-snowghosts-probes).
+  Specify field projections and their versioned support in the range
+  judgment; validate field-based inverses and scatter, sibling writes,
+  replacement of the containing element and stale facts. Reopen when a
+  downstream proof needs a record field rather than an integer side array.
+
+- **Structural uniqueness does not cross a callable boundary as a fact.**
+  A builder's locally known unique layout cannot yet publish that structural
+  property for a consumer's certified scatter. The precise required fact is
+  still to be isolated from Snowghost's probes
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+  Reduce it to a builder and consumer with a minimal uniqueness contract,
+  then compare expressing it through existing range postconditions with a
+  new exported relation. Validate a duplicate witness that fails and a
+  distinct witness that passes, including mutation between builder and
+  consumer. Reopen when the port needs to hand structural uniqueness on.
+
+- **Requalify Paged affine-element loops with in-body measure reads.**
+  Main now admits reads of an unchanged mapped root's measures in PAR-2,
+  including helper-row reads; the Paged integration retains page-formation
+  descriptor reads for page maps. The earlier Snowghost Paged port reported
+  that hoisting the measure read changed five minimal controls from denied
+  to permitted, while none of its 415 corresponding renderer loops became
+  newly permitted (Snowghost-wf `research/m2-paged`,
+  `research/investigations/storage-layout/probes/c2-paged-permission.wf`,
+  ledger `research/investigations/structure-edits/runs/paged-layout-ledger.md`).
+  Reopen after the merged compiler passes CI: rerun those controls and the
+  port's permission ledger to establish whether this former blocker is gone.
+  Keep a loop that appends, an element read outside the map and a mixed
+  page/element map denied; no new performance conclusion follows from the
+  rule change alone.
+
 - **A const generic argument refuses a type-suffixed literal.** The call
   fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
   the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
@@ -811,6 +837,38 @@ rarely insert at the same place.
   admit a suffixed literal whose suffix matches the const parameter's type.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
+
+- **Mathematical clause constants exceed the checker's i128 projection domain.**
+  ENT-2 and MSR-5 specify mathematical integers, not an i128 ceiling. Source
+  folding in `goal_affine_side` and `goal_projection`
+  (`compiler/src/semantic/entailment/flow/goals.rs`) uses checked i128
+  operations and returns no L0 projection on overflow; `comparison_relation`
+  (`flow/sources.rs`) does the same for strict-bound and reverse-bound
+  constants. Minimal arithmetic witness: with i64 constants
+  `low = -9223372036854775808_i64` and `high = 9223372036854775807_i64`,
+  let M denote the clause expression `low * high + low * high + low + low`.
+  M and every intermediate fit i128, with M = -2^127, but the admitted clause
+  fragment `x < M` loses its required `x - Z <= M - 1` projection at
+  `gap.checked_sub(1)?`; `x > M` also loses its representable reverse bound
+  `Z - x <= 2^127 - 1` at `gap.checked_neg()?` before subtracting one.
+  These are projection witnesses, not claims about an executed whole-program
+  verdict. `x <= M - 1_i64` additionally overflows source folding itself.
+  Closed-bound composition already saturates (`compose_transitive_bounds`
+  in `state.rs`); stored offset arithmetic follows that convention as a
+  consistency repair, including saturated reversal and strict-bound
+  arithmetic. It does not implement unbounded offsets: reversing MIN stores
+  MAX, and negating then decrementing MIN gives MAX - 1. Fragment term ranges
+  make those extreme disequalities tautologies, but do not justify silently
+  losing specified source projections. Interval extraction likewise checks
+  lower-endpoint negation and otherwise keeps the type endpoint
+  (`flow/sources.rs`, `flow/prover.rs`); affine arithmetic reports
+  `AffineCheckError::ArithmeticOverflow` (`affine.rs`). Impact: some specified
+  numeric evidence is unavailable; the full source-verdict impact remains
+  unverified. Deferred: the offset panic repair only makes offset arithmetic
+  consistent with bound arithmetic. Reopen for an owner-selected implementation of the
+  mathematical constant domain; compare exact arithmetic against folding,
+  both strict orientations, origin transport, closure and joins in CI.
+  Do not reinterpret implementation overflow as a source-language rejection.
 
 ## Containers and storage lowering
 
@@ -1212,6 +1270,124 @@ rarely insert at the same place.
   short-lived windows. Not checked on a later revision. Reopen with the
   next change to `Slots` lowering or when a profile shows the clearing
   again.
+
+- **Paged page adoption for splices is deferred (R7).** Private paged output
+  cannot yet transfer complete pages into retained storage, so a splice must
+  keep separate owners or move its elements. The [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
+  records Snowghost's P9 requirement. Specify an ownership transfer with
+  explicit length, capacity, partial-page and reference-invalidating effects
+  before adding an adoption operation. Validate empty, aligned and partial
+  splices, linear element consumption and absence of payload copies. Reopen
+  when Snowghost's retained-layout experiment needs P9.
+
+- **A Paged owner with few elements still takes a full first page.** The fixed
+  page size can leave most of its first allocation unused. Snowghost's html5
+  layout has about 117,000 entry-sequence owners, most holding one to five
+  entries, so a 4 KB first page per owner would cost hundreds of megabytes and
+  as many allocations; Snowghost currently plans one context-wide Paged pool
+  of entry nodes instead, which avoids the waste if its experiment confirms
+  it. Its per-owner like-for-like variant measured the cost on html5
+  (Snowghost-wf `research/m2-paged-nodes` at 0ac400e, census run
+  37645318944): 82,907 Paged stores (41,451 SequenceNode stores with B = 8
+  and 2,432-byte pages, 41,451 Flow stores with B = 128 and 1,024-byte
+  pages) hold 143,273,088 bytes of first pages against 63,300,960 in the
+  hand-written base, whose first page is 4 to 64 slots: 2.26 times before
+  descriptors, directories and allocator overhead, and the 38,664 smallest
+  owners alone account for 133,622,784 against 48,252,672 bytes. One candidate is `box_paged_new(capacity: c)` with `c` below the page
+  size allocating its first page at `c` elements and later pages at full size.
+  Compare a smaller first page with the
+  fixed-size representation, including the extra address branch and growth
+  transition, before selecting a change. Validate contents, stable earlier
+  payloads, page ranges and allocation sizes, and measure memory and access
+  cost on the same owner population. Reopen when the Paged port measures
+  material waste in small owners
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **An `apart` certificate cannot use range facts over a window reached
+  through a reference parameter.** The left-inverse scatter of
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  certifies with `&[u64]` parameters, but the same function written over
+  `&Slots<u64>` parameters (`requires forall inverse(k in 0_u64..order^.len)
+  when order^[k] < out^.len: pos^[order^[k]] == k`, body
+  `set out^[order^[k]] = k`) is refused with RANGE-5 `UndischargedApart` in
+  the gate run of the paged-storage branch, and so is the `&Paged<u64>` form;
+  the `&Run<u64>` form is the conformance case. The range walker seeds a
+  container for range and run parameters and a place view for reference
+  parameters, so a fact or measure over `order^` likely lands on a different
+  container identity or generation than the body's reads. Find the
+  mismatch, then accept the reference-parameter forms without changing the
+  range-parameter one. Reopen when a certified scatter must take its
+  storage by reference rather than as a range.
+
+- **Range facts over a window filled by place_back do not reach a call's
+  range requirement.** A caller that fills `Box<Slots<u64>>` (or
+  `Box<Paged<u64>>`) windows with `place_back`, proves
+  `invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q`
+  in a later counted loop, and then calls a function requiring
+  `forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k`
+  over `&order.inner[0_u64..5_u64]` and `&pos.inner[0_u64..5_u64]` is refused
+  with RANGE-3 `UndischargedRangeFact` at the call, for Slots and Paged alike
+  (gate run of the paged-storage branch); the same program over
+  `box_array_filled` arrays,
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`, is
+  accepted. Every existing range-fact case uses arrays, so window storage has
+  no positive witness. Find where the facts over the window die or fail to
+  map onto the range actual (container generation after a boundary
+  operation, or the range formation's length read), fix it, and restore the
+  calling `main` of `tests/conformance/cases/range5-pos-paged-certified-scatter.wf`.
+  Reopen when Snowghost's certified scatter runs over Paged payload pools.
+
+- **The window test module's introduction describes implemented support as
+  missing.** `compiler/src/semantic/tests/windows.rs` says OP-10's window
+  type parameter is not inferred from the operand and that runtime-capacity
+  `Slots<T>` and `Ring<T>` stop as unimplemented, but window operations are
+  called without type arguments and runtime-capacity windows check and run
+  throughout the conformance corpus. Rewrite the paragraph to state what the
+  module's assertions pin today; no test changes. Reopen with the next edit of
+  that module.
+
+- **A segment borrowed below a range element does not emit.** In
+  `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
+  `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
+  projection, `SegmentSlice`), but LLVM emission returns `InvalidIr`; the same
+  borrow through a `Box<Paged<u64>>` element emits. The lowering test
+  `page_borrows_below_range_elements_keep_the_outer_projection` in
+  `compiler/src/lowering/tests.rs` covers the Paged form only; the Segments
+  form failed in the gate run of the paged-storage branch. Find which
+  operand type `emit_segment_slice` or the surrounding measure emission
+  refuses and give that projection the address type the emitter expects;
+  validate with the Segments helper restored to that test. Reopen when a
+  program stores segmented runs in a range of cells.
+
+- **Growth kills facts about Paged elements it does not change.**
+  grow_paged writes the whole cell, so every fact about a filled element dies
+  although no element moves or changes. Snowghost's splice publication would
+  then re-establish its back-link range facts after each growth instead of
+  once. Give growth a row that invalidates references and address formation
+  but preserves element-content support, or a postcondition carrying element
+  facts across it. Validate that a fact over a filled element's field
+  survives growth while a reference formed before growth is still refused.
+  Reopen when a Snowghost proof must be re-established after growth.
+
+- **Paged references do not survive growth.** Stable element storage does
+  not keep the cell stable; grow_paged may replace the cell that holds the
+  directory and requires callers to form their references again. A
+  surviving-reference design needs an effect part read by every address
+  formation and written by cell replacement, including Run references.
+  Compare that refinement with a cell that never moves before changing REF-2. Validate every reference
+  kind, fact invalidation and overlapping growth/address formation. Reopen
+  when re-forming references blocks a concrete downstream operation
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **A page cannot be proved separate from an element outside it.** OWN-7
+  conservatively overlaps a Paged page step with every element or range at
+  that origin: there is no source fact relating their coordinates. Add only
+  a target-independent, finite relation that has a demonstrated caller,
+  rather than inferring page arithmetic from lowering. Validate calls and
+  parallel loops with inside, outside, empty and boundary ranges and retain
+  overlap for unknown coordinates. Reopen when a consumer needs mixed page
+  and element access in one call
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
 - **Audit nonempty release classification for shared handles and key sets.**
   `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
@@ -2258,6 +2434,27 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Qualify ignored-reference entry ordering under granted and refused
+  offers.** A pure `ignore(part: &Slots<u64>)` followed by
+  `grow(cell: &p, ...)`, with `ignore(part: &p.inner)` formed first, needs
+  the referenced block to remain live until the borrowing call enters.
+  The row of `ignore` has no content read, while a refused offer executes
+  at the final join. Ordinary reference parameters carry `dereferenceable`,
+  whose
+  [LLVM contract](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  applies at callee entry. The checker now retains released and borrowed
+  places on each call, and `IrBuilder::overlaps` separates overlapping
+  release/borrow pairs in both orders before argument formation; Paged uses
+  this same boundary. The lowering tests cover cell growth, forwarding
+  wrappers and by-value consumption. Native execution with granted and
+  refused offers and reference attributes with facts on and off remain
+  unverified for the combined Paged and relocating-owner cases. Qualify
+  those paths against sequential output while retaining the source
+  permission verdicts and ordinary reference attributes; inspect
+  `box_keeping_reference_parameters` and its emitter consumer when checking
+  the reference attributes.
+  Reopen at the next parallel-lowering correctness qualification.
+
 - **Measure heap counting under an allocation-heavy program.** The cost of
   counting each allocation (memory statistics) was measured only for firn's
   `set` and `mset`, whose hot path makes no counted allocation of emitted
@@ -2269,25 +2466,25 @@ rarely insert at the same place.
   workload, interleaved with twins on the i9-14900K; reopen when firn's
   script path is next measured or when a program reports the counting.
 
-- **Paged indexed storage is absent in this checkout (Q2).** The active
-  specification and checked type model define Array, Slots and Ring, with no
-  Paged type or storage path. Impact: the selected indexed reduction rule can
-  cover Array and Slots here, but cannot yet name or lower Paged cells.
-  Change: apply the same cell rule to Paged once its owning definition and
-  checked storage representation arrive. Reopen when PR #263 lands on main;
+- **Paged indexed accumulators remain deferred (Q2).** Paged storage, page
+  references and run references are defined, but PAR-2's indexed-accumulator
+  roots remain Array and Slots. Paged element, page and
+  run maps retain their independent-map and certified-element families.
+  Change: extend the indexed cell rule and private-copy lowering to Paged
+  after [PR #263 (built-in paged storage)](https://github.com/mbbill/Whitefoot/pull/263)
+  lands on main;
   validate cross-page cell updates, unchanged length and private-copy
   recombination against sequential execution in CI.
 
-- **Constant idempotent indexed marks remain deferred.** A repeated
-  `set flags[e] = True();` cannot use the indexed accumulator family, so
-  coverage-mark loops with colliding indices remain sequential. Proposed
-  change: select a rule admitting constant idempotent stores, potentially by
-  normalizing this form to Boolean OR with a proved-true contribution;
-  neither that normalization nor other constant stores are admitted now.
-  Validate a positive colliding mark, false and nonconstant stores, mixed
-  operations and reads of partial marks, plus sequential/parallel equality.
-  Reopen when a real coverage-mark loop needs permission after the explicit
-  indexed operations have been implemented and qualified.
+- **Qualify the indexed mark and record-field extension.** The authorized
+  family-kind and cell-projection interface now has an implementation and
+  maintained fixtures, but the owner prohibited execution in this worktree.
+  [The implementation record](../research/investigations/indexed-reductions/DESIGN.md#interface-boundary-constant-marks-and-record-fields)
+  identifies the tests and remaining evidence. Reopen in the integrating CI
+  run: establish ordinary source acceptance, intended permission denials,
+  generated IR validity, dense masks and field slabs, nested/zero-budget
+  execution, and allocation failure cleanup before the downstream recount.
+  No performance or recovered-site-count claim follows from source inspection.
 
 ## Platforms and host interfaces
 

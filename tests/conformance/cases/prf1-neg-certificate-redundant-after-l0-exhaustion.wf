@@ -2,6 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn scaled_after_loop(limit: u64) -> total: u64 pure {
+  doc "The counted header's sum <= i conclusion exports sum <= limit at exact exhaustion. ENT-3.S16 establishes the freshly named local conclusion as an L0 difference bound, so AUTO subtracts two copies and DIRECT proves the third; PRF-1 rejects the post-loop certificate as redundant.";
   let sum = 0_u64;
   for (
     i in 0_u64..limit,

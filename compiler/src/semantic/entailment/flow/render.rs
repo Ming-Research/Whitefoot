@@ -317,6 +317,13 @@ impl Input<'_, '_> {
                         }
                     }
                 }
+                PlaceStep::Page(offset) => {
+                    rendered.push_str(".pages");
+                    rendered.push('[');
+                    rendered.push_str(&self.render_offset(*offset));
+                    rendered.push(']');
+                    ty = None;
+                }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!(
                         "[{}]",
@@ -625,6 +632,13 @@ impl Input<'_, '_> {
                         rendered.push_str(&format!(".{variant}.{field}"));
                         ty = None;
                     }
+                }
+                GoalProjection::Page(offset) => {
+                    rendered.push_str(".pages");
+                    rendered.push('[');
+                    rendered.push_str(&self.render_offset(*offset));
+                    rendered.push(']');
+                    ty = None;
                 }
                 GoalProjection::Subscript(offset) => {
                     rendered.push_str(&format!("[{}]", self.render_offset(*offset)));

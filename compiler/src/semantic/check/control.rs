@@ -584,7 +584,7 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             };
-            let result_range_element = if mode == CheckedMode::Range {
+            let result_range_element = if mode.is_range() {
                 Some(self.types.intern_element(expected)?)
             } else {
                 None

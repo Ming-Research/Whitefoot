@@ -213,11 +213,14 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_failed_loop_invariant_names_its_obligation_and_required_relation() {
+    // [ENT-3.S16] now preserves the one-step bound through L0 and the
+    // join. Advancing by two deliberately violates the next-header bound,
+    // keeping this a diagnostic test of a genuinely unproved backedge.
     let source =
         br#"fn drop_spaces(out: &[u8], src: &[u8]) -> kept: u64 reads(src), writes(out) contract {
   requires out^.len >= src^.len;
 } {
-  doc "Copies every byte of src that is not a space to the front of out.";
+  doc "Deliberately advances kept twice for one input byte, violating the header bound.";
   let kept = 0_u64;
   let count = src^.len;
   for (
@@ -228,7 +231,7 @@ fn a_failed_loop_invariant_names_its_obligation_and_required_relation() {
     if byte == 32_u8 {
     } else {
       set out^[kept] = byte;
-      set kept = kept +wrap 1_u64;
+      set kept = kept +wrap 2_u64;
     }
   }
   return kept;

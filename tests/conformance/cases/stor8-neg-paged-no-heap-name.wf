@@ -1,0 +1,9 @@
+program no_heap;
+
+fn count(p: &Paged<u64>) -> result: u64 reads(p.len) {
+  return p^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
