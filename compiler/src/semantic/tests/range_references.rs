@@ -1207,6 +1207,15 @@ fn direct_page_length_fact_dies_after_place_back() {
     );
 }
 
+/// [REF-4, MSR-2] a guard on the borrow's captured length survives append
+/// and discharges the later requirement on that same captured length.
+#[test]
+fn borrowed_page_length_survives_append() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/ent2-pos-borrowed-page-length-after-append.wf"
+    ));
+}
+
 /// [ENT-3.S6, MSR-2] append kills the formation equality's direct term while
 /// the captured-length fact survives; the later direct read remains unproved.
 #[test]
