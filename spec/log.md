@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.106: offset disequalities, invariant L0 facts and origin transport
+## 2026-10-09 v0.107: offset disequalities, invariant L0 facts and origin transport
 
 Rules: added ENT-3.S16, ENT-4.OT; changed ENT-2, ENT-3, ENT-4, ENT-5, ENT-6, MSR-4, FN-8, INV-1, CALL-6
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve checker completion (#286)'s specification changes and the design decisions of the automatic-facts and origin-transport nodes" with "agreed" (translated). The choices it records were the owner's earlier: offset disequalities and invariant difference bounds in L0 on the status board item for Q148; accepting that three explicit certificates become PRF-1 redundancy rejects ("choose A", status board, 2026-10-08, translated); and query-local origin equivalence in the session of 2026-10-08 ("Q1, Q2, Q3 agreed", translated).
 
 Summary: An L0 disequality carries an offset, `t1 - t2 != c`, normalized with constants through Z, so `cursor <= 4` and `cursor != 4` derive `cursor <= 3`; ENT-4's closure, derivability and negation and ENT-5's joins follow the offset, the joins keeping only finite candidates. ENT-3.S16 lets a proved header or local invariant whose normalized conclusion is exactly a difference bound also establish that ordinary L0 fact, with ordinary support, kills and joins. ENT-4.OT forms a query-local view in which a `let` binding and its defining right-hand side are one proposition while the binding holds it under ENT-3, built on the holds definition approved for v0.104, transporting signed proofs in both directions and publishing no flow fact; ENT-6, MSR-4, FN-8, INV-1 and CALL-6 read that view, cite S16 or use ENT-4's contradiction judgment. Selection ground: an interpreter loop with an equality sentinel test, and computed Boolean or parity bindings, otherwise needed source workarounds the checker could prove unnecessary.
+
+## 2026-10-09 v0.106: a break-free loop has no normal successor
+
+Rules: changed FN-1, GIVE-1, ENT-5
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: FN-1 gives an ordinary `loop_stmt` an edge to its normal successor exactly when some `break_stmt` resolves to it, a labeled break and a break in a value initializer's arm or branch included, instead of giving every ordinary loop that edge; a call with a normal result edge, not a loop, is what fails the return requirement, and counted loops keep both header edges. GIVE-1 counts an arm or branch ending in a `loop_stmt` without that edge as delivering by divergence and still rejects an empty delivery set. ENT-5 defers the loop continuation's reachability to FN-1 and classifies continuing kills by the path condition alone, removing the sentence that classified kills inside nested loops by their location. Selection ground: an interpreter written as `loop { match }` whose arms only continue or return otherwise had to end with an unreachable `return`, a source path with no execution.
 
 ## 2026-10-08 v0.105: memory statistics
 

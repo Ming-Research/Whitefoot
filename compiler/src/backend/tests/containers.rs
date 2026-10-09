@@ -5,7 +5,10 @@
 use super::{compile_link_and_run, emit};
 
 fn observe_allocations(module: &str) -> String {
-    for declaration in ["declare ptr @wf__heap_take(i64)", "declare void @wf__heap_give(ptr, i64)"] {
+    for declaration in [
+        "declare ptr @wf__heap_take(i64)",
+        "declare void @wf__heap_give(ptr, i64)",
+    ] {
         assert_eq!(
             module.lines().filter(|line| *line == declaration).count(),
             1
@@ -184,7 +187,12 @@ fn retained_priority_helpers_do_not_copy_the_inline_run() {
             let end = start + optimized[start..].find("\n}").unwrap() + 2;
             let body = &optimized[start..end];
             assert_eq!(aggregate_transfer_cost(body), (0, 0), "{name}: {body}");
-            for allocator in ["@wf__heap_take(", "@calloc(", "@realloc("] {
+            for allocator in [
+                "@wf__heap_take(",
+                "@wf__heap_retake(",
+                "@calloc(",
+                "@realloc(",
+            ] {
                 assert!(!body.contains(allocator), "{name}: {body}");
             }
             assert!(

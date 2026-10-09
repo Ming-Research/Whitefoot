@@ -104,7 +104,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
@@ -517,10 +517,6 @@ struct ProofClosure {
     term_revision: usize,
     goal_revision: usize,
     state: Rc<ClosedState>,
-    /// The ordered L0-to-affine index of this same entering value map. The
-    /// premise loop borrows that map immutably for the view's entire life.
-    /// Registering a term or changing goal metadata invalidates both views.
-    affine_index: std::cell::RefCell<Option<Rc<AffineL0Index>>>,
 }
 
 impl ProofClosure {
@@ -534,18 +530,11 @@ impl ProofClosure {
             term_revision: terms.revision(),
             goal_revision: goals.revision(),
             state: close(facts, terms, goals, ledger),
-            affine_index: std::cell::RefCell::new(None),
         }
     }
 
     fn matches(&self, terms: &TermTable, goals: &GoalTable) -> bool {
         self.term_revision == terms.revision() && self.goal_revision == goals.revision()
-    }
-
-    fn affine_index(&self, terms: &TermTable, goals: &GoalTable) -> Option<Rc<AffineL0Index>> {
-        self.matches(terms, goals)
-            .then(|| self.affine_index.borrow().as_ref().map(Rc::clone))
-            .flatten()
     }
 }
 
@@ -738,11 +727,13 @@ struct AffineConsequenceProof {
     parents: Vec<DerivationId>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AffineL0Candidate {
     term: TermId,
     value: AffineForm,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AffineL0Entry {
     inequality: AffineInequality,
     left: TermId,
@@ -750,16 +741,39 @@ struct AffineL0Entry {
     bound: i128,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
 }
 
-impl AffineL0Index {
-    fn entry(&self, terms: &[AffineCoefficient]) -> Option<&AffineL0Entry> {
-        self.by_terms.get(terms).map(|index| &self.entries[*index])
-    }
+/// One function-local query memo, including the full ordered value images.
+/// Keeping the closed Rc alive makes its allocation identity unambiguous;
+/// FactState::close changes that identity after facts or inventories change.
+/// The index stores no derivation IDs: selected parents still come from this
+/// view and the vocabulary's one ledger at the point of the query.
+struct AffineL0Cache {
+    closed: Rc<ClosedState>,
+    index: Rc<LazyAffineL0Index>,
+}
+
+/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
+/// the ordered final AUTO family fill independent memos: querying a vector
+/// early must not move its first occurrence in the final family's order.
+struct LazyAffineL0Index {
+    candidates: Vec<AffineL0Candidate>,
+    by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
+    exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
+    ordered: RefCell<AffineL0Order>,
+}
+
+#[derive(Default)]
+struct AffineL0Order {
+    left: usize,
+    right: usize,
+    terms: Vec<Box<[AffineCoefficient]>>,
+    seen: WordHashSet<Box<[AffineCoefficient]>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
@@ -775,7 +789,7 @@ struct AffineAtomInterval {
 /// program points. Only requested atom endpoints are memoized; every residual
 /// still executes the same checked arithmetic and ordered proof rules.
 struct AffineDirectQuery<'a> {
-    l0: &'a AffineL0Index,
+    l0: &'a LazyAffineL0Index,
     values: &'a AffineFlowState,
     closed: &'a ClosedState,
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
@@ -783,7 +797,11 @@ struct AffineDirectQuery<'a> {
 }
 
 impl<'a> AffineDirectQuery<'a> {
-    fn new(l0: &'a AffineL0Index, values: &'a AffineFlowState, closed: &'a ClosedState) -> Self {
+    fn new(
+        l0: &'a LazyAffineL0Index,
+        values: &'a AffineFlowState,
+        closed: &'a ClosedState,
+    ) -> Self {
         Self {
             l0,
             values,
@@ -1323,6 +1341,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 terms: TermTable::new(),
                 goals: GoalTable::default(),
                 derivations: DerivationLedger::default(),
+                affine_l0_cache: None,
                 affine_atoms: Vec::new(),
                 measure_terms_seen: Vec::new(),
                 measure_terms_scanned: 0,
@@ -1716,6 +1735,9 @@ struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,
     derivations: DerivationLedger,
+    /// Only the most recent view is held, rather than one quadratic index
+    /// per program point. Ordinary queries and certificates share this memo.
+    affine_l0_cache: Option<AffineL0Cache>,
     /// Function-local mathematical atoms allocated in structural execution
     /// order. They are ordinary checker state and are discarded with the
     /// analysis.
@@ -1872,8 +1894,6 @@ mod proof_closure_tests {
         let goals = GoalTable::default();
         let mut ledger = DerivationLedger::default();
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        let index = Rc::new(AffineL0Index::default());
-        closed.affine_index.replace(Some(Rc::clone(&index)));
         let context = ProofContext {
             facts: &facts,
             affine: &affine,
@@ -1884,10 +1904,6 @@ mod proof_closure_tests {
             let view = context.close(&terms, &goals, &mut ledger);
             assert!(Rc::ptr_eq(&view, &closed.state));
             assert!(view.derives_bound(ZERO, ZERO, 0));
-            assert!(Rc::ptr_eq(
-                &closed.affine_index(&terms, &goals).unwrap(),
-                &index
-            ));
         }
     }
 
@@ -1899,7 +1915,6 @@ mod proof_closure_tests {
         let goals = GoalTable::default();
         let mut ledger = DerivationLedger::default();
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let term = terms.intern(TermKind::Measure(
             CheckedMeasure::Length,
             ResolvedPlace::spelled(PlaceRoot::Binding(BindingId(0)), false, Vec::new()),
@@ -1910,18 +1925,15 @@ mod proof_closure_tests {
             closed: Some(&closed),
             origin_view: OriginView::Pending,
         };
-        assert!(closed.affine_index(&terms, &goals).is_none());
         assert!(!Rc::ptr_eq(
             &context.close(&terms, &goals, &mut ledger),
             &closed.state
         ));
 
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let count = terms.ids().count();
         terms.set_measure_bound(term, MeasureBound::Constant(7));
         assert_eq!(count, terms.ids().count());
-        assert!(closed.affine_index(&terms, &goals).is_none());
         let context = ProofContext {
             facts: &facts,
             affine: &affine,
@@ -1944,7 +1956,6 @@ mod proof_closure_tests {
         let expression = GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(true)));
         let goal = goals.intern(expression.clone(), None, None, Vec::new());
         let closed = ProofClosure::new(&facts, &terms, &goals, &mut ledger);
-        closed.affine_index.replace(Some(Rc::default()));
         let count = goals.ids().count();
         let same = goals.intern(
             expression,
@@ -1958,7 +1969,6 @@ mod proof_closure_tests {
         );
         assert_eq!(goal, same);
         assert_eq!(count, goals.ids().count());
-        assert!(closed.affine_index(&terms, &goals).is_none());
         let context = ProofContext {
             facts: &facts,
             affine: &affine,

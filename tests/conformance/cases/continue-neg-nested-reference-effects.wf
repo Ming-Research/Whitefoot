@@ -7,7 +7,5 @@ fn probe(first: &u64, second: &u64, flag: Bool) -> result: unit reads(first) {
       set selected = &second^;
       continue @outer;
     }
-    return unit;
   }
-  return unit;
 }

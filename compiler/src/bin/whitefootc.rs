@@ -14,10 +14,9 @@ use whitefoot::{
     FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
     OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry,
-    check, check_module_program, check_with_cache, clang_executable,
-    compile_module_program_with_permission_ledger, compile_with_cache, compile_with_overlap,
-    compile_with_permission_ledger, content_digest, discover_module_sources, entry_verdict,
+    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER,
+    build_module_entry_for_emission, check, check_module_program, check_with_cache, clang_executable,
+    compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
     running_compiler_identity, split_module, stack_ledger,
 };
@@ -340,9 +339,14 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
         // actualization lines — what the lowering did with each permission it
         // was handed — exist only where actualization was asked for, so `--par`
         // adds lines to this ledger rather than changing any of them.
-        let (module, ledger) =
-            compile_with_permission_ledger(&inputs, CompilerLimits::default(), overlap)
-                .map_err(Stop::Compilation)?;
+        let (module, ledger) = compile_for_emission(
+            &inputs,
+            CompilerLimits::default(),
+            overlap,
+            None,
+            options.fragments.is_some(),
+        )
+        .map_err(Stop::Compilation)?;
         for line in &ledger {
             println!("{line}");
         }
@@ -357,10 +361,13 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
             .map_err(Stop::Compilation)?;
             return Ok(());
         }
-        let module = match &cache {
-            Some(cache) => compile_with_cache(&inputs, CompilerLimits::default(), overlap, cache),
-            None => compile_with_overlap(&inputs, CompilerLimits::default(), overlap),
-        }
+        let (module, _) = compile_for_emission(
+            &inputs,
+            CompilerLimits::default(),
+            overlap,
+            cache.as_ref(),
+            options.fragments.is_some(),
+        )
         .map_err(Stop::Compilation)?;
         report.front_end = front_end.elapsed();
         module
@@ -502,12 +509,14 @@ fn run_module_program(
     if options.par_ledger {
         // As for a source bundle, the ledger goes to stdout and the build
         // reads no cache, so every line describes this compilation.
-        let (module, ledger) = compile_module_program_with_permission_ledger(
+        let (module, ledger, _) = build_module_entry_for_emission(
             &graph,
             &inputs,
             entry,
             limits,
             options.overlap(),
+            None,
+            options.fragments.is_some(),
         )
         .map_err(Stop::Compilation)?;
         for line in &ledger {
@@ -516,9 +525,16 @@ fn run_module_program(
         return Ok(Some(module));
     }
     let front_end = std::time::Instant::now();
-    let (module, reused) =
-        build_module_entry(&graph, &inputs, entry, limits, options.overlap(), cache)
-            .map_err(Stop::Compilation)?;
+    let (module, _, reused) = build_module_entry_for_emission(
+        &graph,
+        &inputs,
+        entry,
+        limits,
+        options.overlap(),
+        cache,
+        options.fragments.is_some(),
+    )
+    .map_err(Stop::Compilation)?;
     report.front_end = front_end.elapsed();
     report.module_reused = Some(reused);
     Ok(Some(module))
@@ -883,7 +899,10 @@ fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     compiled.extend(["ordinary_values.c", "ordinary_values.ll"]);
     // The allocator unit is a dependency of emitted storage alone. The
     // reading and all counter storage stay in the unconditional library.
-    if llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(") {
+    if llvm.contains("@wf__heap_take(")
+        || llvm.contains("@wf__heap_give(")
+        || llvm.contains("@wf__heap_retake(")
+    {
         compiled.push("heap.c");
     }
     {
@@ -1844,6 +1863,7 @@ mod tests {
         assert!(staged.iter().any(|unit| unit.relative_path == "heap.c"));
         for dependency in [
             "declare ptr @wf__heap_take(i64)",
+            "declare ptr @wf__heap_retake(ptr, i64, i64)",
             "declare void @wf__heap_give(ptr, i64)",
         ] {
             let (_, with_heap) = runtime_units(dependency);
@@ -1882,7 +1902,14 @@ mod tests {
         assert!(module.contains("call ptr @wf__shared_new("));
         assert!(module.contains("call i32 @wf__shared_release("));
         assert!(module.contains("call void @wf__shared_free("));
-        for symbol in ["@wf__heap_take", "@wf__heap_give", "@malloc", "@free"] {
+        for symbol in [
+            "@wf__heap_take",
+            "@wf__heap_retake",
+            "@wf__heap_give",
+            "@malloc",
+            "@realloc",
+            "@free",
+        ] {
             assert!(
                 !module.contains(symbol),
                 "unexpected allocator reference: {symbol}"

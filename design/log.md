@@ -13,6 +13,36 @@ Owner-approved: On the shared status board of 2026-10-09, written in Chinese, th
 
 Summary: L0 stores offset disequalities and tightens a bound at the excluded constant in either orientation, with the same support, snapshot and join judgments as zero-offset ones; joins keep ENT-5's finite disequality candidates rather than every common derivable exclusion, deferred until a program needs it. A proved invariant's exact difference bounds become ordinary L0 facts, so an equality-sentinel loop proves its increment; three-term and scaled conclusions stay affine premises. A goal's disposition identifies value trees whose currently valid origin expansions agree, in a finite query view built from the live definition links with ordinary kills and join intersection, publishing no flow fact. Keeping constant disequalities out of L0, a branch-entry special case, expanding only the submitted goal and retaining killed equivalences were refused.
 
+## 2026-10-09 A break-free loop has no normal successor
+
+Nodes: language/loop-completion, compiler/checker-facts
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve loop-diverge's specification changes (the 7 above) and two design decisions" with "agreed" (translated), after choosing on the status board of 2026-10-08 that a `loop` with no `break` has no normal exit edge ("choose A", translated) and asking that the change follow the specification process with its approval recorded here.
+
+Summary: An ordinary loop keeps a normal successor exactly when a break resolves to it, and a final loop without one delivers a value initializer by divergence, because a return-only or endless loop cannot fall through and a required trailing `return` invents a path with no execution; giving every ordinary loop a conservative fallthrough edge was refused. The checker records each loop's continuation once on the checked loop, and proof reachability, the invariant induction inventory and lowering read it rather than rediscovering exits from labels.
+
+## 2026-10-09 Proof queries demand the affine index
+
+Nodes: compiler/proof-query-context
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the design decision 'proof queries build the index on demand' (see the latest log)" with "agreed" (translated), after selecting direction A2 of the wide-match checking investigation (Q155).
+
+Summary: Ordinary affine queries and certificates keep one function-local memo of unchanged states; on a miss they pair only candidates whose coefficient vector a DIRECT or residual query needs and enumerate the final AUTO family lazily in its first-occurrence order, so endpoints, bounds and parents equal the full rebuild's, which the tests keep as their oracle. Reuse alone recovered about 10% of the natural wasm interpreter's check on the M5; demanding the index cuts that check to 0.215 of its base on the 14900K, while the constant-assignment series, whose cost is the join, is unchanged ([check-time](../research/investigations/check-time/DESIGN.md#14900k-timing-results)). Eager all-pair rebuilding, target-overlap pruning and cross-event winner repair were refused.
+## 2026-10-09 Handler words for whole-program dispatch families
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve the handler word's design decision (see the latest log)" with "agreed" (translated), after the completion report that stated the decision, including the exclusion of nominals whose values the runtime creates or zero-fills; the direction itself was the owner's choice of an address in each value (Q135 A).
+
+Summary: A whole-program split dispatch family stores one compiler-private word per family in every value of its matched enum, holding the variant's arm address, when the complete family set fits the layout ceiling and every value of the nominal is built by emitted code; constructors and checked primitives write it, copies carry it, replacement rewrites it, and the dispatch loads the next handler from the next element. Nominals reachable through native signatures or whose values the runtime creates or zero-fills (concurrent-map slots and absent entries, I/O, completion and scheduler transfers), families that do not fit, and fragment builds keep tag-and-table dispatch. On the 14900K the natural `loop { match }` form of the wasm interpreter runs CoreMark 1.099 times as fast as without the word, and Halo's `fib` and `loop` stay within 2% ([match-dispatch](../research/investigations/match-dispatch/DESIGN.md#outcome-of-the-handler-word-on-the-natural-form)). A tag-indexed table on those edges and source-visible handler addresses were refused.
+
+## 2026-10-08 grow reallocates its cell
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the status board on 2026-10-08, written in Chinese, approving the item that presented the change: "Agree: approve the storage-representation change in the design tree: `grow` becomes one realloc, replacing the provisional decision of allocating a new block, copying and freeing (the old route recorded as rejected, with Halo's measurement)" (translated); in the paged session, after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: `grow` of a `Box<Slots<T>>` cell reallocates the cell at the new size instead of allocating a new block, moving the filled slots and freeing the old one, so the allocator can extend in place or remap large blocks. The provisional decision had waited for performance grounds: Halo-wf's in-place table growth measured 1.000 of its copying source with the copying `grow` and 0.860 with `realloc` on the i9-14900K (integer-table 14.0% faster, sort 2.5%, other kernels within noise; [Halo-wf `research/experiments/halo-bench/RESULTS.md`, "Growing the array in place with a reallocating grow"](https://github.com/Ming-Research/Halo-wf/blob/6fc3b83ebdd0/research/experiments/halo-bench/RESULTS.md#growing-the-array-in-place-with-a-reallocating-grow), run 37773076340). The block keeps the alignment `malloc` gave it, STOR-7 already permits the address change, and a failed `realloc` terminates as STOR-8 states.
 ## 2026-10-08 Overlap groups order a release before borrows of the storage it frees
 
 Nodes: compiler/parallel-lowering

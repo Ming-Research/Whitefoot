@@ -1,4 +1,4 @@
-# Kernel Specification v0.106
+# Kernel Specification v0.107
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -354,12 +354,11 @@ A value initializer bound by its own inner `let` delivers only to that inner bin
 `give` is legal only inside a value initializer's arm or branch — a checker-scoped restriction exactly as `break`'s enclosing-loop rule [TYPE-6]: the grammar admits `give_stmt` and the checker restricts it, which is META-2-clean by the `break` precedent.
 The binding's mode and type are derived from the delivery set [TYPE-5]: every delivering `give` of one value initializer must have one identical exact mode and type, and that is the binding's derived mode and type; a delivering `give` whose exact mode or type differs from an earlier delivering `give` of the same initializer is a hard error citing GIVE-1 at the later `give_stmt` node — derivation is agreement over the closed delivery set, never a join, widening, or common-supertype rule.
 When every delivering `give` of one initializer delivers a reference, that agreement is agreement of reference kind — `&T` with the same `&T`, `&[T]` with the same `&[T]` — and the binder's path set is [REF-1]'s union over the delivery set.
-A value initializer whose delivery set is empty — every arm or branch leaves by `return`, `break` or `continue` to an enclosing loop — is a hard error citing GIVE-1 at the `let_stmt` node, with a repair [DIAG-1].
+A value initializer whose delivery set is empty is a hard error citing GIVE-1 at the `let_stmt` node, with a repair [DIAG-1].
 On every control path an arm or branch terminates in exactly one `give e;` or cannot reach the initializer's continuation; a give-free continuing path, a statement following a `give` in the same block, and a second `give` on one path are each a hard error citing GIVE-1 — the value analog of match exhaustiveness [ERR-2].
-Give-completeness is a structural last-statement recursion: an arm or branch delivers when its final statement is a `give_stmt`, a `return_stmt`, a `break_stmt` or `continue_stmt` whose resolved target loop lexically encloses the same value initializer, a `match_stmt` every arm of which delivers, an `if_stmt` with `else` both branches of which deliver, or an `atomic_stmt` whose block delivers, relative to that same value initializer; an else-free `if_stmt` has a continuing false edge and never delivers.
+Give-completeness is a structural last-statement recursion: an arm or branch delivers when its final statement is a `give_stmt`, a `return_stmt`, a `break_stmt` or `continue_stmt` whose resolved target loop lexically encloses the same value initializer, a `loop_stmt` with no edge to its normal successor under [FN-1] (delivery by divergence), a `match_stmt` every arm of which delivers, an `if_stmt` with `else` both branches of which deliver, or an `atomic_stmt` whose block delivers, relative to that same value initializer; an else-free `if_stmt` has a continuing false edge and never delivers.
 A final nested value initializer bound by its own `let` delivers only to its own inner let and therefore does not make the outer arm or branch deliver.
 A call with a normal result edge does not itself count as delivery or must-divergence.
-No `loop_stmt` or `for_stmt` is assumed to diverge.
 This recursion is strictly simpler than the ownership checker.
 `give e;` moves or copies `e` per [OWN-1].
 When an initializer's derived delivery mode is `own` and its type is one [ENT-2] fragment integer, a `give` whose operand is a direct non-consuming bare atom, a typed integer literal, or an integer-typed named const additionally participates in [ENT-5]'s bounded relation delivery as its carrier.
@@ -1284,11 +1283,11 @@ A `break_stmt` reaches `normal_successor` of its resolved target loop, ordinary 
 A `continue_stmt` has only the next-iteration edge of its resolved target: the body entry for an ordinary loop, or the compiler-owned update for a counted loop, carrying the current values of that loop's carried bindings after [STOR-3] cleanup; no intervening inner counted loop is updated.
 Every atomic block that this edge leaves completes its ordinary exit, including [TYPE-11] obligations and [SHARE-2] release.
 A `loop_stmt` reaches its body entry, or its body's normal exit when the body contains no statement; the loop-body normal exit reaches the body entry again, or itself when the body contains no statement.
-For this conservative judgment every `loop_stmt` also has an edge to `normal_successor(loop_stmt)`; no ordinary loop is assumed to diverge [GIVE-1].
+A `loop_stmt` also has an edge to `normal_successor(loop_stmt)` exactly when some `break_stmt` resolves to that loop, including a labeled break or a break inside a value initializer's arm or branch.
 A `for_stmt` reaches its compiler-owned preheader, the preheader reaches its header after both endpoint evaluations and binder initialization, and the header has both a true edge to its body entry (or the body's normal exit when empty) and a false edge to `normal_successor(for_stmt)`.
 Its body normal exit reaches the compiler-owned update, and that update reaches the header.
 A `break` resolved to the counted loop reaches `normal_successor(for_stmt)` without the update.
-Every counted header retains both structural edges even when its captured endpoints are constant, so no counted loop is assumed to execute or to diverge [GIVE-1].
+Every counted header retains both structural edges even when its captured endpoints are constant, so no counted loop is assumed to execute or to diverge.
 The function-body normal exit has no successor.
 These edges are structural and are not removed by constant evaluation, a proof, or backend reachability.
 
@@ -1297,7 +1296,7 @@ When more than one statement establishes that premise, the reported one follows 
 The function body's normal exit must be unreachable.
 If it is reachable, the function falls through and is rejected citing FN-1 at the `fn_decl` node, with `SourceCoordinate` equal to the complete source interval of the body-closing `}` token.
 This requirement applies to `own unit` as well as every other result: successful completion is written `return unit;`; there is no implicit return.
-A call with no termination proof or a loop does not satisfy the return requirement.
+A call with a normal result edge does not satisfy the return requirement.
 This complete structural graph, its statement reachability, and every source call and invariant-declaration identity are retained for source audit even when [FN-8] later proves one concrete instance uninhabited.
 That proof changes only its checked body disposition and lowering authority; it never erases a source node or narrows the written effect row.
 
@@ -3561,7 +3560,7 @@ The join of closed states is closed.
 A nonempty join whose every input is contradictory, and an empty join with no reaching edge, are each the contradictory all-derivable state.
 At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 The continuation of a `loop_stmt` uses the same join over its `break` edges.
-A `loop_stmt` with no `break` resolved to it has an empty join and therefore the contradictory state, consistent with that continuation being unreachable in truth while the conservative graph keeps it reachable.
+Reachability of that continuation is governed by [FN-1].
 A `propagate` right-hand side's `Err` edge leaves the function; its normal continuation keeps the preceding state subject to the initializer call's own kill events (b) and (c), and its binder selects the evaluated outcome's conditional success evidence as specified above.
 For every join above, contributing arm, branch, `give`, and `break` edges use their source `NodePath` order.
 
@@ -3575,7 +3574,6 @@ An [INV-1] exact-exhaustion conclusion reaches the continuation only when the id
 For an ordinary loop L, the conservative head state is the state before L minus every fact having a support member that a continuing kill event of L may kill.
 A kill event (a)–(d) placed inside L's body, at any nesting depth, is continuing for L exactly when some path of the conservative structural normal-control graph [FN-1] leads from the edge carrying that event to L's body entry without leaving L's body — that is, exactly when an execution taking that edge can reach a later iteration head of the same loop.
 Every other kill event inside the body is not continuing and is not scanned: an event on or reachable only through a `continue` to a loop enclosing L, a `break` edge resolved to L or any enclosing loop, a `return` edge, or a `propagate` error edge leaves L for the resolved target or the function-return sink [FN-1, ERR-3], and no iteration head of L is reached from it without first re-entering L from outside, where the enclosing flow supplies the state.
-A kill inside a nested ordinary or counted loop whose continuation lies inside L's body is continuing for L, including the kills carried on that nested loop's own `break` edges, because L's body entry is reached from that nested loop's continuation without leaving L.
 Without a parenthesized invariant header, exactly those surviving facts hold at every iteration head; establishment and kills then proceed ordinarily within the iteration, and no fact established inside an iteration survives to the next iteration's head.
 With a header, [INV-1] first proves every header invariant simultaneously in the complete state before L without assuming any invariant from that header.
 After that base batch succeeds, the complete header batch is added to the conservative head state as the assumptions for an arbitrary iteration.
