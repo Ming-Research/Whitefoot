@@ -22,14 +22,16 @@ use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate, PreludeType
 ///
 /// A bound is a closed filter on the argument, derived from the language's
 /// existing classifications, and never a user trait: `Int` and `Float` are
-/// [OP-1]'s numeric rows and each implies copy, and `Class` is the class the
-/// capability bound grants the body -- copy for `T: copy`, affine for
+/// [OP-1]'s numeric rows, `Eq` admits [OP-16] equality, each implies copy,
+/// and `Class` is the class the capability bound grants the body --
+/// copy for `T: copy`, affine for
 /// `T: drop`, and linear for a parameter written with no bound. It selects no
 /// behavior and admits no contract member.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum GenericBound {
     Int,
     Float,
+    Eq,
     Class(super::linearity::LinearityClass),
 }
 
@@ -1418,7 +1420,7 @@ impl<'unit> Checker<'_, 'unit> {
                     } => GenericArgument::Type(CheckedType::GenericFloat(declaration)),
                     GenericParameter::Type {
                         declaration,
-                        bound: GenericBound::Class(_),
+                        bound: GenericBound::Class(_) | GenericBound::Eq,
                         ..
                     } => GenericArgument::Type(CheckedType::Generic(declaration)),
                     GenericParameter::Const { declaration, .. } => {
@@ -1706,6 +1708,14 @@ impl<'unit> Checker<'_, 'unit> {
                             ),
                         );
                     }
+                    if bound == GenericBound::Eq {
+                        self.types.require_equality_type(
+                            check_context,
+                            source,
+                            ty,
+                            SemanticRule::Fn2,
+                        )?;
+                    }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
                         self.types.check_linearity_bound(
@@ -1762,6 +1772,31 @@ impl<'unit> TypeContext<'unit> {
     pub(super) fn const_generic_types(
         &self,
     ) -> impl Iterator<Item = (DeclarationId, IntegerType)> + '_ {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
+                _ => None,
+            })
+    }
+    /// Copy bounds remain available to symbolic proof origins, including
+    /// Eq parameters nested inside instantiated nominal fields.
+    pub(super) fn copy_type_parameters(&self) -> Vec<DeclarationId> {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type {
+                    declaration,
+                    bound:
+                        GenericBound::Int
+                        | GenericBound::Float
+                        | GenericBound::Eq
+                        | GenericBound::Class(super::linearity::LinearityClass::Copy),
+                } => Some(*declaration),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn generic_parameters(&self) -> impl Iterator<Item = &GenericParameter> {
         self.function_templates
             .iter()
             .flat_map(|template| template.generic_parameters.iter())
@@ -1776,11 +1811,8 @@ impl<'unit> TypeContext<'unit> {
                     .values()
                     .flat_map(|formal| formal.parameters.iter()),
             )
-            .filter_map(|parameter| match parameter {
-                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
-                _ => None,
-            })
     }
+
     pub(super) fn collect_function_templates(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -2277,10 +2309,17 @@ impl<'unit> TypeContext<'unit> {
                 .declaration_at(node, DeclarationRole::GenericType)?
                 .id();
             // [GRAM-2, PROV-6] the bound is optional and never inferred: a
-            // `capability_bound` atom, a numeric marker TYPEID, or nothing,
+            // `capability_bound` atom, a built-in bound TYPEID, or nothing,
             // and an absent bound grants the body no capability, which is
             // the linear class read at the parameter.
-            let bound = match self
+            let bound = self.written_generic_bound(node)?;
+            parameters.push(GenericParameter::Type { declaration, bound });
+        }
+        Ok(parameters)
+    }
+    pub(super) fn written_generic_bound(&self, node: NodeId) -> Result<GenericBound, CheckStop> {
+        Ok(
+            match self
                 .declarations
                 .resolved
                 .lexical_uses_at(node)
@@ -2298,9 +2337,12 @@ impl<'unit> TypeContext<'unit> {
                 Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::FLOAT => {
                     GenericBound::Float
                 }
+                Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::EQ => {
+                    GenericBound::Eq
+                }
                 Some((
                     ResolvedTarget::Source {
-                        class: DeclarationClass::NumericBound,
+                        class: DeclarationClass::BuiltinBound,
                         ..
                     },
                     coordinate,
@@ -2313,10 +2355,8 @@ impl<'unit> TypeContext<'unit> {
                     );
                 }
                 Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            };
-            parameters.push(GenericParameter::Type { declaration, bound });
-        }
-        Ok(parameters)
+            },
+        )
     }
 }
 

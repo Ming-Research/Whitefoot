@@ -503,7 +503,7 @@ impl Records<'_> {
             CheckedExpression::BoxTake { path, .. } => self.path_subscripts(path),
             CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. } => {
+            | CheckedExpression::ValueEquality { arguments, .. } => {
                 for argument in arguments {
                     self.expression(argument);
                 }

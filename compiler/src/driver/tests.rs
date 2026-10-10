@@ -2858,7 +2858,7 @@ fn compiler_independent_negative_cases_keep_their_semantic_rule() {
         // when the case was retired: A1 respelled its violation out of
         // existence, so it compiled at exit 0 and this row could never
         // hold again. Its FN-2 content lives at
-        // `fn2-neg-eeq-implicit-type`, repurposed onto a user-generic
+        // `fn2-neg-missing-user-type-argument`, repurposed onto a user-generic
         // call. The entry goes with the case it names rather than being
         // an assertion dropped on its own.
         (

@@ -2459,7 +2459,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             CheckedExpression::IntegerOperation { arguments, .. }
             | CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. }
+            | CheckedExpression::ValueEquality { arguments, .. }
             | CheckedExpression::ConstructStruct {
                 fields: arguments, ..
             }
@@ -2770,10 +2770,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )?,
             },
             GoalOperation::Boolean(operation) => GoalOperation::Boolean(operation),
-            GoalOperation::EnumEquality {
+            GoalOperation::ValueEquality {
                 equal,
                 operand_type,
-            } => GoalOperation::EnumEquality {
+            } => GoalOperation::ValueEquality {
                 equal,
                 operand_type: self.instantiate_goal_type(
                     check_context,

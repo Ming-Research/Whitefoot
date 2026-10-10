@@ -1,0 +1,28 @@
+struct BoundPair {
+  x: u32;
+  y: u32;
+}
+
+fn same<T: Eq>(left: T, right: T) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = BoundPair(x: 7_u32, y: 9_u32);
+  let second = BoundPair(x: 7_u32, y: 10_u32);
+  let equal = same::<BoundPair>(left: first, right: first);
+  let unequal = same::<BoundPair>(left: first, right: second);
+  let integers = same::<i32>(left: -3_i32, right: -3_i32);
+  if equal {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if unequal {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if integers {
+  } else {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -393,15 +393,33 @@ impl Problem {
                     _ => {}
                 }
             }
-            for (index, rule) in self.rules.iter().enumerate() {
+            let mut index = 0;
+            while index < self.rules.len() {
                 if fired[index] {
+                    index += 1;
                     continue;
                 }
-                if let Some(because) = self.entailment(&units, &rule.guards, depth)? {
-                    units.extend(Unit::resting_on(&rule.conclusions, &because));
-                    fired[index] = true;
-                    changed = true;
+                let guards = &self.rules[index].guards;
+                let mut end = index + 1;
+                while end < self.rules.len() && self.rules[end].guards == *guards {
+                    end += 1;
                 }
+                // Adjacent rules with identical guards are one implication
+                // with all of their conclusions. Ask once against unchanged
+                // units and split tags, then apply every conclusion before
+                // the next distinct guard list: earlier conclusions can
+                // simplify that next probe's arithmetic as well as prove it.
+                if let Some(because) = self.entailment(&units, guards, depth, run)? {
+                    let batch = self.rules[index..end].iter().zip(&mut fired[index..end]);
+                    for (rule, fired) in batch {
+                        if !*fired {
+                            units.extend(Unit::resting_on(&rule.conclusions, &because));
+                            *fired = true;
+                            changed = true;
+                        }
+                    }
+                }
+                index = end;
             }
             if !changed {
                 break;
@@ -522,6 +540,7 @@ impl Problem {
         units: &[Unit],
         guards: &[Literal],
         depth: usize,
+        run: &Run,
     ) -> Result<Option<Tags>, Capacity> {
         let mut because = Tags::default();
         for guard in guards {
@@ -531,6 +550,7 @@ impl Problem {
                     literal: negation,
                     tags: Tags::single(depth),
                 });
+                run.guard_probes.set(run.guard_probes.get() + 1);
                 match self.contradiction(&with)? {
                     Some(core) => because.union(&core.without(depth)),
                     None => return Ok(None),
@@ -838,12 +858,14 @@ impl Unit {
     }
 }
 
-/// One judgment's search: how many branches it has saturated, and whether
-/// a branch refuted without its split's case closes the split's other
-/// branches. Without backjumping the search is the full case analysis,
-/// against which tests compare it.
+/// One judgment's search work, and whether a branch refuted without its
+/// split's case closes the split's other branches. Without backjumping the
+/// search is the full case analysis, against which tests compare it.
 struct Run {
     nodes: Cell<usize>,
+    /// Actual contradiction calls for rule guards, one per negation tried.
+    /// Shared answers, choice probes and read-pair probes are not counted.
+    guard_probes: Cell<usize>,
     backjump: bool,
 }
 
@@ -851,6 +873,7 @@ impl Run {
     fn backjumping() -> Self {
         Self {
             nodes: Cell::new(0),
+            guard_probes: Cell::new(0),
             backjump: true,
         }
     }
@@ -1131,6 +1154,136 @@ mod tests {
         let (x, y) = (plain(&mut problem), plain(&mut problem));
         unit(&mut problem, &x, Relation::Less, &y);
         assert_eq!(problem.judge(), Ok(Verdict::Open));
+    }
+
+    #[test]
+    fn shared_rule_guards_are_probed_once_per_batch() {
+        // The 257-projection conformance case has these two shared bounds.
+        // Plain atoms here ensure sharing is independent of read/array shape.
+        for count in [1, 257] {
+            let mut problem = Problem::default();
+            let k = plain(&mut problem);
+            let zero = Linear::constant(0);
+            let guards = vec![
+                Literal::new(k.clone(), Relation::GreaterEqual, zero.clone()),
+                Literal::new(k, Relation::Less, Linear::constant(1)),
+            ];
+            problem.units.extend(guards.iter().cloned());
+            let mut sum = zero.clone();
+            for _ in 0..count {
+                let value = plain(&mut problem);
+                sum = sum.plus(&value).unwrap();
+                problem.rules.push(Rule {
+                    guards: guards.clone(),
+                    conclusions: vec![Literal::new(value, Relation::Equal, zero.clone())],
+                });
+            }
+            // All conclusions are needed: an omitted value could be positive.
+            unit(&mut problem, &sum, Relation::Greater, &zero);
+            let run = Run::backjumping();
+            assert_eq!(problem.judge_in(&run), Ok(Verdict::Refuted));
+            assert_eq!(
+                run.guard_probes.get(),
+                2,
+                "{count} conclusions must share two probes, not require {}",
+                2 * count
+            );
+        }
+    }
+
+    #[test]
+    fn open_shared_guards_are_retried_after_new_conclusions() {
+        // x == 1 is open in the first round, then the last rule establishes
+        // it. Its shared failure must expire; its later proof needs both
+        // equality negations and must be shared by the two earlier rules.
+        let mut problem = Problem::default();
+        let (x, y, z) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let guard = Literal::new(x, Relation::Equal, Linear::constant(1));
+        for value in [&y, &z] {
+            problem.rules.push(Rule {
+                guards: vec![guard.clone()],
+                conclusions: vec![Literal::new(
+                    value.clone(),
+                    Relation::Equal,
+                    Linear::constant(0),
+                )],
+            });
+        }
+        problem.rules.push(Rule {
+            guards: Vec::new(),
+            conclusions: vec![guard],
+        });
+        unit(
+            &mut problem,
+            &y.plus(&z).unwrap(),
+            Relation::Greater,
+            &Linear::constant(0),
+        );
+        let run = Run::backjumping();
+        assert_eq!(problem.judge_in(&run), Ok(Verdict::Refuted));
+        assert_eq!(run.guard_probes.get(), 3);
+    }
+
+    #[test]
+    fn shared_guard_proofs_keep_their_split_dependencies() {
+        // s == 0 or s == 1. Both rules fire only in the first branch; only
+        // the second rule (sharing the proof) contradicts y >= 1. Losing its
+        // tag would backjump past the open s == 1 branch and falsely refute it.
+        let mut problem = Problem::default();
+        let (s, x, y) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let zero = Linear::constant(0);
+        let guard = Literal::new(s.clone(), Relation::Equal, zero.clone());
+        problem.choices.push(vec![
+            vec![guard.clone()],
+            vec![Literal::new(s, Relation::Equal, Linear::constant(1))],
+        ]);
+        for value in [x, y.clone()] {
+            problem.rules.push(Rule {
+                guards: vec![guard.clone()],
+                conclusions: vec![Literal::new(value, Relation::Equal, zero.clone())],
+            });
+        }
+        unit(
+            &mut problem,
+            &y,
+            Relation::GreaterEqual,
+            &Linear::constant(1),
+        );
+        assert_rests_on_the_choice(&problem);
+    }
+
+    #[test]
+    fn distinct_guards_see_earlier_conclusions_before_their_arithmetic() {
+        // Batching distinct guard lists across an entire round would probe
+        // MAX*x > -MAX*x before x == 0 simplifies it. Forming the inequality
+        // would overflow on -MAX - MAX, although the original ordered scan
+        // decides this problem without leaving i128 arithmetic.
+        let mut problem = Problem::default();
+        let x = plain(&mut problem);
+        let conclusion = Literal::new(x.clone(), Relation::Equal, Linear::constant(0));
+        problem.rules.push(Rule {
+            guards: Vec::new(),
+            conclusions: vec![conclusion.clone()],
+        });
+        problem.rules.push(Rule {
+            guards: vec![Literal::new(
+                x.scaled(i128::MAX).unwrap(),
+                Relation::LessEqual,
+                x.scaled(-i128::MAX).unwrap(),
+            )],
+            conclusions: vec![conclusion],
+        });
+        let run = Run::backjumping();
+        assert_eq!(problem.judge_in(&run), Ok(Verdict::Open));
+        assert_eq!(run.guard_probes.get(), 1);
     }
 
     #[test]
@@ -1863,8 +2016,8 @@ mod tests {
         for index in 0..4000 {
             let problem = drawn_problem(&mut draw);
             let full = Run {
-                nodes: Cell::new(0),
                 backjump: false,
+                ..Run::backjumping()
             };
             assert_eq!(
                 problem.judge(),

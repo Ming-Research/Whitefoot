@@ -2328,7 +2328,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::NumericConversion { .. }
         | CheckedExpression::Reinterpret { .. }
         | CheckedExpression::BooleanOperation { .. }
-        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::BoxDeref { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
@@ -2400,7 +2400,7 @@ pub(super) fn collect_operand_reads(
         | CheckedExpression::NumericConversion { .. }
         | CheckedExpression::Reinterpret { .. }
         | CheckedExpression::BooleanOperation { .. }
-        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
         | CheckedExpression::ProjectValue { .. } => {}

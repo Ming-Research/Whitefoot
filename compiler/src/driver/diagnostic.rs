@@ -691,10 +691,10 @@ variant_names! {
     ContractShapeIssue { MissingClause }
     DeclarationClass {
         Function, FunctionParameter, NamedConst, ConstGeneric, Value, GenericType, NominalType,
-        StructConstructor, EnumVariant, NumericBound, Interface, Binding, Label, Invariant,
+        StructConstructor, EnumVariant, BuiltinBound, Interface, Binding, Label, Invariant,
         OperationFamily, Module,
     }
-    DeclarationDomain { LexicalIdentifier, NominalType, Constructor, NumericBound, Label, Invariant }
+    DeclarationDomain { LexicalIdentifier, NominalType, Constructor, BuiltinBound, Label, Invariant }
     LexicalUseRole {
         Type, GenericBound, FormalGroup, TypeArgument, Construct, VariantOwner, EnsuresVariant,
         EffectRoot, EffectIndex, BreakLabel, Const, ConstValue, PlaceBase, IdentifierCallee,
@@ -872,6 +872,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
             InvalidOperation;
+            InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             InvalidConditionalForm { mechanical_fix };
             UndischargedBoundsObligation { residual, disposition, mechanical_fix };

@@ -1088,8 +1088,8 @@ pub(super) fn render_goal_row(
         GoalOperation::Boolean(operation) => {
             render_operation_spelling(operation.spelling(), arguments)
         }
-        GoalOperation::EnumEquality { equal, .. } => {
-            render_operation_spelling(if *equal { "eeq" } else { "ene" }, arguments)
+        GoalOperation::ValueEquality { equal, .. } => {
+            render_operation_spelling(if *equal { "==" } else { "!=" }, arguments)
         }
         GoalOperation::NumericConversion {
             mode,

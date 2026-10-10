@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Value equality
+
+Nodes: language/data-model/tag-only-equality, language/data-model/value-equality, language/checks-and-proofs/range-facts, compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, after investigation #326 the owner chose option A on each of six cards: "which types can == compare, decided by what rule?" (structure decides, automatically); "can a struct with a float field use ==, and how do floats count in value equality?" (floats and types with a float part are not comparable; floats keep feq); "should eeq/ene merge into ==/!= and retire?" (merge and retire); "how does generic code use ==: is an eq bound needed?" (keep the bound, meaning copy with no float part, and admit opaque copy structs); "how do proofs use value equality: decompose by definition or an opaque predicate?" (decompose by definition); and "what happens to #323?" (rewrite it in place into the full implementation) (all translated).
+
+Summary: tag-only-equality is retired into the new value-equality node, which records `==`/`!=` as one value equality over structurally decided equality types, opaque copy structs included; floats outside it; `eeq`/`ene` retired; the `Eq` bound for generic code; and proofs reading equality by the same definition, keeping the old node's rejected alternatives and refusing the range-clause-only expansion this branch first proposed. range-facts and range-judgment cite value equality for generic and non-generic range clauses and keep a by-value parameter's entry snapshot for postconditions; range-judgment adds the solver's single probe per run of rules sharing one guard list. Grounds are in [the value-equality investigation](../research/investigations/value-equality/DESIGN.md).
 ## 2026-10-10 Frozen dataset library and service-first snapshot retention
 
 Nodes: language/data-model/frozen-datasets, language/data-model/frozen-datasets/retention-budget
