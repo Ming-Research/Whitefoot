@@ -1,4 +1,4 @@
-# Kernel Specification v0.123
+# Kernel Specification v0.122
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -570,9 +570,9 @@ A *placement-restricted* type has one *home*, the one place a value of it may ta
 | type | home |
 |---|---|
 | a runtime-capacity form, `Segments<T>`, and `Paged<T>` | the content of a `Box`: the type argument of `Box<·>` |
-| `ConcurrentHashMap<V>` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>`; and the exchange of a `swap` [OP-11] |
+| `ConcurrentHashMap<V>` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>` |
 
-The places a value can take are a binding, a value parameter, a result, a field, an enum payload field, an element of a storage shape, an entry value of a `ConcurrentHashMap`, the content of a `Box`, the state of a shared object and the exchange of a `swap`, whose type parameter takes that place [OP-11]. A placement-restricted type takes only its home among them; any other place is a hard error citing TYPE-9 at the complete `type`, or at the complete `targ` for a type argument, with a repair [DIAG-1]. A reference kind takes no place [TYPE-8], so `&T` names any `T`. A type argument takes, in each instance, the places its parameter takes in the signature and the body [FN-2], and a prelude opaque struct's parameter takes that struct's content place: `Box<T>`'s the content of a `Box`, `Shared<T>`'s and `SharedRead<T>`'s the state of a shared object, every other's an element. So a `swap` of two map targets and a `shared_share` of a map handle are admitted, `shared_new::<ConcurrentHashMap<V>>` is refused, and a `swap` of two runtime-capacity, `Segments` or `Paged` contents is refused, since an exchange in place cannot hold contents of different sizes: exchanging the owning `Box` values exchanges them.
+The places a value can take are a binding, a value parameter, a result, a field, an enum payload field, an element of a storage shape, an entry value of a `ConcurrentHashMap`, the content of a `Box` and the state of a shared object. A placement-restricted type takes only its home among them; any other place is a hard error citing TYPE-9 at the complete `type`, or at the complete `targ` for a type argument, with a repair [DIAG-1]. A reference kind takes no place [TYPE-8], so `&T` names any `T`. A type argument takes, in each instance, the places its parameter takes in the signature and the body [FN-2], and a prelude opaque struct's parameter takes that struct's content place: `Box<T>`'s the content of a `Box`, `Shared<T>`'s and `SharedRead<T>`'s the state of a shared object, every other's an element. So a `swap` of two map targets and a `shared_share` of a map handle are admitted, and `shared_new::<ConcurrentHashMap<V>>` is refused.
 
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and only the operations of [OP-10] and [OP-13] and the key-set insertions of [SHARE-1] change them.
