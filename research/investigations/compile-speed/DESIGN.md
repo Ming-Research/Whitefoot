@@ -255,6 +255,27 @@ before these criteria were written; their results below are the same runs.
    unchanged design; the serial composition phase of the `style_oracle`
    check fell from 10.7 s to about 6 s in samples.
 
+10. **Summary-read symbolic scope.** Symbolic validation analyzes the
+   postcondition components of the canonical generic instances and,
+   transitively, only the callee components that contain a postcondition,
+   the only components whose analysis a caller reads [FN-9]; before, it
+   analyzed every component the canonical instances reach. In Halo-wf
+   `9915000`'s `pkg::vm` check on main `ce57c9ddd`, the checker's work
+   counters (`WHITEFOOT_CHECK_WORK`, one GitHub-hosted run) attribute 344 of
+   the 1227 function analyses to work no caller reads: 254 symbolic analyses
+   of nongeneric functions without a postcondition, analyzed again in the
+   concrete phase, and 90 repeated symbolic instances of generic functions
+   without one. Those runs hold about 36% of the evaluated L0 pairs, 40% of
+   the interning calls and 43% of the joins. Written before the timing: the
+   candidate is kept if Halo's `pkg::vm` check then performs fewer analyses
+   with the same verdict, the gate passes, the LLVM of Halo's `test` entry is
+   byte-identical, and on the i9-14900K (interleaved runs of the base, a twin
+   of the base and the head, ten each after one warm-up, `taskset -c 2-15`)
+   the head's median wall time is below both the base's and the twin's
+   minimum; it is rejected otherwise, because the removed analyses run
+   concurrently with one another beside a serial symbolic type check that
+   may hide their cost.
+
 Rejected alternatives:
 
 - Per-function concurrency first: the critical path is one function, not

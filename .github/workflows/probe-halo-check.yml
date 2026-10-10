@@ -1,51 +1,67 @@
-# Temporary: profile the checker on Halo-wf's pkg::vm (board item
-# proof-bl-cost-halo-check). Removed before the branch is ready.
+# Temporary: evidence for the summary-read symbolic scope on Halo-wf's
+# pkg::vm (board item proof-bl-cost-halo-check). Removed before the branch is
+# ready.
 name: probe-halo-check
 
 on:
   push:
     branches: [claude/halo-check-cost]
-    paths: [.github/workflows/probe-halo-check.yml]
+    paths: [.github/workflows/probe-halo-check.yml, compiler/src/semantic/check.rs]
 
 jobs:
-  counters:
+  compare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/checkout@v4
         with:
           repository: Ming-Research/Halo-wf
           ref: 99150005f5681780d0fe9d83f22f2b7792198ac7
           path: halo
-      - name: Build the compiler with symbols
-        env:
-          CARGO_PROFILE_GATE_DEBUG: line-tables-only
-          CARGO_PROFILE_GATE_STRIP: none
-          RUSTFLAGS: -C force-frame-pointers=yes
-        run: cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
-      - name: Install perf
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq linux-tools-common linux-tools-generic linux-tools-$(uname -r) || sudo apt-get install -y -qq linux-tools-generic
-      - name: Attribute samples by phase and thread
+      - name: Build base and head
         run: |
-          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
-          cd halo/lib/halo
-          PERF=$(ls /usr/lib/linux-tools/*/perf 2>/dev/null | head -1); [ -z "$PERF" ] && PERF=perf
-          sudo sysctl -w kernel.perf_event_paranoid=-1
-          /usr/bin/time -f "wall %e s, user %U s, sys %S s" $PERF record --call-graph fp -F 997 -o $RUNNER_TEMP/perf.data "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null
-          $PERF script -i $RUNNER_TEMP/perf.data -F pid,tid,ip,sym 2>/dev/null | gzip > $RUNNER_TEMP/stacks.txt.gz
-          ls -la $RUNNER_TEMP/stacks.txt.gz; zcat $RUNNER_TEMP/stacks.txt.gz | head -60
-      - name: Record checker work counters
+          base=$(git merge-base HEAD origin/main)
+          echo "base $base head $(git rev-parse HEAD)"
+          git worktree add -q $RUNNER_TEMP/base $base
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+          cargo build --manifest-path $RUNNER_TEMP/base/compiler/Cargo.toml --profile gate --bin whitefootc --locked
+      - name: Analyses, verdicts and LLVM
         run: |
-          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
-          cd halo/lib/halo
-          WHITEFOOT_CHECK_WORK=$RUNNER_TEMP/work.tsv "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null
-          wc -l $RUNNER_TEMP/work.tsv
-      - uses: actions/upload-artifact@v4
-        with:
-          name: work-tsv
-          path: ${{ runner.temp }}/work.tsv
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stacks
-          path: ${{ runner.temp }}/stacks.txt.gz
+          set +e
+          for side in base head; do
+            if [ $side = base ]; then bin=$RUNNER_TEMP/base/compiler/target/gate/whitefootc; else bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc; fi
+            (cd halo/lib/halo && WHITEFOOT_CHECK_WORK=$RUNNER_TEMP/$side.tsv /usr/bin/time -f "$side pkg::vm wall %e s, user %U s, rss %M KiB" "$bin" --check --graph modules.wfg --check-module pkg::vm > $RUNNER_TEMP/$side.verdict 2>&1; echo "$side pkg::vm exit $?")
+            python3 - $RUNNER_TEMP/$side.tsv $side <<'PY'
+          import sys, collections
+          runs = set(); work = collections.Counter()
+          for line in open(sys.argv[1]):
+              f = line.rstrip("\n").split("\t")
+              runs.add(f[1])
+              if f[3] in ("function", "join"): work[f[3] + "." + f[5]] += int(f[6])
+          print(sys.argv[2], "analyses", len(runs), "joins", work["function.joins"], "pairs", work["join.pairs_evaluated"], "interning", work["function.intern_calls"])
+          PY
+            (cd halo/research/experiments/halo-e2e && /usr/bin/time -f "$side test entry LLVM wall %e s" "$bin" --emit-llvm --graph modules.wfg --entry test -o $RUNNER_TEMP/$side.ll; echo "$side emit exit $?")
+          done
+          cmp $RUNNER_TEMP/base.verdict $RUNNER_TEMP/head.verdict && echo "verdict output identical"
+          cmp $RUNNER_TEMP/base.ll $RUNNER_TEMP/head.ll && echo "LLVM identical"; ls -la $RUNNER_TEMP/*.ll
+
+  mutation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: The new case passes on the head
+        run: cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib a_generic_body_reads_a_summary
+      - name: The new case fails when the scope stops at the canonical components' direct callees
+        run: |
+          python3 - <<'PY'
+          p = "compiler/src/semantic/check.rs"; s = open(p).read()
+          old = "            pending.extend(\n                schedule.components[component]"
+          assert old in s
+          s = s.replace(old, "            if !canonical.iter().any(|(index, _)| schedule.function_components[*index] as usize == component) { continue; }\n" + old, 1)
+          open(p, "w").write(s)
+          PY
+          if cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib a_generic_body_reads_a_summary; then echo "MUTANT SURVIVED"; exit 1; else echo "mutant killed"; fi

@@ -39,7 +39,9 @@ use crate::{
     SemanticRule,
 };
 
-use super::entailment::{EntailmentCallee, collect_statement_calls, finalize_function_entailment};
+use super::entailment::{
+    EntailmentCallee, collect_statement_calls, finalize_function_entailment, postcondition_schedule,
+};
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
     GoalOperation, GoalProjection,
@@ -2163,10 +2165,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         });
         // Only the canonical instances are judged below, and a judged body
         // reads another function's analysis solely through the postcondition
-        // summaries of its callees. The other bodies of this symbolic
-        // view — every nongeneric function among them — are analyzed
-        // again by the concrete phase, so analyzing them here would repeat
-        // that whole cost for a result nothing reads.
+        // summaries of its callees. Every other body of this symbolic view —
+        // every nongeneric function among them — is analyzed only when its
+        // component can publish a summary such a body reads; the concrete
+        // phase analyzes the nongeneric ones again, so analyzing the rest
+        // here would repeat that cost for a result nothing reads.
         let analyzed = Checker::generic_validation_scope(functions, canonical)?;
         let mut judged = vec![false; functions.len()];
         for (index, _) in canonical {
@@ -2237,37 +2240,73 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         Ok(None)
     }
     /// The functions whose bodies symbolic validation must analyze: the
-    /// canonical instances and everything their calls reach, by the same
-    /// call-graph shape the postcondition schedule is built from.
+    /// components of the canonical instances, and every component that can
+    /// publish a postcondition summary an analyzed body reads, by the same
+    /// call graph the postcondition schedule is built from.
     ///
-    /// The set is closed under callees, so a strongly connected component is
-    /// either wholly inside it or wholly outside, and every summary an
-    /// analyzed body can consume is published by an analyzed component.
+    /// A component publishes summaries only for its functions' postconditions
+    /// [FN-9], so a callee component without one contributes nothing to its
+    /// callers and is left out with everything only it reaches. Components
+    /// are taken whole: the schedule analyzes every member of a component it
+    /// selects, and a member's own callees decide whether its component
+    /// publishes, so each member's summary-publishing callees are followed.
     fn generic_validation_scope(
         functions: &[CheckedFunctionInventory],
         canonical: &[(usize, DeclarationId)],
     ) -> Result<Vec<bool>, CheckStop> {
         let mut analyzed = vec![false; functions.len()];
+        let schedule = postcondition_schedule(functions.iter().map(|checked| &checked.function))
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if schedule.components.is_empty() {
+            // Without postconditions no analysis reads another's.
+            for (index, _) in canonical {
+                *analyzed
+                    .get_mut(*index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)? = true;
+            }
+            return Ok(analyzed);
+        }
+        let publishes = schedule
+            .components
+            .iter()
+            .map(|component| {
+                component.functions.iter().any(|function| {
+                    !functions[function.0 as usize]
+                        .function
+                        .postconditions
+                        .is_empty()
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut needed = vec![false; schedule.components.len()];
         let mut pending = canonical
             .iter()
-            .map(|(index, _)| *index)
-            .collect::<Vec<_>>();
-        let mut calls = Vec::new();
-        while let Some(index) = pending.pop() {
-            let slot = analyzed
-                .get_mut(index)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if std::mem::replace(slot, true) {
+            .map(|(index, _)| {
+                schedule
+                    .function_components
+                    .get(*index)
+                    .map(|component| *component as usize)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        while let Some(component) = pending.pop() {
+            if std::mem::replace(&mut needed[component], true) {
                 continue;
             }
-            let function = &functions[index].function;
-            calls.clear();
-            collect_statement_calls(
-                function.id,
-                function.body.as_deref().unwrap_or_default(),
-                &mut calls,
+            pending.extend(
+                schedule.components[component]
+                    .outgoing
+                    .iter()
+                    .map(|callee| *callee as usize)
+                    .filter(|callee| publishes[*callee]),
             );
-            pending.extend(calls.iter().map(|call| call.callee.0 as usize));
+        }
+        for (component, needed) in schedule.components.iter().zip(needed) {
+            if needed {
+                for function in &component.functions {
+                    analyzed[function.0 as usize] = true;
+                }
+            }
         }
         Ok(analyzed)
     }

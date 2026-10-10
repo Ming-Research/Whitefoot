@@ -14,7 +14,8 @@ use crate::semantic::entailment::{
 
 impl Checker<'_, '_> {
     /// Analyzes every function of the inventory, or only those `analyzed`
-    /// marks. A caller that restricts the set must close it under callees.
+    /// marks. A caller that restricts the set must include every component
+    /// that can publish a postcondition summary an analyzed body reads.
     ///
     /// Symbolic validation passes `judged`, the canonical instances whose own
     /// analysis is judged. Every other symbolic instance is analyzed only for

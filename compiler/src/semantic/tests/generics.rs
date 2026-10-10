@@ -833,6 +833,49 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [FN-9] symbolic validation of a generic body analyzes the callees whose
+/// summaries it reads, transitively: `seven`'s postcondition is proved only
+/// through `base`'s, and the generic body's subtraction is proved only
+/// through `seven`'s. `noise` publishes no summary, so its analysis is
+/// skipped without changing the verdict.
+#[test]
+fn a_generic_body_reads_a_summary_proved_through_another_summary() {
+    let source = br#"fn base() -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  return 7_u64;
+}
+
+fn seven() -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  let v = base();
+  return v;
+}
+
+fn noise(x: u64) -> r: u64 pure {
+  return x;
+}
+
+fn pick<T: copy>(value: T) -> r: T pure {
+  let n = seven();
+  let m = noise(x: n);
+  let q = n - 7_u64;
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the generic body's subtraction stands on a two-deep summary chain: {outcome:?}"
+        );
+    });
+}
+
 #[test]
 fn unused_int_generic_body_is_checked_for_the_complete_bound_domain() {
     let source = br#"fn invalid<T: Int>(value: T) -> result: T pure {
