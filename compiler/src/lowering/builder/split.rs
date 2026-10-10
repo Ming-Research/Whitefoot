@@ -763,7 +763,7 @@ impl<'program> IrBuilder<'program> {
             | IrType::Window { element, .. } => element,
             _ => return Err(LoweringFailure::InvalidCheckedProgram),
         };
-        let address = self.lower_place_address(root)?;
+        let address = self.lower_write_place_address(root)?;
         let operation = if matches!(root_type, IrType::Buffer { .. }) {
             IrOperation::SliceFromBuffer { buffer: address }
         } else {
