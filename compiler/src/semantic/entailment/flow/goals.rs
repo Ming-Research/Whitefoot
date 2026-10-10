@@ -125,7 +125,9 @@ impl Input<'_, '_> {
             CheckedExpression::Constant(value) => {
                 Some(GoalExpression::Datum(GoalDatum::Literal(value.clone())))
             }
-            CheckedExpression::NamedConstant { declaration, value } => {
+            CheckedExpression::NamedConstant {
+                declaration, value, ..
+            } => {
                 Some(GoalExpression::Datum(GoalDatum::NamedConst {
                     declaration: *declaration,
                     projections: Vec::new(),

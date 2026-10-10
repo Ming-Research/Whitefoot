@@ -1,0 +1,10 @@
+nocopy struct Token {
+  id: u32;
+}
+
+const token: Token = Token(id: 1_u32);
+
+fn read_whole() -> result: u32 pure {
+  let t = token;
+  return t.id;
+}
