@@ -1265,6 +1265,14 @@ process pinned to one logical CPU per performance core (on the native
 a performance core). Thirty interleaved rounds; second call of each process,
 as before; first-call CPU above wall is reported separately as start-up.
 
+**Round count, fixed before the sample.** The 14900K is shared, so a
+six-round sample on it runs first and judges nothing. From its spread, the
+decisive run's round count `n` (at most thirty) is chosen as the smallest
+count at which, by the sample's per-cell spread of `q_r`, every cell's
+interval would be narrower than its distance to its bound or no wider than
+0.02. Only the decisive run's rounds are judged; the sample's are reported
+beside them and never pooled, so stopping early cannot select a verdict.
+
 **Rules, per cell at four and eight workers, by the paired bootstrap interval
 of experiment 1** (`q_r` per round, median, 95 percent interval, fixed seed;
 a disagreeing twin voids the cell):
