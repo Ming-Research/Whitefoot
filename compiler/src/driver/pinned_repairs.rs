@@ -49,6 +49,52 @@ struct RepairPair {
 }
 
 const REPAIRS: &[RepairPair] = &[
+    RepairPair {
+        name: "value-equality-float-field.wf",
+        rejected: br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-1",
+        sentences: &[
+            "]: InvalidEqualityType\n",
+            "\n  mechanical_fix: operand type, field `value` has non-equality type `f64`; replace this comparison with an explicit comparison of the intended observable values using operations admitted for their types, or, if the data model permits it, change this part to an equality type [OP-16]\n",
+        ],
+        repaired: &[
+            br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return feq(left.value, right.value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct EqualityReading {
+  value: u64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // [FORM-7] a text item's one spelling and a `u8` character's range.
     // -------------------------------------------------------------------

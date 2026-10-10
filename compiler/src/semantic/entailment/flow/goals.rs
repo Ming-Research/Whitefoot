@@ -205,13 +205,13 @@ impl Input<'_, '_> {
                     .map(|argument| self.goal_expression(argument, admitted_partial))
                     .collect::<Option<Vec<_>>>()?,
             ),
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
                 ..
             } => build_operation(
-                GoalOperation::EnumEquality {
+                GoalOperation::ValueEquality {
                     equal: *equal,
                     operand_type: *operand_type,
                 },

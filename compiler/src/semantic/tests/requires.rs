@@ -1846,33 +1846,27 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// The OWN-1 bare-affine rejection inside a static requirement carries the
-/// clause-specific repair because [FN-8] rejects `move` inside a contract.
+/// Equality's domain excludes capability-removing declarations, including
+/// inside a pure contract; the OP-16 repair names that exclusion.
 #[test]
-fn requires_clause_bare_affine_use_carries_the_static_repair() {
-    let expected_fix =
-        "restate the definition or clause over copy operands or non-consuming admitted reads";
-    assert_rule(
+fn requires_clause_non_equality_type_carries_its_domain_repair() {
+    assert_rule_kind(
         br#"nocopy enum Holder {
   Value();
 }
 
 fn inspect(holder: Holder) -> result: unit pure contract {
-  requires eeq(holder, holder);
+  requires holder == holder;
 } {
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let holder = Holder::Value();
-  let held = inspect(holder: move holder);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-        SemanticRule::Own1,
-        SemanticIssueKind::BareAffineUse {
-            mechanical_fix: expected_fix,
-        },
+        SemanticRule::Op1,
+        |kind| matches!(kind, SemanticIssueKind::InvalidEqualityType { mechanical_fix } if mechanical_fix.contains("removes a capability")),
     );
 }
 

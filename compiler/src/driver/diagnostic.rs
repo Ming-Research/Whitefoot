@@ -872,6 +872,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
             InvalidOperation;
+            InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             InvalidConditionalForm { mechanical_fix };
             UndischargedBoundsObligation { residual, disposition, mechanical_fix };

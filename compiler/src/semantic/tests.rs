@@ -69,6 +69,7 @@ mod references;
 mod reinterpret;
 mod requires;
 mod source_proofs;
+mod value_equality;
 mod windows;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
@@ -921,20 +922,6 @@ fn give_completeness_rejects_each_structural_failure() {
         b"fn main() -> status: std::process::ExitStatus pure {\n  let flag = True();\n  let result = if flag {\n    give 1_i32;\n    give 2_i32;\n  } else {\n    give 0_i32;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Give1,
         SemanticIssueKind::InvalidGive,
-    );
-}
-
-#[test]
-fn enum_equality_exclusions_reach_the_intended_rule() {
-    assert_rule(
-        b"enum PayloadEq {\n  PayloadEmpty();\n  PayloadValue(value: u32);\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let left = PayloadEq::PayloadEmpty();\n  let right = PayloadEq::PayloadEmpty();\n  let equal = eeq(left, right);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
-    );
-    assert_rule_kind(
-        b"enum LeftEq {\n  LeftFirst();\n}\n\nenum RightEq {\n  RightFirst();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let left = LeftEq::LeftFirst();\n  let right = RightEq::RightFirst();\n  let equal = eeq(left, right);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Type5,
-        |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
     );
 }
 

@@ -1,13 +1,8 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-enum TagEq {
-  TagFirst();
-  TagSecond();
-}
-
-fn compare(left: TagEq) -> return_value: Bool pure {
-  return eeq(left);
+fn compare(left: Bool) -> return_value: Bool pure {
+  return band(left);
 }
 
 fn main() -> return_value: ExitStatus pure {

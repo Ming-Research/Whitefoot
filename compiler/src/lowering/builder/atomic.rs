@@ -854,7 +854,7 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. }
+        | CheckedExpression::ValueEquality { arguments, .. }
         | CheckedExpression::ConstructStruct {
             fields: arguments, ..
         }

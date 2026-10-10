@@ -2021,7 +2021,7 @@ impl<'program> Walker<'program> {
             }
 
             CheckedExpression::FloatOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. } => {
+            | CheckedExpression::ValueEquality { arguments, .. } => {
                 for argument in arguments {
                     let _ = self.eval(state, argument);
                 }

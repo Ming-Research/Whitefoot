@@ -120,7 +120,7 @@ const fn prelude(
 }
 
 /// Distinct OP-1 spellings in normative table order.
-pub(crate) const OPERATION_FAMILIES: [&str; 90] = [
+pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
     "+wrap",
     "-wrap",
     "*wrap",
@@ -149,8 +149,6 @@ pub(crate) const OPERATION_FAMILIES: [&str; 90] = [
     "<=",
     ">",
     ">=",
-    "eeq",
-    "ene",
     "fadd.strict",
     "fsub.strict",
     "fmul.strict",
@@ -264,7 +262,7 @@ mod tests {
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
         assert_eq!(PRELUDE_DECLARATIONS.len(), 25);
-        assert_eq!(OPERATION_FAMILIES.len(), 90);
+        assert_eq!(OPERATION_FAMILIES.len(), 88);
         assert_eq!(
             OPERATION_FAMILIES
                 .iter()
@@ -295,7 +293,7 @@ mod tests {
                 "{spelling} occupies family ordinal {ordinal}"
             );
         }
-        for retired in ["ieq", "ine", "ilt", "ile", "igt", "ige"] {
+        for retired in ["ieq", "ine", "ilt", "ile", "igt", "ige", "eeq", "ene"] {
             assert_eq!(
                 reserved_name(retired),
                 None,

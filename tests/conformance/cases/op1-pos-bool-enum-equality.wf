@@ -4,8 +4,8 @@ alias exit_status = std::process::exit_status;
 fn main() -> return_value: ExitStatus pure {
   let false_value = False();
   let true_value = True();
-  let eq00 = eeq(false_value, false_value);
-  let ne00 = ene(false_value, false_value);
+  let eq00 = false_value == false_value;
+  let ne00 = false_value != false_value;
   if eq00 {
   } else {
     return exit_status(code: 1_u8);
@@ -15,8 +15,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 2_u8);
   }
-  let eq01 = eeq(false_value, true_value);
-  let ne01 = ene(false_value, true_value);
+  let eq01 = false_value == true_value;
+  let ne01 = false_value != true_value;
   let not_eq01 = bnot(eq01);
   if not_eq01 {
   } else {
@@ -26,8 +26,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 4_u8);
   }
-  let eq10 = eeq(true_value, false_value);
-  let ne10 = ene(true_value, false_value);
+  let eq10 = true_value == false_value;
+  let ne10 = true_value != false_value;
   let not_eq10 = bnot(eq10);
   if not_eq10 {
   } else {
@@ -37,8 +37,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 6_u8);
   }
-  let eq11 = eeq(true_value, true_value);
-  let ne11 = ene(true_value, true_value);
+  let eq11 = true_value == true_value;
+  let ne11 = true_value != true_value;
   if eq11 {
   } else {
     return exit_status(code: 7_u8);

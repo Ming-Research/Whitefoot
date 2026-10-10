@@ -18,7 +18,7 @@ use crate::{
 use super::super::super::model::{
     CheckedBooleanOperation, CheckedConversionMode, CheckedExpression, CheckedIntegerArgument,
     CheckedIntegerArgumentSource, CheckedIntegerErrorClass, CheckedIntegerOperation,
-    CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedType,
+    CheckedMeasure, CheckedMode, CheckedNumericType, CheckedType,
 };
 use super::super::{
     CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, PreludeType, TypedExpression,
@@ -84,15 +84,6 @@ impl<'unit> Checker<'_, 'unit> {
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if matches!(spelling, "band" | "bor" | "bxor" | "bnot") {
             return self.check_boolean_operation(context, node, spelling, bindings, loop_depth);
-        }
-        if matches!(spelling, "eeq" | "ene") {
-            return self.check_enum_equality(
-                context,
-                node,
-                spelling == "eeq",
-                bindings,
-                loop_depth,
-            );
         }
         // [OP-1] v0.60's table carries no reader, view, or acquiring row: a
         // measure is a place form [OP-15], a range reference is a
@@ -204,6 +195,8 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::InvalidOperation,
             );
         }
+        self.types
+            .preflight_value_equality(context, node, operation, atoms, bindings)?;
         let mut operands = Vec::with_capacity(operand_count);
         for atom in atoms.iter().copied() {
             // An `infix_tail` operand is always an `atom`; a `clause_expr`
@@ -351,87 +344,6 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedExpression::BooleanOperation {
                 carrier: self.types.declarations.tree.path(node)?.clone(),
                 operation,
-                arguments,
-            },
-            effects,
-        ))
-    }
-
-    fn check_enum_equality(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        node: NodeId,
-        equal: bool,
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        loop_depth: usize,
-    ) -> Result<TypedExpression, CheckStop> {
-        let spelling = if equal { "eeq" } else { "ene" };
-        self.types
-            .declarations
-            .reject_named_operation_arguments(node, spelling)?;
-        self.types
-            .declarations
-            .reject_written_operation_type_argument(node)?;
-        let atoms = self.types.declarations.operation_atoms(node, 2)?;
-        // [OP-2] the selected tag-only nominal is the first operand's exact
-        // type; the second is then checked against it.
-        let first = self.check_atom(context, atoms[0], bindings, loop_depth)?;
-        if first.mode != CheckedMode::Own {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                atoms[0],
-                SemanticIssueKind::type_mismatch(
-                    format!(
-                        "own {}",
-                        self.types.checked_type_name(first.expression.ty())?
-                    ),
-                    self.types
-                        .checked_value_name(first.mode, first.expression.ty())?,
-                ),
-            );
-        }
-        let operand_type = first.expression.ty();
-        let tag_only = match operand_type {
-            CheckedType::Bool => true,
-            CheckedType::Nominal(id) => matches!(
-                &self.types.nominal(id)?.kind,
-                CheckedNominalKind::Enum { variants }
-                    if variants.iter().all(|variant| variant.fields.is_empty())
-            ),
-            _ => false,
-        };
-        if !tag_only {
-            return self.types.declarations.issue_node(
-                SemanticRule::Op1,
-                node,
-                SemanticIssueKind::InvalidOperation,
-            );
-        }
-        // The first operand is already checked, and checking an atom can
-        // consume its place, so only the remaining one is checked here.
-        let mut effects = first.effects;
-        let mut arguments = vec![first.expression];
-        for atom in &atoms[1..] {
-            let argument = self.check_atom(context, *atom, bindings, loop_depth)?;
-            if argument.expression.ty() != operand_type || argument.mode != CheckedMode::Own {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type5,
-                    *atom,
-                    SemanticIssueKind::type_mismatch(
-                        format!("own {}", self.types.checked_type_name(operand_type)?),
-                        self.types
-                            .checked_value_name(argument.mode, argument.expression.ty())?,
-                    ),
-                );
-            }
-            effects = effects.union(argument.effects);
-            arguments.push(argument.expression);
-        }
-        Ok(TypedExpression::owned(
-            CheckedExpression::EnumEquality {
-                carrier: self.types.declarations.tree.path(node)?.clone(),
-                equal,
-                operand_type,
                 arguments,
             },
             effects,
@@ -595,6 +507,35 @@ impl<'unit> TypeContext<'unit> {
                 node,
                 SemanticIssueKind::InvalidOperation,
             );
+        }
+        if matches!(
+            operation,
+            CheckedIntegerOperation::Equal | CheckedIntegerOperation::NotEqual
+        ) {
+            self.check_equality_operand_types(node, &operands)?;
+            let operand_type = operands[0].1.expression.ty();
+            if !matches!(
+                operand_type,
+                CheckedType::Integer(_) | CheckedType::GenericInt(_)
+            ) {
+                let effects = operands
+                    .iter()
+                    .fold(EffectSet::NONE, |effects, (_, operand)| {
+                        effects.union(operand.effects.clone())
+                    });
+                return Ok(TypedExpression::owned(
+                    CheckedExpression::ValueEquality {
+                        carrier: self.declarations.tree.path(node)?.clone(),
+                        equal: operation == CheckedIntegerOperation::Equal,
+                        operand_type,
+                        arguments: operands
+                            .into_iter()
+                            .map(|(_, operand)| operand.expression)
+                            .collect(),
+                    },
+                    effects,
+                ));
+            }
         }
         let mut arguments = Vec::with_capacity(operand_count);
         let mut argument_metadata = Vec::with_capacity(operand_count);
