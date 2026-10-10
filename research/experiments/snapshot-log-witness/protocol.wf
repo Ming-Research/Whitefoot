@@ -1,0 +1,261 @@
+enum Command {
+  Assign(value: u64);
+  AddOne();
+  Erase();
+}
+
+struct Record {
+  key: u8;
+  sequence: u64;
+  after: Option<u64>;
+  command: Command;
+}
+
+struct Journal {
+  records: Slots<Record, 2048>;
+  last_write: Array<u64, 256>;
+  started: Bool;
+  ready: Bool;
+  first_batch: Bool;
+}
+
+fn command_value(before: Option<u64>, command: Command) -> result: Result<Option<u64>, Overflow> pure {
+  match command {
+    Assign(value: assigned) => {
+      let after = Some<u64>(value: assigned);
+      return Ok<Option<u64>, Overflow>(value: after);
+    }
+    Erase() => {
+      let after = None<u64>();
+      return Ok<Option<u64>, Overflow>(value: after);
+    }
+    AddOne() => {
+      let previous = 0_u64;
+      match before {
+        Some(value: held) => {
+          set previous = held;
+        }
+        None() => {
+        }
+      }
+      let next = propagate previous +checked 1_u64;
+      let after = Some<u64>(value: next);
+      return Ok<Option<u64>, Overflow>(value: after);
+    }
+  }
+}
+
+fn mutate(store: &Shared<ConcurrentHashMap<u64>>, journal: &Shared<Journal>, key: u8, command: Command) -> result: Bool reads(store), reads(journal) waits {
+  let bytes = array_filled::<u8, 1>(value: key);
+  let name = &bytes[0_u64..1_u64];
+  let index = cvt::<u8, u64>(key);
+  atomic slot = &store^[name], log = &journal^ {
+    if log^.records.len == log^.records.cap {
+      return False();
+    }
+    let sequence = log^.records.len + 1_u64;
+    let before = slot^;
+    let after = command_value(before: before, command: command);
+    match after {
+      Ok(value: held) => {
+        set slot^ = held;
+        set log^.last_write[index] = sequence;
+        let record = Record(key: key, sequence: sequence, after: held, command: command);
+        place_back(window: &log^.records, value: record);
+      }
+      Err(error: overflow) => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn writer(store: Shared<ConcurrentHashMap<u64>>, journal: Shared<Journal>) -> result: Bool pure waits {
+  let add = Command::AddOne();
+  let erase = Command::Erase();
+  atomic log = &journal when log^.started {
+  }
+  let first = mutate(store: &store, journal: &journal, key: 0_u8, command: add);
+  atomic log = &journal {
+    set log^.ready = True();
+  }
+  if bnot(first) {
+    return False();
+  }
+  atomic log = &journal when log^.first_batch {
+  }
+  for (round in 0_u64..8_u64) {
+    let assign = Command::Assign(value: round);
+    for (index in 1_u64..32_u64) {
+      let key = cvt::<u64, u8>(index);
+      let assigned = mutate(store: &store, journal: &journal, key: key, command: assign);
+      if bnot(assigned) {
+        return False();
+      }
+      let added = mutate(store: &store, journal: &journal, key: key, command: add);
+      if bnot(added) {
+        return False();
+      }
+      let erased = mutate(store: &store, journal: &journal, key: key, command: erase);
+      if bnot(erased) {
+        return False();
+      }
+      let reinserted = mutate(store: &store, journal: &journal, key: key, command: add);
+      if bnot(reinserted) {
+        return False();
+      }
+    }
+    let added = mutate(store: &store, journal: &journal, key: 0_u8, command: add);
+    if bnot(added) {
+      return False();
+    }
+  }
+  return mutate(store: &store, journal: &journal, key: 31_u8, command: erase);
+}
+
+fn equal_entry(left: Option<u64>, right: Option<u64>) -> result: Bool pure {
+  match left {
+    None() => {
+      match right {
+        None() => {
+          return True();
+        }
+        Some(value: held) => {
+          return False();
+        }
+      }
+    }
+    Some(value: held) => {
+      match right {
+        None() => {
+          return False();
+        }
+        Some(value: other) => {
+          return held == other;
+        }
+      }
+    }
+  }
+}
+
+fn witness(wrong: Bool) -> code: u8 pure waits {
+  let store = shared_map_new::<u64>(capacity: 32_u64);
+  let records = slots_new::<Record, 2048>();
+  let stamps = array_filled::<u64, 256>(value: 0_u64);
+  let stopped = False();
+  let state = Journal(records: move records, last_write: stamps, started: stopped, ready: stopped, first_batch: stopped);
+  let journal = shared_new::<Journal>(value: move state);
+  let zero = Command::Assign(value: 0_u64);
+  for (index in 0_u64..32_u64) {
+    let key = cvt::<u64, u8>(index);
+    let initialized = mutate(store: &store, journal: &journal, key: key, command: zero);
+    if bnot(initialized) {
+      return 71_u8;
+    }
+  }
+  let worker_map = shared_share::<ConcurrentHashMap<u64>>(shared: &store);
+  let worker_log = shared_share::<Journal>(shared: &journal);
+  let job = spawn writer(store: move worker_map, journal: move worker_log);
+  let s0 = 0_u64;
+  atomic log = &journal {
+    set s0 = log^.records.len;
+    set log^.started = True();
+  }
+  atomic log = &journal when log^.ready {
+  }
+  let empty = None<u64>();
+  let exported = array_filled::<Option<u64>, 256>(value: empty);
+  let versions = array_filled::<u64, 256>(value: 0_u64);
+  let cursor = 0_u64;
+  let first_sequence = 0_u64;
+  let last_sequence = 0_u64;
+  let invalid = False();
+  loop {
+    let keys = key_set_new(capacity: 1_u64);
+    let next = 0_u64;
+    atomic table = &store, log = &journal {
+      set log^.first_batch = True();
+      if cursor == 0_u64 {
+        set first_sequence = log^.records.len;
+      }
+      set last_sequence = log^.records.len;
+      set next = map_scan::<u64>(map: table, cursor: cursor, count: 1_u64, keys: &keys);
+      for (at in 0_u64..keys.len) {
+        let bytes = array_filled::<u8, 1>(value: 0_u8);
+        let length = key_set_read_key(keys: &keys, index: at, out: &bytes[0_u64..1_u64]);
+        if length != 1_u64 {
+          set invalid = True();
+        } else {
+          let key = bytes[0_u64];
+          let index = cvt::<u8, u64>(key);
+          let name = &bytes[0_u64..1_u64];
+          set exported[index] = table^[name];
+          set versions[index] = log^.last_write[index];
+        }
+      }
+    }
+    if next == 0_u64 {
+      break;
+    }
+    set cursor = next;
+  }
+  let s1 = 0_u64;
+  let reference = array_filled::<Option<u64>, 256>(value: empty);
+  let erase = Command::Erase();
+  let filler = Record(key: 0_u8, sequence: 0_u64, after: empty, command: erase);
+  let history = array_filled::<Record, 2048>(value: filler);
+  atomic table = &store, log = &journal {
+    set s1 = log^.records.len;
+    for (index in 0_u64..256_u64) {
+      let key = cvt::<u64, u8>(index);
+      let bytes = array_filled::<u8, 1>(value: key);
+      let name = &bytes[0_u64..1_u64];
+      set reference[index] = table^[name];
+    }
+    for (at in 0_u64..log^.records.len) {
+      set history[at] = log^.records[at];
+    }
+  }
+  for (at in 0_u64..2048_u64) {
+    let record = history[at];
+    if record.sequence > s0 {
+      if record.sequence <= s1 {
+        let index = cvt::<u8, u64>(record.key);
+        if wrong {
+          let before = exported[index];
+          match command_value(before: before, command: record.command) {
+            Ok(value: held) => {
+              set exported[index] = held;
+            }
+            Err(error: overflow) => {
+              set invalid = True();
+            }
+          }
+        } else {
+          if record.sequence > versions[index] {
+            set exported[index] = record.after;
+            set versions[index] = record.sequence;
+          }
+        }
+      }
+    }
+  }
+  let writer_ok = job;
+  if bnot(writer_ok) {
+    return 71_u8;
+  }
+  if invalid {
+    return 71_u8;
+  }
+  for (index in 0_u64..256_u64) {
+    let same = equal_entry(left: exported[index], right: reference[index]);
+    if bnot(same) {
+      return 70_u8;
+    }
+  }
+  if last_sequence > first_sequence {
+    return 0_u8;
+  }
+  return 10_u8;
+}

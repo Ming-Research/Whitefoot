@@ -1,0 +1,5 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let wrong = False();
+  let code = witness(wrong: wrong);
+  return std::process::exit_status(code: code);
+}

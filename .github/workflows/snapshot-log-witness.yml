@@ -1,0 +1,74 @@
+# Temporary, explicitly requested protocol witness for this branch only.
+# Remove this workflow before opening any pull request.
+name: snapshot-log-witness
+
+on:
+  push:
+    branches: [claude/snap-log-witness]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: snapshot-log-witness-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld time
+          rustup default stable
+
+      - name: Record the revision and host
+        run: |
+          mkdir -p "$RUNNER_TEMP/snapshot-log-witness"
+          {
+            git rev-parse HEAD
+            uname -srvmo
+            lscpu
+            clang --version
+            ld.lld --version
+            rustc --version
+            cargo --version
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            echo "WF_DRIVERS=2; WF_WORKERS=1; no --par; no affinity override"
+          } > "$RUNNER_TEMP/snapshot-log-witness/host.txt"
+          cat "$RUNNER_TEMP/snapshot-log-witness/host.txt"
+
+      - name: Fetch the recorded crate dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the compiler
+        run: make -C compiler build
+
+      - name: Compile and run the protocol and failing control
+        env:
+          OUT: ${{ runner.temp }}/snapshot-log-witness
+        run: sh research/experiments/snapshot-log-witness/run.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snapshot-log-witness-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/snapshot-log-witness/*.txt
+            ${{ runner.temp }}/snapshot-log-witness/*.tsv
+            ${{ runner.temp }}/snapshot-log-witness/*.log
+            ${{ runner.temp }}/snapshot-log-witness/*.time
+            ${{ runner.temp }}/snapshot-log-witness/*.stdout
+            ${{ runner.temp }}/snapshot-log-witness/*.stderr
