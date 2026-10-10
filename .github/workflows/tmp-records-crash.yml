@@ -14,6 +14,7 @@ jobs:
       - name: Build the arms
         run: |
           sudo apt-get install -y -q gdb >/dev/null
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
           make -C compiler build
           make -C research/experiments/par-demand build BUILD="$RUNNER_TEMP/pd" EXPERIMENT=2
       - name: Repeat records verify per arm, width and setting
