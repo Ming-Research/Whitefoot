@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Symbolic validation reads summaries and renames canonical instances
+
+Nodes: compiler/generic-validation-scope
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the item request on "Halo's check still takes about 9 seconds": "approve the two changes to the design-tree node generic-validation-scope. First, symbolic validation analyzes only the callee components that publish postcondition summaries (candidate 10). Second, a renamed symbolic instance forms only its contract and copies its outcomes from the canonical instance (candidate 11)" (translated).
+
+Summary: compiler/generic-validation-scope narrows symbolic entailment to the postcondition components of canonical generic bodies and, transitively, the callee components containing a postcondition, because a component without one publishes no summary a judged body could read. It qualifies the reuse rule for renamings and has a symbolic instance that renames its declaration's canonical instance one to one, with the same bounds and interface members, form only its contract and copy the canonical instance's outcomes, ordered after it in the postcondition schedule, because FN-2 checks a generic body once at its own symbolic instance. Re-checking those bodies took 95% of the body-check time in Halo's `pkg::vm` check. The two changes took that check from 8.84 s to 3.76 s on the i9-14900K with unchanged verdicts and LLVM, as research/investigations/compile-speed/DESIGN.md measures.
+
 ## 2026-10-10 Whole-value reads of a const item
 
 Nodes: language/ownership
