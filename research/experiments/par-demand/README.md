@@ -4,8 +4,8 @@ This is the opt-in prototype for [the prospective experiment](../../investigatio
 It changes no specification or design-tree decision. Remove or replace this
 harness when that investigation ends. No gate consumes this directory.
 
-`--par-demand` implies `--par`, keeps every permitted group (so it rejects a
-simultaneous `--par-call-grain`), and keeps the existing recursion budget,
+`--par-demand` implies `--par`, takes `--par`'s call grain (`--par-call-grain
+off` keeps every permitted group, as experiment 1 did), and keeps the existing recursion budget,
 cut and sequential clone. The [current unmeasured candidate](../../investigations/par-demand/DESIGN.md#the-fourth-change-fixed-before-it-measures)
 emits non-indexed slices in the caller as one slice loop and requests early
 expansion of synthesized chunks in whole-module output; separately optimized

@@ -295,11 +295,15 @@ pub enum OverlapLowering {
     /// Emit sequential ordinary calls.
     #[default]
     Off,
-    /// Research-only demand hand-out. All permitted groups remain available;
-    /// static small splits are pruned and other non-indexed splits use slices.
+    /// Research-only demand hand-out. The call grain selects which permitted
+    /// call offers remain, as for `--par`, and a request decides when one is
+    /// handed out; static small splits are pruned and other non-indexed
+    /// splits use slices.
     Demand {
         /// Keep the existing recursion budget and its sequential cut.
         budget: RecursionBudget,
+        /// Which permitted call offers may be handed out on request.
+        call_grain: CallGrain,
         /// Retain the existing optional refused-edge clone policy.
         sequential_refusal: bool,
     },

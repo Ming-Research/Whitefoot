@@ -91,12 +91,11 @@ pub(crate) fn lower_checked_from(
         | OverlapLowering::OnWithSequentialRefusal { .. } => Some(RecursionBudget::default()),
     };
     let call_grain = match overlap {
-        OverlapLowering::Off | OverlapLowering::On | OverlapLowering::Demand { .. } => {
-            CallGrain::Every
-        }
+        OverlapLowering::Off | OverlapLowering::On => CallGrain::Every,
         OverlapLowering::OnWithCallGrain => CallGrain::WorkUnit,
         OverlapLowering::OnWithSequentialRefusal { call_grain }
-        | OverlapLowering::OnWithRecursionBudget { call_grain, .. } => call_grain,
+        | OverlapLowering::OnWithRecursionBudget { call_grain, .. }
+        | OverlapLowering::Demand { call_grain, .. } => call_grain,
     };
     let overlap = match overlap {
         OverlapLowering::Off => OverlapLowering::Off,

@@ -1410,3 +1410,32 @@ This is the failure the plan's rejection paragraph sends back to the
 direction card; the hand-out needs a grain floor, a cost below which a
 request is not honoured.
 
+### The grain floor: demand takes `--par`'s call grain
+
+The prototype lowered `--par-demand` with every permitted call offer kept
+(`CallGrain::Every`), so a request could hand out any call; `--par` keeps a
+call offer only when its callee reaches recursion that offers its own calls
+or its static work reaches the work unit that prices a range split
+(`CallGrain::WorkUnit`). `--par-demand` now takes that same grain by default,
+and `--par-call-grain off` restores experiment 1's every-offer lowering. A
+request then decides when a statically eligible call is handed out, never
+whether a call below the work unit is: `hot_helper`'s group is pruned and its
+helper no longer polls (`demand_takes_the_par_call_grain_so_a_cheap_group_never_polls`).
+
+This is the smallest floor that closes the witness, and it rests on the same
+static estimates `--par` uses, so it cannot be worse than `--par` at choosing
+call offers; a per-site floor learned from measured task durations (bounded
+re-probing, suppression after short samples) is the candidate if a workload
+shows the static estimate handing out cheap calls or withholding costly ones.
+Loop slices keep their own floor (a range below the minimum span never polls);
+that floor is checked on the whole remaining range, so a far half can be as
+small as half the minimum span, about 75,000 estimated units, well above a
+hand-out, and is left as it is.
+
+**Experiment 2 is rerun with this lowering**, under the rules and round-count
+rule above, unchanged: the six-round sample's arms were built with every offer
+kept, so its rounds are not reused. Prediction, fixed now: `hot_helper`'s
+`demand / seq` wall interval lies within 1.02 at four and eight workers, and
+no other cell's `demand` or `idle1` result moves outside its sample interval
+except through fewer hand-outs of calls below the work unit.
+

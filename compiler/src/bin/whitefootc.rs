@@ -1743,11 +1743,6 @@ impl Options {
         if par && no_overlap {
             return Err("--no-overlap and --par select opposite lowerings: write one".to_owned());
         }
-        if par_demand && call_grain.is_some() {
-            return Err(
-                "--par-demand retains every permitted group; omit --par-call-grain".to_owned(),
-            );
-        }
         if call_grain.is_some() && !par {
             return Err("--par-call-grain requires --par".to_owned());
         }
@@ -1797,6 +1792,7 @@ impl Options {
         } else if self.par_demand {
             OverlapLowering::Demand {
                 budget: self.recursive_frontier.unwrap_or_default(),
+                call_grain: self.call_grain,
                 sequential_refusal: self.sequential_refusal,
             }
         } else if let Some(budget) = self.recursive_frontier {
@@ -2078,11 +2074,20 @@ mod tests {
             options.overlap(),
             OverlapLowering::Demand {
                 budget: RecursionBudget::RuntimeDerived,
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
             }
         );
         assert!(parse(&["--par-demand", "--no-overlap", "value.wf"]).is_err());
-        assert!(parse(&["--par-demand", "--par-call-grain", "auto", "value.wf"]).is_err());
+        assert!(matches!(
+            parse(&["--par-demand", "--par-call-grain", "off", "value.wf"])
+                .unwrap()
+                .overlap(),
+            OverlapLowering::Demand {
+                call_grain: CallGrain::Every,
+                ..
+            }
+        ));
         assert!(matches!(
             parse(&[
                 "--par-demand",

@@ -1,9 +1,11 @@
 //! Research option isolation and shape checks; execution belongs to the
 //! maintained program tests, and baseline-revision byte comparison to CI.
 use super::{emit_lowered, parallel::function_body};
-use crate::{CompilerLimits, OverlapLowering, RecursionBudget, SourceInput};
+use crate::{CallGrain, CompilerLimits, OverlapLowering, RecursionBudget, SourceInput};
+/// Every permitted offer stays, so these shape checks see each offer path.
 const DEMAND: OverlapLowering = OverlapLowering::Demand {
     budget: RecursionBudget::RuntimeDerived,
+    call_grain: CallGrain::Every,
     sequential_refusal: false,
 };
 const SMALL: &str = r#"fn small(seed: u64) -> result: u64 pure {
@@ -215,4 +217,50 @@ fn demand_polls_a_thread_local_word_and_never_calls_the_runtime_accessor() {
         assert!(module.contains(POLL), "{module}");
         assert!(!module.contains("@wf__par_demand_requested"), "{module}");
     }
+}
+
+const CHEAP_GROUP: &str = r#"fn work(n: u64, seed: u64) -> result: u64 pure {
+  let i = 0_u64;
+  let value = seed;
+  loop @work {
+    if i == n {
+      break @work;
+    }
+    let rotated = irotl(value, 7_u32);
+    set value = rotated +wrap i;
+    set i = i +wrap 1_u64;
+  }
+  return value;
+}
+
+fn helper(n: u64, seed: u64) -> result: u64 pure {
+  let next = seed +wrap 1_u64;
+  let a = work(n: n, seed: seed);
+  let b = work(n: n, seed: next);
+  return ixor(a, b);
+}
+"#;
+
+/// A group of two calls whose callee is acyclic and far below the work unit,
+/// the shape of the par-demand experiment's `hot_helper`: under the `--par` grain,
+/// demand's default, the group is pruned and its caller never polls, while
+/// keeping every offer polls at the group. Honouring a request at such a
+/// group handed out one call of about 15 ns per iteration on a native
+/// 14900K, eleven to fifteen times slower than sequential.
+#[test]
+fn demand_takes_the_par_call_grain_so_a_cheap_group_never_polls() {
+    let source = CHEAP_GROUP.as_bytes();
+    let grained = emit_lowered(
+        source,
+        OverlapLowering::Demand {
+            budget: RecursionBudget::RuntimeDerived,
+            call_grain: CallGrain::WorkUnit,
+            sequential_refusal: false,
+        },
+    );
+    let helper = function_body(&grained, "@wf_helper");
+    assert!(!helper.contains("@wf__par_demand_word"), "{helper}");
+    assert!(!helper.contains("@wf__par_acquire_lane"), "{helper}");
+    let every = function_body(&emit_lowered(source, DEMAND), "@wf_helper");
+    assert!(every.contains(POLL), "{every}");
 }
