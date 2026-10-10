@@ -2612,6 +2612,7 @@ mod tests {
                     reference: None,
                     refinement_witnesses: Vec::new(),
                     call_value: true,
+                    read_only_state: false,
                 };
                 let mut bindings = HashMap::from([(id, local)]);
                 let capture =
