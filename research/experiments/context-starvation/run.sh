@@ -19,8 +19,8 @@ import sys
 import time
 
 binary, table_path = sys.argv[1:]
-if 0 not in os.sched_getaffinity(0):
-    raise SystemExit("CPU 0 is unavailable; this protocol requires taskset -c 0")
+if not {0, 1}.issubset(os.sched_getaffinity(0)):
+    raise SystemExit("CPUs 0 and 1 must be available for the two-CPU arms")
 
 table = open(table_path, "w", encoding="utf-8", buffering=1)
 
@@ -30,13 +30,13 @@ def report(line):
     print(line, file=table)
 
 
-report("phase\tpass\trequested_drivers\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms")
+report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms")
 
 
-def sample(phase, repetition, drivers, count):
+def sample(phase, repetition, drivers, count, cpus="0"):
     env = os.environ.copy()
     env.update(WF_DRIVERS=str(drivers), WF_WORKERS="1")
-    command = ["taskset", "-c", "0", binary, str(count)]
+    command = ["taskset", "-c", cpus, binary, str(count)]
     data = {"timer": bytearray(), "compute": bytearray()}
     observed = {}
     threads = -1
@@ -79,7 +79,7 @@ def sample(phase, repetition, drivers, count):
         raise RuntimeError(f"invalid run: exit={code}, stdout={bytes(data['timer'])!r}, "
                            f"stderr={bytes(data['compute'])!r}")
     checksum = int.from_bytes(data["compute"][1:], "little")
-    report(f"{phase}\t{repetition}\t{drivers}\t{count}\t{observed['timer']:.6f}\t"
+    report(f"{phase}\t{repetition}\t{drivers}\t{cpus}\t{count}\t{observed['timer']:.6f}\t"
            f"{observed['compute']:.6f}\t{exited:.6f}\t{checksum}\t{threads}")
     return observed["compute"], checksum
 
@@ -98,13 +98,16 @@ for step in range(8):
 else:
     raise SystemExit("could not obtain a useful calibration sample")
 
-# Use a single count for both driver settings; never tune either separately.
+# Use one count for all driver/affinity arms; never tune them separately.
 count = max(1, min(999_999_999_999, round(count * 2.0 / middle)))
 report(f"# selected iterations={count}; target computation observation=2 s")
 checksums = {}
 for repetition in range(1, 4):
-    for phase, drivers, iterations in [("a", 1, count), ("b", 2, count), ("c", 1, 0)]:
-        duration, checksum = sample(phase, repetition, drivers, iterations)
+    for phase, drivers, iterations, cpus in [
+        ("a", 1, count, "0"), ("b", 2, count, "0"), ("c", 1, 0, "0"),
+        ("d", 2, count, "0,1"), ("e", 2, 0, "0,1"),
+    ]:
+        duration, checksum = sample(phase, repetition, drivers, iterations, cpus)
         prior = checksums.setdefault(iterations, checksum)
         if checksum != prior or (iterations == 0 and checksum != 1):
             raise SystemExit("checksum differs between identical inputs or from the zero-work oracle")

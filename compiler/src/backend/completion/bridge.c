@@ -1626,8 +1626,10 @@ static void wf_drivers_wake_one(void) {
 }
 
 /* Makes a context ready on the driver it last ran on, waking that driver
- * when it is another; with more ready here than this driver runs next, a
- * parked driver is woken to take some. */
+ * when it is another. While this driver runs a context, even one ready
+ * context can use a parked driver; between resumptions, wake one only when
+ * more are ready here than this driver runs next. The shared searcher flag
+ * coalesces these requests until the woken driver has looked for work. */
 static void wf_context_ready(wf_context *context) {
     wf_driver *target = context->driver;
     wf_run_push(target, context);
@@ -1636,7 +1638,8 @@ static void wf_context_ready(wf_context *context) {
          * that sampled the epoch before this either sees the context or
          * parks on a changed epoch, which returns at once. */
         wf_completion_notify_target(target->runtime);
-    } else if (atomic_load_explicit(&target->run_count, memory_order_relaxed) > 1u) {
+    } else if (wf_context_current != NULL
+               || atomic_load_explicit(&target->run_count, memory_order_relaxed) > 1u) {
         wf_drivers_wake_one();
     }
 }

@@ -1,10 +1,10 @@
 # Temporary, explicitly requested scheduling experiment for this branch only.
-# Remove this workflow before opening any pull request.
+# Remove this workflow before the branch is marked ready.
 name: ctx-starvation
 
 on:
   push:
-    branches: [claude/ctx-starvation-witness]
+    branches: [claude/ctx-handoff]
 
 permissions:
   contents: read
