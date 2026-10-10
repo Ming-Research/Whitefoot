@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Frozen dataset library and service-first snapshot retention
+
+Nodes: language/data-model/frozen-datasets, language/data-model/frozen-datasets/retention-budget
+
+Owner-approved: On the shared status board on 2026-10-10, the owner answered "choose A" (translated from Chinese) on each of cards firn-q-snap-budget and firn-q-snap-form.
+
+Summary: Frozen datasets begin as an opt-in persistent library under existing ownership rules, with a new storage domain considered only after a prototype identifies an inexpressible operation and restricted fork retained as a possible backend. Snapshot reserve exhaustion aborts the attempt, preserves the previous authoritative base and log, and requires bounded cleanup and consumer-set pause/latency targets because service availability takes priority over persistence progress.
+
 ## 2026-10-10 Cite status board items instead of docs/todo.md
 
 Nodes: compiler/code-alignment, compiler/downstream-releases, compiler/match-dispatch-lowering, language/checks-and-proofs/automatic-facts

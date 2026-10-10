@@ -8,19 +8,27 @@ eagerly allocating a second dataset? Does that require supporting `fork`?
 This answers the owner's fresh-look request of 2026-10-10, including fork,
 rather than treating memory accounting as the starting design.
 
-Research only, against main `87fa2524f4da93bded8d06e1bfbac2a16c08c68c`,
-specification v0.119. No proposal below is an approved rule or implemented
-capability. No build, test or measurement was run. Repository citations are
-`file:line` at that revision; cross-branch records are identified separately.
+Research record, against main `87fa2524f4da93bded8d06e1bfbac2a16c08c68c`,
+specification v0.119. The owner chose A on all four decisions on 2026-10-10;
+these are approved directions, not specification amendments or implemented
+snapshot capabilities. No build, test or measurement was run. Repository
+citations are `file:line` at that revision; cross-branch records are identified
+separately.
 
-**Provisional recommendation:** first prototype an opt-in persistent dataset
-library under existing ownership rules, against an explicit cut and resource
-contract. No library operation requiring a language change has yet been
-identified; a new storage domain is a fallback if the prototype finds one. Compare the
-library with reconciled scan-plus-log and a qualified restricted fork backend;
-keep fork out of the source abstraction. Neither fork nor versioning guarantees
-both uninterrupted writes and substantially less than twice the memory under
-arbitrary mutation. Small embedded systems remain a design constraint, not
+**Approved direction (2026-10-10):** service first, with an explicit snapshot
+reserve, refusal/abort on exhaustion, preservation of the previous base and
+log, bounded cleanup and consumer-set pause/latency targets. Prototype and
+compare an opt-in persistent dataset library under existing ownership rules,
+qualified restricted Unix fork, and reconciled batched export with per-record
+sequence numbers and after-images, under one cut/resource contract and one
+trace set; each first passes its contract and expressibility witnesses.
+No library operation requiring a language change has yet been identified;
+a new storage domain is considered only if the prototype finds one. Keep
+fork out of the source abstraction. Scoped metering
+[PR #322](https://github.com/Ming-Research/Whitefoot/pull/322) stays paused as
+an unmerged draft until a real consumer appears. Neither fork nor versioning
+guarantees both uninterrupted writes and substantially less than twice the
+memory under arbitrary mutation. Small embedded systems remain a design constraint, not
 a claim that the current compiler already targets them
 (`docs/constitution.md:16`, `:28`, `:48`, `:56`).
 
@@ -595,11 +603,16 @@ approved mechanism. The implementation contracts remain open.
    delivery. Settled: current runtime source supplies no such fork integration;
    neither a Linux result nor dataset quiescence qualifies another platform.
 
-## Decisions for the owner
+## Owner decisions
 
-These four proposals are in dependency order; none is assumed decided.
+The four decisions below are in dependency order. The owner ruled on the
+shared status board on 2026-10-10, answering "choose A" on each card
+(translated from Chinese). The background, options and confidence statements
+retain the analysis on which those rulings were made.
 
 ### 1. What must yield when snapshot retention exhausts its budget?
+
+**Ruling (2026-10-10, firn-q-snap-budget):** A, service-first reserve and abort.
 
 **Background.** The overwrite witness requires old information somewhere;
 an unconditional low-RAM, always-completing snapshot beside unlimited writes
@@ -617,6 +630,8 @@ larger failure model. A can admit C as an explicit deployment policy later.
 Mandatory checkpoint deadlines or a firn durability requirement could favor B/C.
 
 ### 2. How should a frozen dataset be represented and exposed?
+
+**Ruling (2026-10-10, firn-q-snap-form):** A, opt-in persistent dataset library.
 
 **Background.** The named consumers need old data, not duplicated sockets,
 drivers or continuations. SharedRead does not automatically freeze an existing
@@ -645,6 +660,9 @@ favor B; a consumer requiring process continuation could reopen D.
 
 ### 3. Which mechanisms deserve the first comparative implementation?
 
+**Ruling (2026-10-10, firn-q-snap-first):** A, compare all three candidates
+under one cut/resource contract and trace set, after their witnesses pass.
+
 **Background.** No Whitefoot measurement ranks software versions, a safe
 fork and a reconciled scan-plus-log export. Redis's result establishes
 motivation, not a portable winner. The firn-maxmem-scope ruling names the
@@ -669,6 +687,9 @@ native call closure, or measured dirtiness, capture pause and inactive cost
 could overturn the comparison's feasibility or ranking.
 
 ### 4. What happens to scoped metering (#322)?
+
+**Ruling (2026-10-10, firn-q-snap-322):** A, keep scoped metering paused as an
+unmerged draft until a real consumer appears.
 
 **Background.** #322 makes allocations made inside a scope countable and
 excludable; firn needed it to keep its private replay keyspace out of
