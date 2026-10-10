@@ -1,0 +1,29 @@
+# Temporary (PR #323): find the conformance case the range judgment stalls on.
+# Removed before the branch is ready.
+name: probe-case-times
+
+on:
+  push:
+    branches: [claude/aggregate-equality]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compiler
+        run: cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+      - name: Check every single-file case with a time limit
+        run: |
+          bin=compiler/target/gate/whitefootc
+          : > "$RUNNER_TEMP/times.txt"
+          for f in tests/conformance/cases/*.wf; do
+            start=$(date +%s.%N)
+            timeout 60 "$bin" --check "$f" > /dev/null 2>&1
+            status=$?
+            end=$(date +%s.%N)
+            echo "$(echo "$end - $start" | bc) $status $f" >> "$RUNNER_TEMP/times.txt"
+          done
+          echo "slowest cases (seconds, exit status; 124 = timed out):"
+          sort -rn "$RUNNER_TEMP/times.txt" | head -25
