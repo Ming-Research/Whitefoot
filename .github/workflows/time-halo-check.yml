@@ -1,5 +1,5 @@
 # Temporary: time the checker on Halo-wf's pkg::vm on the 14900K (board item
-# proof-bl-cost-halo-check), a baseline after the runner's reinstall.
+# proof-bl-cost-halo-check): base, a twin of the base and the head.
 # Removed before the branch is ready.
 name: time-halo-check
 
@@ -17,6 +17,8 @@ jobs:
       RUNS: "10"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/checkout@v4
         with:
           repository: Ming-Research/Halo-wf
@@ -31,21 +33,29 @@ jobs:
           if [ -d "$HOME/.cargo/bin" ]; then
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
-      - name: Build the compiler as releases are built
-        run: cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
-      - name: Time pkg::vm, interleaved with a twin of the same binary
+      - name: Build base and head as releases are built
+        run: |
+          base=$(git merge-base HEAD origin/main)
+          echo "base $base head $(git rev-parse HEAD)"
+          rm -rf $RUNNER_TEMP/base; git worktree prune
+          git worktree add -q $RUNNER_TEMP/base $base
+          cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+          cargo build --manifest-path $RUNNER_TEMP/base/compiler/Cargo.toml --locked --profile gate --bin whitefootc
+      - name: Time pkg::vm, base, twin and head interleaved
         run: |
           set +e
-          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
+          base=$RUNNER_TEMP/whitefootc-base
           twin=$RUNNER_TEMP/whitefootc-twin
-          cp "$bin" "$twin"
+          head=$RUNNER_TEMP/whitefootc-head
+          cp $RUNNER_TEMP/base/compiler/target/gate/whitefootc "$base"
+          cp "$base" "$twin"
+          cp $GITHUB_WORKSPACE/compiler/target/gate/whitefootc "$head"
           cd halo/lib/halo
-          taskset -c "$CPUS" "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null
-          echo "warm-up exit $?"
+          for exe in "$base" "$head"; do taskset -c "$CPUS" "$exe" --check --graph modules.wfg --check-module pkg::vm > /dev/null; echo "warm-up exit $?"; done
           : > $RUNNER_TEMP/times.tsv
           for i in $(seq 1 "$RUNS"); do
-            for which in base twin; do
-              exe=$bin; [ "$which" = twin ] && exe=$twin
+            for which in base twin head; do
+              exe=$RUNNER_TEMP/whitefootc-$which
               /usr/bin/time -f "%e %M %x" -o $RUNNER_TEMP/one taskset -c "$CPUS" "$exe" --check --graph modules.wfg --check-module pkg::vm > /dev/null
               echo "$which $(cat $RUNNER_TEMP/one)" >> $RUNNER_TEMP/times.tsv
             done
@@ -54,7 +64,7 @@ jobs:
           python3 - "$RUNNER_TEMP/times.tsv" <<'PY'
           import sys, statistics as st
           rows = [l.split() for l in open(sys.argv[1]) if l.strip()]
-          for which in ("base", "twin"):
+          for which in ("base", "twin", "head"):
               xs = sorted(float(r[1]) for r in rows if r[0] == which)
               print(f"{which}: n={len(xs)} median={st.median(xs):.2f}s min={xs[0]:.2f}s max={xs[-1]:.2f}s")
           PY
