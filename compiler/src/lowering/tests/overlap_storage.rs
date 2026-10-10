@@ -756,6 +756,157 @@ fn ignored_range_borrows_plan_storage_separations_and_report_actual_cuts() {
 }
 
 #[test]
+fn noncall_members_keep_pair_local_release_borrow_boundaries() {
+    // A set is not a handed-out call member, but its RHS still has call-entry
+    // storage requirements. Both runs are permitted by PAR-1 because ignore
+    // reads no element; only the disjoint range can overlap the release.
+    let source = IGNORED_OWNING_RANGE
+        .replace(
+            "fn pair(values: &[Box<u64>], middle: u64)",
+            "fn pair(values: &[Box<u64>], middle: u64, scratch: unit)",
+        )
+        .replace(
+            "  ignore(values: &values^[middle..count]);",
+            "  set scratch = ignore(values: &values^[middle..count]);\n  ignore(values: &values^[count..count]);",
+        );
+    for (endpoints, conflict) in [("middle..count", false), ("0_u64..middle", true)] {
+        let source = source.replace(
+            "set scratch = ignore(values: &values^[middle..count]);",
+            &format!("set scratch = ignore(values: &values^[{endpoints}]);"),
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permissions = checked
+                .data
+                .permission
+                .named("pair")
+                .expect("pair permissions");
+            let run = permissions
+                .runs
+                .iter()
+                .find(|run| {
+                    run.sites.len() == 3
+                        && run.sites[0].callee_name == "replace"
+                        && run.sites[1].call.is_none()
+                        && run.sites[2].callee_name == "ignore"
+                })
+                .expect("release, non-call set and final call are source-independent");
+            let boundary = permissions
+                .storage_pairs
+                .iter()
+                .find(|pair| {
+                    pair.first == run.sites[0].statement && pair.second == run.sites[1].statement
+                })
+                .expect("the call/non-call pair retains its storage answer");
+            assert_eq!(boundary.conflict.is_some(), conflict, "{boundary:?}");
+            let program = lower_checked(checked, OverlapLowering::On)
+                .expect("non-call storage boundaries lower");
+            let pair = function(&program, "pair");
+            let calls = calls_to(&program, pair, &["replace", "ignore"]);
+            assert_eq!(calls.len(), 3);
+            if conflict {
+                assert!(pair.overlaps().is_empty(), "{pair:?}");
+            } else {
+                assert_eq!(pair.overlaps().len(), 1);
+                assert_eq!(pair.overlaps()[0].members, vec![calls[0], calls[2]]);
+            }
+            assert_eq!(
+                program.actualization_ledger().iter().any(|line| {
+                    line.contains("pair(replace, a set statement)")
+                        && line.contains("release/borrow conflict")
+                }),
+                conflict,
+                "{:?}",
+                program.actualization_ledger()
+            );
+            crate::emit_llvm(&program).expect("the inline non-call stays in the group window");
+        });
+    }
+}
+
+#[test]
+fn noncall_displaced_owners_join_borrows_before_release() {
+    let source = br#"struct Pair {
+  first: Box<u64>;
+  second: Box<u64>;
+}
+
+fn ignore(value: &u64) -> result: unit pure {
+  return unit;
+}
+
+fn finish(seed: u64) -> result: u64 pure {
+  return seed;
+}
+
+fn pair_conflicting(value: &Pair, fresh: Box<u64>, seed: u64) -> result: u64 writes(value) {
+  let a = ignore(value: &value^.first.inner);
+  set value^.first = move fresh;
+  let b = finish(seed: seed);
+  return b;
+}
+
+fn pair_disjoint(value: &Pair, fresh: Box<u64>, seed: u64) -> result: u64 writes(value) {
+  let a = ignore(value: &value^.first.inner);
+  set value^.second = move fresh;
+  let b = finish(seed: seed);
+  return b;
+}
+
+fn pair_scalar(value: &u64, fresh: u64, seed: u64) -> result: u64 writes(value) {
+  let a = ignore(value: &value^);
+  set value^ = fresh;
+  let b = finish(seed: seed);
+  return b;
+}
+"#;
+    with_checked(source, |checked| {
+        for (name, conflict) in [
+            ("pair_conflicting", true),
+            ("pair_disjoint", false),
+            ("pair_scalar", false),
+        ] {
+            let permissions = checked
+                .data
+                .permission
+                .named(name)
+                .expect("pair permissions");
+            assert!(
+                permissions.runs.iter().any(|run| run.sites.len() == 3),
+                "all three statements remain source-independent: {name}"
+            );
+            let boundary = permissions
+                .storage_pairs
+                .iter()
+                .find(|pair| pair.second_name == "a set statement")
+                .expect("the borrow/replacement pair has storage evidence");
+            assert_eq!(
+                boundary.conflict.is_some(),
+                conflict,
+                "{name}: {boundary:?}"
+            );
+        }
+        let program = lower_checked(checked, OverlapLowering::On)
+            .expect("displaced owners lower with overlap");
+        for (name, grouped) in [
+            ("pair_conflicting", false),
+            ("pair_disjoint", true),
+            ("pair_scalar", true),
+        ] {
+            let pair = function(&program, name);
+            let calls = calls_to(&program, pair, &["ignore", "finish"]);
+            assert_eq!(calls.len(), 2);
+            if grouped {
+                assert_eq!(pair.overlaps().len(), 1, "{name}");
+                assert_eq!(pair.overlaps()[0].members, calls, "{name}");
+            } else {
+                assert!(pair.overlaps().is_empty(), "{name}");
+            }
+        }
+        crate::emit_llvm(&program).expect("owner replacements preserve borrowed-call entry");
+    });
+}
+
+#[test]
 fn a_nonadjacent_release_borrow_conflict_ends_the_group() {
     let source = IGNORED_OWNING_RANGE.replace(
         "  ignore(values: &values^[middle..count]);",

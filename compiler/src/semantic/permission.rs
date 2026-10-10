@@ -822,8 +822,10 @@ impl<'check> Program<'check> {
             .iter()
             .map(|statement| self.classify_waiting(places, waiting, statement))
             .collect::<Vec<_>>();
-        // Group members need not be adjacent. Retain an answer for every
-        // ordered call pair; missing optional proofs remain ordinary overlap.
+        // Group calls need not be adjacent. Retain an answer for each call
+        // and every later statement: non-call statements run on the owning
+        // thread inside the window and can also form borrowed arguments.
+        // Missing optional proofs remain ordinary overlap.
         for (index, first) in classified.iter().enumerate() {
             let Some(first_site) = &first.site else {
                 continue;
@@ -835,9 +837,6 @@ impl<'check> Program<'check> {
                 let Some(second_site) = &second.site else {
                     continue;
                 };
-                if second_site.call.is_none() {
-                    continue;
-                }
                 let before_second = classified[index..later]
                     .iter()
                     .map(|member| member.footprint.as_ref().ok())
@@ -1223,12 +1222,28 @@ impl<'check> Program<'check> {
                 node_path,
                 target,
                 value,
+                releases_displaced_storage,
                 ..
             } => {
                 let (footprint, effects) = self.member_effects(places, value, node_path, []);
                 storage_effects = effects;
                 let footprint = footprint.map(|mut footprint| {
+                    let target_start = footprint.writes.len();
                     set_target_place(places, target, node_path, &mut footprint);
+                    if *releases_displaced_storage {
+                        // Replacing an owner releases its old storage even
+                        // when the RHS contains no call. Keep that storage
+                        // alive until earlier borrowed calls have joined.
+                        storage_effects.released.extend(
+                            footprint.writes[target_start..]
+                                .iter()
+                                .map(|access| StoragePlace {
+                                    place: Some(access.place.clone()),
+                                    source: node_path.clone(),
+                                    owner: false,
+                                }),
+                        );
+                    }
                     footprint
                 });
                 (Some(node_path), None, None, "a set statement", footprint)
