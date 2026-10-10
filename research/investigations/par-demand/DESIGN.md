@@ -1523,3 +1523,28 @@ not the never-slower bar: `small_split`, a loop of many cheap decisions, is
 1.90 from its decision count), so a loop whose slices are all cheap still
 pays for its polls.
 
+## Experiment 3: attribution of experiment 2's failures, fixed before it measures
+
+The direction card after experiment 2 is open; this batch serves its
+recommended option (the [hybrid plan](hybrid-plan.md)) and its alternative
+of a second independent plan alike, and judges no direction. Each arm
+changes one thing against `demand` as built at 9324e6551, with `demand`'s
+twin as the noise control, under the paired rule of experiment 1 (thirty
+rounds after a six-round sizing sample, widths 4 and 8, one logical CPU per
+performance core on the native 14900K):
+
+| Arm | The one change | Question | Rejects the cause when |
+|---|---|---|---|
+| `order` | a request publishes the near half and the owner runs the far half, as `par`'s splitter does | does publication order explain `mandelbrot`'s loss (its costly points are in the last quarter)? | `order / demand` on `mandelbrot` at 8 has an interval containing 1 |
+| `seed` | a counted loop that passes the minimum span publishes a bounded first frontier (the existing 16 chunks per lane ceiling, of at least the minimum span each) before its first slice, then refines on request as now | is delayed exposure of work the cause on `mandelbrot`, `recursion` and `stencil`? | `seed / demand` intervals contain 1 on those cells |
+| `extent` | demand's slice drivers price a slice with the runtime extent estimate `par` uses (`split.work`) instead of the static weight | does coarse static pricing cause `stencil`'s loss and `histogram`'s sequential merge? | `extent / demand` intervals contain 1 on `stencil` and `histogram`, wall and CPU |
+| `dedup` | a failed scan counts itself into a victim's request only when the victim's word is zero, read before the count | does the exit fix's counted request cost the idle CPU of E2-H3? | `dedup`'s CPU margin interval on `stencil` at 4 and `histogram` at 8 overlaps `demand`'s |
+
+Each arm also runs once with per-lane counters (requests attempted and
+posted, publications, steals, parks, spin and park time), in a separate
+instrumented build that decides nothing; timed arms carry no instrument.
+`small_split`'s remaining 10 to 11 percent is attributed by inspecting the
+decisive image's machine code, not by an arm. The batch ends with a table
+per cause: supported, rejected or undecided, and the hybrid plan's changes
+whose cause it rejects are dropped from the plan before any is built.
+
