@@ -3768,10 +3768,16 @@ static int wf_context_drive(wf_driver *driver) {
 
 /* The floor's stack reservation, which a driver thread takes like the
  * entry's thread; a probe that links the bridge without the floor starts no
- * driver and links this default of the host's own size. */
+ * driver and links this default of the host's own size. COFF allows one
+ * weak default per symbol, and the scheduler's entry.c already supplies it
+ * on Windows, so only the ELF and Mach-O builds define it here. */
+#if defined(_WIN32)
+size_t wf__floor_stack_bytes(void);
+#else
 __attribute__((weak)) size_t wf__floor_stack_bytes(void) {
     return 0u;
 }
+#endif
 
 /* Bounded deadline-only detector. It never executes a context or enters a
  * host engine. OUTSIDE publishes a hint; PROBE validates the heap minimum
