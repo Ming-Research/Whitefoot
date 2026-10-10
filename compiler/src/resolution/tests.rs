@@ -418,7 +418,7 @@ fn selector_candidates_use_their_exact_form3_reservation_roles() {
                 ResolutionIssueKind::ReservedName {
                     spelling,
                     declaration_role,
-                    inventory_ordinal: 44,
+                    inventory_ordinal: 42,
                     ..
                 } if spelling == "cvt" && *declaration_role == expected_role
             ));
@@ -769,7 +769,7 @@ fn dotless_operation_names_are_reserved_from_source_declarations() {
             issue.kind(),
             ResolutionIssueKind::ReservedName {
                 spelling,
-                inventory_ordinal: 44,
+                inventory_ordinal: 42,
                 ..
             } if spelling == "cvt"
         ));
@@ -2910,7 +2910,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 212, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 213, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2926,8 +2926,10 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
                 panic!("ordinary function collision: {issue:?}");
             };
             assert_eq!(conflicts.len(), 1);
+            // PRE-1: 47 opaque records + 22 enum records + Int, Float,
+            // Eq, Run + 137 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 209)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 210)
             );
         },
     );

@@ -39,7 +39,7 @@ fn struct_fields_are_ordered_recursive_goals_with_only_integer_projections() {
                 String::new()
             };
             let source = format!(
-                "{TYPES}fn probe(a: &FieldRoot, b: &FieldRoot) -> result: unit reads(a, b) {{\n{origin}  if {condition} {{\n    return unit;\n  }}\n  return unit;\n}}\n\n{MAIN}"
+                "{TYPES}fn probe(a: &FieldRoot, b: &FieldRoot) -> result: unit reads(a), reads(b) {{\n{origin}  if {condition} {{\n    return unit;\n  }}\n  return unit;\n}}\n\n{MAIN}"
             );
             let result = summary(&source, "probe");
             let positive = if operator == "==" {
@@ -133,17 +133,32 @@ fn signed_struct_reconstruction_uses_all_positive_or_any_negative_field() {
 #[test]
 fn enum_and_array_equalities_remain_exact_roots() {
     for ty in ["Option<u8>", "Array<u8, 2>"] {
-        let source = format!(
-            "fn probe(a: {ty}, b: {ty}) -> result: unit pure {{\n  if a == b {{\n    return unit;\n  }}\n  return unit;\n}}\n\n{MAIN}"
-        );
-        let result = summary(&source, "probe");
-        assert!(!result.boolean_decompositions.is_empty());
-        for entry in &result.boolean_decompositions {
-            assert!(entry.members.is_empty());
+        for operator in ["==", "!="] {
+            let source = format!(
+                "fn probe(a: {ty}, b: {ty}) -> result: unit pure {{\n  if a {operator} b {{\n    return unit;\n  }}\n  return unit;\n}}\n\n{MAIN}"
+            );
+            let result = summary(&source, "probe");
+            // ENT-3 retains either sign of enum/Array equality as an exact
+            // root with no children; only nonempty decompositions are recorded.
+            assert!(result.boolean_decompositions.is_empty());
+            let roots: Vec<_> = result
+                .inventory
+                .goals
+                .iter()
+                .filter(|goal| {
+                    matches!(
+                        goal.expression,
+                        GoalExpression::Operation {
+                            row: GoalOperation::ValueEquality { equal, .. },
+                            ..
+                        } if equal == (operator == "==")
+                    )
+                })
+                .collect();
+            assert!(!roots.is_empty(), "the exact equality root is retained");
             assert!(
-                result.inventory.goals[entry.parent.0 as usize]
-                    .projection
-                    .is_none()
+                roots.iter().all(|goal| goal.projection.is_none()),
+                "enum/Array equality has no integer comparison projection"
             );
         }
     }

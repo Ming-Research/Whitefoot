@@ -12,7 +12,9 @@ fn relay(xs: &[RangeCell], v: RangeCell) -> result: unit reads(xs) contract {
   requires forall same(k in 0_u64..xs^.len): xs^[k] == v;
 } {
   if 0_u64 < xs^.len {
-    need(index: xs^[0_u64].index, expected: v.index);
+    let index = xs^[0_u64].index;
+    let expected = v.index;
+    need(index: index, expected: expected);
   }
   return unit;
 }

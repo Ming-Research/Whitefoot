@@ -330,9 +330,11 @@ mod tests {
         // PRE-1 construction function [OP-13], so it is taken by declaration
         // collision rather than by reservation.
         assert_eq!(reserved_name("box_new"), None);
+        // OP-1 has 42 distinct spellings before `cvt`: 22 integer
+        // arithmetic, 6 comparisons, 10 float, and 4 Boolean operations.
         assert_eq!(
             reserved_name("cvt"),
-            Some((ReservedNameClass::DotlessOperation, 44))
+            Some((ReservedNameClass::DotlessOperation, 42))
         );
         assert_eq!(
             reserved_name("wrap"),
