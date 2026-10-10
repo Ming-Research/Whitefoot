@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Runtime-capacity contents are never exchanged in place
+
+Nodes: language/ownership/exchange
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can the contents of runtime-capacity windows (`a.inner` of type `Slots<T>` and the like) be exchanged with `swap`?" (translated).
+
+Summary: An exchange is a place its type parameter takes, so a runtime-capacity window, a run of segments or a paged window, whose only home is a heap cell's content, is exchanged by exchanging the owning cells, because an in-place exchange moves one fixed-size value and these contents vary with their capacity; exchanging the cells' pointers or whole blocks was rejected because a content reached through a reference has no cell slot to rewrite.
+
 ## 2026-10-10 Frozen objects
 
 Nodes: language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects, compiler/frozen-representation
