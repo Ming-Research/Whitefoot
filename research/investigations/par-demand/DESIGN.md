@@ -925,3 +925,24 @@ evidence of record for what the poll compiled to.
 Prediction at four and eight workers: `large_helper`, `small_split`,
 `recursion`, `hot_helper`, `spine` as in the sixth rerun; `records` lower than
 1.07 if the poll's call contributed to it, unchanged if its cost is placement.
+
+## Results of the seventh rerun
+
+Run: [compute-bench 38016588285](https://github.com/Ming-Research/Whitefoot/actions/runs/38016588285),
+`claude/par-demand` at c893fda30, i9-14900K, 10 interleaved rounds, pinned,
+2026-10-10 02:24 to 02:28 UTC. Its images confirm the poll: `records.o.s`,
+`large_helper.o.s` and `spine.o.s` contain no `__tls_get_addr` and no call of
+the accessor, and each poll is `movq wf__par_demand_word@GOTTPOFF(%rip)`
+followed by an `%fs`-relative load.
+
+No cell fails. Medians at four and eight workers, the candidate's CPU ratio
+equal to its wall ratio within 0.4 percent in every cell: `records` 0.994 and
+1.006, down from 1.065 and 1.078, so the hidden call caused its loss;
+`large_helper` 0.999 and 0.999; `recursion` 1.007 and 1.009; `hot_helper`
+0.983 and 0.985; `spine` 1.019 and 1.017; `mandelbrot` 1.012 and 1.008;
+`fir` 0.951 and 0.957; `histogram` 0.969 and 0.950; `small_split` 1.110 and
+1.170 within its 2.2 allowance; `stencil` 1.046 and 0.999 and `prefix` 1.038
+and 1.043, whose spreads (17 to 20 percent) cover those medians. Most cells'
+spreads still exceed 2 percent, so under the current noise measure they
+decide nothing; that measure awaits the owner. The optimized-site inspection
+the rule requires is the remaining step before any cell can count as a pass.
