@@ -959,3 +959,19 @@ was denied parallel admission, so the workload never exercises literal
 pruning of an admitted site, and pruning is untested by this set; `prefix` and
 `histogram` run demand slice drivers in these images, not the legacy splitter
 an earlier note assumed for indexed reductions.
+
+## `small_constant` corrected to exercise pruning
+
+The inspection found that `small_constant`'s loop, which wrote
+`cells^.inner[lo + j]`, was denied by PAR-2 (its computed subscript reads as
+an indexed accumulator), so every run so far measured a sequential loop and
+said nothing about pruning. The workload now writes `cells^.inner[i]` for
+`i` in the literal range `0..3`, which the `--par` ledger of the
+wf-exp-b7054cbb15dc compiler reports as "loop permitted, eligible; no
+accumulator" (checked on the owner's MacBook with `whitefootc --par
+--par-ledger --emit-llvm`, no build or run, to avoid a CI round for a
+one-line ledger); `micro_oracle.c` has its own branch for it, matching a
+direct C transcription at five sizes. The next run's ledger and
+`demand/small_constant.o.s` are the evidence of record that the site is
+admitted and pruned. Earlier runs' `small_constant` cells stand as
+measurements of a denied loop.

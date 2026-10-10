@@ -16,7 +16,14 @@ static uint64_t work(uint64_t n, uint64_t seed) {
     return seed;
 }
 static uint64_t oracle(uint64_t reps, uint64_t n, uint64_t seed) {
-    if (!strcmp(MICRO, "small_split") || !strcmp(MICRO, "small_constant")) {
+    if (!strcmp(MICRO, "small_constant")) {
+        /* Every call writes cells 0, 1 and 2 with its own salt, so only the
+         * last call's values remain; the other cells stay zero. */
+        if (reps == 0) return 0;
+        uint64_t last = reps - 1 + seed;
+        return (0 + last) + (1 + last) + (2 + last);
+    }
+    if (!strcmp(MICRO, "small_split")) {
         uint64_t cells[4096] = {0};
         /* Each of the 572 walker starts repeats independently. Only its final
          * write matters; compute those at most 572 batches, not 200M calls. */
