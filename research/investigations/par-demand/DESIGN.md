@@ -1327,3 +1327,9 @@ scan of the `demand` and `idle1` arms, on the idle path only, so experiment 2
 measures the demand arm with this cost and experiment 1's demand arm without
 it. The scheduler probe now checks that an exited owner's word is withdrawn.
 
+With the fix, the same repetition on the same runner type
+(run 38053140359, revision 39d2ec9a5) ran `records verify` 150 times for each
+of `demand`, `idle1` and `twin`, at 8 and 16 workers, with requests on and
+off: 1,800 runs, no failure. Before it, `demand` crashed within its first 60
+runs at 8 workers, and the compute-bench verify within its first few.
+
