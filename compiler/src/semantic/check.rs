@@ -2,6 +2,7 @@ mod acceptance;
 mod behavior;
 mod cleanup;
 mod control;
+mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
@@ -461,6 +462,10 @@ struct EffectSet {
     writes: Vec<super::model::CheckedStatePath>,
     /// Roots written without a resolved enum payload step (before row truncation).
     variant_writes: Vec<DeclarationId>,
+    /// Diagnostic equations retain direct accesses separately from callee rows.
+    direct_reads: Vec<super::model::CheckedStatePath>,
+    direct_writes: Vec<super::model::CheckedStatePath>,
+    calls: Vec<effect_repairs::EffectCall>,
     /// [EFF-3] whether the boundary this set describes allocates. It is not
     /// a row category [EFF-1, STOR-8]; it is the checked-program metadata
     /// [EFF-3]'s deduplication and reordering licence reads.
@@ -472,12 +477,22 @@ impl EffectSet {
         reads: Vec::new(),
         writes: Vec::new(),
         variant_writes: Vec::new(),
+        direct_reads: Vec::new(),
+        direct_writes: Vec::new(),
+        calls: Vec::new(),
         allocates: false,
     };
     fn union(mut self, other: Self) -> Self {
         for path in other.reads {
-            self.add_read(path);
+            Self::add_path(&mut self.reads, path.into());
         }
+        for path in other.direct_reads {
+            Self::add_path(&mut self.direct_reads, path.into());
+        }
+        for path in other.direct_writes {
+            Self::add_path(&mut self.direct_writes, path.into());
+        }
+        self.calls.extend(other.calls);
         for path in other.writes {
             Self::add_path(&mut self.writes, path.into());
         }
@@ -492,11 +507,18 @@ impl EffectSet {
     }
 
     fn add_read(&mut self, path: impl Into<EffectPath>) {
-        Self::add_path(&mut self.reads, path.into());
+        let path = path.into();
+        Self::add_path(&mut self.direct_reads, path.clone());
+        Self::add_path(&mut self.reads, path);
     }
 
     fn add_write(&mut self, path: impl Into<EffectPath>) {
         let path = path.into();
+        Self::add_path(&mut self.direct_writes, path.clone());
+        self.add_projected_write(path);
+    }
+
+    fn add_projected_write(&mut self, path: EffectPath) {
         if !path.inside_payload && !self.variant_writes.contains(&path.path.root) {
             self.variant_writes.push(path.path.root);
             self.variant_writes.sort_unstable();
@@ -601,6 +623,8 @@ struct TypeContext<'unit> {
     /// [EFF-2] the row each checked body exhibits, rendered as a writer
     /// declares it, which such a repair offers word for word.
     exhibited_rows: HashMap<FunctionId, String>,
+    /// Complete structural effects, retained until the checking view closes.
+    effect_bodies: HashMap<FunctionId, EffectSet>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -1967,6 +1991,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             self.types
                 .exhibited_writes
                 .insert(signature.id, exhibited.writes.clone());
+            self.types
+                .effect_bodies
+                .insert(signature.id, exhibited.clone());
             let row = self
                 .types
                 .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
@@ -1977,45 +2004,17 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             if let Some(writes) = self.types.exhibited_writes.get(&source).cloned() {
                 self.types.exhibited_writes.insert(signature.id, writes);
             }
+            if let Some(effects) = self.types.effect_bodies.get(&source).cloned() {
+                self.types.effect_bodies.insert(signature.id, effects);
+            }
             if let Some(row) = self.types.exhibited_rows.get(&source).cloned() {
                 self.types.exhibited_rows.insert(signature.id, row);
             }
         }
         self.types.validate_release_graphs(&checked.statements)?;
-        // [EFF-1] the row has exactly two categories, and [STOR-8] gives
-        // allocation no entry in it, so [EFF-2]'s judgment is over `reads`
-        // and `writes` alone. The allocation fact is [EFF-3] checked-program
-        // metadata that no declaration can write, so comparing it here would
-        // reject every `pure` function that calls a construction row against
-        // a row it had no way to declare.
-        //
-        // Each category is judged by [EFF-2]'s own two-way covering relation
-        // rather than by set equality.
-        if !Checker::effect_row_matches(&signature.declared_effects, &exhibited) {
-            let suggested = Checker::suggested_effect_row(&exhibited);
-            let (missing, extra) = self.types.effect_row_difference(
-                &exhibited,
-                &suggested,
-                &signature.declared_effects,
-                signature,
-            )?;
-            // [EFF-2] the repair is the suggested row itself: a row EFF-1 and
-            // EFF-2 admit for this body and no call refuses against itself.
-            let expected_row = self.types.render_effect_row(&suggested, signature)?;
-            return self.types.declarations.issue_node(
-                SemanticRule::Eff2,
-                signature.effects_node,
-                SemanticIssueKind::EffectMismatch {
-                    mechanical_fix: format!(
-                        "declare the row as `{expected_row}`, which covers every access the body makes and no other"
-                    ),
-                    expected_row,
-                    found_row: self.types.render_effect_row(&signature.declared_effects, signature)?,
-                    missing,
-                    extra,
-                },
-            );
-        }
+        // EFF-2 is judged when this structural view closes, so a diagnostic
+        // can solve recursive call equations without unfolding bodies or
+        // changing the declared boundaries used by acceptance.
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
             let mut postconditions = postcondition_selectors
                 .into_iter()
@@ -3865,6 +3864,7 @@ impl<'unit> TypeContext<'unit> {
             range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),
+            effect_bodies: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

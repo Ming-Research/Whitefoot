@@ -446,8 +446,9 @@ pub(super) enum RequiredReferent {
 }
 
 impl<'unit> Checker<'_, 'unit> {
-    /// The row an [EFF-2] rejection suggests: the exhibited row without the
-    /// entries another of its entries covers.
+    /// The [EFF-1] canonical row for one exhibited set: remove entries that
+    /// another entry covers. Acyclic [EFF-2] repairs use it directly; recursive
+    /// repairs close the captured call equations before choosing a row.
     ///
     /// The exhibited set records each access as the body made it, so it can
     /// hold a read and a write of one path, or a write of a whole parameter
@@ -2034,7 +2035,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// A capture read the call value when its formation recorded it so
     /// [`BodyChecker::note_capture`]. A spelled capture of a parameter that still
     /// holds its call value read it too, since no path to here wrote it.
-    fn captured_parameter(
+    pub(super) fn captured_parameter(
         &self,
         captured: CapturedValue,
         bindings: &HashMap<DeclarationId, LocalBinding>,

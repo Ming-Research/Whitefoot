@@ -335,6 +335,8 @@ impl Checker<'_, '_> {
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
+            set.direct_reads.retain(|p| !held(p));
+            set.direct_writes.retain(|p| !held(p));
             set.variant_writes
                 .retain(|root| !statement_roots.contains(root));
         }
