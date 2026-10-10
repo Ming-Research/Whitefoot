@@ -34,21 +34,6 @@
 use super::BoundedOutput;
 use super::*;
 
-/// Before the range-place address fix, these accepted slice scrutinees hit
-/// InvalidCheckedProgram as soon as an arm bound a payload. Reuse the
-/// normative fixture to require both LLVM emission and native payload reads.
-#[test]
-fn range_element_matches_execute_scalar_and_struct_payload_reads() {
-    let source = include_bytes!(
-        "../../../../tests/conformance/cases/own13-pos-range-element-payload-match.wf"
-    );
-    let llvm = compile(source);
-    let output = compile_and_run(&llvm);
-    assert_eq!(output.status.code(), Some(42), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
-}
-
 /// The range path must retain fields after the element and the payload's
 /// original storage. Window and Array references use the same match entry;
 /// an own window element still copies its payload. One image observes all
