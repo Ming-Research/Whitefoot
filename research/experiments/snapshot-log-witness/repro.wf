@@ -1,6 +1,6 @@
 const repetitions: u64 = 1000_u64;
 
-const key_bytes: Array<u8, 1> = [0_u8];
+const key_bytes: Array<u8, 1> =[0_u8];
 
 fn writer(map: Shared<ConcurrentHashMap<u64>>, counter: Shared<u64>) -> result: u64 pure waits {
   let key = &key_bytes[0_u64..1_u64];
