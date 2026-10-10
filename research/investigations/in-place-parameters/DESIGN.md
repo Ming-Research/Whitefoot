@@ -587,7 +587,7 @@ reaching instruction, branch, return or cleanup uses. The earlier record-entry
 test now expects only genuinely read continuation carries; its copy and native
 assertions remain. Execution, including baseline failure, awaits CI.
 
-**Halo timing pending**. No specification, verdict or diagnostic change.
+Halo timing (with read-through snapshots, PR #310, Halo-wf run 37986461719, 14900K, six interleaved pairs against the #292 compiler): fib 0.779, binary-trees 0.913, loop 1.024 (register allocation in ForLoop, board item lm-bl-forloop-spill), other kernels within the twin's spread. No specification, verdict or diagnostic change.
 
 ### Read-through snapshots
 
@@ -702,14 +702,15 @@ The caller-side restriction was unnecessary and is removed. A read-through
 call still requires a checked own parameter, an acyclic synchronous body,
 no overlapping execution, and an unexposed complete slot holding only that
 parameter and not serving as its result. Acyclicity excludes split callees.
-A destination result does not invalidate that proof: such callees already
-capture their indirect inputs before a body or result write. Passing a stable element
-address removes the caller's redundant capture while preserving the callee's
-ABI-required capture.
+A destination result does not invalidate that proof: the callee must preserve
+its original inputs across possible aliased result writes. At the time of the
+Load-snapshot change, it did so with entry captures. Passing a stable element
+address removes the caller's redundant capture without relaxing that duty.
 
-The separate callee-entry restriction in `select_incoming_places` remains
-necessary for the current general ABI: a destination is not always distinct
-from inputs. `call_reuse_operand_for_type` may reuse a consumed input as the
+At the time of the Load-snapshot change, the separate callee-entry
+restriction in `select_incoming_places` retained all captures: a destination
+is not always distinct from inputs. The proposed extension below preserves
+this ABI obligation with proved capture placement. `call_reuse_operand_for_type` may reuse a consumed input as the
 result, and `returned_storage_slot` permits a different parameter's slot to
 be redirected into that destination. For example, this schematic fragment
 uses a `Big` record large enough to require a destination result:
@@ -728,9 +729,10 @@ If the result occupies `right`, the callee's entry transfer from `a` into
 `out` overwrites `b`'s incoming storage. Letting `b` read through that pointer
 would observe `a.last`, not the original `right.last`. The existing prologue
 captures `b` before initializing the result and prevents this error. That
-protection is unchanged; it is not grounds for copying the caller's separate
-snapshot too. Removing callee-entry captures would require a distinct ABI or
-a result/input disjointness proof, neither of which this change introduces.
+protection remains required; it is not grounds for copying the caller's
+separate snapshot too. The proposed extension retains these entry captures
+when the prologue initializes the result; other bodies may instead prove
+that each input use or private capture precedes a possible aliased write.
 
 #### Halo prepare trace
 
@@ -807,3 +809,233 @@ The effect whitelist, known-root subset, callee restrictions and exposure or
 mixed-origin exclusions can retain safe copies. Analysis cost, baseline
 failure, optimized shape, facts-off behavior, native correctness and the
 full compiler gate remain unverified. **Halo timing and rebuilt IR pending.**
+
+
+## Destination-result parameters
+
+Can lazy
+incoming capture remove Halo's hot key copy while preserving original-input
+semantics? Compare identical Halo source/toolchain inputs before and after;
+a surviving eligible hot-path entry copy rejects the placement claim, and
+any changed input observation under result/input aliasing rejects correctness.
+
+The supplied `sol-sf.txt` sections A ("The first SetTableRR wide read is a
+callee entry snapshot") and C.4 ("selective parameter capture") identify
+`table_get(table: Value, key: Value)`'s two callee entry copies at
+`bench.ll:26031–26032`, after PR #310 removed its caller snapshots. The key
+copy survives as 16 bytes at `bench.opt.ll:17728`; full LTO places its
+`movupd` in `arm.13.txt:26–34`, spanning the producer's two 8-byte stores.
+The supplied body reads the numeric key at optimized lines 17756–17775 and
+passes it to cold `node_find` at 17781, before the result writes on their
+paths at 17752, 17800 and 17814. These are supplied artifact observations,
+not newly generated IR or timing evidence.
+
+The prototype reuses `storage/snapshots.rs`'s consumer classification,
+materialization-site analysis and conservative effect barriers. An incoming
+pointer has no disjoint-root proof. Writes to the result, its placed fields,
+call destinations, edge transfers and Load materializations invalidate every
+indirect input. Before a first barrier with a reachable use, or an ineligible
+consumer, the path captures private backing; later uses and unchanged carriers
+read that preserved copy. Load snapshots keep their existing per-use behavior;
+incoming captures need a separate finite placement walk because recapturing
+after a result write would read the wrong value.
+
+Mixed clean/captured joins and reentered capture sites retain entry copies.
+A prologue that initializes the result from another parameter retains its
+existing two-pass capture order. Waiting definitions, overlap groups, split
+parts, incomplete or exposed storage, updates and mixed origins remain
+excluded. Calls, pointer writes, releases and unknown effects keep conservative
+barriers. ABI, result-slot reuse, layout, acceptance, verdicts and diagnostics
+remain unchanged; no runtime flag or pointer phi is introduced.
+
+The backend regression shares one native image: `read_first` rejects main's
+entry copy; `write_then_read` rejects omitted/late capture by observing 7
+after writing 99; `hot_cold` requires a copy only before the cold result call.
+Caller assertions require equal result/input pointers, and calls stay out of
+line. Small CFG cases cover mixed joins, all-captured joins and reentry. The
+existing Load case's callee-copy expectation follows the new rule; the
+prologue-alias regression remains unchanged.
+
+On 2026-10-10 the authorized prebuilt `whitefootc --check` accepted the exact
+new fixture and the existing lazy-Load fixture. This establishes admission
+only. Changed Rust files received `rustfmt --edition 2024`. No build, Rust
+test, native execution, gate or performance run was made locally; Rust checks,
+baseline failures, emitted placement, native correctness, analysis cost and
+rebuilt Halo IR remain pending CI.
+
+
+## Layout-bounded transfers
+
+Does emitting
+unavoidable aggregate transfers at layout boundaries preserve producer store
+widths through optimization and full LTO, and improve Halo beyond the same-source
+twin's spread? Compare base, twin and candidate with identical Halo source,
+target, LLVM version and settings, using interleaved runs through CI on the
+14900K. Inspect optimized IR and final source loads before attributing any gain.
+Widened loads crossing the selected boundaries reject the frontend-only remedy;
+forwarding improvements without a runtime gain beyond noise reject its cost.
+
+The supplied `sol-sf.txt` sections A and C.1 identify Frame's retained
+`place_back` transfer at `bench.ll:178655–178656`: an 80-byte memmove becomes
+an 80-byte memcpy at `bench.opt.ll:87373`, then five `movups` loads/stores in
+`disasm/push_frame.txt:79–88`. The first 16-byte read at source offset 64 spans
+the separately stored 8-byte `varcount` and `frame_top` fields. Frame's other
+fields include 4-byte handles and a 1-byte flag with intervening padding.
+
+The same supplied artifacts show Halo Value's overlapping views: a 4-byte tag,
+a 4-byte handle at offset 4, or an 8-byte numeric payload at offset 8. ForLoop's
+optimized construction stores two 8-byte pieces, while SetTableRR's surviving
+key entry capture reads 16 bytes (`bench.opt.ll:17728`,
+`disasm/arm.13.txt:26–34`); full/slow paths retain further wide reads at lines
+255 and 364–369. These are observations of supplied artifacts, not new timing
+or rebuilt candidate output. Destination-result parameter placement can remove
+some captures independently; this experiment addresses copies that remain.
+
+### Proposed emission rule
+
+Target layout owns transfer planning alongside variant and aggregate layout.
+Structs recursively transfer scalar leaves with their original LLVM types and
+widths at target offsets; padding is omitted. Product enums recurse through
+the tag and their physical fields. A union enum partitions its complete size
+at every variant leaf's start **and end**, including nested aggregate boundaries
+and each handler word. Plain-byte intervals use an integer of exactly that
+width (not a first-class union carrier); a full pointer word present in every
+view uses `ptr`. Any interval touching an overlaid/split pointer, a one-bit leaf,
+or a nested byte-only interval instead uses byte memmove through planned scratch
+storage. Common handler words remain pointer-typed, including four-aligned words.
+All scalar source loads and all byte-interval captures precede every destination
+store or restore, preserving partial-overlap and equal-pointer semantics.
+Textually identical source/destination places still need no transfer.
+
+Both bounds must hold: **128 allocated bytes and 16 granules**. They include
+Halo's 80-byte/11-field Frame and 16-byte/3-interval Value while capping scalar
+code growth and live captures. They are provisional experiment limits, not
+measured optima or language limits. Arrays/windows, including nested fields,
+and other unsupported shapes keep the whole memory intrinsic even below the
+bounds: window tails must not become initialized scalar reads, and array
+scalarization already has an established compilation-cost objection. An exceeded
+bound also keeps the intrinsic. The existing OP-11 equal-or-disjoint memcpy
+selection remains in that fallback; all other fallback copies use memmove.
+Conservative alignment 1 is emitted for transfers, including pointer accesses,
+because these copy entry points do not retain a stronger place-alignment fact.
+
+### Evidence to obtain
+
+The backend gate's `layout_transfers` module checks raw IR for the mixed-width
+56-byte Frame fixture: eight loads and stores at offsets 0/8/16/24/32/36/40/48,
+with widths 8/8/4/8/4/1/8/8, all loads before stores and no whole-size intrinsic.
+A Halo-like Value requires 4+4+8, rejecting a tag-only or wide 16-byte transfer.
+A scalar-only 136-byte record, a 17-byte/17-leaf record, and even small
+array-containing records must retain memmove; a 128-byte/16-leaf record still
+expands. Under current at-most-eight-byte leaves, the large scalar record
+exceeds both bounds, so it does not independently test the byte cap. Pointer/Bool
+union overlays require captured byte intervals; the target-plan case covers all
+five supported triples. A native C observer feeds the actual emitted Frame
+transfer equal pointers and partial overlap in both directions, comparing each
+field against a pre-transfer byte snapshot. Its C entry calls `wf__floor_run`
+and supplies `wf__main_body`, as required by the ordinary native test link.
+Interleaving source loads and destination stores corrupts the forward-overlap
+case. Existing owning enum, handler, swap and snapshot cases
+remain wired; their native outcomes and cleanup checks are unchanged.
+
+Existing IR expectations intentionally updated: payload-enum record parameter
+entry/store copy counts and read-through Load/incoming capture presence, count,
+path and immediately-before-consumer checks now recognize bounded transfers as
+complete copies; the handler-cell copy checks common pointer-word transfer
+instead of whole memmove. Copy-elimination assertions also recognize bounded
+transfers, so absence of an intrinsic alone no longer passes them. Array-backed
+record, large swap and container transfer expectations remain whole intrinsics.
+
+The changed maintained expectations are listed individually below. These
+layout-transfer expectation changes preserve the WF fixtures, copy placement
+requirements and native expected results.
+
+| Backend case or shared assertion | Intentional IR expectation change |
+| --- | --- |
+| `payload_enums::a_by_value_parameter_nothing_writes_is_read_in_place` | No-copy checks also exclude bounded transfers. |
+| `payload_enums::unchanged_by_value_parameters_are_read_in_place_across_branches` | `rec_set` still has one required store copy, now ten scalar leaves; other bodies still have zero copies. |
+| `payload_enums::a_different_value_on_one_branch_keeps_the_parameter_entry_copy` | The required `Rec` entry capture is now ten scalar leaves from the same incoming pointer. |
+| `payload_enums::assert_step_destination` (ordinary and split selection callers) | No-copy checks also exclude bounded transfers. |
+| `read_through::read_through_snapshot_placement_preserves_old_values_and_call_boundaries` | Required captures and copy-free stable paths recognize either transfer form. |
+| `read_through::read_through_distinguishes_readonly_ranges_from_overlapping_range_writes` | Writing-range captures remain required; read-only paths still forbid copies. |
+| `read_through::read_through_snapshot_stays_in_one_dispatch_part` | Cross-part captures still count as copies; local paths still forbid them. |
+| `read_through::read_through_distinguishes_previous_and_fresh_loop_snapshots` | Old-snapshot capture presence and fresh-snapshot absence apply to either transfer form. |
+| `read_through::snapshot_materialization_is_local_to_the_use_unless_the_source_changed` | Capture counts, cold-block placement and immediately-before-call/return checks use the bounded transfer's end; result materialization still targets the result pointer. |
+| `read_through::destination_parameters_capture_before_invalidation_only_on_paths_that_need_it` | Incoming capture checks recognize bounded transfers while preserving write/read/path order. |
+| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The 20-byte Cell copies bounded intervals with a pointer-typed handler word at offset 12, rather than whole memmove. Exact load/store offsets, types, ordering and SSA correspondence cover every interval; layout, stored-word alignment and native results stay unchanged. |
+| `match_dispatch::each_dispatch_family_gets_a_word_only_when_all_families_fit` | The same exact copy checks require both family words, at offsets 12 and 20, once each. Family selection and layout expectations stay unchanged. |
+| `match_dispatch::assert_handler_load` (handler-word, family-count and cursor callers) | Trace the actual indirect tail-call target through its aligned pointer load and word GEP to the received element. Earlier copy GEPs may share the offset, and copies may load the tag as i32; tag-switch/table dispatch remains forbidden. |
+| `windows::a_projected_window_target_is_formed_once_before_rhs` | Count loads from the captured target field address, excluding the two Box-pointer loads that copy Columns. The complete target chain, unique projections and RHS/store order remain required. |
+
+Unchanged intrinsic expectations were inspected in `arrays` (array-backed Record
+assignment and place_back), `owned_places` (array-backed result transfer and large
+owning swap), and `containers` (array-backed take/swap transfer). Their collection
+fields or exceeded bounds intentionally retain the old fallback. Paged directory
+growth and dynamic array-range memmove are separate operations, unchanged here.
+
+SLP, MemCpyOpt and code-generation combines can re-merge ordinary nonvolatile
+accesses. This IR does not impose a machine access-width promise; no volatile,
+atomic, inline assembly, global vectorizer restriction or artificial dependency
+is added. If final loads widen, evaluate late target-aware lowering explicitly.
+Extra instructions, register pressure/spills, scratch storage and code size may
+outweigh forwarding benefits. AArch64 paired/vector transfers may benefit from
+wider accesses, so inspect its output rather than extrapolating x86 timing.
+Targets outside the current qualified set are untested.
+
+### Halo timing of both steps
+
+The owner chose this direction (status board card on the store-forwarding
+fix, option A, 2026-10-10). Same Halo source (Halo-wf main d7ad06d), full LTO,
+native 14900K, `taskset -c 2`, six interleaved pairs per comparison against the
+control and a byte-identical twin (Whitefoot run 38093924096): control
+`wf-fd49ea518e16` (main fd49ea518), experiment 1 `wf-exp-cd79ad705c03`
+(destination-result parameter read-through), experiment 2
+`wf-exp-5fe3dd3e4e7a` (experiment 1 plus layout-bounded transfers). Each cell
+is the median ratio to the control (lower is faster); the 1-, 3- and 6-pair
+runs agree within the twin's spread unless noted.
+
+| Kernel | Twin | Experiment 1 | Experiment 2 |
+|---|---:|---:|---:|
+| fib | 0.999 | 1.016 (1.011-1.023) | 0.955 |
+| loop | 1.000 | 0.959 | 0.965 |
+| integer-table | 1.005 | 0.861 | 0.858 |
+| string-key | 1.001 (0.947-1.001) | 0.933 | 0.956 |
+| concat | 1.005 | 0.992 | 0.958 |
+| sort | 0.992 | 0.997 | 0.979 |
+| binary-trees | 1.003 | 1.026 | 0.974 |
+
+Experiment 1 removes the hot `table_get` key capture (SetTableRR, `arm.13`,
+679 to 453 instructions) and speeds integer-table, but alone it slows fib by
+about 2%. Experiment 2 speeds every kernel. Its final code shows the predicted
+risk only in part: Value transfers became scalar (ForLoop `arm.66`, 36 to 19
+128-bit moves; whole program 3680 to 3158), but LLVM re-merged adjacent 8-byte
+Frame fields in `push_frame` into three 16-byte moves (12 to 8 moves), so the
+Frame copy still has wide loads over its two widest field pairs. For Frame,
+the machine-width criterion stated above therefore fails: the frontend-only
+remedy does not keep its boundaries through LLVM. The bounded emission is kept
+because the criterion that decides cost holds: six kernels are faster than the
+control beyond the twin's spread in all three pair counts (string-key, whose
+twin varied from 0.947 to 1.001, is faster in every count but within that
+noise), and the Value transfers, which the
+integer-table and loop stalls involve, do keep their boundaries. Keeping the
+Frame boundaries through LLVM would need the late target-aware lowering named
+above; it is deferred to the status board item for this work, not part of this
+change.
+No specification, acceptance, verdict, diagnostic or ABI change is proposed.
+
+
+On 2026-10-10 the permitted prebuilt `whitefootc --check` accepted the exact
+new fixture source. Changed Rust files received `rustfmt --edition 2024` from
+`compiler/`; incidental formatting in unchanged child modules was removed.
+Read-only review against step 1 (`110412ad49ae988558ea7bc50779ee5a494c232c`),
+including the untracked test module, checked the repository/documentation,
+safety, case ownership/wiring and design correspondence groups. It found a
+rejection-list format issue, masked bound coverage and an insufficient byte-copy
+ordering oracle; all were repaired and the changed coverage/layout hunks received
+limited follow-up review with no new finding. This is inspection, not executed
+backend evidence at that point; the gate later passed on both code commits
+(runs 38092297049 at `cd79ad705` and 38092299946 at `5fe3dd3e4`), and the
+optimized/LTO widths and timing are in [Halo timing of both
+steps](#halo-timing-of-both-steps). Baseline failures of the new cases were not
+executed, and other-target code generation remains unverified. No local build,
+Cargo, Make, native test or performance run was made.

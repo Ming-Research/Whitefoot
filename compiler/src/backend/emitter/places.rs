@@ -40,8 +40,9 @@ pub(in crate::backend) fn returned_storage_slot(
         return Some(returned);
     };
     // All other indirect inputs reach private storage before this group's
-    // entry transfer writes the result or a field within it. The result may alias any consumed
-    // argument, not necessarily this parameter. Keep that last transfer:
+    // entry transfer writes the result or a field within it. Incoming lazy
+    // placement excludes this prologue-write case. The result may alias any
+    // consumed argument, not necessarily this parameter. Keep that last transfer:
     // the same ABI also admits an independent result destination.
     // Source roles, complete CFG interference and exposed-storage exclusion
     // remain independent prerequisites; a matching representation grants none.
@@ -97,7 +98,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     | IrIntegerOperation::AbsoluteChecked
                     | IrIntegerOperation::DivideChecked
                     | IrIntegerOperation::RemainderChecked
-            ) => {
+            ) =>
+            {
                 self.materialize_operands(arguments.iter().copied())?;
                 self.emit_integer(result, ty, *operation, *operand_type, arguments)?;
             }
@@ -666,7 +668,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 transfers.push((*parameter, *ty, operand));
             }
         }
-        // A memory-only value moves by memmove (compiler/payload-enum-layout).
+        // Memory-only values use copy_storage (compiler/payload-enum-layout).
         // Every source is captured before any destination is written: a
         // source another transfer of this edge overwrites is first copied to
         // its own frame snapshot.
@@ -895,6 +897,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
+        } else if let Some(backing) = self.incoming_backing.get(&slot) {
+            self.entry_slot(FunctionSlot::OwnedValue(*backing))
         } else if let Some(incoming) = self.incoming_places.get(&slot) {
             Ok(incoming.clone())
         } else {
@@ -902,14 +906,35 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
     }
 
-    /// Consume the planner's per-use copy schedule before evaluating any
-    /// operand or effect. A later operation starts from the captured address
-    /// again, so no emitted-block order becomes a runtime initialization fact.
+    /// Consume both copy schedules before evaluating any operand or effect.
+    /// Load backing is per-use; incoming backing persists exactly where the
+    /// CFG proof says it was captured on every path, never by emission order.
     pub(super) fn prepare_snapshot_use(
         &mut self,
         block: IrBlockId,
         at: usize,
     ) -> Result<(), BackendFailure> {
+        self.incoming_backing = self
+            .incoming_snapshots
+            .backing
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        let captures = self
+            .incoming_snapshots
+            .copies
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        for slot in captures {
+            let source = self
+                .incoming_places
+                .get(&slot)
+                .ok_or(BackendFailure::InvalidIr)?
+                .clone();
+            let destination = self.entry_slot(FunctionSlot::OwnedValue(slot))?;
+            self.copy_storage(self.storage.slots()[slot], &source, &destination)?;
+        }
         self.snapshot_copies.clear();
         for slot in self.storage.snapshot_copies(block.index(), at) {
             let address = self
@@ -979,18 +1004,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
+        if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
+            .map_err(BackendFailure::TargetLayout)?
+        {
+            return self.copy_granules(&granules, source, destination);
+        }
         let llvm = self.output.type_name(self.program, ty)?;
-        // Keep the checked snapshot and its ordering, but do not expand an
-        // aggregate into SSA fields merely to copy it. The target's allocated
-        // type size includes representation padding and is not the source
-        // layout ceiling or a run's initialized length. The closed OP-11 body
-        // copies only between its equal-or-disjoint reference targets and its
-        // private snapshots. Ordinary llvm.memcpy permits equal pointers (the
-        // stricter memcpy.inline does not), so it preserves same-place swap
-        // without withholding the proved exclusion of partial overlap. This
-        // grants no noalias attribute to swap's reference parameters.
-        // Other bodies may reuse overlapping aggregate result storage and keep
-        // memmove's snapshot semantics.
+        // Whole storage retains overlap-safe byte transfer. Only the closed
+        // OP-11 row proves equal-or-disjoint targets and permits memcpy.
         let operation = if aliasing_admitted_row(self.function.name()) {
             self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
             "memcpy"
@@ -1004,6 +1025,88 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  call void @llvm.{operation}.p0.p0.i64(ptr {destination}, ptr {source}, i64 ptrtoint (ptr getelementptr ({llvm}, ptr null, i32 1) to i64), i1 false)"
         )
         .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Capture the entire source before writing the destination, including
+    /// byte-only intervals. This preserves memmove semantics for arbitrary
+    /// partial overlap and runtime-equal pointers. Alignment 1 is deliberate:
+    /// a caller can supply an interior place with no stronger retained fact.
+    fn copy_granules(
+        &mut self,
+        granules: &[crate::target::TransferGranule],
+        source: &str,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        use crate::target::TransferAccess;
+        writeln!(
+            self.output,
+            "  ; layout-bounded transfer from {source} to {destination}"
+        )?;
+        let mut captured = Vec::with_capacity(granules.len());
+        for granule in granules {
+            let pointer = self.transfer_pointer(source, granule.offset)?;
+            let llvm = match granule.access {
+                TransferAccess::Scalar(ty) => self.output.type_name(self.program, ty)?,
+                TransferAccess::Pointer => "ptr".to_owned(),
+                TransferAccess::Integer(width) => format!("i{width}"),
+                TransferAccess::Bytes => {
+                    let scratch = self.entry_slot(FunctionSlot::TransferScratch)?;
+                    let scratch = self.transfer_pointer(&scratch, granule.offset)?;
+                    self.copy_transfer_bytes(granule.size, &pointer, &scratch)?;
+                    captured.push((None, scratch));
+                    continue;
+                }
+            };
+            let value = format!("%{}", self.next_temporary()?);
+            writeln!(
+                self.output,
+                "  {value} = load {llvm}, ptr {pointer}, align 1"
+            )?;
+            captured.push((Some(llvm), value));
+        }
+        for (granule, (llvm, value)) in granules.iter().zip(captured) {
+            let pointer = self.transfer_pointer(destination, granule.offset)?;
+            if let Some(llvm) = llvm {
+                writeln!(
+                    self.output,
+                    "  store {llvm} {value}, ptr {pointer}, align 1"
+                )?;
+            } else {
+                self.copy_transfer_bytes(granule.size, &value, &pointer)?;
+            }
+        }
+        writeln!(
+            self.output,
+            "  ; end layout-bounded transfer from {source} to {destination}"
+        )?;
+        Ok(())
+    }
+
+    fn transfer_pointer(&mut self, base: &str, offset: u64) -> Result<String, BackendFailure> {
+        if offset == 0 {
+            return Ok(base.to_owned());
+        }
+        let pointer = format!("%{}", self.next_temporary()?);
+        writeln!(
+            self.output,
+            "  {pointer} = getelementptr inbounds i8, ptr {base}, i64 {offset}"
+        )?;
+        Ok(pointer)
+    }
+
+    fn copy_transfer_bytes(
+        &mut self,
+        size: u64,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+        self.output.symbol("llvm.memmove.p0.p0.i64");
+        writeln!(
+            self.output,
+            "  call void @llvm.memmove.p0.p0.i64(ptr {destination}, ptr {source}, i64 {size}, i1 false)"
+        )?;
+        Ok(())
     }
 
     pub(super) fn store_value_at(

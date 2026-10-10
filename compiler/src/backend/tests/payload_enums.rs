@@ -666,7 +666,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 
 /// Union-laid-out enums cross waiting calls and contexts as memory: every
 /// result, bound or direct, and every argument handed to a context is
-/// copied by memmove and never first-class, every observation matches, and
+/// copied through storage and never first-class, every observation matches, and
 /// every owner is released exactly once. Contexts may run on several
 /// drivers, which the observer's lock serves too.
 #[test]
@@ -901,7 +901,7 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '%')
             .collect();
         assert!(
-            !body.contains("@llvm.memmove"),
+            !body.contains("@llvm.memmove") && !body.contains("; layout-bounded transfer "),
             "{overlap:?}: no copy of {incoming}: {body}"
         );
         assert!(
@@ -1046,7 +1046,9 @@ fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
         ] {
             let body = super::emitted_function(&module, name);
             assert_eq!(
-                body.matches("@llvm.memmove").count() + body.matches("@llvm.memcpy").count(),
+                body.matches("@llvm.memmove").count()
+                    + body.matches("@llvm.memcpy").count()
+                    + body.matches("; layout-bounded transfer ").count(),
                 copies,
                 "{overlap:?} {name}: {body}"
             );
@@ -1106,10 +1108,17 @@ fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
         let body = super::emitted_function(&module, "rec_rebind");
         let copies: Vec<_> = body
             .lines()
-            .filter(|line| line.contains("@llvm.memmove") || line.contains("@llvm.memcpy"))
+            .filter(|line| {
+                line.contains("@llvm.memmove")
+                    || line.contains("@llvm.memcpy")
+                    || line.contains("; layout-bounded transfer ")
+            })
             .collect();
         assert_eq!(copies.len(), 1, "{overlap:?}: {body}");
-        assert!(copies[0].contains(", ptr %wf.arg.v0,"), "{overlap:?}: {body}");
+        assert!(
+            copies[0].contains(", ptr %wf.arg.v0,") || copies[0].contains(" from %wf.arg.v0 to "),
+            "{overlap:?}: {body}"
+        );
     }
 }
 
@@ -1184,6 +1193,7 @@ pub(super) fn assert_step_destination(body: &str) {
     }
     assert!(!body.contains("@llvm.memmove."), "{body}");
     assert!(!body.contains("@llvm.memcpy."), "{body}");
+    assert!(!body.contains("; layout-bounded transfer "), "{body}");
 }
 
 #[test]

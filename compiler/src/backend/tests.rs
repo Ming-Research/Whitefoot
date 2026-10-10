@@ -36,6 +36,7 @@ mod integer_conversion;
 mod integer_extended;
 mod integer_negation;
 mod loop_split;
+mod layout_transfers;
 mod match_dispatch;
 mod owned_places;
 mod parallel;

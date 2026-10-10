@@ -258,7 +258,7 @@ impl FunctionEmitter<'_, '_> {
         let slot = self.entry_slot(super::FunctionSlot::ContextResult(start))?;
         let (destination, reads_back) = self.waiting_destination(result, ordinary.result())?;
         // A memory-only result (compiler/payload-enum-layout) moves by
-        // memmove; it returns through a destination, so it is never read
+        // copy_storage; it returns through a destination, so it is never read
         // back as a value.
         if self.is_memory_only(ty)? {
             if reads_back {
