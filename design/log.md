@@ -7,11 +7,11 @@ a mechanism since retired.
 
 ## 2026-10-10 Frozen objects
 
-Nodes: language/waiting/shared-objects/frozen-objects
+Nodes: language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects, compiler/frozen-representation
 
 Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "Should Whitefoot add a born-frozen shared type Frozen<T> with lock-free reads?" (firn-q-frozen-type): add Frozen<T>, created from a uniquely owned value, frozen from birth, transitively immutable, reclaimed by reference counting, read without an atomic statement anywhere; taking a snapshot back stays a managed-cursor protocol of the library (translated).
 
-Summary: The new node frozen-objects records `Frozen<T>`: a value moved into a frozen object by `frozen_new`, shared by `frozen_share`, read through its readonly `inner` without an atomic statement anywhere, and released with its last handle, because the persistent-dataset prototype could not read a node inside an atomic statement on its registry; and its transitive immutability, since a snapshot must not see a later write. It refuses relaxing the nested-statement rule for `SharedRead`, a `freeze` conversion of a shared object, a snapshot storage domain and relaxing the reserve's service-first abort.
+Summary: The new node frozen-objects records `Frozen<T>`: a value moved into a frozen object by `frozen_new`, shared by `frozen_share`, read through its readonly `inner` without an atomic statement anywhere, and released with its last handle, because the persistent-dataset prototype could not read a node inside an atomic statement on its registry; and its transitive immutability, since a snapshot must not see a later write. It refuses relaxing the nested-statement rule for `SharedRead`, a `freeze` conversion of a shared object, a snapshot storage domain and relaxing the reserve's service-first abort. shared-objects now states that its atomic-statement access governs mutable state, since a frozen object is read without one. compiler/frozen-representation records the lowering: a lock-free pool block with an atomic handle count, modelled as the cell kind with a frozen release class (board item `proof-bl-frozen-nominal-kind` tracks a distinct kind).
 
 ## 2026-10-10 Whole-value reads of a const item
 
