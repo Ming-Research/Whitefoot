@@ -1341,3 +1341,42 @@ of `demand`, `idle1` and `twin`, at 8 and 16 workers, with requests on and
 off: 1,800 runs, no failure. Before it, `demand` crashed within its first 60
 runs at 8 workers, and the compute-bench verify within its first few.
 
+## Experiment 2's sample: hot_helper slows down eleven to fifteen times
+
+The six-round sample ([compute-bench run 38054220812](https://github.com/Ming-Research/Whitefoot/actions/runs/38054220812),
+revision ddebcb4be, native 14900K, one logical CPU per performance core) judges
+nothing by the round-count rule; it is reported because one cell is far
+outside every other. `hot_helper` (median second-call wall, ms, six rounds):
+
+| Width | seq | par | demand | idle1 | twin |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 151.9 | 151.8 | 2,340 | 2,573 | 2,356 |
+| 8 | 151.9 | 151.8 | 1,768 | 1,969 | 1,843 |
+
+Process CPU at width 4 is 9.36 s for `demand` against 0.152 s for `seq`, so
+every lane is busy. In experiment 1's thirty rounds (run 38034318254, the
+14900K before its move from a Hyper-V guest to native Ubuntu) the same cell
+passed at about 1.00. `hot_helper` runs a statement group of two independent
+calls of a helper whose work is at most 31 rotations (about 15 ns), ten
+million times; `par` never splits it.
+
+**Attribution, fixed before it runs.** Question: is the slowdown hand-out of
+the group's call on nearly every iteration because idle lanes re-request at
+once, or the exit fix's counted request (two atomic operations per failed
+scan, on the victim's request line, which the owner's publish also reads)?
+Comparison, `hot_helper` at width 4 on the 14900K, five processes each, the
+scheduler report on (`WF_SCHED_REPORT=2`, steals per lane):
+
+- A: `demand` as built here, four performance cores;
+- B: `demand` linked with experiment 1's scheduler (75f91b6ba, before the
+  exit fix and the idle policy), four performance cores;
+- C: A with requests off (`WF_PAR_DEMAND=off-never-request`);
+- D: `par`, four performance cores;
+- E: A on two performance and two efficiency cores, where the idle window is
+  withheld (more than one performance level).
+
+Reading: if B is as slow as A, the exit fix is not the cause; if C is near
+`seq`, requests are; steals near ten million in A mean a hand-out per
+iteration; E near `seq` would tie the slowdown to idle lanes that spin. If A
+is slow and B is not, the exit fix's counting is the cause and is replaced.
+

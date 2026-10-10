@@ -1,0 +1,58 @@
+# Temporary (claude/par-demand only): attribute hot_helper's slowdown in
+# experiment 2's sample (DESIGN.md, "Experiment 2's sample"). Removed after.
+name: tmp-hot-helper
+on:
+  push:
+    branches: [claude/par-demand]
+    paths: [.github/workflows/tmp-hot-helper.yml]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build the arms and a demand image with experiment 1's scheduler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          B="$RUNNER_TEMP/hh"
+          make -C research/experiments/par-demand build BUILD="$B" EXPERIMENT=2
+          git show 75f91b6ba6637a6d33340d8116b2a512ff12b33a:compiler/src/backend/sched/core.c > "$B/exp1-core.c"
+          make -C research/experiments/par-demand BUILD="$B" EXPERIMENT=2 \
+            --eval='exp1: ; $(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/exp1-core.c -o $(BUILD)/exp1-core.o && $(CLANG) -O2 $(BUILD)/demand/hot_helper.o $(BUILD)/micro-hot_helper.o $(BUILD)/runner.o $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/exp1-core.o $(NATIVE_LINK_FLAGS) -o $(BUILD)/exp1demand-hot_helper' exp1
+          cmp "$B/exp1-core.o" "$B/demand-core.o" && { echo "exp1 core identical to current; attribution B is void" >&2; exit 1; } || true
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/hh.tar.gz" hh/seq/hot_helper hh/par/hot_helper hh/demand/hot_helper hh/idle1/hot_helper hh/exp1demand-hot_helper
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hh
+          path: ${{ runner.temp }}/hh.tar.gz
+  run:
+    needs: build
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hh
+          path: ${{ runner.temp }}
+      - name: Five processes per arm
+        run: |
+          set +e
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/hh.tar.gz"
+          B="$RUNNER_TEMP/hh"
+          cat /sys/devices/cpu_core/cpus /sys/devices/cpu_atom/cpus 2>/dev/null
+          one() { label=$1 cpus=$2 setting=$3 image=$4 width=$5
+            for i in 1 2 3 4 5; do
+              WF_WORKERS=$width WF_PAR_DEMAND=$setting WF_SCHED_REPORT=2 WFD_REPETITIONS=10000000 WFD_EXTENT=0 \
+                taskset -c "$cpus" "$image" measure x $width 0 1 > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt"
+              echo "$label run=$i status=$? $(awk -F'\t' '$6==1{print "wall_ms="$7/1e6" cpu_ms="$8/1e6}' "$RUNNER_TEMP/out.txt") $(grep -o 'steals=[0-9]*' "$RUNNER_TEMP/err.txt" | tr '\n' ' ') $(grep -i 'compute:' "$RUNNER_TEMP/err.txt" | head -1)"
+            done; }
+          one A-demand-P4 0,2,4,6 on "$B/demand/hot_helper" 4
+          one B-exp1demand-P4 0,2,4,6 on "$B/exp1demand-hot_helper" 4
+          one C-demand-off-P4 0,2,4,6 off-never-request "$B/demand/hot_helper" 4
+          one D-par-P4 0,2,4,6 off-never-request "$B/par/hot_helper" 4
+          one E-demand-P2E2 0,2,16,17 on "$B/demand/hot_helper" 4
+          one F-idle1-P4 0,2,4,6 on "$B/idle1/hot_helper" 4
+          one S-seq-P1 0 off-never-request "$B/seq/hot_helper" 1
