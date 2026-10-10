@@ -3046,6 +3046,11 @@ pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
     pub(crate) formal_hypothesis: bool,
+    /// [FN-2] the canonical symbolic instance of this function's declaration,
+    /// when this is another symbolic instance whose arguments rename that
+    /// instance's parameters one to one: its body is neither checked nor
+    /// analyzed, and it takes that instance's outcomes. `None` otherwise.
+    pub(crate) summary_source: Option<FunctionId>,
     /// Element layout queried by paged_page_len, absent on other functions.
     pub(crate) prelude_element: Option<CheckedElement>,
     pub(crate) id: FunctionId,

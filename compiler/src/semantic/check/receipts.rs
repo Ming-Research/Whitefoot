@@ -453,6 +453,9 @@ impl ItemSpellings {
 fn analyzed_rendering(function: &CheckedFunction) -> String {
     let CheckedFunction {
         formal_hypothesis,
+        // A symbolic instance taking its canonical instance's outcomes is
+        // never analyzed, and no receipt stands for a symbolic analysis.
+        summary_source: _,
         prelude_element: _,
         id,
         declaration,

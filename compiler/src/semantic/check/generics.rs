@@ -16,7 +16,10 @@ use super::super::model::{
     CheckedConst, CheckedGenericRequirement, CheckedNominalKind, CheckedType, IntegerType,
     NominalId,
 };
-use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate, PreludeType};
+use super::super::entailment::{EntailmentCallee, finalize_function_entailment};
+use super::{
+    CheckStop, CheckedFunctionInventory, Checker, FunctionSignature, FunctionTemplate, PreludeType,
+};
 
 /// [FN-2, PROV-6] the at most one bound a type parameter carries.
 ///
@@ -1292,7 +1295,33 @@ impl<'unit> Checker<'_, 'unit> {
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         self.admit_postcondition_selectors_including(check_context, &canonical_seeds)?;
-        let mut phase_a = self.check_function_view(check_context, Vec::new())?;
+        // [FN-2] every canonical instance precedes the instances discovered
+        // from it in the view, so its body is checked, and its admitted
+        // schema clauses recorded, before any instance that renames it.
+        let const_types = self.types.const_generic_types().collect::<HashMap<_, _>>();
+        for (index, declaration) in &canonical_generic_signatures {
+            let signature = &self.types.signatures[*index];
+            if let Some(class) = symbolic_renaming_class(signature, &const_types) {
+                self.analysis
+                    .symbolic_canonical
+                    .insert(*declaration, (signature.id, class));
+            }
+        }
+        self.analysis.symbolic_const_types = const_types;
+        self.analysis.symbolic_type_bounds = self
+            .types
+            .generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type { declaration, bound } => Some((*declaration, *bound)),
+                _ => None,
+            })
+            .collect();
+        let phase_a = self.check_function_view(check_context, Vec::new());
+        self.analysis.symbolic_canonical.clear();
+        self.analysis.symbolic_const_types.clear();
+        self.analysis.symbolic_type_bounds.clear();
+        self.analysis.symbolic_admitted.clear();
+        let mut phase_a = phase_a?;
         self.types.close_allocation_metadata(&mut phase_a)?;
         for (canonical, declaration) in &canonical_generic_signatures {
             let checked = phase_a
@@ -1327,6 +1356,100 @@ impl<'unit> Checker<'_, 'unit> {
         self.analysis.postcondition_selectors.clear();
         self.admit_postcondition_selectors_including(check_context, &retained_concrete)?;
         Ok(range_stop)
+    }
+
+    /// Checks every source-generic body once with symbolic arguments, even when
+    /// no concrete instantiation is reachable from the executable program.
+    /// The ordinary entailment engine is the only acceptance path: generic
+    /// bodies do not receive a separate proof language or an assertion-based
+    /// exception.
+    fn validate_generic_body_entailment(
+        &mut self,
+        functions: &mut [CheckedFunctionInventory],
+        canonical: &[(usize, DeclarationId)],
+        callees: &[EntailmentCallee],
+    ) -> Result<Option<CheckStop>, CheckStop> {
+        let optimistic_batch = functions.iter().any(|checked| {
+            !checked.function.postconditions.is_empty()
+                || Checker::statements_contain_value_if(
+                    checked.function.body.as_deref().unwrap_or_default(),
+                )
+        });
+        // Only the canonical instances are judged below, and a judged body
+        // reads another function's analysis solely through the postcondition
+        // summaries of its callees. Every other body of this symbolic view —
+        // every nongeneric function among them — is analyzed only when its
+        // component can publish a summary such a body reads; the concrete
+        // phase analyzes the nongeneric ones again, so analyzing the rest
+        // here would repeat that cost for a result nothing reads.
+        let analyzed = Checker::generic_validation_scope(functions, canonical)?;
+        let mut judged = vec![false; functions.len()];
+        for (index, _) in canonical {
+            judged[*index] = true;
+        }
+        self.analyze_function_inventory(
+            functions,
+            callees,
+            optimistic_batch,
+            Some(&analyzed),
+            false,
+            Some(&judged),
+        )?;
+        if optimistic_batch {
+            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
+                if *analyzed && !self.analysis.renamed_summaries[index] {
+                    finalize_function_entailment(&mut checked.function.entailment);
+                }
+            }
+        }
+        if !self.reject_entailment {
+            return Ok(None);
+        }
+        for checked in functions.iter_mut() {
+            checked.function.body_disposition = checked.function.entailment.body_disposition;
+        }
+        let range_functions = functions
+            .iter()
+            .map(|checked| &checked.function)
+            .collect::<Vec<_>>();
+        let ranges = super::super::range_judgment::judge_program(
+            &range_functions,
+            &self.types.nominals,
+            &self.types.elements,
+            &judged,
+            &self.types.checked_constants,
+            super::super::range_judgment::JudgmentScope::Symbolic,
+            self.types.declarations.resolved,
+        );
+        for (index, declaration) in canonical {
+            let checked = functions
+                .get(*index)
+                .filter(|checked| checked.function.declaration == *declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            self.types.entailment_rejection_after_range(
+                &checked.function,
+                &ranges[*index].discharged,
+                &ranges[*index].inconclusive,
+            )?;
+        }
+        if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+            matches!(
+                issue,
+                super::super::range_judgment::RangeIssue::Unsupported { .. }
+                    | super::super::range_judgment::RangeIssue::Undischarged {
+                        capacity: Some(_),
+                        ..
+                    }
+            )
+        }) {
+            return Ok(Some(self.range_issue(issue)));
+        }
+        for (index, _) in canonical {
+            if let Some(issue) = ranges[*index].issues.first() {
+                return Err(self.range_issue(issue));
+            }
+        }
+        Ok(None)
     }
 
     /// The symbolic discovery walk already found every written source call.
@@ -2436,6 +2559,43 @@ pub(super) fn symbolic_renaming_class(
         kinds.push(kind);
     }
     (!kinds.is_empty()).then_some((signature.declaration, kinds))
+}
+
+/// Whether a renamed symbolic instance supplies, for each of its
+/// declaration's parameters, an argument the body treats as it treats that
+/// parameter at the canonical instance: a type parameter carrying the same
+/// bound, or the same interface member, whose contract and `waits` are
+/// shared. Kinds and const types are the renaming class's; a raw
+/// function-kind parameter supplied by another declaration's is not shared,
+/// so such an instance is checked and analyzed itself [FN-2, FN-3].
+pub(super) fn renames_canonical_parameters(
+    signature: &FunctionSignature,
+    bounds: &HashMap<DeclarationId, GenericBound>,
+) -> bool {
+    signature
+        .substitution
+        .bindings()
+        .iter()
+        .all(|(key, argument)| match (key, argument) {
+            (
+                GenericParameterKey::Source(own),
+                GenericArgument::Type(
+                    CheckedType::Generic(actual)
+                    | CheckedType::GenericInt(actual)
+                    | CheckedType::GenericFloat(actual),
+                ),
+            ) => bounds
+                .get(own)
+                .is_some_and(|bound| bounds.get(actual) == Some(bound)),
+            (_, GenericArgument::Const(CheckedConst::Parameter(_))) => true,
+            (
+                GenericParameterKey::Member { member, .. },
+                GenericArgument::Function(super::behavior::FunctionArgument::Parameter(
+                    GenericParameterKey::Member { member: actual, .. },
+                )),
+            ) => member == actual,
+            _ => false,
+        })
 }
 
 /// What a symbolic instance's callers read of another instance's analysis:
