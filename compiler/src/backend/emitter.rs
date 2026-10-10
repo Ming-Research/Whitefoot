@@ -2044,6 +2044,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .push(Parameter::named("i64", "%wf.budget"));
         }
         self.emit_grain_entry(&public)?;
+        self.emit_demand_region_entry(&public)?;
         if waiting {
             self.emit_frame_entry()?;
         }

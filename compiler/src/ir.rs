@@ -1957,6 +1957,11 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    /// Function-entry cheap-region predicates: every (span, iteration price)
+    /// must be below the demand work floor before entering the existing
+    /// sequential clone. Leaves are immutable u64 entry parameters only.
+    pub(crate) demand_regions:
+        std::collections::BTreeMap<String, Vec<(IrWorkEstimate, IrWorkEstimate)>>,
     pub(crate) demand_ablation: crate::DemandAblation,
     pub(crate) par_demand: bool,
     /// OP-9 ceilings before target representation choices, indexed by nominal.

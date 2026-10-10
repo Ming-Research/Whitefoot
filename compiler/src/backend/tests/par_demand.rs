@@ -1,5 +1,5 @@
-//! Research option isolation and shape checks; execution belongs to the
-//! maintained program tests, and baseline-revision byte comparison to CI.
+//! Demand option isolation, region shape and bounded behavior witnesses;
+//! baseline-revision byte comparison and performance qualification belong to CI.
 use super::{emit_lowered, parallel::function_body};
 use crate::{CallGrain, CompilerLimits, OverlapLowering, RecursionBudget, SourceInput};
 /// Every permitted offer stays, so these shape checks see each offer path.
@@ -235,6 +235,7 @@ fn demand_keeps_indexed_reductions_on_the_legacy_splitter() {
 #[test]
 fn demand_compilation_leaves_ordinary_parallel_emission_byte_identical() {
     for source in [
+        REGION.as_bytes(),
         SMALL.as_bytes(),
         include_bytes!("../../../../tests/programs/parallel/tree.wf").as_slice(),
         include_bytes!("../../../../tests/programs/parallel/range_fold.wf").as_slice(),
@@ -338,4 +339,203 @@ fn demand_takes_the_par_call_grain_so_a_cheap_group_never_polls() {
     let every_offer = emit_lowered(source, DEMAND);
     let every = function_body(&every_offer, "@wf_helper");
     assert!(every.contains(POLL), "{every}");
+}
+
+// A formal lowering witness: repeated guarded calls, a loop-carried offset,
+// an immutable extent, and an addressed Box owner. No research fixture import.
+const REGION: &str = r#"fn paint(cells: &Box<Array<u64>>, lo: u64, hi: u64, salt: u64) -> result: unit writes(cells) contract {
+  requires lo <= hi;
+  requires hi <= cells^.inner.len;
+} {
+  for (i in lo..hi) {
+    set cells^.inner[i] = i +wrap salt;
+  }
+  return unit;
+}
+
+fn walk(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
+  let cells = box_array_filled::<u64>(count: 32768_u64, value: 0_u64);
+  let lo = 0_u64;
+  let n = 0_u64;
+  loop @walk {
+    if n == repetitions {
+      break @walk;
+    }
+    let hi = lo +wrap extent;
+    if lo <= hi {
+      if hi <= cells.inner.len {
+        let salt = n +wrap seed;
+        let done = paint(cells: &cells, lo: lo, hi: hi, salt: salt);
+      }
+    }
+    set lo = lo +wrap 7_u64;
+    set n = n +wrap 1_u64;
+  }
+  let checksum = 0_u64;
+  let at = 0_u64;
+  loop @read {
+    if at >= cells.inner.len {
+      break @read;
+    }
+    set checksum = checksum +wrap cells.inner[at];
+    set at = at +wrap 1_u64;
+  }
+  return checksum;
+}
+"#;
+
+#[test]
+fn invariant_demand_region_selects_the_sequential_walker_once() {
+    let module = emit_lowered(REGION.as_bytes(), DEMAND);
+    let walker = function_body(&module, "@wf_walk");
+    assert_eq!(walker.matches("par.region.entry:").count(), 1, "{walker}");
+    assert!(walker.contains("call i64 @wf__par_seq_walk("), "{walker}");
+    assert!(walker.contains("@wf_paint("), "{walker}");
+    let sequential = function_body(&module, "@wf__par_seq_walk");
+    assert!(sequential.contains("@wf__par_seq_paint("), "{sequential}");
+    let paint = function_body(&module, "@wf__par_seq_paint");
+    assert!(paint.contains("@wf__par_seq__par_chunk_"), "{paint}");
+    for body in [sequential, paint] {
+        for forbidden in [
+            "par.region",
+            "par.small",
+            "par.slice",
+            "wf__par_demand",
+            "149999",
+            "21428",
+            "thread_local",
+        ] {
+            assert!(!body.contains(forbidden), "{forbidden}: {body}");
+        }
+    }
+    // Bounds and wrap guards remain source operations in the cheap version.
+    assert!(sequential.contains("icmp ule i64"), "{sequential}");
+    assert!(sequential.contains("add i64"), "{sequential}");
+}
+
+#[test]
+fn variant_demand_predicate_keeps_the_per_call_decision() {
+    let source = REGION.replace(
+        "let hi = lo +wrap extent;",
+        "let width = extent +wrap n;\n    let hi = lo +wrap width;",
+    );
+    let module = emit_lowered(source.as_bytes(), DEMAND);
+    let walker = function_body(&module, "@wf_walk");
+    assert!(!walker.contains("par.region"), "{walker}");
+    assert!(walker.contains("@wf_paint("), "{walker}");
+    let paint = function_body(&module, "@wf_paint");
+    assert!(
+        paint.contains("par.small.") && paint.contains("par.slice."),
+        "{paint}"
+    );
+}
+
+#[test]
+fn invariant_region_preserves_results_and_source_guards() {
+    // Independent scalar oracle covers empty, cheap, profitable, out-of-bounds
+    // and wrapped endpoints, including zero-trip entry with a large extent.
+    let mut source = REGION.to_owned();
+    source.push_str("\nfn main() -> status: std::process::ExitStatus pure {\n");
+    for (index, (repetitions, extent, seed)) in [
+        (0_u64, u64::MAX, 5_u64),
+        (2, 0, 10),
+        (2, 3, 10),
+        (2, 30000, 10),
+        (2, 32768, 10),
+        (2, u64::MAX, 10),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut cells = vec![0_u64; 32768];
+        for n in 0..repetitions {
+            let lo = n.wrapping_mul(7);
+            let hi = lo.wrapping_add(extent);
+            if lo <= hi && hi <= cells.len() as u64 {
+                for i in lo..hi {
+                    cells[i as usize] = i.wrapping_add(n.wrapping_add(seed));
+                }
+            }
+        }
+        let expected = cells.into_iter().fold(0_u64, u64::wrapping_add);
+        source.push_str(&format!("  let answer{index} = walk(repetitions: {repetitions}_u64, extent: {extent}_u64, seed: {seed}_u64);\n  if answer{index} != {expected}_u64 {{\n    return std::process::exit_status(code: 1_u8);\n  }}\n"));
+    }
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
+    for lowering in [OverlapLowering::Off, DEMAND] {
+        let module = emit_lowered(source.as_bytes(), lowering);
+        let directory = super::test_directory();
+        let image = super::build_executable(&module, &directory);
+        for workers in ["1", "4"] {
+            let output = super::BoundedOutput::bounded_output(
+                std::process::Command::new(&image).env("WF_WORKERS", workers),
+            )
+            .expect("run region witness");
+            assert!(output.status.success(), "workers={workers}: {output:?}");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn multiple_invariant_sites_share_one_region_selection() {
+    let source = REGION
+        .replace(
+            "fn walk(repetitions: u64, extent: u64, seed: u64)",
+            "fn walk(repetitions: u64, extent: u64, extent_two: u64, seed: u64)",
+        )
+        .replace(
+            "    set lo = lo +wrap 7_u64;",
+            r#"    let other_hi = lo +wrap extent_two;
+    if lo <= other_hi {
+      if other_hi <= cells.inner.len {
+        let other = paint(cells: &cells, lo: lo, hi: other_hi, salt: seed);
+      }
+    }
+    set lo = lo +wrap 7_u64;"#,
+        );
+    let module = emit_lowered(source.as_bytes(), DEMAND);
+    let walker = function_body(&module, "@wf_walk");
+    assert_eq!(walker.matches("par.region.entry:").count(), 1, "{walker}");
+    assert_eq!(
+        walker.matches("par.region.sequential:").count(),
+        1,
+        "{walker}"
+    );
+    assert_eq!(walker.matches("udiv i64 149999,").count(), 2, "{walker}");
+    assert_eq!(
+        walker.matches("call i64 @wf__par_seq_walk(").count(),
+        1,
+        "{walker}"
+    );
+}
+
+#[test]
+fn wrapping_span_without_an_order_guard_is_not_invariant() {
+    let source = br#"fn fold(lo: u64, hi: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in lo..hi) {
+    set total = total +wrap i;
+  }
+  return total;
+}
+
+fn walk(repetitions: u64, extent: u64) -> result: u64 pure {
+  let n = 0_u64;
+  let total = 0_u64;
+  loop @walk {
+    if n == repetitions {
+      break @walk;
+    }
+    let hi = n +wrap extent;
+    let part = fold(lo: n, hi: hi);
+    set total = total +wrap part;
+    set n = n +wrap 1_u64;
+  }
+  return total;
+}
+"#;
+    let module = emit_lowered(source, DEMAND);
+    let walker = function_body(&module, "@wf_walk");
+    assert!(!walker.contains("par.region"), "{walker}");
+    assert!(function_body(&module, "@wf_fold").contains("par.small."));
 }

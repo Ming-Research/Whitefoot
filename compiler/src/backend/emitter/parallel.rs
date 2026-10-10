@@ -1120,6 +1120,81 @@ impl FunctionEmitter<'_, '_> {
         Ok(result)
     }
 
+    /// Select the existing sequential body before any source operation or
+    /// capture escapes into scheduling. All predicates must be cheap; there
+    /// are exactly two worlds, never a version for each combination of sites.
+    pub(super) fn emit_demand_region_entry(
+        &mut self,
+        public: &FunctionAbi,
+    ) -> Result<(), BackendFailure> {
+        if !self.program.par_demand
+            || self.sequential_clones.is_some()
+            || self.grain.is_some()
+            || self.function.waits()
+            || self.dispatch.is_some()
+        {
+            return Ok(());
+        }
+        let Some(predicates) = self
+            .program
+            .demand_regions
+            .get(self.function.name())
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let ordinal = self
+            .program
+            .functions()
+            .iter()
+            .position(|function| std::ptr::eq(function, self.function))
+            .ok_or(BackendFailure::InvalidIr)? as u32;
+        if !sequential_clone_set(self.program).contains(&ordinal) {
+            return Ok(());
+        }
+        if self.incoming.first().is_some_and(|edges| !edges.is_empty()) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.output.open_block("par.region.entry".to_owned());
+        let mut memo = std::collections::HashMap::new();
+        let mut cheap = "true".to_owned();
+        for (span, price) in predicates {
+            let span = self.emit_work_estimate(&span, &mut memo)?;
+            let price = self.emit_work_estimate(&price, &mut memo)?;
+            let price = self.emit_work_binary("llvm.umax.i64", &price, "1")?;
+            let quotient = self.next_temporary()?;
+            let minimum = self.next_temporary()?;
+            let tiny = self.next_temporary()?;
+            let both = self.next_temporary()?;
+            writeln!(self.output,
+                "  %{quotient} = udiv i64 149999, {price}\n  %{minimum} = add i64 %{quotient}, 1\n  %{tiny} = icmp ult i64 {span}, %{minimum}\n  %{both} = and i1 {cheap}, %{tiny}"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            cheap = format!("%{both}");
+        }
+        let body =
+            super::block_label(crate::IrBlockId::from_index(0).ok_or(BackendFailure::InvalidIr)?);
+        writeln!(
+            self.output,
+            "  br i1 {cheap}, label %par.region.sequential, label %{body}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block("par.region.sequential".to_owned());
+        let clone = sequential_clone_symbol(self.function.name());
+        let arguments = super::ordinary_call_arguments(self.program, self.function, public)?;
+        self.output.symbol(clone.clone());
+        match public.result() {
+            ResultAbi::Destination(_) => writeln!(self.output, "  call void @{clone}({arguments})\n  ret void"),
+            ResultAbi::StoredValue(ty) => {
+                let ty = self.output.type_name(self.program, ty)?;
+                writeln!(self.output, "  %wf.region = call {ty} @{clone}({arguments})\n  store {ty} %wf.region, ptr {}\n  ret void", super::RESULT_POINTER)
+            }
+            ResultAbi::Value(ty) => {
+                let ty = self.output.type_name(self.program, ty)?;
+                writeln!(self.output, "  %wf.region = call {ty} @{clone}({arguments})\n  ret {ty} %wf.region")
+            }
+        }.map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// A demand site whose whole range is below its minimum span calls the
     /// chunk directly; only a range worth handing out enters the slice driver.
     /// Available runtime work prices admission and slices; the static ablation

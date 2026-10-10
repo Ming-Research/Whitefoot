@@ -120,7 +120,7 @@ impl Observation {
     }
 }
 
-struct Environment<'ir> {
+pub(super) struct Environment<'ir> {
     function: &'ir IrFunction,
     definitions: HashMap<IrValueId, &'ir IrOperation>,
     incoming: HashMap<IrValueId, Vec<IrValueId>>,
@@ -128,7 +128,7 @@ struct Environment<'ir> {
 }
 
 impl<'ir> Environment<'ir> {
-    fn new(function: &'ir IrFunction) -> Self {
+    pub(super) fn new(function: &'ir IrFunction) -> Self {
         let mut definitions = HashMap::new();
         let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
         for block in function.blocks() {
@@ -158,7 +158,11 @@ impl<'ir> Environment<'ir> {
         }
     }
 
-    fn scalar(&mut self, value: IrValueId) -> Work {
+    pub(super) fn definition(&self, value: IrValueId) -> Option<&'ir IrOperation> {
+        self.definitions.get(&value).copied()
+    }
+
+    pub(super) fn scalar(&mut self, value: IrValueId) -> Work {
         self.observe(Observation::Scalar, value, &mut Vec::new())
     }
 

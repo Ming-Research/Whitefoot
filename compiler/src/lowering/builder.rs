@@ -7,6 +7,7 @@ mod buffers;
 mod call_grain;
 mod contexts;
 mod demand;
+mod demand_regions;
 mod loops;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
@@ -220,6 +221,11 @@ pub(crate) fn lower_checked_from(
     if par_demand {
         demand::prune_and_report(&mut functions, &mut actualization);
     }
+    let demand_regions = if par_demand {
+        demand_regions::plan(&functions, demand_ablation)
+    } else {
+        Default::default()
+    };
     let nominal_ceilings = nominals
         .iter()
         .map(|nominal| {
@@ -228,6 +234,7 @@ pub(crate) fn lower_checked_from(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        demand_regions,
         demand_ablation,
         par_demand,
         nominal_ceilings,
