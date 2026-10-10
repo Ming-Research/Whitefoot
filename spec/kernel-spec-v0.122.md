@@ -1,4 +1,4 @@
-# Kernel Specification v0.123
+# Kernel Specification v0.122
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -559,7 +559,7 @@ Every aggregate therefore holds only owned values, which is what [STOR-7] rests 
 `Array<T>`, `Slots<T>`, and `Ring<T>` are the runtime-capacity forms, written by omitting the const argument N, whose capacity is fixed at construction and read as the readonly field `cap`, or as `len` for an `Array<T>` [MSR-1], each placed by the placement table below.
 `Segments<T>` is the prelude's opaque struct `Segments` [TYPE-2, PRE-1], declared with no capacity parameter and its one measure `len` as a readonly field [MSR-1]: a run of `len` segments of T whose boundaries `box_segments_filled` fixes when it builds the run [OP-13] and no operation changes, its elements stored contiguously in segment order. It has no constant-capacity form and is placed by the placement table below. Its segments and the run of all its elements are reached by [OP-4, REF-4].
 `Paged<T>` is the prelude's opaque struct `Paged` [TYPE-2, PRE-1], a runtime-capacity window with fixed-size pages of element storage [WIN-1] and the measures of [MSR-1]. It has no constant-capacity form and is placed by the table below. Its elements, runs and pages are reached by [OP-4, REF-4], and its admitted boundary operations are [OP-10].
-`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored as [STOR-1] places it: in the one heap object the `Box` value owns, or, for an empty contiguous runtime-capacity window, in the shared empty header; T is any nameable type [TYPE-3] the placement table admits as a `Box`'s content, a runtime-capacity form, a `Segments<T>` and a `Paged<T>` included; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
+`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored in exactly one heap object the `Box` value owns [STOR-1]; T is any nameable type [TYPE-3] the placement table admits as a `Box`'s content, a runtime-capacity form, a `Segments<T>` and a `Paged<T>` included; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
 The content is reached by the ordinary field step, `b.inner`, and through a reference to the cell as `cell^.inner`, where `^` steps through the reference and `inner` through the cell; `^` never reaches the content itself [TYPE-7, REF-1]. `let n = move b.inner;` consumes the `Box`, yields its content, and frees the cell [WIN-3].
 A `move` of a runtime-capacity, `Segments` or `Paged` content is a hard error citing TYPE-9 at the complete `place`, with a repair [DIAG-1].
 The element type of any shape is any nameable type the placement table admits as an element, copy, affine, or linear [OWN-1, PROV-6].
@@ -808,7 +808,7 @@ The checked program retains, before lowering [DIAG-2], each type's linearity cla
 
 ## 6. Storage
 
-[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned: a content that is a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>` of capacity 0 is the shared empty header, immutable static storage that no release frees, and every other content is one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
+[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned, one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
 There is no per-binding storage annotation and no default clause.
 An `Array<T, N>` holds exactly N stride-spaced element representations in index order and stores no length, capacity, head, occupancy, or discriminant; a window stores its `len`, and a `Ring` its `head`, with the block [WIN-1].
 A shape's concrete size, stride, padding, and zero-extent representation obey [STOR-6]; placing a shape inside another owner changes no element order or ownership.
@@ -865,7 +865,7 @@ No exit duplicates an action already carried by an inner scope edge.
 
 The release action of a type is compiler-owned semantic data selected by that type, not a fixed enumeration of memory-reclamation actions.
 Which components of a value that action visits, and in which order, is [PROV-6]'s release graph and its one walk; the per-type actions below are the leaves that walk runs.
-A `Box<T>` release is its content's compiler-derived release followed by one compiler-derived heap free for each allocation its content occupies [STOR-1].
+A `Box<T>` release is its content's compiler-derived release followed by one compiler-derived heap free.
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
@@ -1224,7 +1224,6 @@ The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring
 Each runtime-capacity construction and `grow` or `grow_paged` [OP-10] computes its size from its own count as [OP-9] states.
 Allocation is total [STOR-8], so no construction has a failure arm for exhausted storage.
 A window built by `slots_new`, `ring_new`, `box_slots_new`, `box_ring_new`, or `box_paged_new` starts empty.
-A runtime-capacity construction of `Array<T>`, `Slots<T>`, or `Ring<T>` whose count is 0 builds the shared empty header and allocates nothing [STOR-1].
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
 `box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
 Its element total, the sum of the lengths, is a runtime sum that no term states; the run's block holds `r^.len + 1` boundaries and that total of elements, its size is computed as [OP-9] states, and its result is the cell itself.
