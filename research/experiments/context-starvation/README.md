@@ -123,10 +123,11 @@ fail the protocol; timing differences themselves do not select success.
 
 ## Run on CI
 
-The manual [compute-bench workflow](../../../.github/workflows/compute-bench.yml)
-has a temporary `experiment: ctx-starvation` choice on `ubuntu-24.04`. It
-installs Clang and LLD, fetches locked Rust dependencies, builds the compiler
-using `make -C compiler build`, and invokes:
+The recorded runs used a temporary `experiment: ctx-starvation` choice of
+the compute-bench workflow on `ubuntu-24.04`, removed when the work merged; a
+rerun adds such a job on its branch again. It installed Clang and LLD,
+fetched locked Rust dependencies, built the compiler using
+`make -C compiler build`, and invoked:
 
 ```sh
 WF_SCHED_REPORT=2 OUT="$RUNNER_TEMP/context-starvation" sh research/experiments/context-starvation/run.sh

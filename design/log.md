@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Driver handoff: idle drivers borrow, a spare takes a computing driver's role
+
+Nodes: compiler/waiting-contexts, compiler/waiting-contexts/bounded-waits, compiler/waiting-contexts/concurrent-map, compiler/completion-runtime
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item firn-gap-ctx-starve to the request "approve two things of driver handoff (#335 and #336): (1) the cost criterion counts as met: throughput within 3% in all 12 cells; p99 equal in 11 cells; the one cell, mset at depth 16 on 2 cores, has about ±20% measurement noise and shows no increase (paired median 1.006); (2) the design-tree changes, with their provisional marks removed: in waiting-contexts a driver becomes a role that threads can take over; bounded-waits adds idle-driver borrowing (step 1) and handing a whole role to a spare thread (step 2); concurrent-map numbers users by thread; completion-runtime drops COOP_TASKRUN from io_uring" (translated). The plan, D first then whole-role transfer, was the owner's choice of A on the driver-handoff card earlier the same day.
+
+Summary: A context that computes without waiting no longer leaves its driver's deadlines and published completions unserviced: an idle driver borrows the computing driver for one bounded pass over due sleeps and terminal records, and with no idle driver a monitor hands the whole driver role to a spare thread from a pool of at most twice as many threads as drivers, the displaced thread giving its context back when it next suspends. Map users are numbered by thread because a displaced thread can still be inside a statement, and rings drop cooperative task run so a replacement can reap them. A 100 ms timer beside a two-second computation now fires at about 0.103 s on one or two CPUs, and firn's throughput stays within 3 percent.
+
 ## 2026-10-10 Whole-value reads of a const item
 
 Nodes: language/ownership
