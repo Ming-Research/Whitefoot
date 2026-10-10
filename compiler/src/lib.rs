@@ -162,7 +162,7 @@ pub use ir::RecursionBudget;
 pub use lexer::*;
 /// The compile-time choice of whether the backend actualizes the permission
 /// judgment's overlap groups.
-pub use lowering::{CallGrain, OverlapLowering};
+pub use lowering::{CallGrain, DemandAblation, OverlapLowering};
 pub use resolution::*;
 pub use source::*;
 pub use spec::*;

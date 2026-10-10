@@ -211,7 +211,7 @@ uint64_t wf_prim_monotonic_us(void) {
         + ((ticks % per_second) * UINT64_C(1000000)) / per_second;
 }
 
-#if defined(WF_PAR_TRACE)
+#if defined(WF_PAR_TRACE) || defined(WF_PAR_DEMAND_COUNTERS)
 /* The lane trace's clock; see prim.h. Behind the instrument's guard, so an
  * ordinary build of this file has the same bytes it had before it existed.
  * Same overflow care as the microsecond reading above. */

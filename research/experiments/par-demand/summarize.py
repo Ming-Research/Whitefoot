@@ -19,12 +19,15 @@ HERE = Path(__file__).resolve().parent
 MANIFEST = json.loads((HERE / "manifest.json").read_text())
 ARMS = ("seq", "demand", "par", "twin")
 E2_ARMS = ("seq", "par", "demand", "idle1", "twin")
+E3_ARMS = ("seq", "par", "demand", "twin", "order", "seed", "extent", "dedup")
+E3_WIDTHS = (4, 8)
 WIDTHS = (1, 4, 8)
 FIELDS = ("workload", "arm", "width", "round", "attempt", "sample", "wall_ns", "cpu_ns", "count")
 
 
 def load(path, experiment=1, sample_index=1):
-    expected_arms = E2_ARMS if experiment == 2 else ARMS
+    expected_arms = E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
+    expected_widths = E3_WIDTHS if experiment == 3 else WIDTHS
     counts = {}
     groups = {}
     seen = set()
@@ -34,21 +37,23 @@ def load(path, experiment=1, sample_index=1):
                 raise ValueError(f"malformed measurement: {row}")
             name, arm = row[:2]
             width, round_id, attempt, sample, wall, cpu, count = map(int, row[2:])
-            if (name not in MANIFEST or arm not in expected_arms or width not in WIDTHS
+            if (name not in MANIFEST or arm not in expected_arms or width not in expected_widths
                     or round_id < 0 or attempt not in (1, 2) or sample not in (0, 1)
                     or min(wall, cpu, count) <= 0):
                 raise ValueError(f"invalid measurement: {row}")
+            if experiment == 3 and attempt != 1:
+                raise ValueError("experiment 3 has no rerun attempt")
             key = (name, width, attempt, arm, round_id, sample)
             if key in seen:
                 raise ValueError(f"duplicate measurement: {key}")
             seen.add(key)
-            if experiment == 2:
+            if experiment in (2, 3):
                 cell = (name, width, attempt)
                 if counts.setdefault(cell, count) != count:
                     raise ValueError(f"comparison extent changed: {cell}")
             if sample == sample_index:  # second call judges; first reports startup
                 groups.setdefault((name, width, attempt), {}).setdefault(arm, {})[round_id] = (wall, cpu)
-    if experiment == 2:
+    if experiment in (2, 3):
         for key in seen:
             if key[:-1] + (1 - key[-1],) not in seen:
                 raise ValueError(f"missing first/second call: {key}")
@@ -110,6 +115,8 @@ def attempt_result(arms, width, decisions=0):
 
 
 def summarize(path, inspection=None, sizing=False, experiment=1):
+    if experiment == 3:
+        return summarize_e3(path, sizing)
     if experiment == 2:
         return summarize_e2(path, inspection, sizing)
     groups = load(path)
@@ -276,12 +283,108 @@ def summarize_e2(path, inspection=None, sizing=False):
     return results
 
 
+def attempt_result_e3(arms, width):
+    if set(arms) != set(E3_ARMS):
+        raise ValueError("missing experiment-3 arm")
+    rounds = set(arms["demand"])
+    if not rounds or rounds != set(range(len(rounds))) or any(set(rows) != rounds for rows in arms.values()):
+        raise ValueError("unpaired or missing experiment-3 rounds")
+    order = sorted(rounds)
+    wall = {arm: [arms[arm][r][0] / arms["demand"][r][0] for r in order] for arm in E3_ARMS}
+    cpu = {arm: [arms[arm][r][1] / arms["demand"][r][1] for r in order] for arm in E3_ARMS}
+    margins = {arm: [(arms[arm][r][1] - 1.1 * arms["seq"][r][1]
+                     - 0.1 * max(0, arms["seq"][r][0] - arms[arm][r][0]) * width)
+                    / arms["seq"][r][1] for r in order] for arm in E3_ARMS}
+    twin = quantity(wall["twin"])
+    return dict(rounds=len(rounds), status="intervals" if twin["interval"][0] <= 1 <= twin["interval"][1] else "void",
+                wall_over_demand={arm: quantity(values) for arm, values in wall.items()},
+                cpu_over_demand={arm: quantity(values) for arm, values in cpu.items()},
+                h3={arm: quantity(values) for arm, values in margins.items()}, twin_wall_ratio=twin,
+                h3_change={arm: quantity([a - b for a, b in zip(values, margins["demand"])])
+                           for arm, values in margins.items()})
+
+
+def cause_verdict(cell, arm, sizing=False):
+    if sizing or cell["status"] == "void":
+        return "undecided"
+    if arm == "dedup":
+        low, high = cell["h3"][arm]["interval"]
+        base_low, base_high = cell["h3"]["demand"]["interval"]
+        if max(low, base_low) <= min(high, base_high):
+            return "rejected"
+        return "supported" if high < base_low and cell["h3_change"][arm]["interval"][1] < 0 else "undecided"
+    intervals = [cell["wall_over_demand"][arm]["interval"]]
+    if arm == "extent":
+        intervals.append(cell["cpu_over_demand"][arm]["interval"])
+    if all(low <= 1 <= high for low, high in intervals):
+        return "rejected"
+    return "supported" if all(high < 1 for _, high in intervals) else "undecided"
+
+
+def e3_round_count(cells):
+    # Project the six-round interval widths by sqrt(6/n), as a sizing rule,
+    # never a verdict. Freeze n before collecting any decisive observations.
+    if any(cell["rounds"] != 6 for cell in cells):
+        raise ValueError("experiment 3 sizing requires exactly six rounds")
+    quantities = []
+    for cell in cells:
+        for metric, bound in (("wall_over_demand", 1), ("cpu_over_demand", 1), ("h3", 0)):
+            for arm in E3_ARMS:
+                value = cell[metric][arm]
+                quantities.append((value["interval"][1] - value["interval"][0],
+                                   max(0.02, abs(value["median"] - bound))))
+    return next((n for n in range(6, 31) if all(width * (6 / n) ** 0.5 <= target
+                                               for width, target in quantities)), 30)
+
+
+def summarize_e3(path, sizing=False):
+    groups = load(path, experiment=3)
+    cells = []
+    for name in MANIFEST:
+        for width in E3_WIDTHS:
+            if (name, width, 1) not in groups:
+                raise ValueError(f"missing initial cell: {name}/{width}")
+            cell = attempt_result_e3(groups[name, width, 1], width)
+            cell.update(workload=name, width=width)
+            cells.append(cell)
+    if len({cell["rounds"] for cell in cells}) != 1:
+        raise ValueError("experiment 3 cells must have the same frozen round count")
+    if not sizing:
+        sample_path = Path(path).parent / "sizing-e3" / "measurements.tsv"
+        if not sample_path.exists():
+            raise ValueError("missing experiment 3 six-round sizing evidence")
+        sample = summarize_e3(sample_path, sizing=True)
+        if any(cell["rounds"] != sample["decisive_rounds"] for cell in cells):
+            raise ValueError("decisive rounds differ from the count frozen by sizing")
+    causes = []
+    for arm, names, widths in (("order", ("mandelbrot",), (8,)),
+                               ("seed", ("mandelbrot", "recursion", "stencil"), E3_WIDTHS),
+                               ("extent", ("stencil", "histogram"), E3_WIDTHS),
+                               ("dedup", ("stencil", "histogram"), E3_WIDTHS)):
+        for cell in cells:
+            name, width = cell["workload"], cell["width"]
+            if name not in names or width not in widths:
+                continue
+            if arm == "dedup" and (name, width) not in (("stencil", 4), ("histogram", 8)):
+                continue
+            causes.append(dict(cause=arm, workload=name, width=width,
+                               verdict=cause_verdict(cell, arm, sizing),
+                               evidence=cell["status"]))
+    result = dict(experiment=3, sizing=sizing, cells=cells, causes=causes)
+    if sizing:
+        result["decisive_rounds"] = e3_round_count(cells)
+    else:
+        result["sizing_evidence"] = str(sample_path)
+        result["decisive_rounds"] = sample["decisive_rounds"]
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("measurements", type=Path)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--sizing", action="store_true")
-    parser.add_argument("--experiment", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--experiment", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     inspection = json.loads(args.inspection.read_text()) if args.inspection and args.inspection.exists() else {}
     rows = summarize(args.measurements, inspection, args.sizing, args.experiment)

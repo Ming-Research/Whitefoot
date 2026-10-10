@@ -66,6 +66,10 @@ pub(crate) fn lower_checked_from(
     roots: Option<&[crate::semantic::FunctionId]>,
 ) -> Result<IrProgram, LoweringFailure> {
     let par_demand = matches!(overlap, OverlapLowering::Demand { .. });
+    let demand_ablation = match overlap {
+        OverlapLowering::Demand { ablation, .. } => ablation,
+        _ => crate::DemandAblation::None,
+    };
     let sequential_compute_refusal = matches!(
         overlap,
         OverlapLowering::OnWithSequentialRefusal { .. }
@@ -169,6 +173,7 @@ pub(crate) fn lower_checked_from(
     let source_functions =
         u32::try_from(physical.variants.len()).map_err(|_| LoweringFailure::CounterOverflow)?;
     let synthesis = SynthesisCell::new(Synthesis::new(source_functions, par_demand));
+    synthesis.borrow_mut().demand_ablation = demand_ablation;
     let symbols = physical
         .variants
         .iter()
@@ -223,6 +228,7 @@ pub(crate) fn lower_checked_from(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        demand_ablation,
         par_demand,
         nominal_ceilings,
         nominals,

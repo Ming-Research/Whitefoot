@@ -1548,3 +1548,34 @@ decisive image's machine code, not by an arm. The batch ends with a table
 per cause: supported, rejected or undecided, and the hybrid plan's changes
 whose cause it rejects are dropped from the plan before any is built.
 
+### Experiment 3 implementation boundary
+
+The arms are selected by the research-only `--par-demand-ablation
+order|seed|extent` option (omitting it keeps the demand lowering unchanged,
+which the CLI and shape tests check) and, for `dedup` and the diagnostic
+counters, by the experiment Makefile's runtime macros
+`WF_PAR_DEMAND_DEDUP` and `WF_PAR_DEMAND_COUNTERS`, never compiled into an
+ordinary or `demand` object (the identity check compares both against
+fadbc866b). `seed` affects counted loops only, so loop-free recursion is a
+negative control here, not a test of eager recursive offers.
+
+**`dedup`, amended before any measurement.** The registered form read the
+victim's word before counting itself in, but that read is not protected:
+the owner can withdraw the address, see no counted thief and exit between
+the thief's load of the address and its read of the word, which is then
+freed thread-local storage. The arm instead keeps a `request_posted` flag in
+the lane, which outlives every owner: a thief reads it uncounted and skips
+the counted request when it is set; the thief that posts sets it; the
+owner's publication clears it after clearing its word. The word is touched
+only inside the counted section, as before. A stale flag only skips or
+repeats a request, which is advice. The question and the rejection rule are
+unchanged.
+
+The reducer reports, per workload and width, each arm's paired ratio to
+`demand` and its E2-H3 margin, the twin's ratio (void if it excludes 1), and
+the per-cause table. For `extent`'s joint wall and CPU criterion, both
+intervals containing 1 reject the cause, both wholly below 1 support it, and
+mixed results stay undecided; `dedup` is supported only by disjoint, lower
+CPU-margin intervals. The six-round sizing projection scales interval width
+by `sqrt(6/n)`, and the decisive reducer requires the saved sample and its
+selected round count.

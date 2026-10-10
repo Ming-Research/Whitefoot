@@ -1374,6 +1374,7 @@ struct Options {
     /// compute offers require the native runtime at link time.
     par: bool,
     par_demand: bool,
+    demand_ablation: whitefoot::DemandAblation,
     /// Which permitted call offers `--par` publishes: the work-unit grain by
     /// default, every permitted offer under `--par-call-grain off`.
     call_grain: CallGrain,
@@ -1457,6 +1458,7 @@ impl Options {
         let mut emit_llvm = false;
         let mut par = false;
         let mut par_demand = false;
+        let mut demand_ablation = None;
         let mut call_grain = None;
         let mut sequential_refusal = false;
         let mut recursive_frontier = None;
@@ -1503,6 +1505,19 @@ impl Options {
                 "--par-demand" => {
                     par = true;
                     par_demand = true;
+                }
+                "--par-demand-ablation" => {
+                    cursor += 1;
+                    let arm = match arguments.get(cursor).map(String::as_str) {
+                        Some("none") => whitefoot::DemandAblation::None,
+                        Some("order") => whitefoot::DemandAblation::Order,
+                        Some("seed") => whitefoot::DemandAblation::Seed,
+                        Some("extent") => whitefoot::DemandAblation::Extent,
+                        _ => return Err("--par-demand-ablation requires none, order, seed or extent".to_owned()),
+                    };
+                    if demand_ablation.replace(arm).is_some() {
+                        return Err("--par-demand-ablation may be written only once".to_owned());
+                    }
                 }
                 "--par-call-grain" => {
                     cursor += 1;
@@ -1746,6 +1761,9 @@ impl Options {
         if call_grain.is_some() && !par {
             return Err("--par-call-grain requires --par".to_owned());
         }
+        if demand_ablation.is_some() && !par_demand {
+            return Err("--par-demand-ablation requires --par-demand".to_owned());
+        }
         if sequential_refusal && !par {
             return Err("--par-sequential-refusal requires --par".to_owned());
         }
@@ -1756,6 +1774,7 @@ impl Options {
             emit_llvm,
             par,
             par_demand,
+            demand_ablation: demand_ablation.unwrap_or_default(),
             call_grain: call_grain.unwrap_or_default(),
             sequential_refusal,
             recursive_frontier,
@@ -1791,6 +1810,7 @@ impl Options {
             OverlapLowering::Off
         } else if self.par_demand {
             OverlapLowering::Demand {
+                ablation: self.demand_ablation,
                 budget: self.recursive_frontier.unwrap_or_default(),
                 call_grain: self.call_grain,
                 sequential_refusal: self.sequential_refusal,
@@ -2073,6 +2093,7 @@ mod tests {
         assert_eq!(
             options.overlap(),
             OverlapLowering::Demand {
+                ablation: whitefoot::DemandAblation::None,
                 budget: RecursionBudget::RuntimeDerived,
                 call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
@@ -2102,6 +2123,23 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn demand_ablation_is_research_only_and_none_keeps_default_emission() {
+        let source = include_bytes!("../../../tests/programs/parallel/range_fold.wf");
+        let default = parse(&["--par-demand", "value.wf"]).unwrap();
+        let explicit = parse(&["--par-demand", "--par-demand-ablation", "none", "value.wf"]).unwrap();
+        let emit = |options: Options| whitefoot::compile_with_overlap(
+            &[whitefoot::SourceInput::new("value.wf", source)],
+            whitefoot::CompilerLimits::default(), options.overlap()).unwrap();
+        assert_eq!(emit(default), emit(explicit));
+        for arm in ["none", "order", "seed", "extent"] {
+            assert!(parse(&["--par-demand", "--par-demand-ablation", arm, "value.wf"]).is_ok());
+            assert!(parse(&["--par", "--par-demand-ablation", arm, "value.wf"]).is_err());
+        }
+        assert!(parse(&["--par-demand", "--par-demand-ablation", "dedup", "value.wf"]).is_err());
+        assert!(parse(&["--par-demand", "--par-demand-ablation"]).is_err());
     }
 
     /// The dispatch ledger shares stdout with nothing else.

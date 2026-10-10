@@ -184,6 +184,7 @@ pub(crate) struct Synthesis {
     /// they are appended after every source function.
     base: u32,
     pub(super) demand: bool,
+    pub(super) demand_ablation: crate::DemandAblation,
     functions: Vec<Option<IrFunction>>,
     /// How many helpers each source function has synthesized,
     /// which numbers the next one's symbol within that function alone.
@@ -199,6 +200,7 @@ impl Synthesis {
         Self {
             base,
             demand,
+            demand_ablation: crate::DemandAblation::None,
             functions: Vec::new(),
             local: HashMap::new(),
             ledger: Vec::new(),

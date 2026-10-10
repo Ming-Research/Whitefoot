@@ -8,8 +8,8 @@ import measure
 import contextlib
 import io
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, WIDTHS, MANIFEST, load, summarize,
-                       attempt_result_e2)
+from summarize import (ARMS, E2_ARMS, E3_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, load, summarize,
+                       attempt_result_e2, attempt_result_e3, cause_verdict, e3_round_count)
 from measure import cpu_list, performance_cores, demand_setting
 
 class VerdictTests(unittest.TestCase):
@@ -206,6 +206,132 @@ class Experiment2Tests(unittest.TestCase):
         with self.assertRaises(ValueError): self.row()
         self.path.write_text("".join(lines[:-1] + [lines[-1].rsplit("\t", 1)[0] + "\t2\n"]))
         with self.assertRaises(ValueError): self.row()
+
+
+class Experiment3Tests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "rows.tsv"
+
+    def write(self, changes=None, rounds=6):
+        values = {arm: (0.5, 1.4) for arm in E3_ARMS}
+        values["seq"] = (1.0, 1.0)
+        values.update(changes or {})
+        lines = []
+        for name in MANIFEST:
+            for width in E3_WIDTHS:
+                for arm, (wall, cpu) in values.items():
+                    for r in range(rounds):
+                        for sample in (0, 1):
+                            lines.append(f"{name}\t{arm}\t{width}\t{r}\t1\t{sample}\t{int(wall * 1e9)}\t{int(cpu * 1e9)}\t1\n")
+        self.path.write_text("".join(lines))
+        sample_dir = self.path.parent / "sizing-e3"
+        sample_dir.mkdir(exist_ok=True)
+        (sample_dir / "measurements.tsv").write_text("".join(lines))
+
+    def test_neutral_rejects_registered_causes_and_reports_h3_without_bounds(self):
+        self.write()
+        result = summarize(self.path, experiment=3)
+        self.assertEqual({r["verdict"] for r in result["causes"]}, {"rejected"})
+        cell = next(c for c in result["cells"] if c["width"] == 4)
+        self.assertAlmostEqual(cell["h3"]["demand"]["median"], 0.1)
+        self.assertEqual(cell["wall_over_demand"]["seq"]["interval"], [2, 2])
+        self.assertNotIn("rules", cell)
+
+    def test_improvement_supports_but_regression_does_not(self):
+        self.write({arm: (0.4, 1.0) for arm in ("order", "seed", "extent", "dedup")})
+        result = summarize(self.path, experiment=3)
+        self.assertEqual({r["verdict"] for r in result["causes"]}, {"supported"})
+        self.write({arm: (0.7, 2.0) for arm in ("order", "seed", "extent", "dedup")})
+        self.assertEqual({r["verdict"] for r in summarize(self.path, experiment=3)["causes"]}, {"undecided"})
+
+    def test_extent_needs_wall_and_cpu_and_dedup_uses_margin_overlap(self):
+        self.write({"extent": (0.4, 1.4), "dedup": (0.5, 1.2)})
+        cell = summarize(self.path, experiment=3)["cells"][0]
+        self.assertEqual(cause_verdict(cell, "extent"), "undecided")
+        cell["h3"]["dedup"]["interval"] = [0.05, 0.2]
+        self.assertEqual(cause_verdict(cell, "dedup"), "rejected")
+
+    def test_void_and_sizing_never_support_or_reject_a_cause(self):
+        self.write({"twin": (0.6, 1.4)})
+        result = summarize(self.path, experiment=3)
+        self.assertEqual({c["status"] for c in result["cells"]}, {"void"})
+        self.assertEqual({r["verdict"] for r in result["causes"]}, {"undecided"})
+        self.write()
+        result = summarize(self.path, sizing=True, experiment=3)
+        self.assertEqual(result["decisive_rounds"], 6)
+        self.assertEqual({r["verdict"] for r in result["causes"]}, {"undecided"})
+        for cell in result["cells"]:
+            cell["wall_over_demand"]["order"] = dict(median=1, interval=[0.5, 1.5])
+        self.assertEqual(e3_round_count(result["cells"]), 30)
+        self.write(rounds=5)
+        with self.assertRaises(ValueError): summarize(self.path, sizing=True, experiment=3)
+
+    def test_missing_wrong_unpaired_and_rerun_evidence_raise(self):
+        self.write()
+        original = self.path.read_text().splitlines(keepends=True)
+        variants = [original[:-1], original + [original[0]],
+                    [line for line in original if "\tseed\t" not in line],
+                    [original[0].replace("\t4\t0\t1\t", "\t1\t0\t1\t")] + original[1:],
+                    [original[0].replace("\t4\t0\t1\t", "\t4\t0\t2\t")] + original[1:],
+                    [original[0].rsplit("\t", 1)[0] + "\t2\n"] + original[1:]]
+        for lines in variants:
+            self.path.write_text("".join(lines))
+            with self.assertRaises(ValueError): summarize(self.path, experiment=3)
+        arms = {arm: {0: (100, 100), 1: (200, 100), 2: (1000, 100)} for arm in E3_ARMS}
+        arms["order"] = {0: (200, 100), 1: (200, 100), 2: (500, 100)}
+        self.assertEqual(attempt_result_e3(arms, 4)["wall_over_demand"]["order"]["median"], 1)
+        del arms["order"][1]
+        with self.assertRaises(ValueError): attempt_result_e3(arms, 4)
+        self.write()
+        (self.path.parent / "sizing-e3/measurements.tsv").unlink()
+        with self.assertRaisesRegex(ValueError, "sizing evidence"):
+            summarize(self.path, experiment=3)
+        self.write(rounds=7)
+        with self.assertRaisesRegex(ValueError, "six rounds"):
+            summarize(self.path, experiment=3)
+
+    def test_measurement_sizes_then_freezes_and_counters_are_unjudged(self):
+        build = Path(self.directory.name)
+        for arm in E3_ARMS:
+            (build / arm).mkdir()
+            for name in MANIFEST:
+                (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        observed = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": "fixture\n"})()
+            image, mode, arm, width, round_id, attempt = command[3:]
+            self.assertEqual(mode, "measure")
+            self.assertEqual(attempt, "1")
+            self.assertIn(int(width), E3_WIDTHS)
+            self.assertEqual(kwargs["env"]["WF_PAR_DEMAND"], demand_setting(3, arm))
+            observed.append((arm, width, round_id, kwargs["env"].get("WF_SCHED_REPORT")))
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{Path(image).name}\t{arm}\t{width}\t{round_id}\t1\t{sample}\t100\t100\t1\n")
+        def invoke(extra=()):
+            with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "3", *extra]), \
+                 patch.object(measure, "run", side_effect=fake_run), \
+                 patch.object(measure.platform, "system", return_value="Linux"), \
+                 patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+                 patch.object(measure, "performance_cores", return_value=(list(range(8)), {})), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                measure.main()
+        invoke()
+        count = len(MANIFEST) * len(E3_ARMS) * len(E3_WIDTHS)
+        self.assertEqual(len(observed), count * 12)
+        self.assertTrue(all(report is None for _, _, _, report in observed))
+        self.assertEqual(json.loads((build / "identity.json").read_text())["rounds"], 6)
+        self.assertTrue((build / "sizing-e3/measurements.tsv").exists())
+        summary = (build / "summary.json").read_bytes()
+        observed.clear()
+        (build / "counter-build").touch()
+        invoke(("--instrumented",))
+        self.assertEqual(len(observed), count)
+        self.assertTrue(all(report == "2" for _, _, _, report in observed))
+        self.assertEqual((build / "summary.json").read_bytes(), summary)
+        with self.assertRaises(SystemExit): invoke()
 
 
 class PerformanceCoreTests(unittest.TestCase):

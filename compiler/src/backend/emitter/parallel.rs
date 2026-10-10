@@ -322,7 +322,7 @@ pub(super) fn parallel_recursion_budget_fallback() -> Result<Module, BackendFail
 /// definition replaces it at link. Windows takes the external declaration.
 pub(crate) const DEMAND_WORD_SYMBOL: &str = "wf__par_demand_word";
 
-pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
+pub(super) fn demand_runtime(windows: bool, ablation: crate::DemandAblation) -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     // The marker enables posting before even a legacy indexed splitter starts
     // the pool. A later first group must not find all helpers parked unasked.
@@ -342,6 +342,19 @@ pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
         module.weak_global(DEMAND_WORD_SYMBOL, "thread_local(initialexec) global", "i64", "0", 8);
     }
     module.text("\n");
+    if ablation == crate::DemandAblation::Seed {
+        let mut signature = Signature::new("wf__par_demand_frontier", "i64", vec![]);
+        if windows {
+            module.declare(signature);
+        } else {
+            signature.linkage = Linkage::Weak;
+            let mut body = FunctionBody::default();
+            body.open_block("entry".to_owned());
+            body.instructions("  ret i64 1\n", &[]);
+            module.define(signature.define(body, "")?);
+        }
+        module.text("\n");
+    }
     Ok(module)
 }
 
@@ -884,7 +897,10 @@ impl FunctionEmitter<'_, '_> {
         // splitter otherwise share the typed internal parameter/result ABI.
         let expected = declared
             .len()
-            .checked_sub(usize::from(!direct_chunk))
+            .checked_sub(usize::from(!direct_chunk) + usize::from(
+                !direct_chunk && split.indexed.is_empty()
+                    && self.program.demand_ablation == crate::DemandAblation::Seed,
+            ))
             .ok_or(BackendFailure::InvalidIr)?;
         if expected != split.captures.len() + 3
             || abi.result().ty() != ty
@@ -1106,9 +1122,9 @@ impl FunctionEmitter<'_, '_> {
 
     /// A demand site whose whole range is below its minimum span calls the
     /// chunk directly; only a range worth handing out enters the slice driver.
-    /// The weight is the site's static price, so the minimum span is a
-    /// constant here and a tiny range pays one comparison, not the driver's
-    /// entry. The chunk takes the driver's parameters less the weight.
+    /// The default weight is static, so a tiny range pays one comparison, not
+    /// driver entry. Extent alone replaces this price; seed alone supplies an
+    /// additional entry frontier count. Neither changes the chunk ABI.
     fn emit_demand_split(
         &mut self,
         result: IrValueId,
@@ -1123,7 +1139,22 @@ impl FunctionEmitter<'_, '_> {
             .get(split.chunk as usize)
             .ok_or(BackendFailure::InvalidIr)?;
         let chunk = self.callee_symbol(split.chunk, chunk_function.name());
-        let minimum_span = crate::lowering::demand_minimum_span(split.weight);
+        let mut weight = split.weight.to_string();
+        let minimum_span = if self.program.demand_ablation == crate::DemandAblation::Extent
+            && let Some(work) = split.work
+        {
+            let estimate = self.emit_work_estimate(work, &mut std::collections::HashMap::new())?;
+            // Like split_budget, zero estimated work prices at one unit;
+            // division and the threshold remain total at every extent.
+            weight = self.emit_work_binary("llvm.umax.i64", &estimate, "1")?;
+            let quotient = self.next_temporary()?;
+            let minimum = format!("%{}", self.next_temporary()?);
+            writeln!(self.output, "  %{quotient} = udiv i64 149999, {weight}\n  {minimum} = add i64 %{quotient}, 1")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            minimum
+        } else {
+            crate::lowering::demand_minimum_span(split.weight).to_string()
+        };
         let ordinal = result.ordinal();
         let (small, slice, join) = (
             format!("par.small.v{ordinal}"),
@@ -1152,13 +1183,22 @@ impl FunctionEmitter<'_, '_> {
             None
         };
         let mut driver_arguments = arguments.clone();
-        driver_arguments.push(format!("i64 {}", split.weight));
+        driver_arguments.push(format!("i64 {weight}"));
         let mut values = Vec::new();
         for (label, callee, mut arguments) in [
             (&small, chunk.as_str(), arguments),
             (&slice, driver, driver_arguments),
         ] {
             self.output.open_block(label.clone());
+            if label == &slice && self.program.demand_ablation == crate::DemandAblation::Seed {
+                let capacity = format!("%{}", self.next_temporary()?);
+                let affordable = format!("%{}", self.next_temporary()?);
+                self.output.symbol("wf__par_demand_frontier");
+                writeln!(self.output, "  {capacity} = call i64 @wf__par_demand_frontier()\n  {affordable} = udiv i64 {span}, {minimum_span}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                let frontier = self.emit_work_binary("llvm.umin.i64", &capacity, &affordable)?;
+                arguments.push(format!("i64 {frontier}"));
+            }
             self.output.symbol(callee.to_string());
             if let Some(destination) = &destination {
                 arguments.insert(0, format!("ptr {destination}"));

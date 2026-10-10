@@ -334,6 +334,14 @@ struct wf__par_lane {
     /* Thieves inside wf__par_request; the exiting owner waits for zero after
      * withdrawing request_word, so no thief writes its freed word. */
     unsigned request_users;
+#if defined(WF_PAR_DEMAND_DEDUP)
+    /* Experiment 3's dedup arm: set by the thief that posts, cleared by the
+     * owner's publication. It lives in the lane, which outlives every owner,
+     * so a thief may read it uncounted; the word itself is still touched
+     * only inside the counted section. A stale value only skips or repeats a
+     * request, which is advice. */
+    unsigned request_posted;
+#endif
 #endif
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
@@ -350,6 +358,16 @@ struct wf__par_lane {
 };
 
 static struct wf__par_lane wf__par_lanes[WF_PAR_MAX_LANES];
+#if defined(WF_PAR_DEMAND_COUNTERS)
+enum wf__par_counter {
+    WF_COUNT_ATTEMPT, WF_COUNT_POST, WF_COUNT_PUBLISH, WF_COUNT_STEAL,
+    WF_COUNT_PARK, WF_COUNT_SPIN_NS, WF_COUNT_PARK_NS, WF_COUNT_LENGTH
+};
+static void wf__par_count(enum wf__par_counter counter, uint64_t value);
+#define WF_DEMAND_COUNT(counter, value) wf__par_count(counter, value)
+#else
+#define WF_DEMAND_COUNT(counter, value) ((void)0)
+#endif
 #if defined(WF_PAR_DEMAND)
 /* The --par-demand module supplies a strong marker. Read once before lazy
  * pool startup, including startup through the legacy indexed splitter. */
@@ -406,10 +424,19 @@ static void wf__par_register_word(struct wf__par_lane *lane) {
 static void wf__par_request(struct wf__par_lane *victim) {
     uint64_t *word;
     if (!atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) return;
+#if defined(WF_PAR_DEMAND_DEDUP)
+    if (__atomic_load_n(&victim->request_posted, __ATOMIC_RELAXED) != 0u) return;
+#endif
+    WF_DEMAND_COUNT(WF_COUNT_ATTEMPT, 1);
     __atomic_fetch_add(&victim->request_users, 1u, __ATOMIC_SEQ_CST);
     word = __atomic_load_n(&victim->request_word, __ATOMIC_SEQ_CST);
-    if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0)
+    if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0) {
         __atomic_store_n(word, (uint64_t)1, __ATOMIC_RELAXED);
+#if defined(WF_PAR_DEMAND_DEDUP)
+        __atomic_store_n(&victim->request_posted, 1u, __ATOMIC_RELAXED);
+#endif
+        WF_DEMAND_COUNT(WF_COUNT_POST, 1);
+    }
     __atomic_fetch_sub(&victim->request_users, 1u, __ATOMIC_RELEASE);
 }
 
@@ -815,6 +842,46 @@ static void wf__par_trace_dump(void) {
 #endif
 
 static _Thread_local struct wf__par_lane *wf__par_self;
+#if defined(WF_PAR_DEMAND_COUNTERS)
+/* Separate diagnostic images only. Single lane writers use atomic counters
+ * because the exit snapshot can race an idle worker. Posts count writes,
+ * including concurrent writers that both observed zero, not unique requests. */
+static struct {
+    _Alignas(WF_PAR_CACHE_LINE) uint64_t values[WF_COUNT_LENGTH];
+} wf__par_counters[WF_PAR_MAX_LANES];
+static void wf__par_count(enum wf__par_counter counter, uint64_t value) {
+    if (wf__par_self == NULL) return;
+    uint64_t *cell = &wf__par_counters[wf__par_self - wf__par_lanes].values[counter];
+    uint64_t old = __atomic_load_n(cell, __ATOMIC_RELAXED);
+    __atomic_store_n(cell, old + value, __ATOMIC_RELAXED);
+}
+static void wf__par_counter_dump(void) {
+    const char *report = getenv("WF_SCHED_REPORT");
+    if (report == NULL || report[0] != '2' || report[1] != '\0') return;
+    int lanes = __atomic_load_n(&wf__par_lane_count, __ATOMIC_RELAXED);
+    if (lanes < 1) lanes = 1;
+    for (int lane = 0; lane < lanes; ++lane) {
+        fprintf(stderr, "demand_counters lane=%d", lane);
+        const char *names[] = {"requests_attempted", "requests_posted", "publications",
+                              "steals", "parks", "spin_ns", "park_ns"};
+        for (int c = 0; c < WF_COUNT_LENGTH; ++c)
+            fprintf(stderr, " %s=%llu", names[c], (unsigned long long)
+                    __atomic_load_n(&wf__par_counters[lane].values[c], __ATOMIC_RELAXED));
+        fputc('\n', stderr);
+    }
+}
+__attribute__((constructor)) static void wf__par_counter_initialize(void) {
+    (void)atexit(wf__par_counter_dump);
+}
+static void wf__par_counter_sleep(wf_prim_wait *wait) {
+    uint64_t start = wf_prim_monotonic_ns();
+    WF_DEMAND_COUNT(WF_COUNT_PARK, 1);
+    wf_prim_wait_sleep(wait);
+    uint64_t end = wf_prim_monotonic_ns();
+    if (start && end >= start) WF_DEMAND_COUNT(WF_COUNT_PARK_NS, end - start);
+}
+#define wf_prim_wait_sleep wf__par_counter_sleep
+#endif
 
 static _Thread_local int wf__par_attached;
 
@@ -972,6 +1039,7 @@ static struct wf__par_slot *wf__par_steal(struct wf__par_lane *victim) {
 #if defined(WF_SCHED_TEST)
     wf_sched_test_after_steal(1);
 #endif
+    WF_DEMAND_COUNT(WF_COUNT_STEAL, 1);
 #if WF_SCHED_STATS
     uint64_t n = __atomic_load_n(&wf__par_self->steals, __ATOMIC_RELAXED);
     __atomic_store_n(&wf__par_self->steals, n + 1, __ATOMIC_RELAXED);
@@ -1015,6 +1083,17 @@ static struct wf__par_slot *wf__par_find(struct wf__par_lane *lane) {
 #endif
     return NULL;
 }
+
+#if defined(WF_PAR_DEMAND_COUNTERS)
+static struct wf__par_slot *wf__par_counter_find(struct wf__par_lane *lane) {
+    uint64_t start = wf_prim_monotonic_ns();
+    struct wf__par_slot *slot = wf__par_find(lane);
+    uint64_t end = wf_prim_monotonic_ns();
+    if (start && end >= start) WF_DEMAND_COUNT(WF_COUNT_SPIN_NS, end - start);
+    return slot;
+}
+#define wf__par_find wf__par_counter_find
+#endif
 
 /* After DONE, only atomic waiter metadata in permanent slot storage may be
  * read. The owner can already reuse the frame; a late signal is harmless. */
@@ -1237,6 +1316,19 @@ static int wf__par_stay_hot(struct wf__par_idling *idling) {
     }
     return 0;
 }
+
+#if defined(WF_PAR_DEMAND_COUNTERS)
+/* Spin time covers scans and spin/yield policy calls, excluding callbacks and
+ * sleeps; it is elapsed time, not exclusive CPU time or a timing verdict. */
+static int wf__par_counter_stay_hot(struct wf__par_idling *idling) {
+    uint64_t start = wf_prim_monotonic_ns();
+    int hot = wf__par_stay_hot(idling);
+    uint64_t end = wf_prim_monotonic_ns();
+    if (start && end >= start) WF_DEMAND_COUNT(WF_COUNT_SPIN_NS, end - start);
+    return hot;
+}
+#define wf__par_stay_hot wf__par_counter_stay_hot
+#endif
 
 /* Nested helping is safe for structured compute calls: no I/O continuation
  * can strand this stack. Register the waiter before the final SC DONE check;
@@ -1566,6 +1658,7 @@ void *wf__par_acquire_lane(uint64_t bytes) {
 }
 
 void wf__par_publish(void *frame, void (*fn)(void *)) {
+    WF_DEMAND_COUNT(WF_COUNT_PUBLISH, 1);
     struct wf__par_slot *slot = (struct wf__par_slot *)frame;
     slot->run = fn;
 #if defined(WF_PAR_DEMAND)
@@ -1575,6 +1668,10 @@ void wf__par_publish(void *frame, void (*fn)(void *)) {
     if (atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) {
         uint64_t *word = __atomic_load_n(&slot->home->request_word, __ATOMIC_RELAXED);
         if (word != NULL) __atomic_store_n(word, (uint64_t)0, __ATOMIC_RELAXED);
+#if defined(WF_PAR_DEMAND_DEDUP)
+        if (__atomic_load_n(&slot->home->request_posted, __ATOMIC_RELAXED) != 0u)
+            __atomic_store_n(&slot->home->request_posted, 0u, __ATOMIC_RELAXED);
+#endif
     }
 #endif
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
@@ -1709,6 +1806,15 @@ uint64_t wf__par_split_budget(uint64_t span, uint64_t weight) {
     }
     return budget;
 }
+
+#if defined(WF_PAR_DEMAND_SEED)
+/* Experiment 3: only the entry frontier changes. Unlike split_budget, queued
+ * siblings do not veto it; refinement retains demand's existing policy. */
+uint64_t wf__par_demand_frontier(void) {
+    int lanes = __atomic_load_n(&wf__par_lane_count, __ATOMIC_RELAXED);
+    return lanes < 2 ? 1 : (uint64_t)lanes * WF_PAR_SPLIT_OVERSUBSCRIBE;
+}
+#endif
 
 /* How many times a call into an ordinary recursive component may hand work
  * out before its callees enter the sequential clone.

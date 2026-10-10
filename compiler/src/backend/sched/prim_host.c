@@ -239,7 +239,7 @@ uint64_t wf_prim_monotonic_us(void) {
         + (uint64_t)now.tv_nsec / UINT64_C(1000);
 }
 
-#if defined(WF_PAR_TRACE)
+#if defined(WF_PAR_TRACE) || defined(WF_PAR_DEMAND_COUNTERS)
 /* The lane trace's clock; see prim.h. Behind the instrument's guard, so an
  * ordinary build of this file has the same bytes it had before it existed. */
 uint64_t wf_prim_monotonic_ns(void) {

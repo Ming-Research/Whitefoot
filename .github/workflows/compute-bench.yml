@@ -44,9 +44,9 @@ on:
         options: [scoreboard, placement, par-demand]
         default: scoreboard
       par_demand_experiment:
-        description: Demand hand-out experiment (2 requires the 14900K and eight performance cores)
+        description: Demand hand-out experiment (2 and 3 require the 14900K and eight performance cores)
         type: choice
-        options: ["1", "2"]
+        options: ["1", "2", "3"]
         default: "1"
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -393,17 +393,24 @@ jobs:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
         run: |
           perl .github/run-check.pl par-demand/build \
-            make -C research/experiments/par-demand build verify idle-policy-identity BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT="$EXPERIMENT"
+            make -C research/experiments/par-demand build verify idle-policy-identity ablation-identity BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT="$EXPERIMENT"
+          if [ "$EXPERIMENT" = 3 ]; then
+            make -C research/experiments/par-demand counter-build BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT=3
+          fi
           { git rev-parse HEAD; cargo --version; /usr/bin/clang --version; lscpu; } > "$RUNNER_TEMP/par-demand/build-host.txt"
-          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par,idle1}/*; do
+          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par,idle1,order,seed,extent,dedup}/*; do
             if [[ "$image" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
           done
       - name: Small hosted sizing sample
+        env:
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
         run: |
-          perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
-            --build "$RUNNER_TEMP/par-demand" --sizing --rounds 1
-          mkdir "$RUNNER_TEMP/par-demand/sizing"
-          mv "$RUNNER_TEMP/par-demand"/{identity.json,measurements.tsv,summary.json} "$RUNNER_TEMP/par-demand/sizing/"
+          if [ "$EXPERIMENT" != 3 ]; then
+            perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
+              --build "$RUNNER_TEMP/par-demand" --sizing --rounds 1
+            mkdir "$RUNNER_TEMP/par-demand/sizing"
+            mv "$RUNNER_TEMP/par-demand"/{identity.json,measurements.tsv,summary.json} "$RUNNER_TEMP/par-demand/sizing/"
+          fi
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/par-demand-images.tar.gz" par-demand
       - uses: actions/upload-artifact@v4
         with:
@@ -418,13 +425,13 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Require the performance-core runner for experiment 2
+      - name: Require the performance-core runner for experiments 2 and 3
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           RUNNER: ${{ inputs.placement_runner }}
         run: |
-          if [ "$EXPERIMENT" = 2 ] && [ "$RUNNER" != 14900k ]; then
-            echo "Experiment 2 requires the 14900K; the hosted job above only builds and verifies its arms." >&2
+          if [ "$EXPERIMENT" != 1 ] && [ "$RUNNER" != 14900k ]; then
+            echo "Experiments 2 and 3 require the 14900K; the hosted job above only builds and verifies their arms." >&2
             exit 1
           fi
       - uses: actions/download-artifact@v4
@@ -442,6 +449,14 @@ jobs:
           { lscpu; cat /proc/self/status; printf 'runner=%s rounds=%s\n' "$RUNNER" "$ROUNDS"; } > "$RUNNER_TEMP/par-demand/measurement-host.txt"
           sizing=()
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
+          if [ "$EXPERIMENT" = 3 ]; then
+            perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
+              --build "$RUNNER_TEMP/par-demand" --experiment 3
+            python3 research/experiments/par-demand/measure.py \
+              --build "$RUNNER_TEMP/par-demand/counter" --experiment 3 --instrumented
+            cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
             --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" --rounds "$ROUNDS" "${sizing[@]}"
           python3 research/experiments/par-demand/summarize.py "$RUNNER_TEMP/par-demand/measurements.tsv" \

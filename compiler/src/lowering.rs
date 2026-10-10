@@ -287,6 +287,20 @@ pub enum CallGrain {
     Every,
 }
 
+/// One isolated research change to demand lowering; never selected implicitly.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DemandAblation {
+    /// Preserve the current demand prototype.
+    #[default]
+    None,
+    /// Publish the near half and execute the far half locally.
+    Order,
+    /// Publish a bounded initial frontier before request-driven refinement.
+    Seed,
+    /// Price slices using the available runtime work estimate.
+    Extent,
+}
+
 /// Whether lowering actualizes ordinary permission-derived overlap.
 ///
 /// Every mode runs the same permission judgment and preserves source acceptance.
@@ -300,6 +314,8 @@ pub enum OverlapLowering {
     /// handed out; static small splits are pruned and other non-indexed
     /// splits use slices.
     Demand {
+        /// Experiment 3's single changed mechanism, or the unchanged prototype.
+        ablation: DemandAblation,
         /// Keep the existing recursion budget and its sequential cut.
         budget: RecursionBudget,
         /// Which permitted call offers may be handed out on request.

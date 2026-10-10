@@ -4,6 +4,7 @@ use super::{emit_lowered, parallel::function_body};
 use crate::{CallGrain, CompilerLimits, OverlapLowering, RecursionBudget, SourceInput};
 /// Every permitted offer stays, so these shape checks see each offer path.
 const DEMAND: OverlapLowering = OverlapLowering::Demand {
+    ablation: crate::DemandAblation::None,
     budget: RecursionBudget::RuntimeDerived,
     call_grain: CallGrain::Every,
     sequential_refusal: false,
@@ -26,6 +27,70 @@ fn dynamic(seed: u64, n: u64) -> result: u64 pure {
 "#;
 
 const POLL: &str = "load atomic i64, ptr @wf__par_demand_word monotonic, align 8";
+
+fn ablation(arm: crate::DemandAblation) -> OverlapLowering {
+    OverlapLowering::Demand {
+        ablation: arm,
+        budget: RecursionBudget::RuntimeDerived,
+        call_grain: CallGrain::Every,
+        sequential_refusal: false,
+    }
+}
+
+#[test]
+fn default_demand_is_unchanged_after_each_ablation() {
+    let before = emit_lowered(SMALL.as_bytes(), DEMAND);
+    for arm in [crate::DemandAblation::Order, crate::DemandAblation::Seed, crate::DemandAblation::Extent] {
+        let _ = emit_lowered(SMALL.as_bytes(), ablation(arm));
+        assert_eq!(before, emit_lowered(SMALL.as_bytes(), ablation(Default::default())));
+    }
+}
+
+#[test]
+fn order_publishes_near_but_combines_near_then_far() {
+    use crate::{IrInstruction, IrOperation, IrIntegerOperation};
+    super::system::with_mutated_ir_lowering(SMALL.as_bytes(), ablation(crate::DemandAblation::Order), |program| {
+        let driver = program.functions().iter().find(|f| f.name().starts_with("_par_slice_dynamic")).unwrap();
+        let members = &driver.overlaps[0].members;
+        let operation = |value| driver.blocks().iter().flat_map(|b| b.instructions()).find_map(|i| match i {
+            IrInstruction::Define { result, operation, .. } if *result == value => Some(operation),
+            _ => None,
+        }).unwrap();
+        let IrOperation::Call { arguments: near, .. } = operation(members[0]) else { panic!("near call") };
+        let IrOperation::Call { arguments: far, .. } = operation(members[1]) else { panic!("far call") };
+        assert_eq!(near[2], far[1]);
+        assert_eq!(far[2], driver.parameters()[2].0);
+        assert_ne!(near[0], far[0]);
+        assert!(driver.blocks().iter().flat_map(|b| b.instructions()).any(|i| matches!(i,
+            IrInstruction::Define { operation: IrOperation::Integer {
+                operation: IrIntegerOperation::AddWrap, arguments, .. }, .. } if arguments == members)));
+    });
+}
+
+#[test]
+fn seed_has_an_entry_frontier_and_retains_the_request_refinement() {
+    let module = emit_lowered(SMALL.as_bytes(), ablation(crate::DemandAblation::Seed));
+    let caller = function_body(&module, "@wf_dynamic");
+    assert!(caller.contains("call i64 @wf__par_demand_frontier()"), "{caller}");
+    assert!(caller.contains("@llvm.umin.i64"), "{caller}");
+    let driver = module.split("\ndefine ").find(|function| {
+        function.lines().next().is_some_and(|header| header.contains("@wf__par_slice_dynamic"))
+    }).expect("dynamic slice driver");
+    assert!(driver.contains(POLL), "{driver}");
+    assert_eq!(driver.matches("call void @wf__par_publish").count(), 2, "{driver}");
+    assert!(driver.contains("udiv i64") && driver.contains("sub i64"), "{driver}");
+}
+
+#[test]
+fn extent_prices_demand_with_the_available_runtime_work() {
+    let source = include_bytes!("../../../../tests/programs/compute/stencil.wf");
+    let plain = emit_lowered(source, DEMAND);
+    let extent = emit_lowered(source, ablation(crate::DemandAblation::Extent));
+    assert!(!plain.contains("udiv i64 149999,"));
+    assert!(extent.contains("udiv i64 149999, %"), "{extent}");
+    assert!(extent.contains("@llvm.umax.i64"));
+    assert!(extent.contains(POLL));
+}
 
 #[test]
 fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
@@ -253,6 +318,7 @@ fn demand_takes_the_par_call_grain_so_a_cheap_group_never_polls() {
     let grained = emit_lowered(
         source,
         OverlapLowering::Demand {
+            ablation: crate::DemandAblation::None,
             budget: RecursionBudget::RuntimeDerived,
             call_grain: CallGrain::WorkUnit,
             sequential_refusal: false,

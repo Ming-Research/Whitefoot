@@ -49,8 +49,14 @@ impl IrBuilder<'_> {
             .map(|ty| b.new_parameter(*ty))
             .collect::<Result<Vec<_>, _>>()?;
         // Same transport as the splitter's trailing budget word. Every caller
-        // supplies assign_weights' positive static per-iteration price.
+        // supplies a positive per-iteration price (static except in extent).
         let weight = b.new_parameter(U64)?;
+        let ablation = self.synthesis.borrow().demand_ablation;
+        let frontier = if ablation == crate::DemandAblation::Seed {
+            Some(b.new_parameter(U64)?)
+        } else {
+            None
+        };
         let one = b.demand_constant(1)?;
         let slice_work = b.demand_constant(SLICE_WORK)?;
         let quotient = b.demand_binary(Op::DivideExact, slice_work, weight)?;
@@ -64,6 +70,45 @@ impl IrBuilder<'_> {
         let (ask, _) = b.new_block(&[])?;
         let (slice, _) = b.new_block(&[])?;
         let (halve, _) = b.new_block(&[])?;
+        let mut overlaps = Vec::new();
+        if let Some(frontier) = frontier {
+            let (publish, _) = b.new_block(&[])?;
+            let (refine, _) = b.new_block(&[])?;
+            let seeded = b.demand_binary(Op::Greater, frontier, one)?;
+            b.branch(seeded, publish, refine)?;
+            b.current = Some(publish);
+            // Entry supplies min(span / minimum_span, lanes * 16). Publish
+            // one far share per descent before the owner's first slice. The
+            // quotient leaves every share >= minimum_span, and near retains
+            // the remainder. Published shares never seed another frontier.
+            let span = b.demand_binary(Op::SubtractWrap, upper, lower)?;
+            let count = b.demand_binary(Op::DivideExact, span, frontier)?;
+            let middle = b.demand_binary(Op::SubtractWrap, upper, count)?;
+            let remaining = b.demand_binary(Op::SubtractWrap, frontier, one)?;
+            let right_seed = match actualization {
+                LoopActualization::IndependentMap => seed,
+                LoopActualization::Reduction { combine, .. } => {
+                    b.identity_value(combine, result_type)?
+                }
+            };
+            let mut far = vec![right_seed, middle, upper];
+            far.extend(captures.iter().copied());
+            far.extend([weight, one]);
+            let far = b.define(result_type, IrOperation::Call { function: ordinal, arguments: far })?;
+            let mut near = vec![seed, lower, middle];
+            near.extend(captures.iter().copied());
+            near.extend([weight, remaining]);
+            let near = b.define(result_type, IrOperation::Call { function: ordinal, arguments: near })?;
+            let result = match actualization {
+                LoopActualization::IndependentMap => near,
+                LoopActualization::Reduction { combine, .. } => {
+                    b.combine_values(combine, result_type, near, far)?
+                }
+            };
+            b.terminate(IrTerminator::Return { value: result, drops: vec![] })?;
+            overlaps.push(IrOverlap { members: vec![far, near] });
+            b.current = Some(refine);
+        }
         b.terminate(IrTerminator::Jump {
             target: header,
             arguments: vec![seed, lower],
@@ -125,28 +170,35 @@ impl IrBuilder<'_> {
                 b.identity_value(combine, result_type)?
             }
         };
-        // Publish the far half; the owner runs the near half with its carried
-        // seed. Join before combining near then far, preserving source order.
+        // Only order reverses publication. Seeds and the near-then-far
+        // reduction combine retain source order in both schedules.
         let mut far = vec![right_seed, middle, upper];
         far.extend(captures.iter().copied());
         far.push(weight);
-        let far = b.define(
-            result_type,
-            IrOperation::Call {
-                function: ordinal,
-                arguments: far,
-            },
-        )?;
         let mut near = vec![accumulator, cursor, middle];
         near.extend(captures);
         near.push(weight);
-        let near = b.define(
+        if frontier.is_some() {
+            far.push(one);
+            near.push(one);
+        }
+        let reverse = ablation == crate::DemandAblation::Order;
+        let (first, second) = if reverse { (near, far) } else { (far, near) };
+        let first = b.define(
             result_type,
             IrOperation::Call {
                 function: ordinal,
-                arguments: near,
+                arguments: first,
             },
         )?;
+        let second = b.define(
+            result_type,
+            IrOperation::Call {
+                function: ordinal,
+                arguments: second,
+            },
+        )?;
+        let (near, far) = if reverse { (first, second) } else { (second, first) };
         let result = match actualization {
             LoopActualization::IndependentMap => near,
             LoopActualization::Reduction { combine, .. } => {
@@ -157,11 +209,10 @@ impl IrBuilder<'_> {
             value: result,
             drops: vec![],
         })?;
+        overlaps.push(IrOverlap { members: vec![first, second] });
         b.finish(
             format!("_par_slice_{name}"),
-            vec![IrOverlap {
-                members: vec![far, near],
-            }],
+            overlaps,
             Some(IrSynthesis::Splitter),
         )
     }

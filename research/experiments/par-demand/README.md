@@ -1,23 +1,19 @@
-# Demand hand-out experiment 1
+# Demand hand-out experiments
 
 This is the opt-in prototype for [the prospective experiment](../../investigations/par-demand/DESIGN.md).
-It changes no specification or design-tree decision. Remove or replace this
+It changes no language rule or adopted production policy. Remove or replace this
 harness when that investigation ends. No gate consumes this directory.
 
 `--par-demand` implies `--par`, takes `--par`'s call grain (`--par-call-grain
 off` keeps every permitted group, as experiment 1 did), and keeps the existing recursion budget,
-cut and sequential clone. The [current unmeasured candidate](../../investigations/par-demand/DESIGN.md#the-fourth-change-fixed-before-it-measures)
-emits non-indexed slices in the caller as one slice loop and requests early
-expansion of synthesized chunks in whole-module output; separately optimized
-fragments still need qualification. Every slice runs the chunk from one call
-site over `[cursor, cursor + min(remaining, step))`, where the step is
-`max(2, ceil(150000 / static_weight))` iterations (work units, not
-nanoseconds), so the inlined loop keeps the unknown trip count the sequential
-loop has; a range below the step is one slice and never polls. Only a request
-enters the recursive driver, which offers the far half and runs the near half
-locally. Accumulated reductions seed the near half with their live value and
-combine near then far after joining. The polling interval and early expansion
-need an owner decision before adoption.
+cut and sequential clone. The current prototype uses an outlined slice driver
+and the original chunk. The caller bypasses the driver below
+`ceil(150000 / static_weight)` iterations. The driver runs slices of
+`max(1, floor(150000 / static_weight))` iterations, polling only when the
+remaining span reaches the minimum and exceeds one. A request publishes the
+far half and runs the near half locally. Reductions seed the near half with
+their live value and combine near then far after joining. Caller-local slices
+and forced early expansion were rejected in the investigation.
 Indexed accumulators deliberately retain the existing prepare/split/finish path;
 the ledger says `legacy splitter for indexed`. This exception can still publish
 work with requests off. Inspect each formal kernel's ledger before attributing
@@ -40,8 +36,8 @@ thread-local request word:
 
 At a group this branches around acquisition and merges a null frame into the
 existing refused edge. At a non-indexed loop, the remaining-work comparison
-precedes the poll, and a false poll executes a caller-local slice then returns
-to the comparison. A true poll enters the driver. Its recursive workers use
+precedes the poll inside the driver, and a false poll executes a chunk slice
+then returns to the comparison. Its recursive workers use
 the same interval and still check before offering a half. The word is this
 thread's `wf__par_demand_word`, a `_Thread_local` the demand scheduler unit
 defines; the module carries a weak zero definition so that it still links and
@@ -103,14 +99,17 @@ Makefile compiles those `.wf` sources directly. Prefix and histogram reuse
 `blocked_oracle.c` through the small performance adapter. Other kernels reuse
 their formal performance APIs unchanged.
 
-Rounds rotate and reverse workload, width and build order. Exceeded bounds get
+Rounds rotate and reverse workload, width and build order. In experiments 1
+and 2, exceeded bounds get
 one extra interleaved batch at the same workload and width. No timing or source
 result is replaced on a rerun. The reducer reports wall/CPU medians, candidate
-ratio, noise and the initial/rerun verdicts. A failed rerun is `fail`; a first
-exceedance followed by a pass is `inconclusive` (the batches disagree). Twin
-spread is `(max - min) / median` over all candidate and identical-twin samples
-at a width; noise is the larger of that and 1%. Spread above 2% makes that workload/width cell inconclusive. Widths 4/8 require ratio at most
-`1.02 + noise`; width 1 requires absolute deviation from 1 at most noise.
+ratio intervals and the initial/rerun verdicts. A failed rerun is `fail`; a first
+exceedance followed by a pass is `inconclusive` (the batches disagree). The
+statistic is the median of paired per-round ratios with a 95% interval from
+10,000 bootstrap medians, seed `20261010`. A twin/demand interval excluding 1
+voids the cell. Experiment 1 uses the decision-point allowance at widths 4/8
+and the `[0.98, 1.02]` band at width 1; experiment 2 adds the preregistered
+keep-speedup, CPU-margin and idle-policy rules.
 The script reports an experiment failure as data, and exits unsuccessfully
 only for malformed/missing evidence or a build/execution/oracle error.
 
@@ -158,3 +157,63 @@ and after a demand compilation in one process, detecting leaked option state.
 The baseline comparison, emitted-IR validity, native program tests, reducer
 controls and performance results must run in CI; cargo check alone proves none
 of those. No measurement has been taken by this implementation task.
+
+## Experiment 3: isolated attribution
+
+Select `par_demand_experiment=3`, `placement_runner=14900k`, with
+`placement_rounds` empty. The hosted job builds and verifies the images; the
+14900K takes six full-work sizing rounds, archives them in `sizing-e3/`, freezes
+the chosen count (6 through 30), and collects a separate decisive matrix at
+widths 4 and 8. There is no exceeding-cell rerun. Sizing projects each paired
+interval's width by `sqrt(6/n)` and selects the first count whose projected
+width is at most 0.02 or its median's distance to the comparison point (1 for
+ratios, 0 for H3). The sample is never pooled with decisive observations.
+
+The compiler accepts `--par-demand-ablation none|order|seed|extent` only with
+`--par-demand`; omission is `none`. Each arm changes one mechanism:
+
+- `order` publishes near and runs far, keeping the original seeds, bounds,
+  joins and near-then-far reduction combine.
+- `seed` passes `min(span / minimum_span, lanes * 16)` at entry. A recursive
+  publication chain hands out one far share at a time, then the owner runs the
+  remaining near share. Every share is at least the minimum span; all shares
+  use the existing request-driven refinement without reseeding. Frame refusal
+  retains ordinary-call fallback. Statement groups and recursion cuts do not
+  change, so a loop-free recursion workload is a negative control for this arm.
+- `extent` evaluates the existing `split.work` estimate and uses it for both
+  admission and slice pricing, clamped to one as in the eager runtime. Missing
+  estimates retain the static price. No work-estimator rule changes.
+- `dedup` (`WF_PAR_DEMAND_DEDUP`) skips the counted request when the victim
+  lane's `request_posted` flag is set; the posting thief sets it and the
+  owner's publication clears it. The flag lives in the lane, which outlives
+  every owner, so reading it uncounted is safe, while the owner's word is still
+  touched only inside the counted section (the investigation records why the
+  registered read-before-count form was amended).
+
+`summary.json` reports every arm/demand paired wall ratio, CPU ratio and H3
+margin, plus a cause table for the preregistered cells. Neutral intervals
+reject the specified cause; intervals wholly below 1 support it; regression
+or mixed wall/CPU evidence stays undecided. For extent, both wall and CPU must
+support improvement or both contain 1 for rejection. Dedup uses overlap of
+the two H3 intervals for rejection, and disjoint improving intervals plus a
+negative paired margin-change interval for support. Voided cells and sizing
+data decide nothing. These are attribution verdicts, not acceptance of the
+hybrid plan; dropping any proposed change remains an owner decision.
+
+The separate `counter-build` target reuses timed WF objects and replaces only
+the scheduler/clock objects with `WF_PAR_DEMAND_COUNTERS`. `--instrumented`
+runs one process per arm/workload/width with `WF_SCHED_REPORT=2`, retaining
+stdout and stderr in `counter/counters/`; the runner's two calls remain within
+that one process. Counters are per-lane atomic exit snapshots: attempted and
+posted requests, publications, steals, parks, scan/spin/yield elapsed ns, and
+completed park elapsed ns. Concurrent writes that observed zero each count as
+a post. Outstanding sleeps at exit are not included; these diagnostics do not
+claim exclusive CPU attribution. Counter images carry a `counter-build`
+marker, and the measurement driver refuses to time them or summarize them.
+
+`ablation-identity` compares both ordinary and macro-off demand `core.o`
+against `fadbc866b7423ab50606177f962724df309bf8e6` with the same flags. CLI
+tests compare explicit `none` with an omitted ablation; backend tests check
+each arm's structure and default emission after compiling the arms. The
+existing pre-prototype `--par` comparison remains wired. All these checks are
+CI obligations, not verified results of this uncommitted implementation.

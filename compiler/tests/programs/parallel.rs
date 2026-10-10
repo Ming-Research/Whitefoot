@@ -538,6 +538,7 @@ fn demand_parallel_programs_match_sequential_at_one_and_four_workers() {
             &[whitefoot::SourceInput::new(name, &source)],
             whitefoot::CompilerLimits::default(),
             whitefoot::OverlapLowering::Demand {
+                ablation: whitefoot::DemandAblation::None,
                 budget: whitefoot::RecursionBudget::RuntimeDerived,
                 call_grain: whitefoot::CallGrain::WorkUnit,
                 sequential_refusal: false,

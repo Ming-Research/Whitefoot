@@ -1957,6 +1957,7 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    pub(crate) demand_ablation: crate::DemandAblation,
     pub(crate) par_demand: bool,
     /// OP-9 ceilings before target representation choices, indexed by nominal.
     pub(crate) nominal_ceilings: Vec<IrLayoutCeiling>,

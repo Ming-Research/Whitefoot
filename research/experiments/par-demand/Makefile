@@ -13,8 +13,10 @@ EXPERIMENT ?= 1
 ARMS := seq demand par twin
 ifeq ($(EXPERIMENT),2)
 ARMS += idle1
+else ifeq ($(EXPERIMENT),3)
+ARMS := seq par demand twin order seed extent dedup
 else ifneq ($(EXPERIMENT),1)
-$(error EXPERIMENT must be 1 or 2)
+$(error EXPERIMENT must be 1, 2 or 3)
 endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
@@ -27,6 +29,14 @@ build: $(IMAGES)
 native-seq := $(NATIVE_OBJECTS)
 native-par := $(NATIVE_OBJECTS)
 native-demand := $(filter-out $(BUILD)/native/sched/core.o $(BUILD)/native/sched/entry.o,$(NATIVE_OBJECTS)) $(BUILD)/demand-core.o $(BUILD)/demand-entry.o
+native-order := $(native-demand)
+native-extent := $(native-demand)
+native-seed := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/seed-core.o
+native-dedup := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/dedup-core.o
+$(BUILD)/seed-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_DEMAND_SEED=1 -c $< -o $@
+$(BUILD)/dedup-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_DEMAND_DEDUP=1 -c $< -o $@
 $(BUILD)/demand-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -c $< -o $@
 $(BUILD)/demand-entry.o: $(NATIVE_ROOT)/sched/entry.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
@@ -60,6 +70,9 @@ $(BUILD)/oracle-histogram.o: blocked_performance.c $(FIXTURES)/blocked_oracle.c 
 flags-seq :=
 flags-demand := --par-demand
 flags-par := --par
+flags-order := --par-demand --par-demand-ablation order
+flags-seed := --par-demand --par-demand-ablation seed
+flags-extent := --par-demand --par-demand-ablation extent
 # Static pattern rules let the maintained formal sources remain single-owned.
 define arm-rules
 $(addprefix $(BUILD)/$(1)/,$(addsuffix .ll,$(MICROS))): $(BUILD)/$(1)/%.ll: %.wf micro_host.ll $(WFC) Makefile
@@ -80,6 +93,15 @@ $(addprefix $(BUILD)/$(1)/,$(KERNELS)): $(BUILD)/$(1)/%: $(BUILD)/$(1)/%.o $(BUI
 	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
 endef
 $(foreach arm,seq demand par,$(eval $(call arm-rules,$(arm))))
+ifeq ($(EXPERIMENT),3)
+$(foreach arm,order seed extent,$(eval $(call arm-rules,$(arm))))
+endif
+$(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-dedup)
+	@mkdir -p $(@D)
+	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
+$(addprefix $(BUILD)/dedup/,$(KERNELS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-dedup)
+	@mkdir -p $(@D)
+	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
 $(BUILD)/twin/%: $(BUILD)/demand/%
 	@mkdir -p $(@D)
 	cp $< $@
@@ -103,8 +125,51 @@ idle-policy-identity: $(BUILD)/native/sched/core.o
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-core.o
 	cmp $(BUILD)/idle-base-core.o $(BUILD)/native/sched/core.o
 
+# Compare both unchanged scheduler variants with the pre-ablation revision.
+ABLATION_BASE := fadbc866b7423ab50606177f962724df309bf8e6
+ablation-identity: $(BUILD)/native/sched/core.o $(BUILD)/demand-core.o
+	@mkdir -p $(BUILD)/ablation-base
+	git -C "$(ROOT)" show $(ABLATION_BASE):compiler/src/backend/sched/core.c > $(BUILD)/ablation-base/core.c
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/ablation-base/core.c -o $(BUILD)/ablation-base/core.o
+	cmp $(BUILD)/ablation-base/core.o $(BUILD)/native/sched/core.o
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/ablation-base/core.c -o $(BUILD)/ablation-base/demand-core.o
+	cmp $(BUILD)/ablation-base/demand-core.o $(BUILD)/demand-core.o
+
+# Counter images reuse timed WF objects. Only the scheduler/clock objects
+# carry counters, and their output never enters measurements.tsv.
+counter-flags-seq :=
+counter-flags-par :=
+counter-flags-demand := -DWF_PAR_DEMAND=1
+counter-flags-order := $(counter-flags-demand)
+counter-flags-extent := $(counter-flags-demand)
+counter-flags-seed := $(counter-flags-demand) -DWF_PAR_DEMAND_SEED=1
+counter-flags-dedup := $(counter-flags-demand) -DWF_PAR_DEMAND_DEDUP=1
+counter-entry-seq := $(BUILD)/native/sched/entry.o
+counter-entry-par := $(BUILD)/native/sched/entry.o
+$(foreach arm,demand order seed extent dedup,$(eval counter-entry-$(arm) := $(BUILD)/demand-entry.o))
+$(BUILD)/counter-prim.o: $(NATIVE_ROOT)/sched/prim_host.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND_COUNTERS=1 -c $< -o $@
+define counter-rules
+$(BUILD)/counter-$(1)-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile $(if $(filter dedup,$(1)),$(BUILD)/dedup-core.o)
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND_COUNTERS=1 $(counter-flags-$(1)) -c $$< -o $$@
+$(addprefix $(BUILD)/counter/$(1)/,$(MICROS)): $(BUILD)/counter/$(1)/%: $(BUILD)/$(if $(filter dedup,$(1)),demand,$(1))/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(filter-out %/core.o %/entry.o %/prim_host.o,$(NATIVE_OBJECTS)) $(counter-entry-$(1)) $(BUILD)/counter-$(1)-core.o $(BUILD)/counter-prim.o
+	@mkdir -p $$(@D)
+	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
+$(addprefix $(BUILD)/counter/$(1)/,$(KERNELS)): $(BUILD)/counter/$(1)/%: $(BUILD)/$(if $(filter dedup,$(1)),demand,$(1))/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(filter-out %/core.o %/entry.o %/prim_host.o,$(NATIVE_OBJECTS)) $(counter-entry-$(1)) $(BUILD)/counter-$(1)-core.o $(BUILD)/counter-prim.o
+	@mkdir -p $$(@D)
+	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
+endef
+$(foreach arm,seq par demand order seed extent dedup,$(eval $(call counter-rules,$(arm))))
+$(BUILD)/counter/twin/%: $(BUILD)/counter/demand/%
+	@mkdir -p $(@D)
+	cp $< $@
+counter-build: $(foreach arm,$(ARMS),$(addprefix $(BUILD)/counter/$(arm)/,$(WORKLOADS)))
+	touch $(BUILD)/counter/counter-build
+instrumented: counter-build
+	python3 measure.py --build "$(BUILD)/counter" --experiment 3 --instrumented
+
 legacy-identity:
 	test -n "$(BASE_WFC)"
 	python3 legacy_identity.py --base "$(BASE_WFC)" --candidate "$(WFC)" --output "$(BUILD)/legacy"
 .SECONDARY:
-.PHONY: build verify measure summarize legacy-identity idle-policy-identity
+.PHONY: build verify measure summarize legacy-identity idle-policy-identity ablation-identity counter-build instrumented

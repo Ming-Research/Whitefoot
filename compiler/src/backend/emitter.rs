@@ -549,7 +549,7 @@ fn emit_module(
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
     if program.par_demand && (thunks.is_used() || thunks.queries_demand) {
-        text.append(parallel::demand_runtime(windows)?);
+        text.append(parallel::demand_runtime(windows, program.demand_ablation)?);
     }
     if thunks.is_used() {
         text.text("\n");
