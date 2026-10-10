@@ -1043,6 +1043,14 @@ fn substituted(
 /// the inequalities, each already tightened over the integers, rests on, or
 /// `None` when they have a rational solution.
 fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capacity> {
+    eliminate_counting(inequalities, &mut 0)
+}
+
+/// [`eliminate`], counting the rounds that each remove one shared atom.
+fn eliminate_counting(
+    inequalities: Vec<(Inequality, Tags)>,
+    rounds: &mut usize,
+) -> Result<Option<Tags>, Capacity> {
     let mut current: BTreeMap<Inequality, Tags> = BTreeMap::new();
     for (inequality, why) in inequalities {
         if inequality.contradictory() {
@@ -1083,6 +1091,7 @@ fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capa
         }
     }
     loop {
+        *rounds += 1;
         // The atom with the fewest products, least identity first.
         let mut counts: BTreeMap<AtomId, (usize, usize)> = BTreeMap::new();
         for inequality in current.keys() {
@@ -1240,6 +1249,23 @@ mod tests {
         unit(&mut problem, &y, Relation::Less, &z);
         unit(&mut problem, &z, Relation::Less, &x);
         assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn bound_only_atoms_take_no_elimination_round() {
+        let mut inequalities = Vec::new();
+        for atom in 0..600 {
+            let at = Linear::atom(atom);
+            let below = Inequality::at_most(&at, &Linear::constant(255)).expect("bound");
+            let above = Inequality::at_most(&Linear::constant(0), &at).expect("bound");
+            inequalities.push((below, Tags::default()));
+            inequalities.push((above, Tags::default()));
+        }
+        let mut rounds = 0;
+        assert_eq!(eliminate_counting(inequalities, &mut rounds), Ok(None));
+        // One round finds no atom left; one round per atom rebuilt the set
+        // 600 times.
+        assert_eq!(rounds, 1);
     }
 
     #[test]
