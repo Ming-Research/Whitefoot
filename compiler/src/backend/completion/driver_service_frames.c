@@ -1,7 +1,7 @@
-/* Strong handwritten coroutine entries for driver_service_test.c. This
- * separate translation unit replaces the bridge's weak no-library entries
- * without a conditional path in the production bridge. Linked only by that
- * probe, including its sanitizer variants. */
+/* Strong handwritten coroutine entries for driver_service_test.c and
+ * driver_service_native_test.c. This separate translation unit replaces the
+ * bridge's weak no-library entries without a conditional path in the
+ * production bridge. Linked only by those probes and their sanitizer variants. */
 #include "bridge.h"
 
 extern void wf_driver_service_test_resume(void *frame);
