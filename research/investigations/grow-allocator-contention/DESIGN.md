@@ -80,4 +80,28 @@ beyond that spread, so the Halo criterion passes for both.
 
 ### Snowghost, four workers
 
-Pending (Snowghost-wf's measurement).
+Snowghost-wf run 38018868437 (2026-10-10, branch `research/grow-threshold`) on
+a GitHub-hosted AMD EPYC 7763 with 4 vCPUs: each release built twice from
+Snowghost-wf bb98d43 (v0.94 from 9d720c4 as the target reference), five
+alternating rounds with reversed order, because the twins differed by more
+than 0.15 in the trial. Text preparation, median 4-thread to 1-thread ratio,
+twin a / b, and `futex` calls in three ecma262 text runs at `WF_WORKERS=4`:
+
+| build | ecma262 | html5 | ecma262 1 thread (s) | futex |
+|---|---|---|---|---:|
+| v0.94 (0b7f5c5) | 0.495 / 0.508 | 0.507 / 0.518 | 0.637 / 0.617 | 205 / 272 |
+| main, always `realloc` | 0.781 / 0.790 | 0.653 / 0.642 | 0.597 / 0.587 | 158,627 / 159,641 |
+| copy below 1 KiB | 0.518 / 0.519 | 0.524 / 0.534 | 0.543 / 0.550 | 904 / 1,028 |
+| copy below 128 KiB | 0.530 / 0.512 | 0.540 / 0.534 | 0.543 / 0.540 | 1,157 / 1,105 |
+
+The later layout passes recovered too (ecma262 ratio 0.83 on main, 0.55 / 0.62
+at 1 KiB, 0.58 / 0.59 at 128 KiB, 0.62 / 0.60 at v0.94). `mremap` stayed at
+29 to 30 calls in every build. Neither limit reaches the rejection line, and
+the single-thread time also fell by about 8% against main.
+
+## Conclusion
+
+Both limits pass both criteria and are indistinguishable within the twins on
+these hosts, so the rule fixed before measuring selects 1 KiB. The limit is
+tuned to glibc's per-thread cache; blocks above it still take an arena lock in
+both `realloc` and `malloc`, which these workloads did not exercise.
