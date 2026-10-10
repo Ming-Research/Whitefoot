@@ -550,10 +550,7 @@ fn build_linked_executable_inner(
     // dependencies, using the same build inputs as the driver. Source
     // classification never selects a second linkage or callable ABI.
     let mut staged_units = Vec::new();
-    let needs_heap = llvm.contains("@wf__heap_take(")
-        || llvm.contains("@wf__heap_give(")
-        || llvm.contains("@wf__heap_retake(")
-        || llvm.contains("@wf__empty_window")
+    let needs_heap = crate::module_requires_heap_runtime(llvm)
         || host.is_some_and(|source| {
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")

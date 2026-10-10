@@ -899,11 +899,7 @@ fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     compiled.extend(["ordinary_values.c", "ordinary_values.ll"]);
     // The allocator unit is a dependency of emitted storage alone. The
     // reading and all counter storage stay in the unconditional library.
-    if llvm.contains("@wf__heap_take(")
-        || llvm.contains("@wf__heap_give(")
-        || llvm.contains("@wf__heap_retake(")
-        || llvm.contains("@wf__empty_window")
-    {
+    if whitefoot::module_requires_heap_runtime(llvm) {
         compiled.push("heap.c");
     }
     {
