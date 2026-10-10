@@ -8,8 +8,11 @@ harness when that investigation ends. No gate consumes this directory.
 off` keeps every permitted group, as experiment 1 did), and keeps the existing recursion budget,
 cut and sequential clone. The current prototype uses an outlined slice driver
 and the original chunk. The caller bypasses the driver below
-`ceil(150000 / static_weight)` iterations. The driver runs slices of
-`max(1, floor(150000 / static_weight))` iterations, polling only when the
+`ceil(150000 / weight)` iterations. By default `weight` is the available
+runtime-extent estimate `split.work`, clamped to at least one; when no estimate
+is available it is the static weight. `--par-demand-ablation static` restores
+the old static pricing. The driver runs slices of
+`max(1, floor(150000 / weight))` iterations, polling only when the
 remaining span reaches the minimum and exceeds one. A request publishes the
 far half and runs the near half locally. Reductions seed the near half with
 their live value and combine near then far after joining. Caller-local slices
@@ -70,10 +73,13 @@ emitted code never calls it.
 
 Dispatch `.github/workflows/compute-bench.yml` with `experiment=par-demand`,
 `placement_runner=github` for sizing or `14900k` for the real panel, and
-`placement_rounds` for the round count. Every dispatch first builds on a hosted
-runner, verifies results with requests on and off at widths 1 and 4, compares
-legacy emission, and runs one small sizing round. The selected runner then
-uses those exact images; the hosted selection remains sizing-only. The native
+`placement_rounds` for experiment 1 or 2's round count. Every dispatch first
+builds on a hosted runner, verifies results with requests on and off at the
+experiment's widths (1/4 for experiment 1, 1/4/8 for experiments 2/4, 4/8 for
+experiment 3), and compares legacy emission. Experiments 1 and 2 also run one
+small hosted sizing round. The selected runner then uses those exact images;
+experiments 2, 3 and 4 require the 14900K for timing, while a hosted
+experiment-1 selection remains sizing-only. The native
 runner shares the formal performance instrument's prepare/call/check boundary:
 only the WF call is timed, with wall and process CPU clocks. Sample zero warms
 the same workload and is retained but excluded from the verdict. No local
@@ -100,7 +106,7 @@ Makefile compiles those `.wf` sources directly. Prefix and histogram reuse
 their formal performance APIs unchanged.
 
 Rounds rotate and reverse workload, width and build order. In experiments 1
-and 2, exceeded bounds get
+2 and 4, exceeded bounds get
 one extra interleaved batch at the same workload and width. No timing or source
 result is replaced on a rerun. The reducer reports wall/CPU medians, candidate
 ratio intervals and the initial/rerun verdicts. A failed rerun is `fail`; a first
@@ -158,7 +164,64 @@ The baseline comparison, emitted-IR validity, native program tests, reducer
 controls and performance results must run in CI; cargo check alone proves none
 of those. No measurement has been taken by this implementation task.
 
-## Experiment 3: isolated attribution
+## Experiment 4: call grain and runtime-extent pricing
+
+Select `par_demand_experiment=4`, `placement_runner=14900k`, leaving
+`placement_rounds` empty. The hosted job builds and verifies all five arms;
+there is no hosted timing sample for experiment 4. The 14900K runs six
+full-work sizing rounds at widths 1, 4 and 8, saves them under `sizing-e4/`,
+freezes `n` (6 through 30), then runs `n` separate decisive rounds in the same
+job. Each exceeding cell gets one rerun of `n` rounds. The sample is never
+pooled with decisive measurements. Sizing projects applicable rule interval
+widths by `sqrt(6/n)` and chooses the smallest count whose widths are at most
+0.02 or their medians' distance to the bounds; otherwise it uses 30. The
+reducer requires the saved six-round sample and checks the decisive and
+rerun counts against it. Later inspection cannot change the frozen count.
+
+The arms are `seq`, `par`, `demand` (runtime-extent pricing), `static`
+(`--par-demand --par-demand-ablation static`, old demand pricing), and `twin`
+(a byte copy of demand). Demand, static and twin run with requests on. The
+workloads, call grain, runtime, same-work oracles, CPU pinning and first/second
+call boundary are experiment 2's; the abandoned `idle1` policy is not an arm.
+
+`summary.json` contains `cells`, the frozen `decisive_rounds` and the sizing
+source. Each cell reports paired wall and CPU statistics, startup CPU above
+wall, H3 margins for demand/par/static, and initial/rerun rule verdicts:
+
+- E4-seq: demand/seq wall upper end <= 1.00, with no decision-point allowance
+  or one-worker band.
+- E4-par: when par/seq's interval lies wholly below 1, demand/par upper end
+  <= 1.05.
+- E4-gain: when static/seq's interval lies wholly below 1, demand/static
+  upper end <= 1.05.
+- E4-H3: experiment 2's CPU margin unchanged, upper end <= 0:
+  `(cpu_demand - 1.1 * cpu_seq - 0.1 * max(0, wall_seq - wall_demand) * W) / cpu_seq`.
+
+All use experiment 1's per-round ratios, median, 10,000-draw bootstrap,
+seed `20261010`, and 95% interval. A twin/demand interval excluding 1 voids
+the cell. An interval wholly above a bound needs one rerun, and fails only
+if that rerun also exceeds; straddling or disagreeing attempts are
+inconclusive. Spine, small_constant and inspected cells whose timed work is
+optimized away in both builds are reported controls that decide nothing.
+Every pass requires this run's optimized-code inspection as described above.
+The preregistered rejection criteria and predictions are in
+[Experiment 4's design](../../investigations/par-demand/DESIGN.md#experiment-4-the-call-grain-and-runtime-extent-pricing-fixed-before-it-measures).
+
+CI commands (no local timing or checks):
+
+```sh
+make -C research/experiments/par-demand build verify BUILD=/tmp/par-demand EXPERIMENT=4
+make -C research/experiments/par-demand measure BUILD=/tmp/par-demand EXPERIMENT=4
+make -C research/experiments/par-demand summarize BUILD=/tmp/par-demand EXPERIMENT=4
+```
+
+## Experiment 3: isolated attribution (historical baseline)
+
+To reproduce the original attribution, use its recorded compiler revision:
+`--par-demand` now includes the old extent arm, so a current experiment-3
+run compares against a different baseline. The historical `extent` harness
+arm now aliases default demand; it no longer selects a CLI ablation. The
+registered results and reducer labels remain historical evidence.
 
 Select `par_demand_experiment=3`, `placement_runner=14900k`, with
 `placement_rounds` empty. The hosted job builds and verifies the images; the
@@ -169,8 +232,8 @@ interval's width by `sqrt(6/n)` and selects the first count whose projected
 width is at most 0.02 or its median's distance to the comparison point (1 for
 ratios, 0 for H3). The sample is never pooled with decisive observations.
 
-The compiler accepts `--par-demand-ablation none|order|seed|extent` only with
-`--par-demand`; omission is `none`. Each arm changes one mechanism:
+The compiler accepts `--par-demand-ablation none|order|seed|static` only with
+`--par-demand`; omission is `none`. The current research switches are:
 
 - `order` publishes near and runs far, keeping the original seeds, bounds,
   joins and near-then-far reduction combine.
@@ -180,9 +243,10 @@ The compiler accepts `--par-demand-ablation none|order|seed|extent` only with
   use the existing request-driven refinement without reseeding. Frame refusal
   retains ordinary-call fallback. Statement groups and recursion cuts do not
   change, so a loop-free recursion workload is a negative control for this arm.
-- `extent` evaluates the existing `split.work` estimate and uses it for both
-  admission and slice pricing, clamped to one as in the eager runtime. Missing
-  estimates retain the static price. No work-estimator rule changes.
+- `static` restores the old static demand pricing for admission and slices.
+  Omission (`none`), `order` and `seed` use the existing `split.work` estimate,
+  clamped to one, with static pricing for unavailable estimates. The work
+  estimator, order change and seed change themselves are unchanged.
 - `dedup` (`WF_PAR_DEMAND_DEDUP`) skips the counted request when the victim
   lane's `request_posted` flag is set; the posting thief sets it and the
   owner's publication clears it. The flag lives in the lane, which outlives

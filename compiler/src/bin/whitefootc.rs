@@ -1512,8 +1512,8 @@ impl Options {
                         Some("none") => whitefoot::DemandAblation::None,
                         Some("order") => whitefoot::DemandAblation::Order,
                         Some("seed") => whitefoot::DemandAblation::Seed,
-                        Some("extent") => whitefoot::DemandAblation::Extent,
-                        _ => return Err("--par-demand-ablation requires none, order, seed or extent".to_owned()),
+                        Some("static") => whitefoot::DemandAblation::Static,
+                        _ => return Err("--par-demand-ablation requires none, order, seed or static".to_owned()),
                     };
                     if demand_ablation.replace(arm).is_some() {
                         return Err("--par-demand-ablation may be written only once".to_owned());
@@ -2127,18 +2127,23 @@ mod tests {
 
     #[test]
     fn demand_ablation_is_research_only_and_none_keeps_default_emission() {
-        let source = include_bytes!("../../../tests/programs/parallel/range_fold.wf");
+        let source = include_bytes!("../../../tests/programs/compute/stencil.wf");
         let default = parse(&["--par-demand", "value.wf"]).unwrap();
         let explicit = parse(&["--par-demand", "--par-demand-ablation", "none", "value.wf"]).unwrap();
         let emit = |options: Options| whitefoot::compile_with_overlap(
             &[whitefoot::SourceInput::new("value.wf", source)],
             whitefoot::CompilerLimits::default(), options.overlap()).unwrap();
-        assert_eq!(emit(default), emit(explicit));
-        for arm in ["none", "order", "seed", "extent"] {
+        let module = emit(default);
+        assert_eq!(module, emit(explicit));
+        assert!(module.contains("udiv i64 149999, %"));
+        let static_price = emit(parse(&["--par-demand", "--par-demand-ablation", "static", "value.wf"]).unwrap());
+        assert!(!static_price.contains("udiv i64 149999,"));
+        for arm in ["none", "order", "seed", "static"] {
             assert!(parse(&["--par-demand", "--par-demand-ablation", arm, "value.wf"]).is_ok());
             assert!(parse(&["--par", "--par-demand-ablation", arm, "value.wf"]).is_err());
         }
         assert!(parse(&["--par-demand", "--par-demand-ablation", "dedup", "value.wf"]).is_err());
+        assert!(parse(&["--par-demand", "--par-demand-ablation", "extent", "value.wf"]).is_err());
         assert!(parse(&["--par-demand", "--par-demand-ablation"]).is_err());
     }
 

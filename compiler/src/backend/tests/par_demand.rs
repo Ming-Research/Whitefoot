@@ -40,7 +40,7 @@ fn ablation(arm: crate::DemandAblation) -> OverlapLowering {
 #[test]
 fn default_demand_is_unchanged_after_each_ablation() {
     let before = emit_lowered(SMALL.as_bytes(), DEMAND);
-    for arm in [crate::DemandAblation::Order, crate::DemandAblation::Seed, crate::DemandAblation::Extent] {
+    for arm in [crate::DemandAblation::Order, crate::DemandAblation::Seed, crate::DemandAblation::Static] {
         let _ = emit_lowered(SMALL.as_bytes(), ablation(arm));
         assert_eq!(before, emit_lowered(SMALL.as_bytes(), ablation(Default::default())));
     }
@@ -82,14 +82,16 @@ fn seed_has_an_entry_frontier_and_retains_the_request_refinement() {
 }
 
 #[test]
-fn extent_prices_demand_with_the_available_runtime_work() {
+fn default_prices_demand_with_runtime_work_and_static_restores_the_old_weight() {
     let source = include_bytes!("../../../../tests/programs/compute/stencil.wf");
-    let plain = emit_lowered(source, DEMAND);
-    let extent = emit_lowered(source, ablation(crate::DemandAblation::Extent));
-    assert!(!plain.contains("udiv i64 149999,"));
-    assert!(extent.contains("udiv i64 149999, %"), "{extent}");
-    assert!(extent.contains("@llvm.umax.i64"));
-    assert!(extent.contains(POLL));
+    let demand = emit_lowered(source, DEMAND);
+    let static_price = emit_lowered(source, ablation(crate::DemandAblation::Static));
+    assert!(demand.contains("udiv i64 149999, %"), "{demand}");
+    assert!(demand.contains("@llvm.umax.i64"));
+    assert!(demand.contains(POLL));
+    assert!(!static_price.contains("udiv i64 149999,"), "{static_price}");
+    assert!(static_price.contains(POLL));
+    assert_ne!(demand, static_price);
 }
 
 #[test]
@@ -123,39 +125,45 @@ fn demand_slices_runtime_extents_and_prunes_constant_small_extents() {
 
 #[test]
 fn a_range_below_the_minimum_span_calls_the_chunk_without_entering_the_driver() {
-    let module = emit_lowered(SMALL.as_bytes(), DEMAND);
-    let caller = function_body(&module, "@wf_dynamic");
-    let mut blocks = vec![String::new()];
-    for line in caller.lines() {
-        if !line.starts_with(' ') && line.ends_with(':') {
-            blocks.push(String::new());
+    for arm in [crate::DemandAblation::None, crate::DemandAblation::Static] {
+        let module = emit_lowered(SMALL.as_bytes(), ablation(arm));
+        let caller = function_body(&module, "@wf_dynamic");
+        let mut blocks = vec![String::new()];
+        for line in caller.lines() {
+            if !line.starts_with(' ') && line.ends_with(':') {
+                blocks.push(String::new());
+            }
+            blocks.last_mut().expect("a block").push_str(line);
+            blocks.last_mut().expect("a block").push('\n');
         }
-        blocks.last_mut().expect("a block").push_str(line);
-        blocks.last_mut().expect("a block").push('\n');
+        let small = blocks
+            .iter()
+            .find(|block| block.starts_with("par.small.v"))
+            .unwrap_or_else(|| panic!("the caller tests the range first: {caller}"));
+        assert!(small.contains("@wf__par_chunk_"), "{caller}");
+        assert!(!small.contains("@wf__par_slice_"), "{caller}");
+        let slice = blocks
+            .iter()
+            .find(|block| block.starts_with("par.slice.v"))
+            .unwrap_or_else(|| panic!("a large range still enters the driver: {caller}"));
+        assert!(slice.contains("@wf__par_slice_"), "{caller}");
+        if arm == crate::DemandAblation::Static {
+            // The comparison's right operand is an integer literal: the site's
+            // weight is static, so no division is left for run time.
+            assert!(
+                caller.lines().any(|line| {
+                    line.contains(" = icmp ult i64 ")
+                        && line
+                            .rsplit(", ")
+                            .next()
+                            .is_some_and(|operand| operand.trim().parse::<u64>().is_ok())
+                }),
+                "the minimum span is a folded constant: {caller}"
+            );
+        } else {
+            assert!(caller.contains("udiv i64 149999, %"), "{caller}");
+        }
     }
-    let small = blocks
-        .iter()
-        .find(|block| block.starts_with("par.small.v"))
-        .unwrap_or_else(|| panic!("the caller tests the range first: {caller}"));
-    assert!(small.contains("@wf__par_chunk_"), "{caller}");
-    assert!(!small.contains("@wf__par_slice_"), "{caller}");
-    let slice = blocks
-        .iter()
-        .find(|block| block.starts_with("par.slice.v"))
-        .unwrap_or_else(|| panic!("a large range still enters the driver: {caller}"));
-    assert!(slice.contains("@wf__par_slice_"), "{caller}");
-    // The comparison's right operand is an integer literal: the site's
-    // weight is static, so no division is left for run time.
-    assert!(
-        caller.lines().any(|line| {
-            line.contains(" = icmp ult i64 ")
-                && line
-                    .rsplit(", ")
-                    .next()
-                    .is_some_and(|operand| operand.trim().parse::<u64>().is_ok())
-        }),
-        "the minimum span is a folded constant: {caller}"
-    );
 }
 
 #[test]

@@ -13,8 +13,9 @@
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
 #
-# With `experiment: par-demand`, a hosted sizing batch precedes the selected
-# runner's interleaved demand experiment. Its pass/fail/inconclusive verdicts
+# With `experiment: par-demand`, hosted construction and verification precede
+# the selected runner's interleaved demand experiment. Experiments 3/4 take
+# their six-round sizing sample on the 14900K in the decisive job. Its pass/fail/inconclusive verdicts
 # are report data; only malformed evidence or construction/correctness errors
 # fail this manual workflow. No research path enters the formal gate.
 #
@@ -44,9 +45,9 @@ on:
         options: [scoreboard, placement, par-demand]
         default: scoreboard
       par_demand_experiment:
-        description: Demand hand-out experiment (2 and 3 require the 14900K and eight performance cores)
+        description: Demand hand-out experiment (2, 3 and 4 require the 14900K and eight performance cores)
         type: choice
-        options: ["1", "2", "3"]
+        options: ["1", "2", "3", "4"]
         default: "1"
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -54,7 +55,7 @@ on:
         options: [github, 14900k]
         default: github
       placement_rounds:
-        description: Rounds over every image, kernel and width (empty uses 10, or 30 for demand experiment 2)
+        description: Rounds over every image, kernel and width (empty uses 10, or 30 for demand experiment 2; demand 3/4 select rounds from sizing)
         type: string
         default: ""
       placement_unaligned:
@@ -398,14 +399,14 @@ jobs:
             make -C research/experiments/par-demand counter-build BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT=3
           fi
           { git rev-parse HEAD; cargo --version; /usr/bin/clang --version; lscpu; } > "$RUNNER_TEMP/par-demand/build-host.txt"
-          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par,idle1,order,seed,extent,dedup}/*; do
+          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par,idle1,order,seed,extent,dedup,static}/*; do
             if [[ "$image" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
           done
       - name: Small hosted sizing sample
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
         run: |
-          if [ "$EXPERIMENT" != 3 ]; then
+          if [ "$EXPERIMENT" = 1 ] || [ "$EXPERIMENT" = 2 ]; then
             perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
               --build "$RUNNER_TEMP/par-demand" --sizing --rounds 1
             mkdir "$RUNNER_TEMP/par-demand/sizing"
@@ -425,13 +426,13 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Require the performance-core runner for experiments 2 and 3
+      - name: Require the performance-core runner for experiments 2, 3 and 4
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           RUNNER: ${{ inputs.placement_runner }}
         run: |
           if [ "$EXPERIMENT" != 1 ] && [ "$RUNNER" != 14900k ]; then
-            echo "Experiments 2 and 3 require the 14900K; the hosted job above only builds and verifies their arms." >&2
+            echo "Experiments 2, 3 and 4 require the 14900K; the hosted job above only builds and verifies their arms." >&2
             exit 1
           fi
       - uses: actions/download-artifact@v4
@@ -449,6 +450,12 @@ jobs:
           { lscpu; cat /proc/self/status; printf 'runner=%s rounds=%s\n' "$RUNNER" "$ROUNDS"; } > "$RUNNER_TEMP/par-demand/measurement-host.txt"
           sizing=()
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
+          if [ "$EXPERIMENT" = 4 ]; then
+            perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
+              --build "$RUNNER_TEMP/par-demand" --experiment 4
+            cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "$EXPERIMENT" = 3 ]; then
             perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
               --build "$RUNNER_TEMP/par-demand" --experiment 3

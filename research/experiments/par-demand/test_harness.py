@@ -8,8 +8,8 @@ import measure
 import contextlib
 import io
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, E3_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, load, summarize,
-                       attempt_result_e2, attempt_result_e3, cause_verdict, e3_round_count)
+from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, load, summarize,
+                       attempt_result_e2, attempt_result_e3, attempt_result_e4, cause_verdict, e3_round_count, e4_round_count)
 from measure import cpu_list, performance_cores, demand_setting
 
 class VerdictTests(unittest.TestCase):
@@ -334,6 +334,200 @@ class Experiment3Tests(unittest.TestCase):
         with self.assertRaises(SystemExit): invoke()
 
 
+class Experiment4Tests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "rows.tsv"
+        self.inspection = {name: dict(hot_work_survives=True, evidence="controlled E4 images",
+                                    check_compiles_to="load and branch") for name in MANIFEST}
+
+    def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
+        baseline = {"seq": (1.0, 1.0), "par": (0.5, 1.0),
+                    "demand": (0.5, 1.0), "static": (0.5, 1.0), "twin": (0.5, 1.0)}
+        lines = []
+        for name in MANIFEST:
+            for width in WIDTHS:
+                for attempt in attempts:
+                    changes_for_attempt = rerun_changes if attempt == 2 and rerun_changes is not None else changes
+                    selected = dict(baseline)
+                    selected.update(changes_for_attempt or {})
+                    if "twin" not in (changes_for_attempt or {}):
+                        selected["twin"] = selected["demand"]
+                    for arm, (wall, cpu) in selected.items():
+                        for r in range(rounds):
+                            for sample in (0, 1):
+                                first_cpu = wall + 0.07 if sample == 0 else cpu
+                                lines.append(f"{name}\t{arm}\t{width}\t{r}\t{attempt}\t{sample}\t{int(wall * 1e9)}\t{int(first_cpu * 1e9)}\t1\n")
+        self.path.write_text("".join(lines))
+        sample_dir = self.path.parent / "sizing-e4"
+        sample_dir.mkdir(exist_ok=True)
+        # Saved sample always has exactly six rounds and no reruns. Constant
+        # fixtures select n=6, independent of their passing/failing ratios.
+        sample_lines = [line for line in lines if line.split("\t")[4] == "1" and int(line.split("\t")[3]) < 6]
+        (sample_dir / "measurements.tsv").write_text("".join(sample_lines))
+
+    def row(self, width=4, name="large_helper", inspection=None):
+        result = summarize(self.path, self.inspection if inspection is None else inspection, experiment=4)
+        return next(cell for cell in result["cells"] if cell["workload"] == name and cell["width"] == width)
+
+    def test_seq_is_literal_with_no_allowance_and_one_rerun(self):
+        self.write({"par": (1, 1), "static": (1, 1), "demand": (1, 1)})
+        for width in WIDTHS:
+            self.assertEqual(self.row(width=width)["verdicts"]["E4-seq"], "pass")
+        self.write({"demand": (1.01, 1)})
+        self.assertEqual(self.row(name="small_split")["verdicts"]["E4-seq"], "needs-rerun")
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2))
+        for width in WIDTHS:
+            self.assertEqual(self.row(width=width, name="small_split")["verdicts"]["E4-seq"], "fail")
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2), rerun_changes={"demand": (0.5, 1)})
+        self.assertEqual(self.row()["verdicts"]["E4-seq"], "inconclusive")
+
+    def test_par_and_gain_each_keep_speedups_and_require_a_reference_gain(self):
+        for rule, reference in (("E4-par", "par"), ("E4-gain", "static")):
+            self.write({"demand": (0.525, 1)})
+            self.assertEqual(self.row()["verdicts"][rule], "pass")
+            self.write({reference: (0.4, 1)})
+            self.assertEqual(self.row()["verdicts"][rule], "needs-rerun")
+            self.write({reference: (0.4, 1)}, attempts=(1, 2))
+            self.assertEqual(self.row()["verdicts"][rule], "fail")
+            self.assertEqual(self.row()["verdicts"]["E4-seq"], "pass")
+            self.write({reference: (1, 1)}, attempts=(1, 2))
+            self.assertEqual(self.row()["verdicts"][rule], "not-applicable")
+
+    def test_h3_keeps_cpu_margin_width_and_only_saved_wall_credit(self):
+        self.write({"demand": (0.5, 1.4)})
+        self.assertEqual(self.row()["verdicts"]["E4-H3"], "needs-rerun")
+        self.write({"demand": (0.5, 1.4)}, attempts=(1, 2))
+        self.assertEqual(self.row()["verdicts"]["E4-H3"], "fail")
+        self.assertAlmostEqual(self.row()["initial"]["h3"]["demand"]["median"], 0.1)
+        self.assertEqual(self.row(width=8)["verdicts"]["E4-H3"], "pass")
+        self.write({"demand": (1.2, 1.2)}, attempts=(1, 2))
+        self.assertAlmostEqual(self.row()["initial"]["h3"]["demand"]["median"], 0.1)
+        self.assertEqual(set(self.row()["initial"]["h3"]), {"par", "demand", "static"})
+
+    def test_each_rule_needs_inspection_and_twin_agreement(self):
+        self.write()
+        self.assertEqual(set(self.row()["verdicts"].values()), {"pass"})
+        for field, wrong in (("hot_work_survives", False), ("evidence", ""), ("check_compiles_to", "")):
+            missing = {"large_helper": dict(self.inspection["large_helper"])}
+            del missing["large_helper"][field]
+            self.assertEqual(set(self.row(inspection=missing)["verdicts"].values()), {"inconclusive"})
+            missing["large_helper"][field] = wrong
+            self.assertEqual(set(self.row(inspection=missing)["verdicts"].values()), {"inconclusive"})
+        self.assertEqual(set(self.row(inspection={})["verdicts"].values()), {"inconclusive"})
+        self.write({"twin": (0.6, 1)})
+        self.assertEqual(set(self.row()["verdicts"].values()), {"void"})
+        self.write({"demand": (1.2, 2)}, attempts=(1, 2),
+                   rerun_changes={"demand": (1.2, 2), "twin": (1.3, 2)})
+        self.assertEqual(self.row()["status"], "void")
+
+    def test_controls_startup_pairing_and_straddling(self):
+        self.write({"demand": (2, 3)}, attempts=(1, 2))
+        for name in ("spine", "small_constant"):
+            self.assertEqual(self.row(name=name)["status"], "not-applicable")
+        self.inspection["large_helper"]["optimized_away_in_both"] = True
+        self.assertEqual(self.row()["status"], "not-applicable")
+        arms = {arm: {0: (100, 100), 1: (200, 200), 2: (1000, 1000)} for arm in E4_ARMS}
+        arms["demand"] = arms["twin"] = {0: (200, 100), 1: (200, 200), 2: (500, 1000)}
+        result = attempt_result_e4(arms, 4)
+        self.assertEqual(result["wall_over_seq"]["demand"]["median"], 1)
+        self.assertEqual(result["rules"]["E4-seq"]["status"], "inconclusive")
+        del arms["static"][1]
+        with self.assertRaises(ValueError): attempt_result_e4(arms, 4)
+        self.write()
+        self.assertEqual(self.row()["initial"]["first_call_cpu_above_wall_ns"]["demand"]["median"], 70000000)
+
+    def test_wrong_missing_and_changed_round_evidence_raise(self):
+        self.write()
+        original = self.path.read_text().splitlines(keepends=True)
+        variants = [original[:-1], original + [original[0]],
+                    [line for line in original if "\tstatic\t" not in line],
+                    [line for line in original if line.split("\t")[5] != "0"],
+                    [original[0].rsplit("\t", 1)[0] + "\t2\n"] + original[1:],
+                    [original[0].replace("\t1\t0\t1\t", "\t1\t0\t3\t")] + original[1:]]
+        for lines in variants:
+            self.path.write_text("".join(lines))
+            with self.assertRaises(ValueError): self.row()
+        self.write(attempts=(1, 2))
+        rows = [line.split("\t") for line in self.path.read_text().splitlines()]
+        for row in rows:
+            if row[4] == "2":
+                row[-1] = "2"
+        self.path.write_text("".join("\t".join(row) + "\n" for row in rows))
+        with self.assertRaisesRegex(ValueError, "comparison extent changed"): self.row()
+        self.write()
+        (self.path.parent / "sizing-e4/measurements.tsv").unlink()
+        with self.assertRaisesRegex(ValueError, "sizing evidence"): self.row()
+        self.write(rounds=7)
+        with self.assertRaisesRegex(ValueError, "frozen"): self.row()
+        self.write(rounds=5)
+        with self.assertRaisesRegex(ValueError, "six rounds"): self.row()
+
+    def test_sizing_freezes_six_to_thirty_and_cannot_pass(self):
+        self.write()
+        sample = summarize(self.path, sizing=True, experiment=4)
+        self.assertEqual(sample["decisive_rounds"], 6)
+        self.assertEqual({cell["status"] for cell in sample["cells"]}, {"inconclusive", "not-applicable"})
+        cells = sample["cells"]
+        rule = next(cell for cell in cells if cell["workload"] == "large_helper")["initial"]["rules"]["E4-seq"]
+        rule.update(median=1, interval=[0.5, 1.5])
+        self.assertEqual(e4_round_count(cells), 30)
+        # 0.03 * sqrt(6/n) <= 0.02 first holds at n=14.
+        rule.update(median=1, interval=[0.985, 1.015])
+        self.assertEqual(e4_round_count(cells), 14)
+        self.write({"demand": (1.2, 2)})
+        sample = summarize(self.path, sizing=True, experiment=4)
+        self.assertEqual(next(cell for cell in sample["cells"] if cell["workload"] == "large_helper")["status"], "inconclusive")
+        self.write(attempts=(1, 2))
+        with self.assertRaisesRegex(ValueError, "without reruns"):
+            summarize(self.path, sizing=True, experiment=4)
+
+    def test_driver_sizes_then_runs_decisive_rounds_and_reruns_once(self):
+        build = self.path.parent
+        for arm in E4_ARMS:
+            (build / arm).mkdir()
+            for name in MANIFEST:
+                (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        observed = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": "fixture\n"})()
+            image, mode, arm, width, round_id, attempt = command[3:]
+            name = Path(image).name
+            self.assertEqual(mode, "measure")
+            self.assertEqual(command[2], ",".join(map(str, range(int(width)))))
+            self.assertEqual(kwargs["env"]["WF_PAR_DEMAND"], demand_setting(4, arm))
+            if "repetitions" in MANIFEST[name]:
+                self.assertEqual(kwargs["env"]["WFD_REPETITIONS"], str(MANIFEST[name]["repetitions"]))
+            observed.append((name, arm, width, round_id, attempt))
+            # Only small_split W=4 exceeds; its twin remains identical.
+            wall = 110 if name == "small_split" and width == "4" and arm in ("demand", "twin") else 100
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{name}\t{arm}\t{width}\t{round_id}\t{attempt}\t{sample}\t{wall}\t100\t1\n")
+        with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "4"]), \
+             patch.object(measure, "run", side_effect=fake_run), \
+             patch.object(measure.platform, "system", return_value="Linux"), \
+             patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+             patch.object(measure, "performance_cores", return_value=(list(range(8)), {})), \
+             contextlib.redirect_stdout(io.StringIO()):
+            measure.main()
+        count = len(MANIFEST) * len(E4_ARMS) * len(WIDTHS)
+        self.assertEqual(len(observed), count * 12 + len(E4_ARMS) * 6)
+        reruns = [row for row in observed if row[-1] == "2"]
+        self.assertEqual({(row[0], row[2]) for row in reruns}, {("small_split", "4")})
+        identity = json.loads((build / "identity.json").read_text())
+        self.assertEqual((identity["rounds"], identity["sizing_rounds"]), (6, 6))
+        sample = json.loads((build / "sizing-e4/summary.json").read_text())
+        self.assertEqual(sample["decisive_rounds"], 6)
+        cells = json.loads((build / "summary.json").read_text())["cells"]
+        self.assertEqual(next(cell for cell in cells if cell["workload"] == "small_split" and cell["width"] == 4)["status"], "fail")
+        for extra in (("--rounds", "30"), ("--instrumented",)):
+            with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "4", *extra]), \
+                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                measure.main()
+
+
 class PerformanceCoreTests(unittest.TestCase):
     def topology(self, count=8, hybrid=True):
         directory = tempfile.TemporaryDirectory()
@@ -370,6 +564,8 @@ class PerformanceCoreTests(unittest.TestCase):
         self.assertEqual({arm: demand_setting(2, arm) for arm in E2_ARMS},
                          dict(seq="off-never-request", par="off-never-request", demand="on", idle1="on", twin="on"))
         self.assertEqual({demand_setting(1, arm) for arm in ARMS}, {"off-never-request"})
+        self.assertEqual({arm: demand_setting(4, arm) for arm in E4_ARMS},
+                         dict(seq="off-never-request", par="off-never-request", demand="on", static="on", twin="on"))
 
 
 class MeasurementModeTests(unittest.TestCase):

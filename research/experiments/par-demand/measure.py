@@ -12,8 +12,8 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, E3_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, attempt_result,
-                       attempt_result_e2, e2_excluded, load, summarize)
+from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, attempt_result,
+                       attempt_result_e2, attempt_result_e4, e2_excluded, load, summarize)
 
 
 def run(command, **kwargs):
@@ -92,7 +92,7 @@ def performance_cores(root=Path("/sys/devices/system/cpu"),
         record(cpuinfo)
     cores = sorted(firsts)
     if len(cores) < 8:
-        raise ValueError(f"experiment 2 needs eight performance cores with their first siblings allowed; found {cores}")
+        raise ValueError(f"experiments 2, 3 and 4 need eight performance cores with their first siblings allowed; found {cores}")
     return cores, dict(files=files, available_cpus=sorted(available),
                        performance_cpus=sorted(performance) if performance is not None else None,
                        performance_source=str(performance_file) if performance is not None else "all cores (P-core file absent)")
@@ -100,25 +100,25 @@ def performance_cores(root=Path("/sys/devices/system/cpu"),
 
 def demand_setting(experiment, arm):
     return "on" if (experiment == 2 and arm in ("demand", "idle1", "twin")
-                    or experiment == 3 and arm not in ("seq", "par")) else "off-never-request"
+                    or experiment in (3, 4) and arm not in ("seq", "par")) else "off-never-request"
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--rounds", type=int)
-    parser.add_argument("--experiment", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument("--experiment", type=int, choices=(1, 2, 3, 4), default=1)
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    if args.experiment == 3 and args.rounds is not None:
-        parser.error("experiment 3 selects its rounds from six sizing rounds; omit --rounds")
+    if args.experiment in (3, 4) and args.rounds is not None:
+        parser.error("experiments 3 and 4 select their rounds from six sizing rounds; omit --rounds")
     if args.instrumented and (args.experiment != 3 or args.sizing or args.verify_only):
         parser.error("--instrumented requires experiment 3 without sizing or verify-only")
     if args.rounds is None:
         args.rounds = 30 if args.experiment == 2 else 10
-    arms_for_run = E3_ARMS if args.experiment == 3 else E2_ARMS if args.experiment == 2 else ARMS
+    arms_for_run = E4_ARMS if args.experiment == 4 else E3_ARMS if args.experiment == 3 else E2_ARMS if args.experiment == 2 else ARMS
     widths_for_run = E3_WIDTHS if args.experiment == 3 else WIDTHS
     if args.rounds < 1:
         parser.error("rounds must be positive")
@@ -136,9 +136,9 @@ def main():
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
     topology = None
-    if args.experiment in (2, 3) and not args.verify_only:
+    if args.experiment in (2, 3, 4) and not args.verify_only:
         if platform.system() != "Linux" or shutil.which("taskset") is None:
-            raise ValueError("experiment 2 requires Linux topology and taskset pinning")
+            raise ValueError("experiments 2, 3 and 4 require Linux topology and taskset pinning")
         cores, topology = performance_cores()
     else:
         # Verification has no timing verdict and may run on the hosted sizing
@@ -153,13 +153,13 @@ def main():
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
-                    setting="on" if args.experiment in (2, 3) else "off-never-request", manifest=MANIFEST,
+                    setting="on" if args.experiment in (2, 3, 4) else "off-never-request", manifest=MANIFEST,
                     instrumented=args.instrumented)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in MANIFEST:
             for arm in arms_for_run:
-                for width in widths_for_run if args.experiment in (2, 3) else (1, 4):
+                for width in widths_for_run if args.experiment in (2, 3, 4) else (1, 4):
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
                             env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND=setting))
@@ -190,8 +190,8 @@ def main():
                     meta = MANIFEST[name]
                     settings = dict(env)
                     if "repetitions" in meta:
-                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment != 3 else meta["repetitions"])
-                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment != 3 else meta["extent"])
+                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4) else meta["repetitions"])
+                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4) else meta["extent"])
                     widths = list(widths_for_run)
                     widths = widths[round_id % len(widths):] + widths[:round_id % len(widths)]
                     for width in widths:
@@ -209,11 +209,11 @@ def main():
                                          WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
     selected = {(name, width) for name in MANIFEST for width in widths_for_run}
-    if args.experiment == 3:
+    if args.experiment in (3, 4):
         args.rounds = 6
         batch(1, selected)
-        sample = summarize(path, sizing=True, experiment=3)
-        sample_dir = build / "sizing-e3"
+        sample = summarize(path, sizing=True, experiment=args.experiment)
+        sample_dir = build / f"sizing-e{args.experiment}"
         sample_dir.mkdir(exist_ok=True)
         path.replace(sample_dir / "measurements.tsv")
         (sample_dir / "summary.json").write_text(json.dumps(sample, indent=2) + "\n")
@@ -224,9 +224,10 @@ def main():
         (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         if args.sizing:
             return
-        batch(1, selected)
-        (build / "summary.json").write_text(json.dumps(summarize(path, experiment=3), indent=2) + "\n")
-        return
+        if args.experiment == 3:
+            batch(1, selected)
+            (build / "summary.json").write_text(json.dumps(summarize(path, experiment=3), indent=2) + "\n")
+            return
     batch(1, selected)
     groups = load(path, args.experiment)
     def decisions(name):
@@ -236,6 +237,9 @@ def main():
     inspection_path = build / "inspection.json"
     inspection = json.loads(inspection_path.read_text()) if inspection_path.exists() else {}
     def exceeded(name, width, arms):
+        if args.experiment == 4:
+            return attempt_result_e4(arms, width,
+                                     excluded=e2_excluded(name, inspection.get(name, {})))["status"] == "exceeds"
         if args.experiment == 2:
             return attempt_result_e2(arms, width, decisions(name),
                                      excluded=e2_excluded(name, inspection.get(name, {})))["status"] == "exceeds"

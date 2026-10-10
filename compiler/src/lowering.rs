@@ -297,8 +297,8 @@ pub enum DemandAblation {
     Order,
     /// Publish a bounded initial frontier before request-driven refinement.
     Seed,
-    /// Price slices using the available runtime work estimate.
-    Extent,
+    /// Restore static slice pricing for the research comparison.
+    Static,
 }
 
 /// Whether lowering actualizes ordinary permission-derived overlap.
@@ -314,7 +314,7 @@ pub enum OverlapLowering {
     /// handed out; static small splits are pruned and other non-indexed
     /// splits use slices.
     Demand {
-        /// Experiment 3's single changed mechanism, or the unchanged prototype.
+        /// A research ablation, or the runtime-extent-priced demand prototype.
         ablation: DemandAblation,
         /// Keep the existing recursion budget and its sequential cut.
         budget: RecursionBudget,

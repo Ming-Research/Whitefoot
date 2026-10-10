@@ -1122,9 +1122,9 @@ impl FunctionEmitter<'_, '_> {
 
     /// A demand site whose whole range is below its minimum span calls the
     /// chunk directly; only a range worth handing out enters the slice driver.
-    /// The default weight is static, so a tiny range pays one comparison, not
-    /// driver entry. Extent alone replaces this price; seed alone supplies an
-    /// additional entry frontier count. Neither changes the chunk ABI.
+    /// Available runtime work prices admission and slices; the static ablation
+    /// restores the old weight. Seed supplies an additional entry frontier
+    /// count. Neither changes the chunk ABI.
     fn emit_demand_split(
         &mut self,
         result: IrValueId,
@@ -1140,7 +1140,7 @@ impl FunctionEmitter<'_, '_> {
             .ok_or(BackendFailure::InvalidIr)?;
         let chunk = self.callee_symbol(split.chunk, chunk_function.name());
         let mut weight = split.weight.to_string();
-        let minimum_span = if self.program.demand_ablation == crate::DemandAblation::Extent
+        let minimum_span = if self.program.demand_ablation != crate::DemandAblation::Static
             && let Some(work) = split.work
         {
             let estimate = self.emit_work_estimate(work, &mut std::collections::HashMap::new())?;

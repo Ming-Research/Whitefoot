@@ -1,4 +1,4 @@
-//! Opt-in experiment 1: static-price slices with demand-only hand-out.
+//! Opt-in demand experiments: work-priced slices with demand-only hand-out.
 //! Removed or replaced when research/investigations/par-demand concludes.
 use super::loops::U64;
 use super::{IrBuilder, split};
@@ -49,7 +49,7 @@ impl IrBuilder<'_> {
             .map(|ty| b.new_parameter(*ty))
             .collect::<Result<Vec<_>, _>>()?;
         // Same transport as the splitter's trailing budget word. Every caller
-        // supplies a positive per-iteration price (static except in extent).
+        // supplies a positive runtime-extent price, or a static fallback/ablation.
         let weight = b.new_parameter(U64)?;
         let ablation = self.synthesis.borrow().demand_ablation;
         let frontier = if ablation == crate::DemandAblation::Seed {

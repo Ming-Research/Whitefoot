@@ -1635,3 +1635,65 @@ total and `extent` 22 ms, while process CPU stays about twice sequential, so
 most of the excess is in the slices' own execution, consistent with memory
 bandwidth shared by eight workers rather than with waiting.
 
+## Experiment 4: the call grain and runtime-extent pricing, fixed before it measures
+
+The owner chose option A on the direction card: keep the hybrid direction
+with only changes whose attribution supports them. Demand retains `par`'s
+call grain and now prices slices with the runtime-extent estimate `split.work`
+by default, the `extent` arm of experiment 3. Missing estimates keep the
+static weight. Publication order, eager seeding and the idle policy stay as
+in experiment 2 with the call grain; dedup and counters remain research-only.
+Cheap-region versioning from the hybrid plan is not yet built.
+
+**Arms and workloads.** The twelve workloads of experiment 2, at widths 1,
+4 and 8: `seq`, `par`, `demand` (the new default, requests on), `static`
+(the old demand pricing, `--par-demand --par-demand-ablation static`, requests
+on), and `twin` (a byte copy of `demand`). Every arm runs the same input,
+repetitions and extent, checked against the independent oracle. Processes
+are pinned to one logical CPU per performance core on the native 14900K.
+The second call judges steady execution; first-call CPU above wall is
+reported separately.
+
+**Round count.** In the same job, first collect six full-work sizing rounds,
+which judge nothing. Freeze `n` as the smallest count from 6 through 30 for
+which every applicable rule's projected interval width, scaled by
+`sqrt(6/n)`, is at most 0.02 or its median's distance to the bound; use 30
+if none qualifies. Then collect `n` separate decisive rounds, never pooled
+with sizing. Each exceeding cell gets exactly one rerun of `n` rounds.
+The saved six-round measurements and frozen count are required evidence.
+
+**Rules, per cell.** Keep experiment 1's paired rule: per-round ratios,
+their median, 10,000 bootstrap draws with seed `20261010`, and the 95 percent
+interval. A `twin / demand` interval excluding 1 voids the cell.
+
+- E4-seq, literal never-slower: `demand / seq` wall upper end at most 1.00
+  passes; lower end above 1.00 exceeds; otherwise inconclusive. There is
+  no decision-point allowance or two-sided one-worker band.
+- E4-par: where `par / seq` wall's interval lies wholly below 1,
+  `demand / par` wall upper end at most 1.05 passes.
+- E4-gain: where `static / seq` wall's interval lies wholly below 1,
+  `demand / static` wall upper end at most 1.05 passes, preserving the
+  old demand lowering's gains.
+- E4-H3 keeps experiment 2's margin unchanged:
+  `m_r = (cpu_demand - 1.1 * cpu_seq - 0.1 * max(0, wall_seq - wall_demand) * W) / cpu_seq`;
+  the median margin's interval upper end at most 0 passes. Report the same
+  margin for `par` and `static` for comparison.
+- An interval's lower end above its bound exceeds. A second exceeding
+  interval after the one rerun fails; disagreement between attempts or an
+  interval straddling its bound stays inconclusive.
+- `small_constant` and cells whose timed work is optimized away in both
+  builds decide nothing. `spine` is reported and decides nothing here.
+- A pass also requires optimized-code inspection of this run's images,
+  identifying surviving timed work and what the decision compiled to,
+  as in experiment 2. Missing inspection never becomes a pass.
+
+**What would reject the direction as built.** A failing E4-par or E4-gain
+cell rejects the claim that this lowering preserves available speedups.
+A failing E4-seq cell on a workload with parallel work rejects the
+never-slower claim. Each returns to the owner with its attribution before
+further building; E4-H3 still reports whether extra CPU buys saved wall time.
+
+**Predictions, fixed before measurement.** `mandelbrot` and `stencil` pass
+E4-par. `small_split` fails E4-seq: its remaining 10 to 11 percent is the
+per-call decision cost, which runtime-extent pricing does not remove; the
+hybrid plan's cheap-region versioning that addresses it is not yet built.
