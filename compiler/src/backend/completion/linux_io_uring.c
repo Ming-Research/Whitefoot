@@ -51,6 +51,28 @@ static int wf_linux_enter(
     return (int)result;
 }
 
+#if defined(WF_LINUX_IO_URING_MADVISE)
+extern int WF_LINUX_IO_URING_MADVISE(void *, size_t, int);
+#else
+#define WF_LINUX_IO_URING_MADVISE madvise
+#endif
+
+static int wf_linux_mapping_dontfork(void *mapping, size_t size) {
+    /* Ring indices and SQEs are shared with the kernel. A snapshot child must
+     * have no mapping through which it can submit or consume parent work.
+     * Advice belongs to creation, before the ring is offered to any caller;
+     * failure is a setup refusal, so the bridge's ordinary fallback applies. */
+#if defined(WF_LINUX_IO_URING_TEST_SKIP_DONTFORK)
+    /* Negative-control image only: the same forbidden read must now succeed. */
+    (void)mapping;
+    (void)size;
+    return 0;
+#else
+    return WF_LINUX_IO_URING_MADVISE(mapping, size, MADV_DONTFORK) == 0
+        ? 0 : errno;
+#endif
+}
+
 static void wf_linux_unmap(wf_linux_io_uring_adapter *adapter) {
     if (adapter->submission_entries != MAP_FAILED
         && adapter->submission_entries != NULL) {
@@ -203,33 +225,17 @@ int wf_linux_io_uring_init(
      * kernel's twice-the-depth default, because the depth is a throughput
      * choice about submission and the queue's size is a bound on how many
      * completions can be posted before the overflow path. */
-    /* IORING_SETUP_COOP_TASKRUN: a completion the kernel finishes on the
-     * submitting thread's behalf (a receive whose poll fired) is posted when
-     * that thread next enters the kernel, which every scheduler thread does
-     * within a bounded spin, instead of by an inter-processor interrupt that
-     * stops whatever the thread was running.  Measured on the TCP echo
-     * control test at 64 connections it is the difference between 200 to
-     * 225 thousand and 240 to 250 thousand round trips a second, with the
-     * same parks and the same enters (`research/investigations/io-model/RESULTS.md`,
-     * the batch 0108 section).  A kernel before 5.19 refuses the flag with EINVAL, and
-     * the ring is then made without it. */
-    parameters.flags = IORING_SETUP_CQSIZE | IORING_SETUP_COOP_TASKRUN;
+    /* A role may be serviced by a replacement while its submitter computes.
+     * Do not defer task work until that submitter's next kernel transition.
+     * The prior COOP_TASKRUN throughput advantage must be compared separately
+     * from handoff bookkeeping in the ordinary-I/O acceptance experiment. */
+    parameters.flags = IORING_SETUP_CQSIZE;
     parameters.cq_entries = (unsigned)completions;
     adapter->ring_descriptor = (int)syscall(
         __NR_io_uring_setup,
         (unsigned)depth,
         &parameters
     );
-    if (adapter->ring_descriptor < 0 && errno == EINVAL) {
-        memset(&parameters, 0, sizeof(parameters));
-        parameters.flags = IORING_SETUP_CQSIZE;
-        parameters.cq_entries = (unsigned)completions;
-        adapter->ring_descriptor = (int)syscall(
-            __NR_io_uring_setup,
-            (unsigned)depth,
-            &parameters
-        );
-    }
     if (adapter->ring_descriptor < 0) {
         error = errno;
         adapter->ring_descriptor = -1;
@@ -268,6 +274,13 @@ int wf_linux_io_uring_init(
         adapter->submission_mapping_size = shared_size;
         adapter->completion_mapping = adapter->submission_mapping;
         adapter->completion_mapping_size = shared_size;
+        error = wf_linux_mapping_dontfork(adapter->submission_mapping, shared_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
     } else {
         adapter->submission_mapping = mmap(
             NULL,
@@ -284,6 +297,13 @@ int wf_linux_io_uring_init(
             return error;
         }
         adapter->submission_mapping_size = submission_size;
+        error = wf_linux_mapping_dontfork(adapter->submission_mapping, submission_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
         adapter->completion_mapping = mmap(
             NULL,
             completion_size,
@@ -300,6 +320,13 @@ int wf_linux_io_uring_init(
             return error;
         }
         adapter->completion_mapping_size = completion_size;
+        error = wf_linux_mapping_dontfork(adapter->completion_mapping, completion_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
     }
 
     adapter->submission_entries_size = parameters.sq_entries
@@ -314,6 +341,17 @@ int wf_linux_io_uring_init(
     );
     if (adapter->submission_entries == MAP_FAILED) {
         error = errno;
+        wf_linux_unmap(adapter);
+        (void)close(adapter->ring_descriptor);
+        adapter->ring_descriptor = -1;
+        return error;
+    }
+
+    error = wf_linux_mapping_dontfork(
+        adapter->submission_entries,
+        adapter->submission_entries_size
+    );
+    if (error != 0) {
         wf_linux_unmap(adapter);
         (void)close(adapter->ring_descriptor);
         adapter->ring_descriptor = -1;

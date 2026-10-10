@@ -50,11 +50,16 @@ static wf_host_operation *operation(void) {
 static void parked(int state) {
     CHECK(state == 2);
     CHECK(wf__context_wait(operation(), &frame) == 1);
+    /* The handwritten wait has now unwound, as the driver loop requires. */
+    wf_context_adopt_wait(&wf_driver_root, &wf_context_root);
     CHECK(wf_context_root.record == &operation()->record);
     CHECK(atomic_load(&wf_driver_root.host_waits) == 1u);
 }
 
 static void finish_park(void) {
+    if (wf_context_root.record != NULL && atomic_load(&wf_driver_root.host_waits) == 0u)
+        wf_context_adopt_wait(&wf_driver_root, &wf_context_root);
+    wf_context_current = NULL;
     /* The test watchdog fails a lost wake/cancellation; no test timeout is
      * passed as the operation's deadline, so it cannot make a broken fire pass. */
     while (wf_context_root.record != NULL) {
@@ -71,6 +76,7 @@ static void finish_park(void) {
     CHECK(wf_context_root.timer_slot == 0);
     CHECK(wf_driver_root.timer_count == 0);
     CHECK(atomic_load(&wf_driver_root.host_waits) == 0u);
+    wf_context_current = &wf_context_root;
 }
 
 static void stopped_result(const wf_read_result *result, unsigned char byte, unsigned reason) {
@@ -173,6 +179,7 @@ static void guard_races(void) {
         wf__shared_unlock(ordinary, 1u);
         wf__shared_unlock(view, 1u);
         CHECK(wf__watch_park(current, &frame) == 1);
+        wf_context_commit_wake(wf_context_current);
     }
     wf_context_current = &wf_context_root;
     wf_driver_self = &wf_driver_root;
@@ -213,6 +220,7 @@ static void guard_races(void) {
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
     CHECK(wf__watch_park(&guard, &frame) == 1);
+    wf_context_commit_wake(wf_context_current);
     wake_race race = { .source = &source, .ordinary = ordinary };
     pthread_t fire_thread, write_thread;
     CHECK(pthread_create(&fire_thread, NULL, race_fire, &race) == 0);
@@ -247,6 +255,7 @@ static void guard_races(void) {
     wf_driver_self = &firing_driver;
     CHECK(wf__body_cancel_fire_start(&result, &source, &call) == 3);
     CHECK(wf__context_wait(&call, &frame) == 1);
+    wf_context_commit_wake(wf_context_current);
     CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
     CHECK(result == 0xff && firing.record == NULL);
     wf_context_current = &wf_context_root;
@@ -258,6 +267,7 @@ static void guard_races(void) {
     wf_context_current = &firing;
     wf_driver_self = &firing_driver;
     CHECK(wf__context_wait(&call, &frame) == 1);
+    wf_context_commit_wake(wf_context_current);
     CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
     wf_context_current = &wf_context_root;
     wf_driver_self = &wf_driver_root;
@@ -375,8 +385,8 @@ int main(void) {
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
 
-    /* Fire after linking but before context_wait, with the driver's epoch
-     * already advanced: the driver's post-snapshot recheck still finds it. */
+    /* Fire before post-unwind registration, with the driver's epoch already
+     * advanced: adoption and the post-snapshot recheck still find it. */
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
     byte = 0xcc;
@@ -384,7 +394,9 @@ int main(void) {
                                              0, 1, NULL, &watch, operation());
     fire_elsewhere(&source);
     parked(state);
+    wf_context_current = NULL;
     CHECK(wf_driver_find_cancelled(&wf_driver_root));
+    wf_context_current = &wf_context_root;
     finish_park();
     wf__body_receive_next_finish(&result, &receive, &destination, 0, 1, NULL, &watch, operation());
     stopped_result(&result, byte, WF_IO_CANCELLED);

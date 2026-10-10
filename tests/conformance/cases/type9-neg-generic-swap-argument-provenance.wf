@@ -1,0 +1,14 @@
+fn exchange<A: drop, B: drop>(unused: &A, target: &B, incoming: &B) -> result: unit writes(target), writes(incoming) {
+  doc "FN-2: only B takes the exchange place; equal concrete arguments do not merge A and B's placement obligations.";
+  swap(first: target, second: incoming);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: the refusal cites the second complete Slots argument, whose parameter takes the exchange place.";
+  let unused = box_slots_new::<u64>(capacity: 0_u64);
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  exchange::<Slots<u64>, Slots<u64>>(unused: &unused.inner, target: &small.inner, incoming: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}
