@@ -1,11 +1,17 @@
 const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
 
-fn release(store: &Shared<ConcurrentHashMap<Box<u64>>>) -> freed: u64 writes(store) {
-  let freed = shared_map_release_reserve::<Box<u64>>(map: store);
+fn release(store: &Shared<ConcurrentHashMap<Box<u64>>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
+  doc "Release reserve through a callee that only reads the map handle.";
+  let freed = std::process::release_map_reserve::<Box<u64>>(map: store, meter: meter);
   return freed;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Release reserve directly and through another handle without changing entries.";
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
   let store = shared_map_new::<Box<u64>>(capacity: 1_u64);
   let code = 42_u8;
   let a = &names[0_u64..1_u64];
@@ -17,10 +23,10 @@ fn main() -> status: std::process::ExitStatus pure waits {
     let second = box_new::<u64>(value: 2_u64);
     set t^[b] = Some<Box<u64>>(value: move second);
   }
-  let freed = shared_map_release_reserve::<Box<u64>>(map: &store);
-  let again = release(store: &store);
+  let freed = std::process::release_map_reserve::<Box<u64>>(map: &store, meter: &meter);
+  let again = release(store: &store, meter: &meter);
   let other = shared_share::<ConcurrentHashMap<Box<u64>>>(shared: &store);
-  let through = shared_map_release_reserve::<Box<u64>>(map: &other);
+  let through = std::process::release_map_reserve::<Box<u64>>(map: &other, meter: &meter);
   let count = 9_u64;
   let seen = 0_u64;
   atomic t = &store {

@@ -344,6 +344,7 @@ pub(crate) fn build_provides_function(key: &crate::DeclarationKey) -> bool {
                     | "meter_share"
                     | "heap_in_use"
                     | "resident_bytes"
+                    | "release_map_reserve"
                     | "scope_open"
                     | "scope_open_child"
                     | "scope_view"

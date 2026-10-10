@@ -31,7 +31,6 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let start = std::time::now(clock: &clock);
   let future = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
   let outcome = std::time::sleep_until(deadline: future, cancel: &never);
-  std::time::close_cancel_watch(watch: move never);
   let after = std::time::now(clock: &clock);
   let reached = std::time::instant_reached(deadline: future, instant: after);
   match outcome {

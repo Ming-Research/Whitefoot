@@ -423,16 +423,22 @@ fn linked_definitions_return_their_declared_register_results() {
                 );
                 linked.push(function.name().to_owned());
             }
-            // The two Instant producers, `Result<u64, Utf8Error>` and the resident
-            // and scope readings' `Option<u64>` fit the register-result budget.
+            // The two Instant producers, the four cancellation constructors, whose
+            // results are one-field structs over a shared handle [PRE-2],
+            // `Result<u64, Utf8Error>` and the resident and scope readings'
+            // `Option<u64>` fit the register-result budget.
             assert_eq!(
                 linked,
                 [
                     "std.time.now",
                     "std.time.instant_after",
+                    "std.time.cancel_source",
+                    "std.time.cancel_share",
+                    "std.time.cancel_watch",
+                    "std.time.cancel_never",
                     "std.text.host_utf8_len",
                     "std.process.resident_bytes",
-                    "std.process.scope_bytes"
+                    "std.process.scope_bytes",
                 ]
             );
             // `sleep_until`'s `Result<unit, unit>` fits the budget too, and

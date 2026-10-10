@@ -894,6 +894,13 @@ impl<'unit> DeclarationInventory<'unit> {
             _ => name.to_owned(),
         }
     }
+    /// Whether the build supplies this function's definition [PRE-2]: a
+    /// Whitefoot body in a host module is an ordinary checked definition.
+    pub(in crate::semantic::check) fn build_provides(&self, declaration: DeclarationId) -> bool {
+        self.resolved
+            .declaration(declaration)
+            .is_some_and(|record| crate::library::build_provides_function(record.key()))
+    }
     /// The package and path of the module whose records declare a
     /// declaration, as its key names them; `None` for a PRE-1 declaration
     /// [MOD-3].

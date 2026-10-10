@@ -37,7 +37,7 @@ static void *fire_on_other_driver(void *source) {
     return NULL;
 }
 
-static void fire_elsewhere(wf_value *source) {
+static void fire_elsewhere(wf_cancel_handle *source) {
     pthread_t thread;
     CHECK(pthread_create(&thread, NULL, fire_on_other_driver, source) == 0);
     CHECK(pthread_join(thread, NULL) == 0);
@@ -81,7 +81,7 @@ static void stopped_result(const wf_read_result *result, unsigned char byte, uns
 }
 
 typedef struct wake_race {
-    wf_value *source;
+    wf_cancel_handle *source;
     void *ordinary;
     _Atomic unsigned arrived;
     _Atomic unsigned go;
@@ -115,13 +115,13 @@ static void *race_write(void *opaque) {
 /* Each schedule uses the production start/wait/finish and guard protocol.
  * The watchdog, never a program deadline, detects a lost wake. */
 static void guard_races(void) {
-    wf_value source, watch;
+    wf_cancel_handle source, watch;
     wf_watch guard;
     wf_test_guard_phase("cancellation guard: fire before registration");
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
     wf_cancel *view = wf__body_cancel_state(&watch);
-    CHECK(view == (void *)wf_value_pointer(&source));
+    CHECK(view == source.state);
     fire_elsewhere(&source);
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(view->visible_fired == 1u);
@@ -279,16 +279,19 @@ static void guard_races(void) {
     wf__shared_free(view);
 
     wf_test_guard_phase("cancellation view: retained never state");
+    CHECK(atomic_load(&wf_never_state.shared.handles) == 1u);
     wf__body_cancel_never(&watch);
     view = wf__body_cancel_state(&watch);
     void *same = wf__body_cancel_state(&watch);
-    CHECK(view == same);
+    CHECK(view == same && watch.state == view);
+    CHECK(atomic_load(&wf_never_state.shared.handles) == 4u);
     wf__body_close_cancel_watch(&watch);
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(view->visible_fired == 0u && atomic_load(&view->fired) == 0u);
     wf__shared_unlock(view, 1u);
     CHECK(!wf__shared_release(same));
     CHECK(!wf__shared_release(view));
+    CHECK(atomic_load(&wf_never_state.shared.handles) == 1u);
 }
 
 int main(void) {
@@ -302,7 +305,8 @@ int main(void) {
 
     int pair[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
-    wf_value receive, source, shared, watch, never;
+    wf_value receive;
+    wf_cancel_handle source, shared, watch, never;
     wf_descriptor_value(&receive, pair[0]);
     wf__body_cancel_source(&source);
     wf__body_cancel_share(&shared, &source);

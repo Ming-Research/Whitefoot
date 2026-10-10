@@ -72,7 +72,6 @@ impl IrBuilder<'_> {
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
             "map_clear" => self.row_map_clear(),
-            "shared_map_release_reserve" => self.row_shared_map_release_reserve(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
             "key_set_read_key" => self.row_key_set_read_key(),
@@ -241,49 +240,6 @@ impl IrBuilder<'_> {
         let table = self.row_table(map)?;
         self.define(IrType::Unit, IrOperation::ConcurrentHashMapClear { table })?;
         self.return_unit()
-    }
-
-    /// `shared_map_release_reserve<V>(map: &Shared<ConcurrentHashMap<V>>) ->
-    /// u64`: the bytes of storage the map's table kept beyond its entries'
-    /// needs and has now released, its entries unchanged [SHARE-1]. The
-    /// table is read from the object's state without a hold, since a map
-    /// in a state keeps its identity for the object's life.
-    fn row_shared_map_release_reserve(&mut self) -> Result<(), LoweringFailure> {
-        let [shared] = self.row_parameters()?;
-        let IrType::Address(IrAddressed::Nominal(nominal)) = self.value_type(shared)? else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let IrNominalKind::Shared {
-            state,
-            shape: crate::IrShared::Object,
-        } = self.nominals[nominal.index()].kind
-        else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        if self.table_nominal(state).is_none() || self.result != U64 {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        }
-        let referent = IrAddressed::of(state).ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        let object = self.define(
-            IrType::Nominal(nominal),
-            IrOperation::Load {
-                address: shared,
-                referent: IrAddressed::Nominal(nominal),
-            },
-        )?;
-        let field = self.define(
-            IrType::Address(referent),
-            IrOperation::SharedState { nominal, object },
-        )?;
-        let table = self.define(
-            state,
-            IrOperation::Load {
-                address: field,
-                referent,
-            },
-        )?;
-        let freed = self.define(U64, IrOperation::ConcurrentHashMapReleaseReserve { table })?;
-        self.return_value(freed)
     }
 
     /// `key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> u64`: the

@@ -94,16 +94,17 @@ void wf__completion_file_append_submit(
     void *record
 );
 
-/* Non-null watches only; pending watched submissions return 2,
- * completed ones 1, matching an ordinary host start. Source handles own the
- * state; the pending call borrows a live watch through its finish. */
+/* Sources and watches retain an ordinary shared unit; the pending call
+ * borrows a live watch through its finish. */
 void *wf__cancel_new(void);
-void wf__cancel_retain(void *source);
-void wf__cancel_release(void *source);
-void *wf__cancel_state(void *source);
+void *wf__cancel_never(void);
+/* A retained never state maps to the no-watch host-wait sentinel. */
+void *wf__cancel_wait_state(void *state);
 void wf__cancel_fire_held(void *source);
 /* Start returns 3: retry context_wait on resume until it acquires the unit. */
 int wf__shared_start(void *object, void *operation);
+/* Non-null fireable states only; pending watched submissions return 2,
+ * completed ones 1, matching an ordinary host start. */
 int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record);
 int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
                                                 uint64_t count, void *cancel, void *record);

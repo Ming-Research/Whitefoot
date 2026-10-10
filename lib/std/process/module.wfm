@@ -72,6 +72,8 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Buil
 
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Build-provided. Returns Some resident bytes reported by the host, or None when unavailable.";
 
+public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Build-provided. Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
 public fn scope_open(meter: &MemoryMeter) -> result: Result<MeterScope, MeterError> writes(meter) doc "Build-provided. Opens a top-level scope with the default account as its parent, or returns CapacityExhausted when no safely reusable slot is available.";
 
 public fn scope_open_child(meter: &MemoryMeter, parent: &MeterScope) -> result: Result<MeterScope, MeterError> reads(parent), writes(meter) doc "Build-provided. Opens a scope with parent as its fixed parent, or returns CapacityExhausted. The parent account includes the child's bytes.";
