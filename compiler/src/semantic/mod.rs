@@ -1516,6 +1516,9 @@ impl SemanticUnsupported {
 /// Trusted semantic-checker invariant failure, never a source verdict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SemanticCompilerFailure {
+    /// A generic host boundary needs an ABI this compiler cannot share across
+    /// all type arguments. This is a compiler capability stop, not rejection.
+    UnsupportedGenericHostAbi,
     /// Canonical production topology had an impossible local shape.
     InvalidCanonicalTree,
     /// A resolved declaration or use record was missing or inconsistent.

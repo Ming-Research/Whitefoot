@@ -3,7 +3,7 @@
 # Consumers supply ROOT, BUILD and CLANG. Retire this include when the compiler
 # provides a reusable linked-library artifact for these callers.
 NATIVE_ROOT := $(ROOT)/compiler/src/backend
-NATIVE_C := ordinary_values.c sched/core.c sched/entry.c \
+NATIVE_C := ordinary_values.c keyed_table.c sched/core.c sched/entry.c \
             completion/runtime.c completion/file_adapter.c completion/bridge.c \
             completion/stop_signals.c
 ifeq ($(OS),Windows_NT)
@@ -25,6 +25,8 @@ NATIVE_HEADERS := $(wildcard $(NATIVE_ROOT)/*.h $(NATIVE_ROOT)/sched/*.h $(NATIV
 # Listing it as a plain object would impose malloc/free on heap-free callers.
 NATIVE_OBJECTS := $(addprefix $(BUILD)/native/,$(NATIVE_C:.c=.o)) $(BUILD)/native/ordinary_values_ir.o $(BUILD)/native/heap.a
 .SECONDARY: $(NATIVE_OBJECTS)
+# The keyed tables' unit compiles the map's source in.
+$(BUILD)/native/keyed_table.o: $(NATIVE_ROOT)/concurrent_map.c
 NATIVE_BUILD_RULES := $(lastword $(MAKEFILE_LIST))
 NATIVE_CONFIG := $(BUILD)/native/configuration.txt
 NATIVE_CALLER_DEFAULT := $(.DEFAULT_GOAL)

@@ -235,7 +235,10 @@ impl<'unit> TypeContext<'unit> {
                     return Ok(true);
                 }
                 CheckedType::Nominal(id) => {
-                    if matches!(self.nominal(id)?.kind, CheckedNominalKind::Box { .. }) {
+                    if matches!(
+                        self.nominal(id)?.kind,
+                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. }
+                    ) {
                         return Ok(true);
                     }
                     pending.extend(self.owned_components(id)?);

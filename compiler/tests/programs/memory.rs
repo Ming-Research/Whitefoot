@@ -1,6 +1,18 @@
 use super::support::{build_program, compile_program};
 
 #[test]
+fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
+    // One native build/run checks frame reuse, take/reinsert, wrapped Ring
+    // cleanup, struct/enum transport and Array fill. The program checks the
+    // heap baseline after every call, with stale freed pointers in raw slots.
+    let program = build_program(&compile_program("short_lived_windows.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
 fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
     // PRE-2: the map's two waves distinguish newly carved and reused nodes.
     // A presized table avoids moves masking node deltas: on the unfixed

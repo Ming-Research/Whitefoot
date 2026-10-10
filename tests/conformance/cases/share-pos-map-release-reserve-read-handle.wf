@@ -1,0 +1,17 @@
+fn release<V: drop>(store: &Shared<ConcurrentHashMap<V>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
+  doc "A generic caller reads its handle and writes only its meter.";
+  return std::process::release_map_reserve::<V>(map: store, meter: meter);
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Instantiate the same host release boundary at two value types.";
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let bytes = shared_map_new::<u8>(capacity: 0_u64);
+  let words = shared_map_new::<Box<u64>>(capacity: 0_u64);
+  let first = release::<u8>(store: &bytes, meter: &meter);
+  let second = release::<Box<u64>>(store: &words, meter: &meter);
+  return std::process::exit_status(code: 42_u8);
+}
