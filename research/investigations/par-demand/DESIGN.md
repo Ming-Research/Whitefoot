@@ -1587,7 +1587,7 @@ selected round count.
 performance core). The harness ran the six-round sample, which by the rule
 selected thirty rounds, then the thirty decisive rounds, not pooled with
 the sample; counter builds ran once per arm and decide nothing. Every twin
-interval contains 1 except none: all cells are valid. Wall ratios are each
+interval contains 1, so every cell is valid. Wall ratios are each
 arm ÷ `demand` (below 1 is faster), median and 95 percent interval;
 `par` is shown as `par ÷ demand` for reference.
 
