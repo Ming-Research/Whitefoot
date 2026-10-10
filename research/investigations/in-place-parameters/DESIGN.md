@@ -587,7 +587,7 @@ reaching instruction, branch, return or cleanup uses. The earlier record-entry
 test now expects only genuinely read continuation carries; its copy and native
 assertions remain. Execution, including baseline failure, awaits CI.
 
-Halo timing: see [Halo timing of both steps](#halo-timing-of-both-steps). No specification, verdict or diagnostic change.
+Halo timing (with read-through snapshots, PR #310, Halo-wf run 37986461719, 14900K, six interleaved pairs against the #292 compiler): fib 0.779, binary-trees 0.913, loop 1.024 (register allocation in ForLoop, board item lm-bl-forloop-spill), other kernels within the twin's spread. No specification, verdict or diagnostic change.
 
 ### Read-through snapshots
 
