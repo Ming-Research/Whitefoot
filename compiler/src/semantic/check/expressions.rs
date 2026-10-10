@@ -32,7 +32,7 @@ enum AccessKind {
     Move,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::semantic::check) enum PlaceUseContext {
     Ordinary,
     /// The caller judges a referent without taking its owned value.
