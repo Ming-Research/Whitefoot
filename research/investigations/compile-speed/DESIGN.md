@@ -420,19 +420,33 @@ than the share of proof work removed, because the analyses run concurrently
 beside the serial symbolic type check that dominates the module-verdict
 thread.
 
+Candidate 11 was measured against candidate 10's head `e8471e19`. Both
+compilers accept Halo's `pkg::vm`, and the LLVM of Halo's `test` entry is
+byte-identical to main `fe5589ec5`'s, whose emission took 72.8 s against 44.8 s
+with both candidates (one GitHub-hosted run each). The function analyses fall to
+577 from main's 1227. A verification patch that also checked and analyzed every
+contract-only instance found its admitted clauses equal to the canonical
+instance's in all 8,364 comparisons and its body disposition, invariant
+outcomes and postcondition proofs equal to the copied ones in all 6,810. On the
+i9-14900K, under candidate 10's conditions:
+
+| Compiler | median wall | range | peak RSS |
+|---|---:|---:|---:|
+| candidate 10 `e8471e19` | 8.61 s | 8.57–8.64 s | 1.46–1.49 GB |
+| twin of it | 8.62 s | 8.58–8.71 s | 1.46–1.49 GB |
+| candidate 11 | 3.76 s | 3.74–3.82 s | 0.54–0.57 GB |
+
+The candidate is kept by its prior criterion: Halo's module check is 2.3x
+faster than candidate 10 and 2.35x faster than main.
+
 ## Remaining costs
 
-- **Symbolic validation on Halo's critical path.** In `pkg::vm` the
-  module-verdict thread now spends about 44% of its samples in generic
-  validation (28% type-checking the symbolic view, 14% discovering and
-  instantiating its signatures), against 25% for the concrete type check and
-  10% reading declarations; the symbolic view checks every function body,
-  nongeneric ones included. A per-thread sample split on a GitHub-hosted runner
-  (Halo-wf `9915000`, main `fe5589ec5`) puts 57% of that thread's samples in
-  the symbolic view's body checks and 1% in the concrete view's, so the
-  nongeneric bodies are a small part; the generic bodies and their
-  non-canonical symbolic instances are the rest. About 30% of that thread's samples are in the C
-  library's allocator and copying.
+- **Symbolic validation on Halo's critical path.** Before candidate 11, the
+  `pkg::vm` module-verdict thread spent 57% of its samples in the symbolic
+  view's body checks and 1% in the concrete view's (a per-thread sample split
+  on a GitHub-hosted runner, Halo-wf `9915000`, main `fe5589ec5`), almost all
+  of it in the renamed instances candidate 11 no longer checks. What remains
+  of the check after it has not been profiled.
 
 - **Edge insertion of constant terms.** In `pkg::style`, now the slowest
   module, 46% of samples are edge insertion during pre-kill materialization.
