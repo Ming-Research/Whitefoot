@@ -24,6 +24,58 @@ jobs:
           CARGO_PROFILE_GATE_STRIP: none
           RUSTFLAGS: -C force-frame-pointers=yes
         run: cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+      - name: Install perf
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq linux-tools-common linux-tools-generic linux-tools-$(uname -r) || sudo apt-get install -y -qq linux-tools-generic
+      - name: Attribute samples by phase and thread
+        run: |
+          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
+          cd halo/lib/halo
+          PERF=$(ls /usr/lib/linux-tools/*/perf 2>/dev/null | head -1); [ -z "$PERF" ] && PERF=perf
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          /usr/bin/time -f "wall %e s, user %U s, sys %S s" $PERF record --call-graph fp -F 997 -o $RUNNER_TEMP/perf.data "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null
+          $PERF script -i $RUNNER_TEMP/perf.data -F pid,tid,sym 2>/dev/null > $RUNNER_TEMP/stacks.txt
+          wc -l $RUNNER_TEMP/stacks.txt
+          python3 - $RUNNER_TEMP/stacks.txt <<'PY'
+          import sys, re, collections
+          samples = []
+          cur = None
+          for line in open(sys.argv[1], errors="replace"):
+              if not line.strip():
+                  if cur: samples.append(cur)
+                  cur = None
+                  continue
+              if not line.startswith((" ", "\t")):
+                  f = line.split()
+                  pid, tid = f[0].split("/") if "/" in f[0] else (f[0], f[1])
+                  cur = (pid == tid, [])
+              elif cur is not None:
+                  sym = line.strip().split(" ", 1)[-1]
+                  cur[1].append(sym)
+          if cur: samples.append(cur)
+          main = [s for s in samples if s[0]]
+          print("samples", len(samples), "main thread", len(main))
+          def short(sym):
+              m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)(::\{closure#\d+\})*(\+0x[0-9a-f]+)?$", sym)
+              return m.group(1) if m else sym
+          def phase(frames):
+              names = [short(x) for x in frames]
+              if "validate_generic_templates" in names: return "symbolic"
+              if "check_program" in names: return "concrete"
+              return "other"
+          for label, group in (("ALL THREADS", samples), ("MAIN THREAD", main)):
+              n = len(group)
+              by_phase = collections.Counter(phase(f) for _, f in group)
+              print(f"== {label}: n={n}", {k: f"{100*v/n:.1f}%" for k, v in by_phase.most_common()})
+              for ph in ("symbolic", "concrete", "other"):
+                  inc = collections.Counter()
+                  for _, frames in group:
+                      if phase(frames) != ph: continue
+                      for name in set(short(x) for x in frames):
+                          inc[name] += 1
+                  print(f"-- {label} {ph}: top inclusive (% of {label} samples)")
+                  for name, c in inc.most_common(45):
+                      print(f"   {100*c/n:5.1f}% {name}")
+          PY
       - name: Record checker work counters
         run: |
           bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
