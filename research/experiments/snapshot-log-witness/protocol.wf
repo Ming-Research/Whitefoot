@@ -232,11 +232,9 @@ fn witness(wrong: Bool) -> code: u8 pure waits {
               set invalid = True();
             }
           }
-        } else {
-          if record.sequence > versions[index] {
-            set exported[index] = record.after;
-            set versions[index] = record.sequence;
-          }
+        } else if record.sequence > versions[index] {
+          set exported[index] = record.after;
+          set versions[index] = record.sequence;
         }
       }
     }
