@@ -87,22 +87,14 @@ impl CheckedProgram {
     ) -> Result<(), EntryRejection<'resolved>> {
         // [MOD-8] composition needs every declared function's definition; a
         // pending interface declaration blocks it at the declaration, and the
-        // build supplies the definition of every host module's function [PRE-2].
-        let bundle = resolved.syntax().classified_bundle().source_bundle();
+        // build supplies only the individual functions selected by PRE-2.
+        // A missing Whitefoot body in a host module is still pending.
         if let Some(pending) = resolved
             .interface_functions()
             .iter()
             .filter(|function| function.definition().is_none())
             .filter_map(|function| resolved.declaration(function.declaration()))
-            .find(|declaration| {
-                !declaration
-                    .module()
-                    .and_then(|module| bundle.module(module))
-                    .is_some_and(|module| {
-                        module.package() == crate::Package::Standard
-                            && crate::library::is_host_module(module.path())
-                    })
-            })
+            .find(|declaration| !crate::library::build_provides_function(declaration.key()))
         {
             return Err(EntryRejection::PendingDeclaration(pending));
         }
