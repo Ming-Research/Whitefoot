@@ -1598,7 +1598,7 @@ fn declaration_domain(class: DeclarationClass) -> Option<DeclarationDomain> {
         DeclarationClass::StructConstructor | DeclarationClass::EnumVariant => {
             Some(DeclarationDomain::Constructor)
         }
-        DeclarationClass::NumericBound => Some(DeclarationDomain::NumericBound),
+        DeclarationClass::BuiltinBound => Some(DeclarationDomain::BuiltinBound),
         // [MOD-4] a module alias occupies its lowercase spelling beside the
         // module's functions and constants.
         DeclarationClass::Module => Some(DeclarationDomain::LexicalIdentifier),

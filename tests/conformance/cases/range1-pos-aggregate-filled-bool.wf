@@ -1,0 +1,30 @@
+fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {
+  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;
+} {
+  return unit;
+}
+
+fn fill<T: copy>(value: T) -> result: Array<T, 1> pure contract {
+  ensures forall same(k in 0_u64..1_u64): result[k] == value;
+} {
+  let made = array_filled::<T, 1>(value: value);
+  return made;
+}
+
+fn forward(flag: Bool) -> result: unit pure {
+  let value = False();
+  if flag {
+    set value = True();
+  }
+  let targets = fill::<Bool>(value: value);
+  same::<Bool>(targets: &targets[0_u64..1_u64], value: value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let enabled = True();
+  forward(flag: enabled);
+  let targets = fill::<Bool>(value: enabled);
+  same::<Bool>(targets: &targets[0_u64..1_u64], value: enabled);
+  return std::process::exit_status(code: 0_u8);
+}

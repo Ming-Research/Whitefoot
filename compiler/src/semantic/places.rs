@@ -1386,7 +1386,7 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         | CheckedExpression::NumericConversion { .. }
         | CheckedExpression::Reinterpret { .. }
         | CheckedExpression::BooleanOperation { .. }
-        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::ArrayMeasure { .. }
         | CheckedExpression::ArrayIndex { .. }
         | CheckedExpression::BufferMeasure { .. }

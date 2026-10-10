@@ -269,9 +269,7 @@ const BOOLEAN_SPELLINGS: [(&str, usize); 4] = [("band", 2), ("bor", 2), ("bxor",
 /// construction functions [OP-13], which are ordinary records and not
 /// operation-table rows, and allocation is total so no source predicate
 /// decides it [STOR-8].
-const UNMODELLED_ROW_SPELLINGS: [&str; 8] = [
-    "eeq",
-    "ene",
+const UNMODELLED_ROW_SPELLINGS: [&str; 6] = [
     "cvt",
     "cvt.checked",
     "cvt.defined",
@@ -487,13 +485,23 @@ fn the_domain_column_decides_which_operand_types_are_accepted() {
     for operation in INTEGER_OPERATIONS {
         let spelling = integer_spelling(operation);
         let row = row_of(&rows, spelling);
-        domains.insert(row.domain.as_str());
+        // Equal/NotEqual here model only the integer path of OP-16;
+        // structural domains are checked by the value-equality suite.
+        let equality = matches!(
+            operation,
+            CheckedIntegerOperation::Equal | CheckedIntegerOperation::NotEqual
+        );
+        if equality {
+            assert_eq!(row.domain, "one equality type T [OP-16]");
+        } else {
+            domains.insert(row.domain.as_str());
+        }
         let accepted: Vec<IntegerType> = ALL_INTEGER_TYPES
             .into_iter()
             .filter(|integer| operation.accepts_operand_type(CheckedType::Integer(*integer)))
             .collect();
         let expected: Vec<IntegerType> = match row.domain.as_str() {
-            "all int T" => ALL_INTEGER_TYPES.to_vec(),
+            "all int T" | "one equality type T [OP-16]" => ALL_INTEGER_TYPES.to_vec(),
             "signed int T" => ALL_INTEGER_TYPES
                 .into_iter()
                 .filter(|integer| integer.signed())

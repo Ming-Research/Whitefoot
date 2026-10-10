@@ -1149,13 +1149,13 @@ impl<'unit> TypeContext<'unit> {
                 CheckedType::Bool,
                 arguments.as_slice(),
             )),
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
                 ..
             } => Some((
-                GoalOperation::EnumEquality {
+                GoalOperation::ValueEquality {
                     equal: *equal,
                     operand_type: *operand_type,
                 },
@@ -1286,27 +1286,44 @@ impl<'unit> TypeContext<'unit> {
             }
             [left, _operator, right] => {
                 let (left, right) = (*left, *right);
-                let CheckedExpression::IntegerOperation {
-                    operation,
-                    operand_type,
-                    arguments,
-                    result,
-                    ..
-                } = checked
-                else {
-                    return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+                let (row, arguments, result) = match checked {
+                    CheckedExpression::IntegerOperation {
+                        operation,
+                        operand_type,
+                        arguments,
+                        result,
+                        ..
+                    } => (
+                        GoalOperation::Integer {
+                            operation: *operation,
+                            operand_type: *operand_type,
+                        },
+                        arguments,
+                        *result,
+                    ),
+                    CheckedExpression::ValueEquality {
+                        equal,
+                        operand_type,
+                        arguments,
+                        ..
+                    } => (
+                        GoalOperation::ValueEquality {
+                            equal: *equal,
+                            operand_type: *operand_type,
+                        },
+                        arguments,
+                        CheckedType::Bool,
+                    ),
+                    _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
                 };
                 let [checked_left, checked_right] = arguments.as_slice() else {
                     return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                 };
                 Ok(ExpandedClauseExpression::Operation {
-                    row: GoalOperation::Integer {
-                        operation: *operation,
-                        operand_type: *operand_type,
-                    },
+                    row,
                     type_arguments: Vec::new(),
                     const_arguments: Vec::new(),
-                    result: *result,
+                    result,
                     arguments: vec![
                         self.build_clause_affine(
                             check_context,

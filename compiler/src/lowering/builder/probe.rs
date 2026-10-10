@@ -345,7 +345,7 @@ fn statement_is_neutral(
 
 /// Whether the expression is pure and statically total under the frozen
 /// whitelist: constants, binding reads, checked integer operations, Boolean
-/// operations, enum equality, numeric conversion, and reinterpretation.
+/// operations, value equality, numeric conversion, and reinterpretation.
 fn expression_is_pure(expression: &CheckedExpression) -> bool {
     match expression {
         CheckedExpression::Constant(_)
@@ -353,7 +353,7 @@ fn expression_is_pure(expression: &CheckedExpression) -> bool {
         | CheckedExpression::Binding { .. } => true,
         CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. } => {
+        | CheckedExpression::ValueEquality { arguments, .. } => {
             arguments.iter().all(expression_is_pure)
         }
         CheckedExpression::NumericConversion { value, .. }

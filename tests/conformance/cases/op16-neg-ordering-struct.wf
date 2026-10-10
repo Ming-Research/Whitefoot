@@ -1,0 +1,11 @@
+struct EqOrdered {
+  value: u32;
+}
+
+fn compare(left: EqOrdered, right: EqOrdered) -> result: Bool pure {
+  return left < right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

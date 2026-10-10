@@ -12,7 +12,10 @@ pub(super) fn value(world: &mut World, state: &mut State, value: &CheckedValue) 
         CheckedValue::Integer { ty, bits } => Value::Int(Linear::constant(
             crate::semantic::entailment::integer_value(*ty, *bits),
         )),
-        CheckedValue::Bool(truth) => Value::Bool(super::world::Cond::Constant(*truth)),
+        CheckedValue::Bool(truth) => world.boolean(super::world::Cond::Constant(*truth)),
+        CheckedValue::ConstGeneric { declaration, ty } => {
+            Value::Int(world.const_generic(*declaration, *ty))
+        }
         CheckedValue::Struct { fields, .. } => Value::Struct(
             fields
                 .iter()
@@ -96,6 +99,9 @@ pub(crate) fn judge(
         };
         frame.places.insert(place, view);
     }
+    if facts::vacuous(&mut world, clause, &frame) {
+        return None;
+    }
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let failure = |relation, capacity| RangeIssue::Undischarged {
         node: node.clone(),
@@ -110,16 +116,26 @@ pub(crate) fn judge(
     for (position, conclusion) in formed.conclusions.iter().enumerate() {
         let (mut units, choices) = state.premises(&world);
         units.extend(formed.premises.iter().cloned());
-        units.push(super::world::negated(conclusion));
+        units.extend(conclusion.guards.iter().cloned());
+        units.push(super::world::negated(&conclusion.conclusions[0]));
         match facts::judge(
             &mut world,
             &[],
             &[],
             &[],
             Query {
+                type_facts: formed.type_facts.clone(),
                 units,
                 choices,
-                rules: Vec::new(),
+                rules: formed.conditions.clone(),
+                support: formed
+                    .conclusions
+                    .iter()
+                    .zip(&clause.conclusions)
+                    .filter(|(_, written)| written.projected)
+                    .flat_map(|(rule, _)| rule.guards.iter().chain(&rule.conclusions))
+                    .cloned()
+                    .collect(),
             },
         ) {
             Ok(Verdict::Refuted) => {}

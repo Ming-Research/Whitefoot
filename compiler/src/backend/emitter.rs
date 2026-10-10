@@ -31,6 +31,7 @@ mod segments;
 mod shared;
 mod slice;
 mod union_enums;
+mod value_equality;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -2466,11 +2467,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Ok(());
         }
         match operation {
-            // These operations transfer their payload from storage when its
-            // representation is stored. Materializing that payload as an SSA
-            // aggregate first lets SROA scalarize large arrays before the
+            // These operations read stored payloads through typed addresses.
+            // Eager SSA materialization would load unused representation
+            // bytes for equality and scalarize large arrays before BoxNew's
             // typed storage copy can be emitted.
-            IrOperation::BoxNew { .. } => {}
+            IrOperation::BoxNew { .. } | IrOperation::ValueEquality { .. } => {}
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;
             }
@@ -2590,11 +2591,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 operation,
                 arguments,
             } => self.emit_boolean(result, ty, *operation, arguments),
-            IrOperation::EnumEquality {
+            IrOperation::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
-            } => self.emit_enum_equality(result, ty, *equal, *operand_type, *arguments),
+            } => self.emit_value_equality(result, ty, *equal, *operand_type, *arguments),
             IrOperation::ArrayFill {
                 value,
                 target_domain,
