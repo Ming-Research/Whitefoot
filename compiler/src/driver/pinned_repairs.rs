@@ -7,7 +7,7 @@
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
 //! its family module; the repairs still printed without one are listed in
-//! `docs/todo.md`.
+//! status board item coord-wfbl-01-25.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;

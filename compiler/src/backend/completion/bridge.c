@@ -2705,7 +2705,8 @@ int wf__watch_park(void *watch_frame, void *frame) {
  * WF_SHARED_STATE_OFFSET.  `holders` counts the atomic statements holding
  * it: zero when it is free, the number of readers, or WF_SHARED_WRITER.
  * The entries take a read or a write request, but lowering makes only write
- * requests today, so the read path runs in no program (docs/todo.md).
+ * requests today, so the read path runs in no program (status board item
+ * coord-wfbl-03-17).
  * A statement that finds the object held spins for a bounded time, since a
  * holder's block cannot wait and so its holder is running; one that still
  * finds it held parks in `waiting`.  An unlock wakes the first parked

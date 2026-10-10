@@ -1399,7 +1399,8 @@ impl<'program> IrBuilder<'program> {
                 // would lie between a hand-out and its join, so this call is
                 // not recorded: its unavailable result ends any group through
                 // it. Admitting it as a group's last member, as an addressed
-                // binding is, remains a deferred opportunity (docs/todo.md).
+                // binding is, remains a deferred opportunity (status board
+                // item coord-wfbl-03-36).
                 CheckedStatement::DropExpression {
                     value: expression,
                     drops,

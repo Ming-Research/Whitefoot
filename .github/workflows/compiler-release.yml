@@ -34,8 +34,8 @@
 # It carries no documents yet: a downstream's writers read the
 # specification, the maintained programs and the standard library's
 # interfaces in this repository at the release's commit, until the choice
-# of what a release carries for them is made (docs/todo.md, "A compiler
-# release carries no documents").
+# of what a release carries for them is made (status board item
+# coord-wfbl-05-06, "a compiler release carries no documents").
 #
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them

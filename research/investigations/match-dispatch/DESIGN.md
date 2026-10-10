@@ -253,8 +253,8 @@ registers the values the loop cannot change wait in the frame; a loop that
 still does not fit is emitted whole. The enclosing function computes the
 loop's invariant loads once and passes the handler table's address where a
 register is left. `whitefootc --dispatch-ledger` reports each loop's
-verdict. Derived addresses for loop-carried indices remain in
-`docs/todo.md` under "Interpreter dispatch lowering".
+verdict. Derived addresses for loop-carried indices remain open as status
+board item `coord-wfbl-06-02`.
 
 ## Later stages
 
@@ -320,8 +320,8 @@ Criteria, fixed before the first measurement:
   measured.
 - **Compiler attribution.** A gap that profiles to code the compiler emits
   around a handler (reloads, spills, checks it could have proved) rather
-  than to the interpreter's design goes to `docs/todo.md` as a compiler
-  item with the profile as evidence.
+  than to the interpreter's design goes on the status board as a compiler
+  item in the owning session's area, with the profile as evidence.
 
 ## Stage 3 v1 outcome
 
