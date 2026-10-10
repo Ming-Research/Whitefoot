@@ -589,3 +589,31 @@ token operations stay inside the owner's cost criterion (3 percent
 throughput, 5 percent p99 on ordinary I/O) needs the 14900K comparison. One
 driver on one CPU (arm a) still waits the whole computation, which is the
 whole-role reassignment of step 2.
+
+## Result: whole-role reassignment for one driver (A, first increment)
+
+Change: 950d5bfd7 on `claude/ctx-handoff-2` (stacked on step 1): a monitor
+thread that runs no contexts claims a driver that has stayed outside past a
+due deadline with no idle driver to borrow it, and hands its role to a warm
+spare executor (one per driver, at most two executors per driver); the
+displaced thread keeps computing and, at its next return, commits its context
+through a driver ingress queue and joins the spare pool. Map users follow
+physical executors (inventory doubled); the ring is created without
+`IORING_SETUP_COOP_TASKRUN` so a replacement can reap it. Witness run
+[compute-bench 38049310155](https://github.com/Ming-Research/Whitefoot/actions/runs/38049310155)
+(hosted ubuntu-24.04, about 2.0 s of computation, three passes):
+
+| Arm | Drivers | CPUs | 100 ms timer fired at | Counters |
+|---|---|---|---|---|
+| a | 1 | 1 | 0.1037 to 0.1064 s | 1 reassignment, 1 ingress commit |
+| b | 2 | 1 | 0.1027 to 0.1028 s | driver 1: 3,745 borrows, 1 borrowed sleep |
+| d | 2 | 2 | 0.1025 to 0.1031 s | borrow, as in step 1 |
+| c, e (no computation) | 1, 2 | 1, 2 | 0.1027 to 0.1033 s | none |
+
+One driver on one CPU now meets the owner's 25 ms bound by the external
+marker (at most 6.4 ms after the deadline), through reassignment rather than
+borrowing. Still open: the cost criterion (the per-resume counters, the
+monitor, the doubled map-user inventory and the changed ring flags all add
+cost; 14900K comparison pending), detection of overdue readiness and
+completions (this increment detects deadlines only), behaviour when the spare
+reserve is exhausted, and an internal-timestamp measurement of the latency.
