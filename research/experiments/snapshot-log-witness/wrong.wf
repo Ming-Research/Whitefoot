@@ -1,5 +1,9 @@
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: err, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let wrong = True();
-  let code = witness(wrong: wrong);
+  let code = witness(wrong: wrong, factory: &factory, err: &err);
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
   return std::process::exit_status(code: code);
 }

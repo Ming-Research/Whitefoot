@@ -139,7 +139,8 @@ fn equal_entry(left: Option<u64>, right: Option<u64>) -> result: Bool pure {
   }
 }
 
-fn witness(wrong: Bool) -> code: u8 pure waits {
+fn witness(wrong: Bool, factory: &std::io::HandleFactory, err: &std::io::OutputStream) -> code: u8 writes(factory), writes(err) waits {
+  progress(factory: factory, err: err, text: &phase_start[0_u64..6_u64]);
   let store = shared_map_new::<u64>(capacity: 32_u64);
   let records = slots_new::<Record, 2048>();
   let stamps = array_filled::<u64, 256>(value: 0_u64);
@@ -164,6 +165,7 @@ fn witness(wrong: Bool) -> code: u8 pure waits {
   }
   atomic log = &journal when log^.ready {
   }
+  progress(factory: factory, err: err, text: &phase_writer_started[0_u64..15_u64]);
   let empty = None<u64>();
   let exported = array_filled::<Option<u64>, 256>(value: empty);
   let versions = array_filled::<u64, 256>(value: 0_u64);
@@ -200,6 +202,7 @@ fn witness(wrong: Bool) -> code: u8 pure waits {
     }
     set cursor = next;
   }
+  progress(factory: factory, err: err, text: &phase_scan_done[0_u64..10_u64]);
   let s1 = 0_u64;
   let reference = array_filled::<Option<u64>, 256>(value: empty);
   let erase = Command::Erase();
@@ -239,7 +242,9 @@ fn witness(wrong: Bool) -> code: u8 pure waits {
       }
     }
   }
+  progress(factory: factory, err: err, text: &phase_reconcile_done[0_u64..15_u64]);
   let writer_ok = job;
+  progress(factory: factory, err: err, text: &phase_join_done[0_u64..10_u64]);
   if bnot(writer_ok) {
     return 71_u8;
   }
@@ -256,4 +261,40 @@ fn witness(wrong: Bool) -> code: u8 pure waits {
     return 0_u8;
   }
   return 10_u8;
+}
+
+const phase_start: Array<u8, 6> = "start\n";
+
+const phase_writer_started: Array<u8, 15> = "writer started\n";
+
+const phase_scan_done: Array<u8, 10> = "scan done\n";
+
+const phase_reconcile_done: Array<u8, 15> = "reconcile done\n";
+
+const phase_join_done: Array<u8, 10> = "join done\n";
+
+fn progress(factory: &std::io::HandleFactory, err: &std::io::OutputStream, text: &[u8]) -> result: unit reads(text), writes(factory), writes(err) waits {
+  let sent = 0_u64;
+  let end = text^.len;
+  loop {
+    if sent >= end {
+      break;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let cancel = std::time::cancel_never();
+    let outcome = std::io::write_once(factory: factory, output: err, source: text, start: sent, end: end, deadline: no_deadline, cancel: &cancel);
+    std::time::close_cancel_watch(watch: move cancel);
+    match outcome {
+      Ok(value: next) => {
+        if next == sent {
+          return unit;
+        }
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return unit;
+      }
+    }
+  }
+  return unit;
 }
