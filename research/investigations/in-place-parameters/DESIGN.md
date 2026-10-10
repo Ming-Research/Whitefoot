@@ -587,7 +587,7 @@ reaching instruction, branch, return or cleanup uses. The earlier record-entry
 test now expects only genuinely read continuation carries; its copy and native
 assertions remain. Execution, including baseline failure, awaits CI.
 
-**Halo timing pending**. No specification, verdict or diagnostic change.
+Halo timing: see [Halo timing of both steps](#halo-timing-of-both-steps). No specification, verdict or diagnostic change.
 
 ### Read-through snapshots
 
@@ -813,7 +813,7 @@ full compiler gate remain unverified. **Halo timing and rebuilt IR pending.**
 
 ## Destination-result parameters
 
-**Proposed experiment; owner decision pending; timing pending.** Can lazy
+Can lazy
 incoming capture remove Halo's hot key copy while preserving original-input
 semantics? Compare identical Halo source/toolchain inputs before and after;
 a surviving eligible hot-path entry copy rejects the placement claim, and
@@ -866,7 +866,7 @@ rebuilt Halo IR remain pending CI.
 
 ## Layout-bounded transfers
 
-**Proposed experiment; owner approval pending; timing pending.** Does emitting
+Does emitting
 unavoidable aggregate transfers at layout boundaries preserve producer store
 widths through optimization and full LTO, and improve Halo beyond the same-source
 twin's spread? Compare base, twin and candidate with identical Halo source,
@@ -980,7 +980,39 @@ is added. If final loads widen, evaluate late target-aware lowering explicitly.
 Extra instructions, register pressure/spills, scratch storage and code size may
 outweigh forwarding benefits. AArch64 paired/vector transfers may benefit from
 wider accesses, so inspect its output rather than extrapolating x86 timing.
-Targets outside the current qualified set are untested. **Timing pending.**
+Targets outside the current qualified set are untested.
+
+### Halo timing of both steps
+
+The owner chose this direction (status board card on the store-forwarding
+fix, option A, 2026-10-10). Same Halo source (Halo-wf main d7ad06d), full LTO,
+native 14900K, `taskset -c 2`, six interleaved pairs per comparison against the
+control and a byte-identical twin (Whitefoot run 38093924096): control
+`wf-fd49ea518e16` (main fd49ea518), experiment 1 `wf-exp-cd79ad705c03`
+(destination-result parameter read-through), experiment 2
+`wf-exp-5fe3dd3e4e7a` (experiment 1 plus layout-bounded transfers). Each cell
+is the median ratio to the control (lower is faster); the 1-, 3- and 6-pair
+runs agree within the twin's spread unless noted.
+
+| Kernel | Twin | Experiment 1 | Experiment 2 |
+|---|---:|---:|---:|
+| fib | 0.999 | 1.016 (1.011-1.023) | 0.955 |
+| loop | 1.000 | 0.959 | 0.965 |
+| integer-table | 1.005 | 0.861 | 0.858 |
+| string-key | 1.001 (0.947-1.001) | 0.933 | 0.956 |
+| concat | 1.005 | 0.992 | 0.958 |
+| sort | 0.992 | 0.997 | 0.979 |
+| binary-trees | 1.003 | 1.026 | 0.974 |
+
+Experiment 1 removes the hot `table_get` key capture (SetTableRR, `arm.13`,
+679 to 453 instructions) and speeds integer-table, but alone it slows fib by
+about 2%. Experiment 2 speeds every kernel. Its final code shows the predicted
+risk only in part: Value transfers became scalar (ForLoop `arm.66`, 36 to 19
+128-bit moves; whole program 3680 to 3158), but LLVM re-merged adjacent 8-byte
+Frame fields in `push_frame` into three 16-byte moves (12 to 8 moves), so the
+Frame copy still has wide loads over its two widest field pairs. Keeping those
+boundaries through LLVM would need the late target-aware lowering named above;
+it is not part of this change.
 No specification, acceptance, verdict, diagnostic or ABI change is proposed.
 
 
