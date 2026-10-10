@@ -51,6 +51,28 @@ static int wf_linux_enter(
     return (int)result;
 }
 
+#if defined(WF_LINUX_IO_URING_MADVISE)
+extern int WF_LINUX_IO_URING_MADVISE(void *, size_t, int);
+#else
+#define WF_LINUX_IO_URING_MADVISE madvise
+#endif
+
+static int wf_linux_mapping_dontfork(void *mapping, size_t size) {
+    /* Ring indices and SQEs are shared with the kernel. A snapshot child must
+     * have no mapping through which it can submit or consume parent work.
+     * Advice belongs to creation, before the ring is offered to any caller;
+     * failure is a setup refusal, so the bridge's ordinary fallback applies. */
+#if defined(WF_LINUX_IO_URING_TEST_SKIP_DONTFORK)
+    /* Negative-control image only: the same forbidden read must now succeed. */
+    (void)mapping;
+    (void)size;
+    return 0;
+#else
+    return WF_LINUX_IO_URING_MADVISE(mapping, size, MADV_DONTFORK) == 0
+        ? 0 : errno;
+#endif
+}
+
 static void wf_linux_unmap(wf_linux_io_uring_adapter *adapter) {
     if (adapter->submission_entries != MAP_FAILED
         && adapter->submission_entries != NULL) {
@@ -268,6 +290,13 @@ int wf_linux_io_uring_init(
         adapter->submission_mapping_size = shared_size;
         adapter->completion_mapping = adapter->submission_mapping;
         adapter->completion_mapping_size = shared_size;
+        error = wf_linux_mapping_dontfork(adapter->submission_mapping, shared_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
     } else {
         adapter->submission_mapping = mmap(
             NULL,
@@ -284,6 +313,13 @@ int wf_linux_io_uring_init(
             return error;
         }
         adapter->submission_mapping_size = submission_size;
+        error = wf_linux_mapping_dontfork(adapter->submission_mapping, submission_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
         adapter->completion_mapping = mmap(
             NULL,
             completion_size,
@@ -300,6 +336,13 @@ int wf_linux_io_uring_init(
             return error;
         }
         adapter->completion_mapping_size = completion_size;
+        error = wf_linux_mapping_dontfork(adapter->completion_mapping, completion_size);
+        if (error != 0) {
+            wf_linux_unmap(adapter);
+            (void)close(adapter->ring_descriptor);
+            adapter->ring_descriptor = -1;
+            return error;
+        }
     }
 
     adapter->submission_entries_size = parameters.sq_entries
@@ -314,6 +357,17 @@ int wf_linux_io_uring_init(
     );
     if (adapter->submission_entries == MAP_FAILED) {
         error = errno;
+        wf_linux_unmap(adapter);
+        (void)close(adapter->ring_descriptor);
+        adapter->ring_descriptor = -1;
+        return error;
+    }
+
+    error = wf_linux_mapping_dontfork(
+        adapter->submission_entries,
+        adapter->submission_entries_size
+    );
+    if (error != 0) {
         wf_linux_unmap(adapter);
         (void)close(adapter->ring_descriptor);
         adapter->ring_descriptor = -1;
