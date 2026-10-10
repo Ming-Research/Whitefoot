@@ -2180,8 +2180,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
     match needs {
       Next(next: cursor) => {
       }
-      Needs(bytes: bytes) => {
-        set required = bytes;
+      Needs(bytes: wanted) => {
+        set required = wanted;
       }
     }
     if refused == 99_u64 {
