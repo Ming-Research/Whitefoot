@@ -1,0 +1,22 @@
+struct Wrapper {
+  ordinary: u8;
+  frozen: Frozen<u8>;
+}
+
+fn denied(wrapper: &Wrapper) -> result: u8 reads(wrapper) {
+  let cursor = &wrapper^.ordinary;
+  let once = True();
+  loop {
+    if once {
+      set cursor = &wrapper^.frozen.inner;
+      set once = False();
+      continue;
+    }
+    break;
+  }
+  return move cursor^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

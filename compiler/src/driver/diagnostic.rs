@@ -859,6 +859,8 @@ impl Report for SemanticIssueKind {
             MoveThroughReference { mechanical_fix };
             ReservedPseudoField { spelling, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
+            FrozenForbiddenPart { part, mechanical_fix };
+            FrozenContentConsume { mechanical_fix };
             MoveOfCopy { mechanical_fix };
             BareAffineUse { mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };

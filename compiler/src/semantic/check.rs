@@ -5,6 +5,7 @@ mod control;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
+mod frozen;
 mod generics;
 mod inventory;
 mod linearity;

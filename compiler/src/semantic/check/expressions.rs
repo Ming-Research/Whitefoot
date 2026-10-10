@@ -838,6 +838,19 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(node, Production::Psuffix)?;
+        if options.explicit_move
+            || options.context == PlaceUseContext::Ordinary
+            || !self.types.declarations.tree.place_has_dereference(node)?
+        {
+            self.reject_frozen_consume(
+                check_context,
+                node,
+                pbase,
+                &suffixes,
+                bindings,
+                options.explicit_move,
+            )?;
+        }
         if !suffixes.is_empty()
             && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {

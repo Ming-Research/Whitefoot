@@ -840,9 +840,19 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by TYPE-10.
         mechanical_fix: &'static str,
     },
-    /// [TYPE-2] a path that ends at or passes through a readonly field was
-    /// written as a write target: a `set` target, or an argument at a
-    /// reference parameter whose callee row writes that parameter.
+    /// [SHARE-1] a frozen content argument owns a mutable shared or host part.
+    FrozenForbiddenPart {
+        /// First mutable shared or host-handle part, in declaration order.
+        part: String,
+        /// Repair naming that part.
+        mechanical_fix: String,
+    },
+    /// [SHARE-1] frozen content cannot be moved or consumed.
+    FrozenContentConsume {
+        /// Read or retain the content instead of consuming it.
+        mechanical_fix: &'static str,
+    },
+    /// [TYPE-2] a readonly path cannot be written.
     ReadonlyWriteTarget {
         /// The readonly field's spelling as the declaration writes it.
         spelling: String,
