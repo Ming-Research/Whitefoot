@@ -43,15 +43,20 @@ on:
         type: choice
         options: [scoreboard, placement, par-demand]
         default: scoreboard
+      par_demand_experiment:
+        description: Demand hand-out experiment (2 requires the 14900K and eight performance cores)
+        type: choice
+        options: ["1", "2"]
+        default: "1"
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
         type: choice
         options: [github, 14900k]
         default: github
       placement_rounds:
-        description: Placement experiment rounds over every image, kernel and width
+        description: Rounds over every image, kernel and width (empty uses 10, or 30 for demand experiment 2)
         type: string
-        default: "10"
+        default: ""
       placement_unaligned:
         description: Commit of the placement experiment's unaligned compiler; empty means the merge base with main
         type: string
@@ -297,7 +302,7 @@ jobs:
 
       - name: Build, verify and time every placement
         env:
-          ROUNDS: ${{ inputs.placement_rounds }}
+          ROUNDS: ${{ inputs.placement_rounds || '10' }}
           CPUS: ${{ inputs.placement_cpus }}
           WHITEFOOT_CHECK_TIMEOUT: "6000"
         run: |
@@ -371,6 +376,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require the performance-core runner for experiment 2
+        env:
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
+          RUNNER: ${{ inputs.placement_runner }}
+        run: |
+          if [ "$EXPERIMENT" = 2 ] && [ "$RUNNER" != 14900k ]; then
+            echo "Experiment 2 requires the 14900K; hosted sizing remains experiment 1." >&2
+            exit 1
+          fi
       - name: Build both compilers and compare legacy emission
         run: |
           cargo fetch --locked --manifest-path compiler/Cargo.toml
@@ -381,13 +395,16 @@ jobs:
             BUILD="$RUNNER_TEMP/par-demand" \
             BASE_WFC="$RUNNER_TEMP/par-demand-base/compiler/target/gate/whitefootc"
       - name: Check the experiment reducer with wrong and missing evidence
-        run: python3 -m unittest discover -s research/experiments/par-demand -p test_harness.py
-      - name: Build and verify the four images of every workload
+        working-directory: research/experiments/par-demand
+        run: python3 -m unittest
+      - name: Build and verify every selected arm
+        env:
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
         run: |
           perl .github/run-check.pl par-demand/build \
-            make -C research/experiments/par-demand build verify BUILD="$RUNNER_TEMP/par-demand"
+            make -C research/experiments/par-demand build verify idle-policy-identity BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT="$EXPERIMENT"
           { git rev-parse HEAD; cargo --version; /usr/bin/clang --version; lscpu; } > "$RUNNER_TEMP/par-demand/build-host.txt"
-          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par}/*; do
+          for image in "$RUNNER_TEMP/par-demand"/{seq,demand,par,idle1}/*; do
             if [[ "$image" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
           done
       - name: Small hosted sizing sample
@@ -416,8 +433,9 @@ jobs:
           path: ${{ runner.temp }}
       - name: Interleave arms, widths and rounds; rerun an exceeded bound once
         env:
-          ROUNDS: ${{ inputs.placement_rounds }}
+          ROUNDS: ${{ inputs.placement_rounds || (inputs.par_demand_experiment == '2' && '30' || '10') }}
           RUNNER: ${{ inputs.placement_runner }}
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
           WHITEFOOT_CHECK_TIMEOUT: "5400"
         run: |
           tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/par-demand-images.tar.gz"
@@ -425,9 +443,9 @@ jobs:
           sizing=()
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
           perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
-            --build "$RUNNER_TEMP/par-demand" --rounds "$ROUNDS" "${sizing[@]}"
+            --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" --rounds "$ROUNDS" "${sizing[@]}"
           python3 research/experiments/par-demand/summarize.py "$RUNNER_TEMP/par-demand/measurements.tsv" \
-            --inspection "$RUNNER_TEMP/par-demand/inspection.json" "${sizing[@]}" > "$RUNNER_TEMP/par-demand/summary.json"
+            --inspection "$RUNNER_TEMP/par-demand/inspection.json" --experiment "$EXPERIMENT" "${sizing[@]}" > "$RUNNER_TEMP/par-demand/summary.json"
           cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

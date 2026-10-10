@@ -9,9 +9,11 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 from pathlib import Path
-from summarize import ARMS, WIDTHS, MANIFEST, attempt_result, load, summarize
+from summarize import (ARMS, E2_ARMS, WIDTHS, MANIFEST, attempt_result,
+                       attempt_result_e2, e2_excluded, load, summarize)
 
 
 def run(command, **kwargs):
@@ -37,13 +39,80 @@ def one_cpu_per_core():
     return sorted(firsts)
 
 
+def cpu_list(text):
+    """Linux cpulist syntax, including multiple ranges."""
+    result = set()
+    for part in text.strip().split(","):
+        if not part:
+            continue
+        bounds = part.split("-")
+        first, last = (int(bounds[0]), int(bounds[-1]))
+        if len(bounds) > 2 or first < 0 or last < first:
+            raise ValueError(f"invalid CPU list: {text}")
+        result.update(range(first, last + 1))
+    return result
+
+
+def performance_cores(root=Path("/sys/devices/system/cpu"),
+                      performance_file=Path("/sys/devices/cpu_core/cpus"), available=None):
+    """One first sibling per P-core; homogeneous hosts fall back to all cores.
+
+    Keep source contents (not only a derived CPU count) in identity.json. A
+    restricted affinity must still include eight distinct selected P-cores;
+    never silently substitute SMT siblings or efficiency cores.
+    """
+    files = {}
+    def record(path):
+        value = path.read_text()
+        files[str(path)] = value
+        return value
+    if available is None:
+        available = os.sched_getaffinity(0)
+    performance = cpu_list(record(performance_file)) if performance_file.exists() else None
+    firsts = set()
+    for siblings in sorted(root.glob("cpu[0-9]*/topology/thread_siblings_list")):
+        members = cpu_list(record(siblings))
+        if not members:
+            raise ValueError(f"empty sibling list: {siblings}")
+        first = min(members)
+        # Select a core only when its first sibling is known to be a P CPU;
+        # the task's pin sets never use an arbitrary CPU from the PMU mask.
+        if (performance is None or first in performance) and first in available:
+            firsts.add(first)
+        for field in ("core_id", "physical_package_id", "core_type", "cpu_capacity"):
+            path = siblings.parent / field
+            if path.exists():
+                record(path)
+    for name in ("online", "present", "possible"):
+        path = root / name
+        if path.exists():
+            record(path)
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        record(cpuinfo)
+    cores = sorted(firsts)
+    if len(cores) < 8:
+        raise ValueError(f"experiment 2 needs eight performance cores with their first siblings allowed; found {cores}")
+    return cores, dict(files=files, available_cpus=sorted(available),
+                       performance_cpus=sorted(performance) if performance is not None else None,
+                       performance_source=str(performance_file) if performance is not None else "all cores (P-core file absent)")
+
+
+def demand_setting(experiment, arm):
+    return "on" if experiment == 2 and arm in ("demand", "idle1", "twin") else "off-never-request"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
-    parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--rounds", type=int)
+    parser.add_argument("--experiment", type=int, choices=(1, 2), default=1)
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
+    if args.rounds is None:
+        args.rounds = 30 if args.experiment == 2 else 10
+    arms_for_run = E2_ARMS if args.experiment == 2 else ARMS
     if args.rounds < 1:
         parser.error("rounds must be positive")
     build = args.build.resolve()
@@ -54,10 +123,18 @@ def main():
     hashes = {}
     for name in MANIFEST:
         digest = lambda arm: hashlib.sha256((build / arm / name).read_bytes()).hexdigest()
-        hashes[name] = {arm: digest(arm) for arm in ARMS}
+        hashes[name] = {arm: digest(arm) for arm in arms_for_run}
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
-    cores = one_cpu_per_core()
+    topology = None
+    if args.experiment == 2 and not args.verify_only:
+        if platform.system() != "Linux" or shutil.which("taskset") is None:
+            raise ValueError("experiment 2 requires Linux topology and taskset pinning")
+        cores, topology = performance_cores()
+    else:
+        # Verification has no timing verdict and may run on the hosted sizing
+        # machine. Every experiment-2 timing batch, sizing included, is strict.
+        cores = one_cpu_per_core()
     pinned = {width: cores[:max(width, 1)] for width in WIDTHS} if len(cores) >= max(WIDTHS) else {}
     def pin(width, command):
         cpus = pinned.get(width)
@@ -65,12 +142,14 @@ def main():
     identity = dict(host=platform.uname()._asdict(), sizing=args.sizing, rounds=args.rounds, pinned=pinned,
                     revision=run(["git", "rev-parse", "HEAD"], capture_output=True).stdout.strip(),
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
-                    hashes=hashes, setting="off-never-request", manifest=MANIFEST)
+                    hashes=hashes, experiment=args.experiment, topology=topology,
+                    settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
+                    setting="on" if args.experiment == 2 else "off-never-request", manifest=MANIFEST)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in MANIFEST:
-            for arm in ARMS:
-                for width in (1, 4):
+            for arm in arms_for_run:
+                for width in WIDTHS if args.experiment == 2 else (1, 4):
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
                             env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND=setting))
@@ -94,7 +173,7 @@ def main():
                     for width in widths:
                         if (name, width) not in selected:
                             continue
-                        arms = list(ARMS)
+                        arms = list(arms_for_run)
                         shift = (round_id + WIDTHS.index(width)) % len(arms)
                         arms = arms[shift:] + arms[:shift]
                         if round_id % 2:
@@ -102,21 +181,27 @@ def main():
                         for arm in arms:
                             print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
                             run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
-                                env=dict(settings, WF_WORKERS=str(width)), stdout=output)
+                                env=dict(settings, WF_WORKERS=str(width),
+                                         WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
     batch(1, {(name, width) for name in MANIFEST for width in WIDTHS})
-    groups = load(path)
+    groups = load(path, args.experiment)
     def decisions(name):
         meta = MANIFEST[name]
         repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if args.sizing else meta.get("repetitions", 0)
         return meta.get("decisions_per_repetition", 0) * repetitions
-    rerun = {(name, width) for (name, width, attempt), arms in groups.items()
-             if attempt_result(arms, width, decisions(name))["status"] == "exceeds"}
-    if rerun:
-        batch(2, rerun)
     inspection_path = build / "inspection.json"
     inspection = json.loads(inspection_path.read_text()) if inspection_path.exists() else {}
-    (build / "summary.json").write_text(json.dumps(summarize(path, inspection, args.sizing), indent=2) + "\n")
+    def exceeded(name, width, arms):
+        if args.experiment == 2:
+            return attempt_result_e2(arms, width, decisions(name),
+                                     excluded=e2_excluded(name, inspection.get(name, {})))["status"] == "exceeds"
+        return attempt_result(arms, width, decisions(name))["status"] == "exceeds"
+    rerun = {(name, width) for (name, width, attempt), arms in groups.items()
+             if exceeded(name, width, arms)}
+    if rerun:
+        batch(2, rerun)
+    (build / "summary.json").write_text(json.dumps(summarize(path, inspection, args.sizing, args.experiment), indent=2) + "\n")
 
 
 if __name__ == "__main__":

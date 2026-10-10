@@ -1294,3 +1294,12 @@ speedup there (hand-out latency or granularity); a failing E2-H1 cell means
 the asking path costs more than its bound; a failing E2-H3 cell for `idle1`
 means waiting workers still burn CPU that buys no time. Each goes back to
 the owner with its attribution before any further building.
+
+**Implementation note, recorded before the run.** The `idle1` arm's runtime
+differs from `demand`'s in two places, both compiled only under
+`WF_PAR_IDLE_SINGLE_SPINNER`: the idle spin policy above, and the join
+wait's park, which in `idle1` announces the joining lane as idle before its
+final scan (as a worker does) so that a publish can wake it to help; a lane
+that loses the spinner slot parks at once, and without that announcement a
+parked joiner could not be given other work. So E2-idle compares the policy
+as built, both changes together, not the spin rule alone.

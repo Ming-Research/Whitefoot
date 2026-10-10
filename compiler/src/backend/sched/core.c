@@ -398,6 +398,30 @@ _Alignas(WF_PAR_CACHE_LINE) static unsigned long long wf__par_idle;
  * exists and read-only afterwards, so no lane can observe it changing. */
 static uint64_t wf__par_idle_window_us;
 
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+/* Experiment 2's candidate, not a shipped idle policy. All lanes retain the
+ * short first WF_PAR_SPIN_ROUNDS (1,024 by default). Only the CAS winner may
+ * extend that floor into a clock window; losers park without the yield tail.
+ * The winner's total spin window is a 7/8 exponentially decaying estimate of
+ * waits observed before work arrived, initially 1,000 us, clamped between the
+ * time spent in the short round floor and 1,000 us.
+ * A timeout contributes its elapsed wait (a censored lower bound); a shorter
+ * successful wait shrinks the estimate. The round floor always applies even
+ * when the estimate falls below that floor. Clock sampling retains the round
+ * resolution, so expiry may overshoot by one sampling block.
+ *
+ * The existing CPU-count/performance-level guard still withholds the window;
+ * those pools keep the short rounds and yields. The slot is released before
+ * running any callback, returning from a join, or parking, so nested helping
+ * cannot retain it. A winner taking work wakes a parked lane if another deque
+ * is visibly nonempty. Every publish still wakes as before. Neither this
+ * advice nor the slot participates in deque or completion synchronization:
+ * the announce/final-scan/posted-lock park protocol remains authoritative. */
+_Alignas(WF_PAR_CACHE_LINE) static unsigned wf__par_spinner;
+/* Protected by the spinner slot, not read by lanes that lost its CAS. */
+static uint64_t wf__par_spin_estimate_us = 1000;
+#endif
+
 /* The publish epoch: one counter, on a line of its own, that advances at every
  * transition which can make a deque's stealable content differ from what a
  * scan just saw. It exists so that a lane spinning out a long idle window does
@@ -1007,6 +1031,11 @@ struct wf__par_idling {
     int rounds;
     uint64_t entered;
     uint64_t seen;
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+    int spinner;
+    uint64_t started;
+    uint64_t limit_us;
+#endif
 };
 
 /* A lane that has just run something is no longer idle. */
@@ -1014,7 +1043,41 @@ static void wf__par_idling_reset(struct wf__par_idling *idling) {
     idling->rounds = 0;
     idling->entered = 0;
     idling->seen = 0;
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+    idling->spinner = 0;
+    idling->started = 0;
+    idling->limit_us = 0;
+#endif
 }
+
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+/* Release before callbacks: a callback can enter another helping join. */
+static void wf__par_idling_finish(struct wf__par_idling *idling, int found_work) {
+    if (!idling->spinner) return;
+    if (idling->started != 0) {
+        uint64_t now = wf_prim_monotonic_us();
+        if (now >= idling->started) {
+            uint64_t waited = now - idling->started;
+            if (waited > 1000) waited = 1000;
+            wf__par_spin_estimate_us = (7 * wf__par_spin_estimate_us + waited) / 8;
+        }
+    }
+    idling->spinner = 0;
+    __atomic_store_n(&wf__par_spinner, 0u, __ATOMIC_RELEASE);
+    if (found_work) {
+        int count = __atomic_load_n(&wf__par_lane_count, __ATOMIC_RELAXED);
+        for (int i = 0; i < count; i += 1) {
+            struct wf__par_lane *lane = &wf__par_lanes[i];
+            unsigned long long top = __atomic_load_n(&lane->top, __ATOMIC_SEQ_CST);
+            unsigned long long bottom = __atomic_load_n(&lane->bottom, __ATOMIC_SEQ_CST);
+            if (bottom > top) {
+                wf__par_wake_one();
+                break;
+            }
+        }
+    }
+}
+#endif
 
 /* Whether this round scans the deques at all.
  *
@@ -1081,11 +1144,46 @@ static int wf__par_should_scan(struct wf__par_idling *idling) {
  * host for the same reason. Neither loop has a reason of its own to differ,
  * and the probes that drive the park protocol run with the window at zero. */
 static int wf__par_stay_hot(struct wf__par_idling *idling) {
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+    if (idling->rounds == 0 && idling->started == 0 && wf__par_idle_window_us != 0)
+        idling->started = wf_prim_monotonic_us();
+#endif
     if (idling->rounds < WF_PAR_SPIN_ROUNDS) {
         idling->rounds += 1;
         wf_prim_spin_hint();
         return 1;
     }
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+    if (wf__par_idle_window_us != 0) {
+        if (!idling->spinner) {
+            unsigned vacant = 0;
+            if (!__atomic_compare_exchange_n(&wf__par_spinner, &vacant, 1u, 0,
+                                              __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+                return 0;
+            }
+            idling->spinner = 1;
+            idling->limit_us = wf__par_spin_estimate_us;
+            if (idling->limit_us > wf__par_idle_window_us)
+                idling->limit_us = wf__par_idle_window_us;
+        }
+        uint64_t now = wf_prim_monotonic_us();
+        if (now != 0 && idling->started != 0) {
+            if (idling->entered == 0) {
+                idling->entered = now;
+                uint64_t floor_us = now - idling->started;
+                if (idling->limit_us < floor_us) idling->limit_us = floor_us;
+                if (idling->limit_us > 1000) idling->limit_us = 1000;
+            }
+            if (now - idling->started < idling->limit_us) {
+                idling->rounds = 0;
+                wf_prim_spin_hint();
+                return 1;
+            }
+        }
+        wf__par_idling_finish(idling, 0);
+        return 0;
+    }
+#else
     if (idling->rounds == WF_PAR_SPIN_ROUNDS && wf__par_idle_window_us != 0) {
         /* One clock read per spin bound, never per round. The window runs from
          * the first crossing, so a lane stays hot for the window plus the one
@@ -1102,6 +1200,7 @@ static int wf__par_stay_hot(struct wf__par_idling *idling) {
             }
         }
     }
+#endif
     if (idling->rounds < WF_PAR_SPIN_ROUNDS + WF_PAR_YIELD_ROUNDS) {
         idling->rounds += 1;
         wf_prim_yield();
@@ -1123,6 +1222,9 @@ static void wf__par_wait(struct wf__par_lane *lane, struct wf__par_slot *target)
          * very task being waited on, which is the one line this lane has to
          * watch. */
         if (__atomic_load_n(&target->state, __ATOMIC_ACQUIRE) == WF_PAR_SLOT_DONE) {
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+            wf__par_idling_finish(&idling, 0);
+#endif
             return;
         }
 
@@ -1132,6 +1234,9 @@ static void wf__par_wait(struct wf__par_lane *lane, struct wf__par_slot *target)
                 slot = wf__par_find(lane);
             }
             if (slot != NULL) {
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+                wf__par_idling_finish(&idling, 1);
+#endif
                 wf__par_execute(slot);
                 wf__par_idling_reset(&idling);
                 continue;
@@ -1141,6 +1246,38 @@ static void wf__par_wait(struct wf__par_lane *lane, struct wf__par_slot *target)
             continue;
         }
 
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+        /* Like a worker, announce BEFORE the final SC scan. A publish either
+         * sees this bit or precedes that scan. Signal holds this same lock and
+         * sets posted, closing notification-before-sleep. Completion still
+         * sees the SC waiter registration and final DONE check. */
+        struct wf__par_slot *help;
+        unsigned long long bit = 1ull << (lane - wf__par_lanes);
+        wf_prim_wait_lock(&lane->wait);
+        __atomic_store_n(&target->waiter, lane, __ATOMIC_SEQ_CST);
+        __atomic_fetch_or(&wf__par_idle, bit, __ATOMIC_SEQ_CST);
+        help = wf__par_pop(lane);
+        if (help == NULL) help = wf__par_find(lane);
+        if (help == NULL && !lane->posted &&
+            __atomic_load_n(&target->state, __ATOMIC_SEQ_CST) != WF_PAR_SLOT_DONE) {
+#if defined(WF_SCHED_TEST)
+            wf_sched_test_before_wait(target->frame);
+#endif
+#if defined(WF_PAR_TRACE)
+            wf__par_trace_put(lane, WF_PAR_TRACE_PARK, (int64_t)idling.rounds);
+#endif
+            wf_prim_wait_sleep(&lane->wait);
+#if defined(WF_PAR_TRACE)
+            wf__par_trace_wake(lane);
+#endif
+        }
+        __atomic_store_n(&target->waiter, NULL, __ATOMIC_RELAXED);
+        __atomic_fetch_and(&wf__par_idle, ~bit, __ATOMIC_ACQ_REL);
+        lane->posted = 0;
+        wf_prim_wait_unlock(&lane->wait);
+        if (help != NULL) wf__par_execute(help);
+        wf__par_idling_reset(&idling);
+#else
 #if defined(WF_PAR_TRACE)
         int trace_slept = 0;
 #endif
@@ -1170,6 +1307,7 @@ static void wf__par_wait(struct wf__par_lane *lane, struct wf__par_slot *target)
         }
 #endif
         return;
+#endif
     }
 }
 
@@ -1191,6 +1329,9 @@ static void wf__par_worker_main(void *opaque) {
         if (wf__par_should_scan(&idling)) {
             slot = wf__par_find(lane);
             if (slot != NULL) {
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+                wf__par_idling_finish(&idling, 1);
+#endif
                 wf__par_execute(slot);
                 wf__par_idling_reset(&idling);
                 continue;
@@ -1207,6 +1348,9 @@ static void wf__par_worker_main(void *opaque) {
         if (slot != NULL) {
             __atomic_fetch_and(&wf__par_idle, ~(1ull << (lane - wf__par_lanes)),
                                __ATOMIC_ACQ_REL);
+#if defined(WF_PAR_IDLE_SINGLE_SPINNER)
+            wf__par_idling_finish(&idling, 1);
+#endif
             wf__par_execute(slot);
             wf__par_idling_reset(&idling);
             continue;

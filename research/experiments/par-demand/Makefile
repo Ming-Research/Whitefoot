@@ -9,7 +9,13 @@ FIXTURES := $(ROOT)/tests/programs/compute
 MICROS := small_constant small_split recursion spine hot_helper large_helper
 KERNELS := mandelbrot records fir stencil prefix histogram
 WORKLOADS := $(MICROS) $(KERNELS)
+EXPERIMENT ?= 1
 ARMS := seq demand par twin
+ifeq ($(EXPERIMENT),2)
+ARMS += idle1
+else ifneq ($(EXPERIMENT),1)
+$(error EXPERIMENT must be 1 or 2)
+endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
 .DEFAULT_GOAL := build
@@ -17,7 +23,7 @@ DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORA
 include $(ROOT)/compiler/runtime.mk
 build: $(IMAGES)
 # Ordinary arms preprocess out demand fields and instructions. Only candidate
-# and its copied twin link these two opt-in scheduler units.
+# and its copied twin link the demand units; idle1 adds the idle-policy guard.
 native-seq := $(NATIVE_OBJECTS)
 native-par := $(NATIVE_OBJECTS)
 native-demand := $(filter-out $(BUILD)/native/sched/core.o $(BUILD)/native/sched/entry.o,$(NATIVE_OBJECTS)) $(BUILD)/demand-core.o $(BUILD)/demand-entry.o
@@ -27,7 +33,19 @@ $(BUILD)/demand-entry.o: $(NATIVE_ROOT)/sched/entry.c $(NATIVE_HEADERS) $(NATIVE
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -c $< -o $@
 
 
-# Small shared native oracle/runtime objects do not vary across the three arms.
+# idle1 reuses demand's exact WF object, oracle and runner. Only scheduler
+# objects differ; neither compiler emission nor another optimization run does.
+native-idle1 := $(filter-out $(BUILD)/native/sched/core.o $(BUILD)/native/sched/entry.o,$(NATIVE_OBJECTS)) $(BUILD)/idle1-core.o $(BUILD)/idle1-entry.o
+$(BUILD)/idle1-%.o: $(NATIVE_ROOT)/sched/%.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_IDLE_SINGLE_SPINNER=1 -c $< -o $@
+$(addprefix $(BUILD)/idle1/,$(MICROS)): $(BUILD)/idle1/%: $(BUILD)/demand/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-idle1)
+	@mkdir -p $(@D)
+	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
+$(addprefix $(BUILD)/idle1/,$(KERNELS)): $(BUILD)/idle1/%: $(BUILD)/demand/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-idle1)
+	@mkdir -p $(@D)
+	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
+
+# Shared native oracle/runtime objects do not vary across the arms.
 $(BUILD)/runner.o: runner.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
 	$(CLANG) $(DEFAULT_FLAGS) -c $< -o $@
 $(BUILD)/micro-%.o: micro_oracle.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
@@ -67,14 +85,26 @@ $(BUILD)/twin/%: $(BUILD)/demand/%
 	cp $< $@
 	cmp $< $@
 verify: build
-	python3 measure.py --build "$(BUILD)" --verify-only
+	python3 measure.py --build "$(BUILD)" --verify-only --experiment $(EXPERIMENT)
 measure: build
-	python3 measure.py --build "$(BUILD)" --rounds $(or $(ROUNDS),10) $(MEASURE_FLAGS)
+	python3 measure.py --build "$(BUILD)" --experiment $(EXPERIMENT) $(if $(ROUNDS),--rounds $(ROUNDS)) $(MEASURE_FLAGS)
 summarize:
-	python3 summarize.py "$(BUILD)/measurements.tsv" --inspection "$(BUILD)/inspection.json"
+	python3 summarize.py "$(BUILD)/measurements.tsv" --inspection "$(BUILD)/inspection.json" --experiment $(EXPERIMENT)
 # CI supplies the pre-prototype compiler; this compares complete --par modules.
+# The revision immediately before the idle-policy experiment. Compare both
+# macro-off scheduler objects, so the candidate cannot alter the shipped arm
+# or experiment 1's demand arm even through code placement. CI only.
+IDLE_BASE := 75f91b6ba6637a6d33340d8116b2a512ff12b33a
+idle-policy-identity: $(BUILD)/native/sched/core.o $(BUILD)/demand-core.o
+	@mkdir -p $(BUILD)/idle-base
+	git -C "$(ROOT)" show $(IDLE_BASE):compiler/src/backend/sched/core.c > $(BUILD)/idle-base/core.c
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-core.o
+	cmp $(BUILD)/idle-base-core.o $(BUILD)/native/sched/core.o
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-demand-core.o
+	cmp $(BUILD)/idle-base-demand-core.o $(BUILD)/demand-core.o
+
 legacy-identity:
 	test -n "$(BASE_WFC)"
 	python3 legacy_identity.py --base "$(BASE_WFC)" --candidate "$(WFC)" --output "$(BUILD)/legacy"
 .SECONDARY:
-.PHONY: build verify measure summarize legacy-identity
+.PHONY: build verify measure summarize legacy-identity idle-policy-identity
