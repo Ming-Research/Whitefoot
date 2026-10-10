@@ -1,0 +1,32 @@
+alias MemoryMeter = std::process::MemoryMeter;
+alias MeterScope = std::process::MeterScope;
+alias MeterError = std::process::MeterError;
+alias ScopeView = std::process::ScopeView;
+
+fn open(meter: &MemoryMeter) -> result: Result<MeterScope, MeterError> writes(meter) {
+  return std::process::scope_open(meter: meter);
+}
+
+fn child(meter: &MemoryMeter, parent: &MeterScope) -> result: Result<MeterScope, MeterError> reads(parent), writes(meter) {
+  return std::process::scope_open_child(meter: meter, parent: parent);
+}
+
+fn observe(scope: &MeterScope) -> result: ScopeView reads(scope) {
+  return std::process::scope_view(scope: scope);
+}
+
+fn sample(view: &ScopeView) -> result: Option<u64> writes(view) {
+  return std::process::scope_bytes(view: view);
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: Result<unit, MeterScope> writes(meter) {
+  return std::process::scope_close(meter: meter, scope: move scope);
+}
+
+fn refusal(error: MeterError) -> result: unit pure {
+  match error {
+    CapacityExhausted() => {
+      return unit;
+    }
+  }
+}

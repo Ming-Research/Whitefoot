@@ -1,0 +1,3 @@
+fn enter(scope: &std::process::MeterScope) -> result: Bool writes(scope) {
+  return std::process::scope_enter(scope: scope);
+}

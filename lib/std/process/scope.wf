@@ -1,0 +1,10 @@
+fn scope_run<interface ScopeBody<A, R>>(scope: MeterScope, argument: A) -> outcome: ScopeRun<A, R> pure waits {
+  let entered = scope_enter(scope: &scope);
+  if entered {
+    let result = ScopeBody<A, R>::run(argument: move argument);
+    scope_leave(scope: &scope);
+    return ScopeRun<A, R>::Ran(scope: move scope, result: move result);
+  } else {
+    return ScopeRun<A, R>::Refused(scope: move scope, argument: move argument);
+  }
+}

@@ -1,0 +1,16 @@
+alias MemoryMeter = std::process::MemoryMeter;
+alias MeterScope = std::process::MeterScope;
+
+fn close_when_ready(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    let closed = std::process::scope_close(meter: meter, scope: move scope);
+    match move closed {
+      Ok(value: finished) => {
+        return finished;
+      }
+      Err(error: returned) => {
+        set scope = move returned;
+      }
+    }
+  }
+}

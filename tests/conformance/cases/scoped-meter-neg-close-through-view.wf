@@ -1,0 +1,3 @@
+fn close(meter: &std::process::MemoryMeter, view: std::process::ScopeView) -> result: Result<unit, std::process::MeterScope> writes(meter) {
+  return std::process::scope_close(meter: meter, scope: move view);
+}

@@ -1261,7 +1261,7 @@ A `fn_decl` or `fn_sig` writes one result or a parenthesized list of two or more
 Each `result_binding` is one **result ordinal**, numbered from zero in written order; the list's binder spellings are distinct under [TYPE-6], and each ordinal receives every result judgment of this rule independently.
 A declaration that writes a list hands its ordinals back together, and a caller names them again only through a destructuring `let` binder list [GRAM-4, TYPE-5, CALL-4]; no expression position produces a result list, so a list-returning callee is bindable only by that form.
 This rule's remaining sentences are stated over a written result and read per ordinal where a declaration writes a list.
-The written templates are ordinary interface propositions. A Whitefoot definition proves them under FN-9; a PRE-1 or PRE-2 definition is supplied under SCOPE-3. A caller consults only the declared finite summary and never the definition.
+The written templates are ordinary interface propositions. A Whitefoot definition, including one in a host module [PRE-2], proves them under FN-9; a build-provided definition of a PRE-1 or PRE-2 declaration supplies them under SCOPE-3. A caller consults only the declared finite summary and never the definition.
 The written effect paths state which reference-parameter-supplied state the function observes or changes. The checker derives the exact same set from body accesses and calls and checks it in both directions under [EFF-2].
 Strengthening a requirement GoalTemplate or RelationTemplate is a caller-visible interface change.
 A generic function carries the same boundary with its written type, const, and function parameters, and each concrete [FN-2] instance substitutes them before its calls and body are re-checked.
@@ -1373,7 +1373,7 @@ This criterion deliberately rejects some finite permutation cycles. Every compon
 [FN-7] Program start selects an ordinary function and supplies ordinary arguments [PROG-3]. Its name, signature, result types, written contracts, and source callers obey FN-1 through FN-10 without an entry-specific restriction.
 A module program names its entries in its graph [MOD-9]; a source bundle's build selects its function `main`, and the language reserves no entry name. Selection, argument construction and binding, and interpretation of a normal result belong to the build invocation and do not select source acceptance.
 
-[FN-8] Every source `fn_decl`, generic or nongeneric, and every `fn_sig` may carry one optional `contract_block`. A function formal's block has the same formation rules and constrains bindings under FN-4. Every supplied definition must satisfy the ordinary declared contract; a Whitefoot body is checked under FN-9 and a PRE-1 or PRE-2 declaration is supplied under SCOPE-3.
+[FN-8] Every source `fn_decl`, generic or nongeneric, and every `fn_sig` may carry one optional `contract_block`. A function formal's block has the same formation rules and constrains bindings under FN-4. Every supplied definition must satisfy the ordinary declared contract; a Whitefoot body is checked under FN-9 and a build-provided definition of a PRE-1 or PRE-2 declaration supplies its contract under SCOPE-3.
 A present block must contain at least one `requires_clause` or `ensures_clause`; an empty or define-only block is an FN-8 rejection at `contract_block`.
 Grammar fixes all definitions before all requirements and all requirements before all postconditions.
 
@@ -1422,7 +1422,7 @@ Lowering must preserve its ordinary ABI and symbol but emit exactly one empty en
 A source call must still prove every contradictory requirement, which no reachable non-contradictory caller state can do.
 
 [FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation: one whose body is a `clause_expr` is the relation this rule forms and proves, and one whose body is a `range_clause` is a range postcondition, which takes this rule's route admission and which [RANGE-1] forms and [RANGE-3] selects and proves.
-A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
+A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A build-provided definition of a PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
 No contract definition or clause contributes an effect, executable epilogue, runtime operation, storage slot, or runtime report.
 
 Every declared result ordinal is a datum of every clause, written as that ordinal's `result_binding` spelling [CALL-4].
@@ -1464,7 +1464,7 @@ The relation is queried once in the current ProofContext at that return.
 Every query must discharge; the first clause/return failure rejects with no runtime fallback.
 
 Postcondition verification has no summary fixed point.
-Form the concrete ordinary-call graph, its SCCs, and the callee-before-caller condensation. PRE-1 and PRE-2 supplied declarations and pending interface declarations [MOD-8] are leaves whose declared relations are already available; source definitions undergo the following body verification.
+Form the concrete ordinary-call graph, its SCCs, and the callee-before-caller condensation. PRE-1 and PRE-2 declarations with build-provided definitions and pending interface declarations [MOD-8] are leaves whose declared relations are already available; source definitions, including host-module bodies, undergo the following body verification.
 The graph treats a call from one module to an instance of another module's generic callable as reaching every function-kind actual that instance was supplied, whether or not its body calls them [MOD-8]; components formed this way only grow, and an edit to that body cannot change which summaries the calling module's proofs may use. Within one module the graph is the calls alone.
 While verifying a component, all same-component S12 summaries are unavailable; previously completed callee components remain available.
 Only after every relation of every inhabited instance in the component succeeds are all its relation summaries published atomically; any failure publishes none. Publication is per module: the members one module's check verifies publish their summaries to that module's other proofs once all of them verify, another module's instance never delays it, and composition still requires every member to verify.
@@ -1585,7 +1585,7 @@ Framing an action out of an enclosing row removes no checked action or ordinary 
 
 A SET-1 commit contributes a write. SET-1's reinitialization of a complete binding already dead at statement entry keeps its no-previous-owner exception. Target and right-hand-side evaluation contribute ordinarily.
 A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
-A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
+A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. A Whitefoot definition exhibits its row by the body check above; a build-provided definition has no fabricated source body. No alternate effect rule applies to either's calls.
 
 [EFF-3] A call whose row is `pure`, which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
 The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8], and that a waiting call's changes to shared objects take effect in the execution's order [WAIT-2, SHARE-3] and appear in no row [SHARE-2].
@@ -1689,7 +1689,7 @@ One accessibility rule serves executable code and annotations: every name and fi
 A private declaration or field is accessible only in its declaring module; a public one also in each module whose graph row lists its declaring module. PRE-1 declarations and members keep their ordinary availability.
 A construction names every field [GRAM-8], so a construction outside the declaring module requires every field to be public and supplies no readonly field [TYPE-2]; a destructuring consume or an `arm` outside it binds only public fields, covering the rest with `..`. Each inaccessible selection, binding or construction is a hard error citing MOD-5 at its `psuffix`, `effect_path`, `fieldbind`, `arm`, `call` or `cvalue`.
 
-[MOD-6] `public` is written only in an interface record, on a top-level declaration, a struct `field` or an enum `vfield`; a declaration or field without it is private to its module, and a public enum's variants are public.
+[MOD-6] `public` is written only in an interface record, on a top-level declaration, a struct `field` or an enum `vfield`; a declaration or field without it, including a build-provided declaration of a host module [PRE-2], is private to its module, and a public enum's variants are public.
 `public` in an implementation record or a source bundle, and `public` on a field or payload field of a private type, are each a hard error citing MOD-6 at that `item`, `field` or `vfield`; so is `readonly` on a field that is not `public` [TYPE-2].
 A public function's parameter and result types, bounds, effect row, contract clauses and function-kind formals, a public field's type and a public const's type name only declarations and fields its module's clients can access: public declarations of the module, public declarations of its dependencies, PRE-1 declarations, and public fields along every written path [MOD-5]. A name or field selection there that its clients cannot access is a hard error citing MOD-6 at that use, in the declaring module as elsewhere; a private function's contract and row may name its module's private declarations and fields.
 
@@ -1713,7 +1713,7 @@ A `std` prefix in a standard library record, a `module_row` or `entry_decl` path
 The standard library's graph binds no package [MOD-11].
 A module program selects the standard library modules its packages' rows list, and a source bundle those its records name by a `std` path; each selected module selects its dependencies in the standard library's graph. The bound unit orders the program's modules first [MOD-2], then its bound packages' modules [MOD-11], then the selected standard library modules in the standard library's row order, so a program record's ordinal never depends on which packages or standard library modules it selects.
 A standard library module's verdict depends only on the standard library's records and graph and the prelude [MOD-8], never on the program that selects it, and a check or composition reads a standard library module's records only when it selects that module.
-The host modules are the standard library modules PRE-2 fixes; every other standard library module is written in Whitefoot and checked as every module is.
+The host modules are the standard library modules PRE-2 fixes, with definitions provided as that rule states; every Whitefoot body in the standard library is checked as every module's body is.
 
 [MOD-11] A `package_decl` binds its IDENT, in its graph's package alone, to one package.
 Its STRING's value is a relative location: one or more components separated by exactly one `/`, each `..` or a logical path component [PROG-2]. The bound package's root is the directory the host reaches from the binding graph's package root by following those components in order, a symbolic link on the way being followed as the host follows it, and its graph record is the `modules.wfg` in that directory. A STRING whose value is not a relative location is a hard error citing MOD-11 at the `package_decl`.
@@ -2244,7 +2244,7 @@ A program that needs two host operations ordered passes both through one owner w
 
 [WAIT-2] An execution consists of contexts: the entry [PROG-3] executes in the root context, and each spawn [WAIT-3] starts one further context, which executes the spawned call.
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
-A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
+A call of a waiting build-provided host function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
 Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order in which atomic statements and cancellation-state updates of different contexts take effect [SHARE-3], the positions of byte sequences, the extents of map scans and the bytes a release of a map's reserve reports [SHARE-1] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
@@ -2549,14 +2549,34 @@ pkg::net: [pkg::io, pkg::time];
 pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
 ```
 
-A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
-A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
+A host module's interface record is exactly the text below, and it may carry Whitefoot implementation records under [MOD-2, MOD-7, MOD-8]. Each declared function has one definition: a checked Whitefoot body or a definition supplied by the build under [SCOPE-3]. Definition providers for the top-level functions below are:
+
+| Module | Functions | Provider |
+| --- | --- | --- |
+| `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` | Every top-level function declared below in these modules | Build |
+| `std::process` | `exit_status`, `stop_listen`, `stop_next`, `close_stop_listener`, `meter_share`, `heap_in_use`, `resident_bytes`, `scope_open`, `scope_open_child`, `scope_view`, `scope_bytes`, `scope_close`, `scope_enter`, `scope_leave` | Build |
+| `std::process` | `scope_run` | Whitefoot implementation record below |
+
+This selection is build metadata keyed by declaration identity, not a source modifier or an effect or proof category; interface members bind under [FN-3, FN-4]. Calls use the ordinary declared boundary [FN-1]; a Whitefoot body is checked and instantiated under [FN-2, FN-5, FN-9, EFF-2], and a build-provided definition has the obligations of a PRE-1 definition. Declarations and bodies retain ordinary module visibility [MOD-6] and record order [MOD-2]; host-module declarations have source origins, not PRE-1 declaration ordinals [DIAG-1].
+A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation and its release is empty [STOR-3]. A build-provided definition creates a fresh handle; Whitefoot bodies may pass and return existing handles under the ordinary ownership rules.
 An opaque struct a host module declares with fields, `Instant` or `CancelState`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
-A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
+A build-provided host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; one that does not wait completes without waiting for the host. A Whitefoot host-module body executes its ordinary calls and returns under [FN-1, WAIT-2].
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
 `CancelSource` and `CancelWatch` are independently owned handles of one shared cancellation state, of type `CancelState`. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Closing a source or watch releases only that handle and neither fires nor clears the state; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch whose state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
-`MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
+`MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading and each scope open, close or entry outcome is an input of the execution [WAIT-2], as a clock reading is; readings write their meter or view, and handles observing the same process or scope have only the ordering governed by [HOST-1].
+
+Every counted allocation has one fixed origin account assigned by its storage role. Process-wide driver, timer-capacity and descriptor-registry storage, and accounting infrastructure, belong to the default process account. Program-owned storage and runtime storage specific to a context, computation or collection take the current scope at allocation, or the default account when no explicit scope is current. A move of storage or of a handle to it preserves that origin. Release debits the origin, and resize charges the change in extent to the same origin even when it relocates the block or executes in another context, after the originating invocation has returned. Concurrent-map tables, detached cell arrays and reserves, node chunks, map control state and runtime context or compute-frame storage retain the origin of each separately allocated structure through swap, clear, drain, reuse and cleanup. A separately allocated payload keeps its own origin; moving it into another structure does not relabel it. Compiler-emitted heap storage, including boxes and byte strings, follows this same origin rule independently of its physical origin representation. Each allocation contributes once to the process holding defined above; pool-backed blocks contribute their granted extent without a second direct-allocation charge. Opening, entering, leaving or closing a scope never transfers charges, excludes bytes from `heap_in_use` or changes what `resident_bytes` measures. Accounting metadata does not change emitted storage's requested payload extent.
+
+`scope_open` returns `Ok` with one `nodrop MeterScope` owning a new scope whose parent is the default account. `scope_open_child` returns `Ok` with one such owner whose fixed parent is the supplied live owner. Neither operation enters the new scope or selects its parent from ambient state. The target declares a finite slot capacity including the default account; all meters share it, independently of host handle credits. An open returns `Err(CapacityExhausted)` when no free slot can be assigned a fresh generation safely, and leaves existing scopes unchanged. Slots and generations are synchronized with opens, closes, observation and accounting. Reuse assigns a generation distinct from every prior occupant of that slot; exhaustion of its generation domain makes that slot unavailable for further opens rather than wrapping. Accounting and observation require no allocator when the program emits no heap use.
+
+`scope_view` borrows an owner and returns a droppable, non-retaining `ScopeView` for that slot and generation. Any number of views may be obtained before moving the owner; views hold no capacity, activity or storage reference and provide neither entry nor close ownership. `scope_bytes` returns `Some` of the nonnegative inclusive holding: the bytes whose origins are that scope or any of its descendants. Each byte counts once in each ancestor, so inclusive accounts that overlap are not disjoint quantities. With no allocation, resize or release in that subtree during the reading, the count is exact; otherwise its error relative to any instant during the reading is bounded by the bytes those events move in that subtree. Descendant enumeration validates generations and fixed ancestry, so slot reuse cannot add bytes of an unrelated scope to a reading. A view whose generation has closed returns `None` and never observes a later occupant. A reading racing close may return `Some` for the still-live generation or `None`, with its generation validation taking effect during the call; separate readings do not constitute an atomic snapshot [SHARE-3].
+
+`scope_close` consumes the owner and returns `Ok(unit)` exactly when synchronized lifecycle state establishes no activity, no open descendants and no origin-bearing storage for that scope. It then retires that generation and releases its slot for safe reuse. Otherwise it returns `Err` with the same owner, leaving the scope open for a later polling retry; it does not wait for readiness. A sampled zero is not a lifecycle test: even a zero-byte origin-bearing structure keeps its origin alive, and an external holder may resize it. Close never frees program storage or clears a live charge. Views impose no close obligation and do not prevent close.
+
+The root context starts in the default account. Ordinary calls, spawned contexts and overlapped computations inherit the current scope; it follows the logical work through suspension, resumption, helping and stealing. `scope_run` enters its owned scope exactly when the current scope equals that scope's recorded parent. A mismatch returns `Refused` with the same owner and argument, without invoking the body or changing the current scope. Successful entry records activity and makes that scope current before calling `ScopeBody<A, R>::run`. On the body's return, after its ordinary cleanup and structured joins [WAIT-3], the runner leaves the scope, ends that activity, restores the caller's scope and returns `Ran` with the owner and result. Allocations made before entry, including argument storage and preexisting context or frame blocks, keep their origins; returned storage can remain charged after leave. An entered scope's owner remains inside the runner, so children for a nested run are opened while its owner is available before that invocation. Allocation attribution adds no effect-row path or parallel scheduling edge [EFF-1, PAR-1].
+
+The private build-provided `scope_enter` performs the entry test and transition above, returning `True` on entry and `False` on refusal. `scope_leave` ends the matching activity and restores the recorded parent after the body returns. Their use by `scope_run` is shown in its implementation record; clients cannot name them [MOD-5, MOD-6]. The public runner has value parameters and an ordinary `pure waits` boundary, and its linear result is governed by [WAIT-3] when spawned.
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
 A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
@@ -2956,6 +2976,25 @@ public enum StopKind {
 public opaque nocopy struct MemoryMeter {
 }
 
+public opaque nodrop struct MeterScope {
+}
+
+public opaque nocopy struct ScopeView {
+}
+
+public enum MeterError {
+  CapacityExhausted();
+}
+
+public enum ScopeRun<A, R> {
+  Ran(public scope: MeterScope, public result: R);
+  Refused(public scope: MeterScope, public argument: A);
+}
+
+public interface ScopeBody<A, R> {
+  fn run(argument: A) -> result: R pure waits;
+}
+
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -2969,19 +3008,50 @@ public struct Inputs {
   public memory_meter: MemoryMeter;
 }
 
-public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+public fn exit_status(code: u8) -> result: ExitStatus pure doc "Build-provided. Returns the status that reports code when the entry returns it.";
 
-public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
+public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Build-provided. Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
 
-public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<StopKind, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<StopKind, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Build-provided. Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
 
-public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
+public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Build-provided. Closes listener, restores the host default and returns its handle credit.";
 
-public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Returns a meter that observes the same process memory as meter.";
+public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Build-provided. Returns a meter that observes the same process memory as meter.";
 
-public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
+public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Build-provided. Returns the program heap bytes counted as specified by PRE-2.";
 
-public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
+public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Build-provided. Returns Some resident bytes reported by the host, or None when unavailable.";
+
+public fn scope_open(meter: &MemoryMeter) -> result: Result<MeterScope, MeterError> writes(meter) doc "Build-provided. Opens a top-level scope with the default account as its parent, or returns CapacityExhausted when no safely reusable slot is available.";
+
+public fn scope_open_child(meter: &MemoryMeter, parent: &MeterScope) -> result: Result<MeterScope, MeterError> reads(parent), writes(meter) doc "Build-provided. Opens a scope with parent as its fixed parent, or returns CapacityExhausted. The parent account includes the child's bytes.";
+
+public fn scope_view(scope: &MeterScope) -> result: ScopeView reads(scope) doc "Build-provided. Returns a droppable observation handle for this scope generation; the view retains no slot and grants no entry or close ownership.";
+
+public fn scope_bytes(view: &ScopeView) -> bytes: Option<u64> writes(view) doc "Build-provided. Returns Some inclusive origin-attributed bytes under PRE-2's sampling bound, or None after this scope generation closes.";
+
+public fn scope_close(meter: &MemoryMeter, scope: MeterScope) -> result: Result<unit, MeterScope> writes(meter) doc "Build-provided. Retires an inactive scope with no open descendants or origin-bearing storage; otherwise returns the unchanged owner in Err for polling. A sampled zero does not establish readiness.";
+
+public fn scope_run<interface ScopeBody<A, R>>(scope: MeterScope, argument: A) -> outcome: ScopeRun<A, R> pure waits doc "Defined in scope.wf and checked as Whitefoot. Runs the supplied body when the current scope is the recorded parent, returning Ran with the owner and result after restoration; otherwise returns Refused with the owner and argument unchanged.";
+
+fn scope_enter(scope: &MeterScope) -> entered: Bool writes(scope) doc "Build-provided, private. Performs PRE-2's entry transition and returns True on entry or False without changing the current scope.";
+
+fn scope_leave(scope: &MeterScope) -> result: unit writes(scope) doc "Build-provided, private. Completes PRE-2's leave transition after the body has returned and restores the recorded parent.";
+```
+
+`std::process`, the implementation record `process/scope.wf`:
+
+```
+fn scope_run<interface ScopeBody<A, R>>(scope: MeterScope, argument: A) -> outcome: ScopeRun<A, R> pure waits {
+  let entered = scope_enter(scope: &scope);
+  if entered {
+    let result = ScopeBody<A, R>::run(argument: move argument);
+    scope_leave(scope: &scope);
+    return ScopeRun<A, R>::Ran(scope: move scope, result: move result);
+  } else {
+    return ScopeRun<A, R>::Refused(scope: move scope, argument: move argument);
+  }
+}
 ```
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
@@ -3307,7 +3377,7 @@ Window mutation uses the operations of [OP-10]; a source helper over a written r
 [ENT-3] The fact state is defined constructively over the conservative structural normal-control graph [FN-1]: each source below establishes its L0 and signed-goal facts at its stated point; facts flow forward along normal edges; kill events apply on the edges where [ENT-5] places them, with scope-exit kills applied before any join; merge points take the [ENT-5] join and loop heads the [ENT-5] loop rule; and the state queried at any point is the [ENT-4] closure of that flow.
 Dominated straight-line establishment is a consequence of this construction, not a second definition.
 Nothing else is a fact: a writer's `ensures_clause` is only an FN-9 proof obligation, never a trusted source; a written header or local invariant conclusion has no authority until INV-1 and any applicable PRF-1 certificate prove it; a type invariant is a fact only where [TYPE-11] makes it a requirement, a postcondition or an atomic block's entry fact; and no compiler-invented loop proposition, inferred summary, or unverified user-function result exists.
-S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under FN-9: a separately verified earlier-SCC summary or a PRE-1 or PRE-2 supplied declaration, under the publication formula below.
+S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under FN-9: a separately verified earlier-SCC summary or a declaration with a build-provided PRE-1 or PRE-2 definition, under the publication formula below.
 Each accepted fact retains the constructor identity and direct parents that already produced it; this diagnostic information establishes and kills no additional relation or signed goal, and no [ENT-4] answer depends on a second provenance state.
 
 An ordinary-let binding b holds its initializer right-hand side E at a use when, on every path from that initializer to the use that does not execute the initializer again, no [ENT-5] kill event (a)–(d) applies to a fact supported by b or by any member of E's opaque-goal support [ENT-5].
@@ -3439,7 +3509,7 @@ Before the binder and captures leave scope, [INV-1]'s separately proved exact-ex
 [ENT-3.S12]
 - S12 (ordinary declared normal results).
 S12 has one owning `CallResultPublication(c,q)` judgment in the ordinary semantic flow.
-That judgment succeeds only when q belongs to a declaration relation available under FN-9, either supplied by PRE-1 or PRE-2 or atomically published by a strictly earlier call-graph component; every actual-expression obligation and instantiated FN-8 requirement of c is discharged in the caller before transfer; every referenced formal has its exact pre-transfer substitution; ordinary consumes, borrow commits, projected effects, writes, target commits, and kills have run in the fixed order below; and every support of the substituted result relation remains live.
+That judgment succeeds only when q belongs to a declaration relation available under FN-9, either supplied by a build-provided PRE-1 or PRE-2 definition or atomically published by a strictly earlier call-graph component; every actual-expression obligation and instantiated FN-8 requirement of c is discharged in the caller before transfer; every referenced formal has its exact pre-transfer substitution; ordinary consumes, borrow commits, projected effects, writes, target commits, and kills have run in the fixed order below; and every support of the substituted result relation remains live.
 The candidate relation and all of those parent derivations remain private until every source-semantic judgment in the compilation unit succeeds, then enter the checked program in the same failure-atomic publication as their call and function.
 Failure of any premise or any later source-semantic judgment discards the candidate and the complete prospective checked program.
 This is the original construction of S12, not a second provenance pass or a check of compiler-generated data.
@@ -3455,7 +3525,7 @@ The complete candidate set stays unchanged in failure-atomic scratch until the o
 [ENT-3.S13]
 - S13 (call datums).
 At an ordinary source call whose callee has an atomically published summary, each `own` operand and each explicitly entry-qualified measure or fragment-integer place of a written reference parameter of each declared relation of the resolved callee mints one call datum [MSR-3] and establishes it equal to that operand's exact pre-transfer term, at the pre-transfer point of [ENT-5]'s call-boundary order and before that boundary's consumes, borrow commits, callee-effect kills, and target kills.
-The population of this source is every callee whose declared relation list is published data: an ordinary function with its FN-9-verified, PRE-1-supplied or PRE-2-supplied contract. A PRE-1 or PRE-2 signature is declaration data and requires no source-body earlier-component verification premise; it gains no additional result-fact source.
+The population of this source is every callee whose declared relation list is published data: an ordinary function with its FN-9-verified contract or a contract supplied by a build-provided PRE-1 or PRE-2 definition. A signature with a build-provided definition is declaration data and requires no source-body earlier-component verification premise; it gains no additional result-fact source. A Whitefoot host-module body follows FN-9's source-body verification and publication rules.
 The same datum formation applies to source summaries and [PRE-1] and [PRE-2] declarations. The exit-state measure or fragment-integer place of a written reference parameter is never a call datum: it is the ordinary live term after the call's exact projected effects and the statement's own kills.
 The operand's pre-transfer term is the one [FN-9]'s `A0(c)` substitution already fixes; the datum adds no term the substitution could not name and no relation the callee did not declare.
 A datum has empty support, so [ENT-5]'s pre-kill closure carries its consequences across the same statement's kills while every fact whose support those kills remove dies normally.

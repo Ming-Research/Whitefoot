@@ -1,0 +1,15 @@
+alias MeterScope = std::process::MeterScope;
+alias ScopeBody = std::process::ScopeBody;
+
+fn keep(argument: u64) -> result: u64 pure {
+  return argument;
+}
+
+binding KeepNumber : ScopeBody<u64, u64> {
+  run = keep;
+}
+
+fn discard(scope: MeterScope) -> result: unit pure waits {
+  spawn std::process::scope_run::<KeepNumber>(scope: move scope, argument: 0_u64);
+  return unit;
+}

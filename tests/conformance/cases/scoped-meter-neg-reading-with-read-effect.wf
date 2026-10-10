@@ -1,0 +1,3 @@
+fn sample(view: &std::process::ScopeView) -> result: Option<u64> reads(view) {
+  return std::process::scope_bytes(view: view);
+}

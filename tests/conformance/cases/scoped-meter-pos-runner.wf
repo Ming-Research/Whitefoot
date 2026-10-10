@@ -1,0 +1,31 @@
+alias MeterScope = std::process::MeterScope;
+alias ScopeRun = std::process::ScopeRun;
+alias ScopeBody = std::process::ScopeBody;
+
+fn keep(argument: MeterScope) -> result: MeterScope pure {
+  return move argument;
+}
+
+binding KeepOwner : ScopeBody<MeterScope, MeterScope> {
+  run = keep;
+}
+
+fn direct<interface ScopeBody<A, R>>(scope: MeterScope, argument: A) -> outcome: ScopeRun<A, R> pure waits {
+  return std::process::scope_run::<ScopeBody<A, R>>(scope: move scope, argument: move argument);
+}
+
+fn spawned(scope: MeterScope, child: MeterScope) -> outcome: ScopeRun<MeterScope, MeterScope> pure waits {
+  let outcome = spawn std::process::scope_run::<KeepOwner>(scope: move scope, argument: move child);
+  return move outcome;
+}
+
+fn recover(outcome: ScopeRun<MeterScope, MeterScope>) -> result: ScopeRun<MeterScope, MeterScope> pure {
+  match move outcome {
+    Ran(scope: owner, result: returned) => {
+      return ScopeRun<MeterScope, MeterScope>::Ran(scope: move owner, result: move returned);
+    }
+    Refused(scope: owner, argument: original) => {
+      return ScopeRun<MeterScope, MeterScope>::Refused(scope: move owner, argument: move original);
+    }
+  }
+}
