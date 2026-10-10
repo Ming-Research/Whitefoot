@@ -130,3 +130,37 @@ least as often as turns do, so the cost criterion would fail at least as
 badly on this probe. The choice between fairness and throughput under this
 contention is the owner's (status board card "guard fairness").
 
+## Result on firn's engine: turns are far worse
+
+Measured by firn's session ([Firn-wf run 38065358945](https://github.com/Ming-Research/Firn-wf/actions/runs/38065358945),
+native 14900K, 2026-10-10 15:52–15:57 UTC): the limiter-script workload
+(EVALSHA token bucket, every request checking out firn's one shared script
+engine under a guard), pipeline depth 1, server on CPUs 2 and 4 (two
+drivers), client on CPUs 6–15 (ten threads), two passes of five seconds with
+the order reversed on the second, AOF off. Control: firn main 15293c5 pinned
+to release wf-fe5589ec5f45 (this branch's base); turns: the same tree pinned
+to experiment release wf-exp-5f6dca744b8f (this branch at 5f6dca744); a
+second control build as the noise control. Both pinned trees pass firn's
+gate. Requests per second and p50 / p99 in ms, pass 1 / pass 2 (the client
+reports no maximum):
+
+| Line | Connections | Rate | p50 | p99 |
+|---|---:|---|---|---|
+| Redis 7.0.15 | 8 | 228,770 / 228,835 | 0.029 / 0.029 | 0.059 / 0.058 |
+| Redis 7.0.15 | 50 | 231,140 / 231,900 | 0.202 / 0.201 | 0.410 / 0.408 |
+| control | 8 | 159,068 / 159,481 | 0.018 / 0.018 | 0.793 / 0.742 |
+| control | 50 | 211,012 / 209,346 | 0.087 / 0.071 | 1.500 / 1.628 |
+| control twin | 8 | 159,278 / 159,617 | 0.018 / 0.018 | 0.724 / 0.699 |
+| control twin | 50 | 208,578 / 205,304 | 0.062 / 0.086 | 1.679 / 1.587 |
+| turns | 8 | 21,281 / 21,292 | 0.346 / 0.346 | 0.873 / 0.874 |
+| turns | 50 | 4,411 / 4,394 | 7.959 / 7.879 | 51.211 / 52.503 |
+
+The control and its twin agree within about 2 percent. Turns cut throughput
+7.5 times at 8 connections and 47 times at 50, and raise p99 at 50
+connections from about 1.6 ms to about 52 ms: when every request takes the
+one engine, turns make each acquisition a context switch, so the queue of
+woken watchers is served one switch at a time while new requests wait
+behind it. Turns as built are rejected on the workload that motivated
+them; any further candidate is measured the same way before it is
+proposed.
+
