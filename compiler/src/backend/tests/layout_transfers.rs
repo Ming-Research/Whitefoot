@@ -150,7 +150,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// Verify the actual memory instructions and addresses, not just a planner
 /// result or absence of an intrinsic. A whole-size load, wrong width/offset,
 /// copied padding, omitted leaf or interleaved stores fails this oracle.
-fn assert_typed_transfer(body: &str, expected: &[(u64, &str)]) {
+pub(super) fn assert_typed_transfer(body: &str, expected: &[(u64, &str)]) {
     let (region, source, destination) = transfer_region(body);
     let mut pointers =
         std::collections::HashMap::from([(source, (source, 0)), (destination, (destination, 0))]);
@@ -379,7 +379,11 @@ fn bounded_transfer_preserves_equal_and_overlapping_storage_natively() {
     let host = r#"#include <stdint.h>
 #include <string.h>
 extern void wf_transfer(void *, const void *);
-int main(void) {
+extern int wf__floor_run(int, char **);
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+int wf__main_body(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
     const unsigned offsets[] = {0, 8, 16, 24, 32, 36, 40, 48};
     const unsigned widths[] = {8, 8, 4, 8, 4, 1, 8, 8};
     for (int displacement = -8; displacement <= 8; displacement += 8) {

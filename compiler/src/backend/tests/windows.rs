@@ -1310,7 +1310,26 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("captured pointer definition")
         .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
-    assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
+    // Bounded copies of Columns load both Box fields too. Count reads of
+    // the captured field address, whose result the target chain below uses;
+    // the two Columns GEPs above still forbid reevaluating that projection.
+    let load_prefix = " = load ptr, ptr ";
+    let field = update[captured + load_prefix.len()..]
+        .lines()
+        .next()
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap();
+    assert_eq!(
+        update
+            .lines()
+            .filter_map(|line| line.split_once(load_prefix))
+            .filter(|(_, operand)| operand.split(',').next() == Some(field))
+            .count(),
+        1,
+        "the target's Box pointer is loaded once: {update}"
+    );
     let address = update[captured..rhs]
         .lines()
         .find_map(|line| {

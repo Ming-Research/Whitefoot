@@ -932,8 +932,10 @@ exceeds both bounds, so it does not independently test the byte cap. Pointer/Boo
 union overlays require captured byte intervals; the target-plan case covers all
 five supported triples. A native C observer feeds the actual emitted Frame
 transfer equal pointers and partial overlap in both directions, comparing each
-field against a pre-transfer byte snapshot. Interleaving source loads and destination stores corrupts
-the forward-overlap case. Existing owning enum, handler, swap and snapshot cases
+field against a pre-transfer byte snapshot. Its C entry calls `wf__floor_run`
+and supplies `wf__main_body`, as required by the ordinary native test link.
+Interleaving source loads and destination stores corrupts the forward-overlap
+case. Existing owning enum, handler, swap and snapshot cases
 remain wired; their native outcomes and cleanup checks are unchanged.
 
 Existing IR expectations intentionally updated: payload-enum record parameter
@@ -944,8 +946,9 @@ instead of whole memmove. Copy-elimination assertions also recognize bounded
 transfers, so absence of an intrinsic alone no longer passes them. Array-backed
 record, large swap and container transfer expectations remain whole intrinsics.
 
-The changed maintained expectations are listed individually below; fixture source,
-copy placement requirements and native expected results are unchanged.
+The changed maintained expectations are listed individually below. These
+layout-transfer expectation changes preserve the WF fixtures, copy placement
+requirements and native expected results.
 
 | Backend case or shared assertion | Intentional IR expectation change |
 | --- | --- |
@@ -959,7 +962,10 @@ copy placement requirements and native expected results are unchanged.
 | `read_through::read_through_distinguishes_previous_and_fresh_loop_snapshots` | Old-snapshot capture presence and fresh-snapshot absence apply to either transfer form. |
 | `read_through::snapshot_materialization_is_local_to_the_use_unless_the_source_changed` | Capture counts, cold-block placement and immediately-before-call/return checks use the bounded transfer's end; result materialization still targets the result pointer. |
 | `read_through::destination_parameters_capture_before_invalidation_only_on_paths_that_need_it` | Incoming capture checks recognize bounded transfers while preserving write/read/path order. |
-| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The 20-byte Cell copies bounded intervals with a pointer-typed handler word at offset 12, rather than whole memmove. Layout, stored-word alignment and native results stay unchanged. |
+| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The 20-byte Cell copies bounded intervals with a pointer-typed handler word at offset 12, rather than whole memmove. Exact load/store offsets, types, ordering and SSA correspondence cover every interval; layout, stored-word alignment and native results stay unchanged. |
+| `match_dispatch::each_dispatch_family_gets_a_word_only_when_all_families_fit` | The same exact copy checks require both family words, at offsets 12 and 20, once each. Family selection and layout expectations stay unchanged. |
+| `match_dispatch::assert_handler_load` (handler-word, family-count and cursor callers) | Trace the actual indirect tail-call target through its aligned pointer load and word GEP to the received element. Earlier copy GEPs may share the offset, and copies may load the tag as i32; tag-switch/table dispatch remains forbidden. |
+| `windows::a_projected_window_target_is_formed_once_before_rhs` | Count loads from the captured target field address, excluding the two Box-pointer loads that copy Columns. The complete target chain, unique projections and RHS/store order remain required. |
 
 Unchanged intrinsic expectations were inspected in `arrays` (array-backed Record
 assignment and place_back), `owned_places` (array-backed result transfer and large
