@@ -6,6 +6,7 @@ struct Parcel {
 }
 
 const pattern: Array<u8, 5> = "abcde";
+
 const expected_parcel: Parcel = Parcel(bytes: "abcde");
 
 fn returned() -> result: Array<u8, 5> pure {
