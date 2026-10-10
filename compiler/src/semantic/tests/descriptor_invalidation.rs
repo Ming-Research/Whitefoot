@@ -10,7 +10,7 @@ fn destructuring_a_boxed_window_preserves_its_empty_measure() {
   storage: Box<Slots<T>>;
 }
 
-fn release<T>(values: GrowVector<T>) -> result: unit pure contract {
+fn finish<T>(values: GrowVector<T>) -> result: unit pure contract {
   requires values.storage.inner.len <= 0_u64;
 } {
   let GrowVector(storage: storage) = move values;
@@ -165,7 +165,7 @@ fn an_overwrite_before_or_after_box_placement_kills_the_old_measure() {
         "let renamed = move original;\n  set renamed = move replacement;",
     ] {
         let source = format!(
-            r#"fn release(original: Box<Slots<u8>>, replacement: Box<Slots<u8>>) -> result: unit pure contract {{
+            r#"fn finish(original: Box<Slots<u8>>, replacement: Box<Slots<u8>>) -> result: unit pure contract {{
   requires original.inner.len <= 0_u64;
 }} {{
   {statements}
@@ -192,7 +192,7 @@ fn a_declared_write_before_or_after_box_placement_kills_the_old_measure() {
   return unit;
 }}
 
-fn release(original: Box<Slots<u8>>) -> result: unit pure contract {{
+fn finish(original: Box<Slots<u8>>) -> result: unit pure contract {{
   requires original.inner.len <= 0_u64;
 }} {{
   {statements}

@@ -307,6 +307,24 @@ fn copy_destructuring_preserves_its_source_and_noncopy_requires_move() {
     );
 }
 
+/// Structural copy includes nested structs and fixed arrays; mutating either
+/// copied field cannot consume or change the original composite.
+#[test]
+fn copy_destructuring_preserves_nested_copy_struct_and_array_fields() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/prov6-pos-copy-destructuring-nested-array.wf"
+    ));
+}
+
+/// A drop-bound generic forwards an explicitly moved parameter to release,
+/// including at a concrete copy instance where the written bound owns spelling.
+#[test]
+fn a_generic_drop_bound_can_forward_its_parameter_to_release() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/pre1-pos-release-generic-drop-forwarding.wf"
+    ));
+}
+
 /// Release uses the ordinary drop bound and the ordinary call's move.
 #[test]
 fn release_consumes_drop_values_and_cannot_release_linear_values() {

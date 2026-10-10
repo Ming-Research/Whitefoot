@@ -1365,7 +1365,7 @@ struct Owner {
   suffix: Box<Slots<u64>>;
 }
 
-fn release(owner: Owner) -> result: unit pure {
+fn finish(owner: Owner) -> result: unit pure {
   doc "Holds the whole nested owner and nothing else, so its one return edge carries exactly four cell releases.";
   return unit;
 }
@@ -1377,18 +1377,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let prefix = box_slots_new::<u32>(capacity: 1_u64);
   let suffix = box_slots_new::<u64>(capacity: 1_u64);
   let owner = Owner(prefix: move prefix, pair: move pair, suffix: move suffix);
-  release(owner: move owner);
+  finish(owner: move owner);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
-    // `release` holds the whole nested owner and nothing else, so its one
+    // `finish` holds the whole nested owner and nothing else, so its one
     // return edge carries exactly four run releases. Allocation identities
     // and their order are checked by the owned-place execution controls.
-    let release = emitted_function(&llvm, "release");
+    let release = emitted_function(&llvm, "finish");
     assert_eq!(release.matches("call void @wf__heap_give").count(), 4);
     // Allocation is total [STOR-8], so `main` has no refusal arm to hold a
-    // partly built owner on: its one edge hands the whole owner to `release`
+    // partly built owner on: its one edge hands the whole owner to `finish`
     // and carries no release of its own.
     let main = emitted_function(&llvm, "main");
     assert_eq!(main.matches("call void @wf__heap_give").count(), 0);

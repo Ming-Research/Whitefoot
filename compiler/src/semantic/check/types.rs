@@ -1604,9 +1604,18 @@ impl<'unit> TypeContext<'unit> {
             }
             match ty {
                 CheckedType::Nominal(id) => match &cx.nominals[id.0 as usize].kind {
-                    CheckedNominalKind::Box { referent, .. } => {
-                        visit(cx, *referent, Placement::BoxContent, seen)
-                    }
+                    CheckedNominalKind::Box {
+                        referent, release, ..
+                    } => visit(
+                        cx,
+                        *referent,
+                        if *release == super::super::model::CheckedReleaseClass::Frozen {
+                            Placement::Value
+                        } else {
+                            Placement::BoxContent
+                        },
+                        seen,
+                    ),
                     CheckedNominalKind::Shared {
                         state,
                         shape: super::super::model::CheckedShared::Object,
@@ -1753,13 +1762,22 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::Segments { element } => (14, Some(element)),
-            CheckedType::KeySet => (20, None),
-            CheckedType::Entries { element } => (21, Some(element)),
-            CheckedType::Bool => (22, None),
+            CheckedType::KeySet => (21, None),
+            CheckedType::Entries { element } => (22, Some(element)),
+            CheckedType::Bool => (23, None),
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominals[id.0 as usize].kind
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominals[id.0 as usize].kind
                 {
-                    result.push("016".to_owned());
+                    result.push(
+                        if release == super::super::model::CheckedReleaseClass::Frozen {
+                            "019"
+                        } else {
+                            "016"
+                        }
+                        .to_owned(),
+                    );
                     result.extend(self.atomic_type_order(referent)?);
                     return Ok(result);
                 }
@@ -1771,12 +1789,12 @@ impl<'unit> TypeContext<'unit> {
                         "Box" => 16,
                         "Shared" => 17,
                         "SharedRead" => 18,
-                        "ConcurrentHashMap" => 19,
-                        "Option" => 23,
-                        "Result" => 24,
-                        "Overflow" => 25,
-                        "DivError" => 26,
-                        "NarrowError" => 27,
+                        "ConcurrentHashMap" => 20,
+                        "Option" => 24,
+                        "Result" => 25,
+                        "Overflow" => 26,
+                        "DivError" => 27,
+                        "NarrowError" => 28,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));
@@ -1803,19 +1821,19 @@ impl<'unit> TypeContext<'unit> {
                 }
                 match self.prelude_type(id) {
                     Some(PreludeType::Option(t)) => {
-                        result.push("023".to_owned());
+                        result.push("024".to_owned());
                         result.extend(self.atomic_type_order(t)?);
                         return Ok(result);
                     }
                     Some(PreludeType::Result(a, b)) => {
-                        result.push("024".to_owned());
+                        result.push("025".to_owned());
                         result.extend(self.atomic_type_order(a)?);
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
-                    Some(PreludeType::Overflow) => (25, None),
-                    Some(PreludeType::DivError) => (26, None),
-                    Some(PreludeType::NarrowError) => (27, None),
+                    Some(PreludeType::Overflow) => (26, None),
+                    Some(PreludeType::DivError) => (27, None),
+                    Some(PreludeType::NarrowError) => (28, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -1912,19 +1930,19 @@ impl<'unit> TypeContext<'unit> {
                                         CheckedNominalKind::Box {
                                             referent: a,
                                             region: ar,
-                                            ..
+                                            release: ac,
                                         },
                                         CheckedNominalKind::Box {
                                             referent: b,
                                             region: br,
-                                            ..
+                                            release: bc,
                                         },
                                     ) => {
                                         // [TYPE-9] Box has no brand. intern_box_nominal
                                         // is its sole constructor and sets region to None,
                                         // including symbolic and concrete instances.
                                         debug_assert!(ar.is_none() && br.is_none());
-                                        if ar != br {
+                                        if ar != br || ac != bc {
                                             return Ok(false);
                                         }
                                         pending.push((

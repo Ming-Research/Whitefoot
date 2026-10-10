@@ -2443,9 +2443,15 @@ impl<'program> Walker<'program> {
                     fields: values,
                 }
             }
-            CheckedExpression::BufferMeasure { .. } | CheckedExpression::BoxDeref { .. } => {
-                self.opaque_of(expression.ty())
-            }
+            CheckedExpression::BoxDeref {
+                value, referent, ..
+            } => match self.eval(state, value) {
+                Value::Owned(location) => {
+                    self.read_location(state, &location.child(Step::BoxContent), *referent)
+                }
+                _ => self.opaque_of(*referent),
+            },
+            CheckedExpression::BufferMeasure { .. } => self.opaque_of(expression.ty()),
             CheckedExpression::BoxTake { binding, path, .. } => {
                 let _ = self.path_target(state, PlaceRoot::Binding(*binding), path);
                 self.opaque_of(expression.ty())

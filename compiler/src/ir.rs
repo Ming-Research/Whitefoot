@@ -175,6 +175,8 @@ impl IrAddressed {
 /// rediscovers it, and no lowering may infer one action from a type shape.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IrReleaseClass {
+    /// [SHARE-1] release a frozen handle; the last handle releases the value.
+    Frozen,
     /// A free to the general store the run was taken from.
     General,
 }
@@ -319,14 +321,13 @@ pub(crate) fn type_derives_release(
             } => {
                 pending.push(*elements.get(element.index())?);
             }
-            // S39 a cell needs a release exactly when its own storage or
-            // its referent does: a bump extent's cell whose referent derives
-            // nothing needs no walk at all.
+            // [PROV-6] an owned cell or frozen handle has a non-empty
+            // release action even when its content has none.
             IrType::Nominal(id)
                 if matches!(
                     nominal_kind(id),
                     Some(IrNominalKind::Box {
-                        release: IrReleaseClass::General,
+                        release: IrReleaseClass::General | IrReleaseClass::Frozen,
                         ..
                     })
                 ) =>
@@ -418,10 +419,8 @@ pub enum IrNominalKind {
     },
     Box {
         referent: IrType,
-        /// [PROV-6, S39] which release action this cell's own reclamation is.
-        /// The ambient-heap `box<T>` [STOR-1] and a `Box<'s, T>` at a general
-        /// store both free their cell; a `Box<'s, T>` at a bump extent is
-        /// reclaimed by its region's own reset and has no action of its own.
+        /// [PROV-6, STOR-3, SHARE-1] owned-cell or frozen-handle release.
+        /// Frozen content is immutable and released only by its last handle.
         release: IrReleaseClass,
     },
     /// An ordinary opaque nominal supplied by PRE-1.

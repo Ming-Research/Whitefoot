@@ -1402,7 +1402,7 @@ fn consume(value: Holder) -> result: u8 pure {
   return 0_u8;
 }
 
-fn release(value: Holder, early: Bool) -> result: u8 pure {
+fn finish(value: Holder, early: Bool) -> result: u8 pure {
   touch(value: &value.stamp);
   if value.stamp != 41_u64 {
     return 2_u8;
@@ -1420,7 +1420,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let bytes = box_slots_new::<u8>(capacity: 3_u64);
     let holder = Holder(cell: move cell, bytes: move bytes, stamp: 0_u64);
     let early = round == 0_u64;
-    let status = release(value: move holder, early: early);
+    let status = finish(value: move holder, early: early);
     if status != 0_u8 {
       return std::process::exit_status(code: status);
     }

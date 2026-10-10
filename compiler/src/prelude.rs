@@ -102,6 +102,14 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    (
+        "prelude/Frozen.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Frozen<T: drop> {
+  readonly inner: T;
+}
+"#,
+    ),
     // A keyed table [SHARE-1]: its entries are reached only through the entry
     // bindings of an atomic statement, so it declares no field; `V: drop`
     // because releasing a table drops every value its entries hold.
@@ -374,6 +382,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/shared_read_share.wf",
         PreludeSource::Function,
         r#"fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/frozen_new.wf",
+        PreludeSource::Function,
+        r#"fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
+"#,
+    ),
+    (
+        "prelude/frozen_share.wf",
+        PreludeSource::Function,
+        r#"fn frozen_share<T: drop>(frozen: &Frozen<T>) -> result: Frozen<T> reads(frozen);
 "#,
     ),
     (

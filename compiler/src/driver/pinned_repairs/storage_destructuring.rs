@@ -44,7 +44,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let rebuilt = ScanResult(size: 7_u64, accepted: True());
+  let accepted = True();
+  let rebuilt = ScanResult(size: 7_u64, accepted: accepted);
   let ScanResult(size: count, accepted: built) = rebuilt;
   let still_live = rebuilt.size;
   return std::process::exit_status(code: 0_u8);

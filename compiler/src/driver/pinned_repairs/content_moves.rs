@@ -220,7 +220,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "drop-bound-slots-content.wf",
-        rejected: br#"fn release<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
+        rejected: br#"fn finish<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   let content = move cell.inner;
@@ -236,7 +236,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: replace `move cell.inner` with `move cell` and keep the receiving value boxed, accessing its content through `.inner`; if the move was intended only to release the content, remove it and let `cell` release at scope exit; to release the window explicitly instead, take every element out and consume it, establish `cell.inner.len == 0_u64`, and call `free_empty(window: move cell)` [OP-14]\n",
         ],
         repaired: &[
-            br#"fn release<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
+            br#"fn finish<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   let content = move cell;
@@ -248,7 +248,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"fn release<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
+            br#"fn finish<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   return unit;
@@ -258,7 +258,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"fn release<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
+            br#"fn finish<T: drop>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   free_empty(window: move cell);
@@ -273,7 +273,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "unbounded-slots-content.wf",
-        rejected: br#"fn release<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
+        rejected: br#"fn finish<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   let content = move cell.inner;
@@ -289,7 +289,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: replace `move cell.inner` with `move cell` and keep the receiving value boxed, accessing its content through `.inner`; to release the window explicitly instead, take every element out and consume it, establish `cell.inner.len == 0_u64`, and call `free_empty(window: move cell)` [OP-14]\n",
         ],
         repaired: &[
-            br#"fn release<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
+            br#"fn finish<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   let content = move cell;
@@ -301,7 +301,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"fn release<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
+            br#"fn finish<T>(cell: Box<Slots<T>>) -> result: unit pure contract {
   requires cell.inner.len == 0_u64;
 } {
   free_empty(window: move cell);

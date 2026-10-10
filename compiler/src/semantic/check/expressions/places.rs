@@ -120,6 +120,25 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_elaborated_place_use(check_context, use_node, node, bindings, options, place)
     }
 
+    /// Whether a written place selects an element: a subscript or range step.
+    fn place_has_element_step(&self, node: NodeId) -> Result<bool, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        for suffix in self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?
+        {
+            if matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. }
+            ) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_elaborated_place_use(
         &mut self,
@@ -130,7 +149,39 @@ impl<'unit> Checker<'_, 'unit> {
         options: PlaceUseOptions,
         place: ElaboratedPlace,
     ) -> Result<TypedExpression, CheckStop> {
+        // [MSR-1] measures select copy u64 values, rather than the measured
+        // container. [DIAG-1] gives their moves and all other copy moves to
+        // [OWN-1] before [SHARE-1] considers a frozen-content consume.
+        // A range referent without a measure names a run, not a value, which
+        // TYPE-5 refuses below before any copy judgment.
+        let copy = place.measure.is_some() || self.types.is_copy_type(check_context, place.ty)?;
+        if copy
+            && options.explicit_move
+            && !(place.range_referent && place.measure.is_none())
+            && Checker::judges_class_spelling(check_context)
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Own1,
+                use_node,
+                SemanticIssueKind::MoveOfCopy {
+                    mechanical_fix: self.copy_move_repair(use_node)?,
+                },
+            );
+        }
         for member in &place.resolved.members {
+            // [DIAG-1] a move through `^` is OWN-1's and an element take
+            // WIN-3's; SHARE-1 owns the remaining explicit non-copy consumes.
+            if options.explicit_move
+                && !copy
+                && !self.types.declarations.tree.place_has_dereference(node)?
+                && !self.place_has_element_step(node)?
+                && self
+                    .types
+                    .frozen_member_on_resolved_path(check_context, member, bindings)?
+                    .is_some()
+            {
+                return self.frozen_consume_issue(node);
+            }
             if options.explicit_move {
                 self.types
                     .reject_shared_read_write(node, member, bindings)?;
@@ -225,7 +276,6 @@ impl<'unit> Checker<'_, 'unit> {
                 ),
             );
         }
-        let copy = self.types.is_copy_type(check_context, place.ty)?;
         let read_out = !copy
             && options.explicit_move
             && self.body.take_commit_read_out(&place.resolved.identity);
@@ -303,15 +353,6 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-        }
-        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
-            return self.types.declarations.issue_node(
-                SemanticRule::Own1,
-                use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: self.copy_move_repair(use_node)?,
-                },
-            );
         }
         let mut effects = EffectSet::NONE;
         for member in &place.resolved.members {
@@ -725,7 +766,7 @@ impl<'unit> TypeContext<'unit> {
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
-    pub(super) fn place_member(
+    pub(in crate::semantic::check) fn place_member(
         &self,
         ty: CheckedType,
         name: &str,
@@ -1329,6 +1370,25 @@ impl<'unit> TypeContext<'unit> {
         path: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<String>, CheckStop> {
+        self.readonly_path_member(check_context, path, bindings, false)
+    }
+
+    pub(in crate::semantic::check) fn frozen_member_on_resolved_path(
+        &self,
+        check_context: &CheckContext<'_>,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Option<String>, CheckStop> {
+        self.readonly_path_member(check_context, path, bindings, true)
+    }
+
+    fn readonly_path_member(
+        &self,
+        check_context: &CheckContext<'_>,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        frozen_only: bool,
+    ) -> Result<Option<String>, CheckStop> {
         #[derive(Clone, Copy)]
         enum PathType {
             Value(CheckedType),
@@ -1356,7 +1416,10 @@ impl<'unit> TypeContext<'unit> {
         for step in &path.path {
             match *step {
                 PlaceStep::Descendant(target) => {
-                    if target.readonly {
+                    if target.frozen_content {
+                        return Ok(Some("a descendant of Frozen.inner".to_owned()));
+                    }
+                    if target.readonly && !frozen_only {
                         return Ok(Some("a readonly descendant path".to_owned()));
                     }
                     ty = if target.range {
@@ -1378,7 +1441,7 @@ impl<'unit> TypeContext<'unit> {
                     let field = fields
                         .get(index as usize)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if self.field_withholds_writes(check_context, nominal, field) {
+                    if !frozen_only && self.field_withholds_writes(check_context, nominal, field) {
                         return Ok(Some(field.name.clone()));
                     }
                     ty = PathType::Value(field.ty);
@@ -1394,6 +1457,9 @@ impl<'unit> TypeContext<'unit> {
                     else {
                         return Ok(None);
                     };
+                    if self.is_frozen_type(current)? {
+                        return Ok(Some("Frozen.inner".to_owned()));
+                    }
                     ty = PathType::Value(referent);
                 }
                 PlaceStep::Payload { variant, field } => {
@@ -1410,7 +1476,7 @@ impl<'unit> TypeContext<'unit> {
                         .get(variant as usize)
                         .and_then(|variant| variant.fields.get(field as usize))
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if self.field_withholds_writes(check_context, nominal, field) {
+                    if !frozen_only && self.field_withholds_writes(check_context, nominal, field) {
                         return Ok(Some(field.name.clone()));
                     }
                     ty = PathType::Value(field.ty);
@@ -1447,7 +1513,9 @@ impl<'unit> TypeContext<'unit> {
                         },
                     });
                 }
-                PlaceStep::Measure(measure) => return Ok(Some(measure.spelling().to_owned())),
+                PlaceStep::Measure(measure) => {
+                    return Ok((!frozen_only).then(|| measure.spelling().to_owned()));
+                }
                 PlaceStep::Part(_) => return Ok(None),
             }
         }
@@ -1663,6 +1731,18 @@ impl<'unit> TypeContext<'unit> {
             let Some(member) = self.place_member(ty, &name)? else {
                 return Ok(());
             };
+            if let PlaceMember::BoxContent { nominal, .. } = member
+                && self.is_frozen_type(CheckedType::Nominal(nominal))?
+            {
+                return self.declarations.issue_node(
+                    SemanticRule::Type2,
+                    target,
+                    SemanticIssueKind::ReadonlyWriteTarget {
+                        spelling: "Frozen.inner".to_owned(),
+                        mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
+                    },
+                );
+            }
             if let PlaceMember::Field { nominal, index, .. } = member {
                 let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());

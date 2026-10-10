@@ -167,7 +167,8 @@ impl<'unit> Checker<'_, 'unit> {
             self.ensure_source_constructor_instance(check_context, construct, substitution)?;
         }
         self.ensure_implicit_prelude_nominals(check_context, node, substitution, false)?;
-        self.types.reject_recursive_nominal_layouts()
+        self.types.reject_recursive_nominal_layouts()?;
+        self.validate_frozen_instances()
     }
 
     /// Performs the ordinary nominal pre-scan for one function without
@@ -216,7 +217,8 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.ensure_implicit_prelude_nominals(check_context, function, substitution, true)?;
         self.ensure_result_list_nominal(check_context, function, substitution)?;
-        self.types.reject_recursive_nominal_layouts()
+        self.types.reject_recursive_nominal_layouts()?;
+        self.validate_frozen_instances()
     }
 
     /// Interns the compiler-owned result-list nominal of a `fn_decl` that
@@ -640,6 +642,33 @@ impl<'unit> Checker<'_, 'unit> {
                 .checked_add(1)
                 .ok_or(SemanticCompilerFailure::CounterOverflow)?;
         }
+        self.validate_frozen_instances()?;
+        Ok(())
+    }
+
+    fn validate_frozen_instances(&self) -> Result<(), CheckStop> {
+        for id in &self.types.view.nominals {
+            if let CheckedNominalKind::Box {
+                referent,
+                release: super::super::model::CheckedReleaseClass::Frozen,
+                ..
+            } = self.types.nominal(*id)?.kind
+            {
+                let (template, substitution) = self.types.source_nominal_instances[id.0 as usize]
+                    .as_ref()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let template = &self.types.nominal_templates[*template];
+                let key = template
+                    .generic_parameters
+                    .first()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                    .key();
+                let site = self
+                    .types
+                    .behavior_binding_site(template.node, key, substitution)?;
+                self.types.reject_frozen_part(site, referent)?;
+            }
+        }
         Ok(())
     }
 
@@ -755,6 +784,21 @@ impl<'unit> Checker<'_, 'unit> {
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let kind = (|| {
             Ok(match template.role {
+                DeclarationRole::Struct
+                    if template.name == "Frozen"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Box {
+                        referent: substitution
+                            .first_type_argument()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        region: None,
+                        release: super::super::model::CheckedReleaseClass::Frozen,
+                    }
+                }
                 DeclarationRole::Struct
                     if matches!(
                         template.name.as_str(),
@@ -1907,6 +1951,21 @@ impl<'unit> TypeContext<'unit> {
         &self,
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
+        use super::repairs::OpaqueStruct;
+        let template = self
+            .nominal_templates_by_declaration
+            .get(&declaration)
+            .and_then(|&index| self.nominal_templates.get(index))
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if self.declarations.tree.is_prelude_node(template.node)? {
+            return Ok(match template.name.as_str() {
+                "Frozen" => OpaqueStruct::Frozen,
+                "Shared" => OpaqueStruct::Shared,
+                "SharedRead" => OpaqueStruct::SharedRead,
+                "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            });
+        }
         if self
             .declarations
             .declaration_home(declaration)
@@ -1914,11 +1973,6 @@ impl<'unit> TypeContext<'unit> {
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }
-        let template = self
-            .nominal_templates_by_declaration
-            .get(&declaration)
-            .and_then(|&index| self.nominal_templates.get(index))
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if !self
             .declarations
             .tree

@@ -1,0 +1,15 @@
+fn require_byte(value: u8) -> result: u8 pure contract {
+  requires value >= 1_u8;
+} {
+  return value;
+}
+
+fn denied() -> result: u8 pure {
+  let root = frozen_new::<u8>(value: 7_u8);
+  if root.inner >= 1_u8 {
+    let replacement = frozen_new::<u8>(value: 0_u8);
+    set root = move replacement;
+    return require_byte(value: root.inner);
+  }
+  return 0_u8;
+}
