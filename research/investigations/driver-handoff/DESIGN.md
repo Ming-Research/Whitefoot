@@ -536,3 +536,23 @@ A later approved amendment must update the specification, its approval record an
 A separate read-only review examined the protocol against the supplied base and witness revision. Its findings on stale TLS wakes, false stuck detection, physical thread inventory, blocking borrowed service, lane attachment and cancellation latency are incorporated above.
 
 The final manuscript, implementation, coroutine unwind behavior, latency and costs remain unverified.
+
+## Result: waking an idle driver for a lone ready context (D1) does not help
+
+Change (78d6b3f33): `wf_context_ready` also woke one idle driver when a
+context became ready on a driver that was running a context, not only when
+the run queue held more than one. Witness run
+[ctx-starvation 38038660775](https://github.com/Ming-Research/Whitefoot/actions/runs/38038660775)
+(hosted ubuntu-24.04, 455,604,710 iterations, about 1.99 s of computation,
+three passes each): with two drivers on two CPUs (arm `d`, `taskset -c 0,1`)
+the 100 ms timer still fired at 1.9876 to 1.9877 s, the same as one driver on
+one CPU (arm `a`, 1.9872 to 1.9880 s) and two drivers on one CPU (arm `b`);
+the zero-computation controls fired at 0.1026 to 0.1030 s. Reading: the root
+context suspends on its timer microseconds after the spawn, and its own driver
+pops the ready child at once, before the woken driver returns from its park
+(about 10 us or more); the timer's deadline then sits in that driver's private
+heap, which no other driver may read. So moving ready contexts cannot help
+once the starter's driver has resumed the child; the deadline itself must be
+serviced by someone else, which needs the ownership protocol of section 2
+(try-borrow for D, reassignment for A). The change is reverted: it added
+wakes with no measured benefit.
