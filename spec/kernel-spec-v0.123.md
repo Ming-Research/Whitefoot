@@ -1,4 +1,4 @@
-# Kernel Specification v0.124
+# Kernel Specification v0.123
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -565,17 +565,17 @@ A `move` of a runtime-capacity, `Segments` or `Paged` content is a hard error ci
 The element type of any shape is any nameable type the placement table admits as an element, copy, affine, or linear [OWN-1, PROV-6].
 A constructor `call` and a destructuring `let_stmt` naming any of the six is refused by [TYPE-2] like every opaque struct's, with a repair [DIAG-1].
 
-A *placement-restricted* type has its *homes*, the only places a value of it may take:
+A *placement-restricted* type has one *home*, the one place a value of it may take:
 
-| type | homes |
+| type | home |
 |---|---|
 | a runtime-capacity form, `Segments<T>`, and `Paged<T>` | the content of a `Box`: the type argument of `Box<·>` |
-| `ConcurrentHashMap<V>` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>`; and the exchange of a `swap` [OP-11] |
+| `ConcurrentHashMap<V>` [SHARE-1] | the state of a shared object: the type argument of `Shared<·>` or `SharedRead<·>` |
 
-The places a value can take are a binding, a value parameter, a result, a field, an enum payload field, an element of a storage shape, an entry value of a `ConcurrentHashMap`, the content of a `Box`, the state of a shared object and the exchange of a `swap`, whose type parameter takes that place [OP-11]. A placement-restricted type takes only its homes among them; any other place is a hard error citing TYPE-9 at the complete `type`, at the complete `targ` for a written type argument, or at the complete `call` for a type argument its operand supplies, with a repair [DIAG-1]. A reference kind takes no place [TYPE-8], so `&T` names any `T`. A type argument takes, in each instance, the places its parameter takes in the signature and the body [FN-2], and a prelude opaque struct's parameter takes that struct's content place: `Box<T>`'s the content of a `Box`, `Shared<T>`'s and `SharedRead<T>`'s the state of a shared object, every other's an element. So a `swap` of two map targets and a `shared_share` of a map handle are admitted, and `shared_new::<ConcurrentHashMap<V>>` is refused.
+The places a value can take are a binding, a value parameter, a result, a field, an enum payload field, an element of a storage shape, an entry value of a `ConcurrentHashMap`, the content of a `Box` and the state of a shared object. A placement-restricted type takes only its home among them; any other place is a hard error citing TYPE-9 at the complete `type`, or at the complete `targ` for a type argument, with a repair [DIAG-1]. A reference kind takes no place [TYPE-8], so `&T` names any `T`. A type argument takes, in each instance, the places its parameter takes in the signature and the body [FN-2], and a prelude opaque struct's parameter takes that struct's content place: `Box<T>`'s the content of a `Box`, `Shared<T>`'s and `SharedRead<T>`'s the state of a shared object, every other's an element. So a `swap` of two map targets and a `shared_share` of a map handle are admitted, and `shared_new::<ConcurrentHashMap<V>>` is refused.
 
 [TYPE-10] Window parts are names, not declarations.
-`len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and they change only through the operations of [OP-10] and [OP-13], the key-set insertions of [SHARE-1], and a replacement [SET-1] or exchange [OP-11] of the whole value that holds them.
+`len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and only the operations of [OP-10] and [OP-13] and the key-set insertions of [SHARE-1] change them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
 `pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. It is admitted only in the measure `p.pages.len` [MSR-1], as the base of a page subscript whose use [OP-4] judges, and in a page-selection effect path [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
