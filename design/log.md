@@ -12,6 +12,13 @@ Nodes: language/ownership
 Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated). After the implementation narrowed the read to copy types, because a struct declared `nocopy` can be const-eligible, the owner approved the item request on the same board on 2026-10-10: "confirm limiting the whole-value read to consts of a copy type (a nocopy struct const keeps only partial reads)" (translated).
 
 Summary: language/ownership adds the decision that a const item of a copy type is also read as a whole value, a copy into the reader's storage, because copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
+## 2026-10-10 Statement groups keep their calls across an independent non-call statement
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose A on the card "when a statement group meets an unrelated non-call statement, should the calls before and after it stay in one group?" (translated), whose option A read "cross the unrelated non-call statement: change as in PR #329, and change the design-tree decision, recording 'end the group at every non-call' as a rejected alternative because PAR-1 already proves the whole run pairwise independent" (translated).
+
+Summary: Lowering kept a statement group's calls only up to the first non-call member, so two independent calls around an ordinary statement never overlapped although PAR-1 proves the whole run independent. The non-call statement now stays on the owning thread at its source position inside the group's window, checked against the group's calls with the release-and-borrow boundary, and a `set` that displaces a releasing owner counts as a release; ending the group at every non-call is recorded as rejected.
 ## 2026-10-10 Statement groups end before an implicit context await
 
 Nodes: compiler/parallel-lowering
