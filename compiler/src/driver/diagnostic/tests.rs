@@ -474,3 +474,43 @@ fn a_driver_stop_is_one_sentence_in_text_and_an_envelope_in_json() {
         r#"{"category":"Invocation","stage":"Driver","detail":{"message":"cannot read \"missing.wf\": No such file or directory (os error 2)"}}"#
     );
 }
+
+#[test]
+fn invalid_float_literals_render_the_repair_in_text_and_json() {
+    for (literal, canonical, repair) in [
+        (
+            "0.5e3_f64",
+            Some("5.0e2_f64"),
+            "write the literal as `5.0e2_f64`",
+        ),
+        (
+            "1.0e999_f64",
+            None,
+            "replace the literal with a canonical spelling of a finite value representable in its stated type",
+        ),
+    ] {
+        let source = format!(
+            "fn value() -> result: f64 pure {{\n  return {literal};\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n",
+        );
+        let failure = stop("float.wf", source.as_bytes());
+        assert_eq!(failure.rule_id(), Some("FORM-7"));
+        let text = failure.render(DiagnosticFormat::Text);
+        assert!(
+            text.contains(&format!("\n  mechanical_fix: {repair}")),
+            "{text}"
+        );
+        let json = failure.render(DiagnosticFormat::Json);
+        assert!(
+            json.contains(&format!("\"mechanical_fix\":\"{repair}\"")),
+            "{json}"
+        );
+        if let Some(spelling) = canonical {
+            assert!(
+                json.contains(&format!("\"canonical_spelling\":\"{spelling}\"")),
+                "{json}"
+            );
+        } else {
+            assert!(!json.contains("canonical_spelling"), "{json}");
+        }
+    }
+}

@@ -865,15 +865,31 @@ impl FunctionEmitter<'_, '_> {
         let Some(IrType::Nominal(source)) = self.value_type(object) else {
             return Err(BackendFailure::InvalidIr);
         };
-        if ty != IrType::Nominal(nominal)
-            || self.shared_state(source)? != self.shared_state(nominal)?
-        {
+        let frozen = matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Box {
+                release: crate::IrReleaseClass::Frozen,
+                ..
+            }
+        );
+        if ty != IrType::Nominal(nominal) {
             return Err(BackendFailure::InvalidIr);
         }
-        self.names(&["wf__shared_share"]);
+        let retain = if frozen {
+            if source != nominal {
+                return Err(BackendFailure::InvalidIr);
+            }
+            "wf__frozen_share"
+        } else {
+            if self.shared_state(source)? != self.shared_state(nominal)? {
+                return Err(BackendFailure::InvalidIr);
+            }
+            "wf__shared_share"
+        };
+        self.names(&[retain]);
         writeln!(
             self.output,
-            "  call void @wf__shared_share(ptr {object})\n  {} = getelementptr i8, ptr {object}, i64 0",
+            "  call void @{retain}(ptr {object})\n  {} = getelementptr i8, ptr {object}, i64 0",
             self.value_name(result),
             object = self.value_name(object),
         )

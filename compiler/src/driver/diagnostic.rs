@@ -831,7 +831,7 @@ impl Report for SemanticIssueKind {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         report_variants!(SemanticIssueKind, self, fields;
             InvalidIntegerLiteral;
-            InvalidFloatLiteral;
+            InvalidFloatLiteral { canonical_spelling, mechanical_fix };
             InvalidTextItem { reason, mechanical_fix };
             NonAsciiByteCharacter { mechanical_fix };
             TextLengthMismatch { declared_length, byte_length, mechanical_fix };
@@ -859,6 +859,8 @@ impl Report for SemanticIssueKind {
             MoveThroughReference { mechanical_fix };
             ReservedPseudoField { spelling, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
+            FrozenForbiddenPart { part, mechanical_fix };
+            FrozenContentConsume { mechanical_fix };
             MoveOfCopy { mechanical_fix };
             BareAffineUse { mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };

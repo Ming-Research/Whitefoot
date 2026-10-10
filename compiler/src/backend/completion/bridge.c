@@ -62,6 +62,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -3013,6 +3014,45 @@ void wf__runtime_yield(void) {
 
 _Noreturn void wf__runtime_exhausted(void) {
     wf_context_exhausted();
+}
+
+/* Frozen storage uses the shared runtime's pool and handle-count protocol,
+ * without holders, guards or a lock. Publication to contexts/workers uses
+ * their ordinary release/acquire handoff; retaining an already live handle
+ * therefore needs only a relaxed increment. Every reader completes before
+ * its acq_rel decrement, and the last decrement acquires those completions. */
+typedef struct {
+    _Atomic uint64_t handles;
+    size_t pool_bytes;
+    _Alignas(max_align_t) unsigned char value[];
+} wf_frozen;
+
+static wf_frozen *wf_frozen_header(void *value) {
+    return (wf_frozen *)((unsigned char *)value - offsetof(wf_frozen, value));
+}
+
+void *wf__frozen_new(uint64_t value_bytes) {
+    size_t granted;
+    if (value_bytes > SIZE_MAX - sizeof(wf_frozen)) {
+        wf_context_exhausted();
+    }
+    wf_frozen *frozen = wf_pool_take(sizeof(wf_frozen) + (size_t)value_bytes, &granted);
+    atomic_init(&frozen->handles, 1u);
+    frozen->pool_bytes = granted;
+    return frozen->value;
+}
+
+void wf__frozen_share(void *value) {
+    atomic_fetch_add_explicit(&wf_frozen_header(value)->handles, 1u, memory_order_relaxed);
+}
+
+int wf__frozen_release(void *value) {
+    return atomic_fetch_sub_explicit(&wf_frozen_header(value)->handles, 1u, memory_order_acq_rel) == 1u;
+}
+
+void wf__frozen_free(void *value) {
+    wf_frozen *frozen = wf_frozen_header(value);
+    wf_pool_give(frozen, frozen->pool_bytes);
 }
 
 void *wf__shared_new(uint64_t state_bytes) {

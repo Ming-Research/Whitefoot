@@ -268,7 +268,7 @@ impl<'unit> TypeContext<'unit> {
                 }
             ),
             AdmittedShapes::BoxedPaged => matches!(
-                self.box_content(operand)?,
+                self.owned_box_content(operand)?,
                 Some(CheckedType::Window {
                     shape: WindowShape::Paged,
                     capacity: None,
@@ -283,7 +283,7 @@ impl<'unit> TypeContext<'unit> {
                 }
             ),
             AdmittedShapes::BoxedRuntimeSlots => matches!(
-                self.box_content(operand)?,
+                self.owned_box_content(operand)?,
                 Some(CheckedType::Window {
                     shape: WindowShape::Slots,
                     capacity: None,
@@ -298,13 +298,20 @@ impl<'unit> TypeContext<'unit> {
                         ..
                     }
                 ) || matches!(
-                    self.box_content(operand)?,
+                    self.owned_box_content(operand)?,
                     Some(CheckedType::Window { capacity: None, .. })
                 )
             }
         })
     }
-    /// The content of a [TYPE-9] `Box`, for an operand that is one.
+    /// The content of an owned Box for window-row shape admission.
+    fn owned_box_content(&self, operand: CheckedType) -> Result<Option<CheckedType>, CheckStop> {
+        if self.is_frozen_type(operand)? {
+            return Ok(None);
+        }
+        self.box_content(operand)
+    }
+    /// Content projection shared by owned cells and frozen handles.
     pub(in crate::semantic::check) fn box_content(
         &self,
         operand: CheckedType,

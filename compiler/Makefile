@@ -224,6 +224,35 @@ COMPLETION_NATIVE_SOURCES := $(SCHED_SOURCES) $(COMPLETION_DIR)/runtime.c \
     $(COMPLETION_DIR)/native_adapter_probe.c
 $(eval $(call completion-image,linux-native-probe,$(COMPLETION_NATIVE_SOURCES),$(COMPLETION_BASE_CFLAGS)))
 
+# The first fork witness is a fixed native encoder, not a WF callback. Include
+# the actual compute core in the test to hold a real lane wait mutex, as the
+# scheduler probes do; do not also link a second core. Keep child code free of
+# compiler-inserted libc calls and stack-canary TLS. No sanitizer runtime is
+# admitted to the post-fork closure. Each hook image protects a named control.
+ifeq ($(shell uname -s),Linux)
+FORK_CAPSULE_SOURCES := $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c \
+    $(COMPLETION_DIR)/runtime.c $(COMPLETION_DIR)/wait_host.c \
+    $(COMPLETION_DIR)/linux_io_uring.c $(COMPLETION_DIR)/fork_capsule.c \
+    $(COMPLETION_DIR)/fork_capsule_test.c
+FORK_CAPSULE_CFLAGS := $(COMPLETION_BASE_CFLAGS) -fno-builtin -fno-stack-protector
+FORK_CAPSULE_IMAGES := fork-capsule fork-capsule-no-advice fork-capsule-close-loop fork-capsule-advice-failure
+$(eval $(call completion-image,fork-capsule,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS)))
+$(eval $(call completion-image,fork-capsule-no-advice,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_LINUX_IO_URING_TEST_SKIP_DONTFORK))
+$(eval $(call completion-image,fork-capsule-close-loop,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_FORK_CAPSULE_TEST_NO_CLOSE_RANGE))
+$(eval $(call completion-image,fork-capsule-advice-failure,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_LINUX_IO_URING_MADVISE=wf_fork_test_madvise))
+$(foreach image,$(FORK_CAPSULE_IMAGES),$(COMPLETION_TMP)/objects/$(image)/completion/fork_capsule_test.o): $(SCHED_DIR)/core.c
+completion-fork-capsule-test: $(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
+	@set -e; for image in $(FORK_CAPSULE_IMAGES); do \
+		echo "== $$image =="; \
+		status=0; $(NO_CORE_DUMPS) "$(COMPLETION_TMP)/$$image" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ]; then \
+			echo "fork capsule: unavailable (not qualification evidence)"; \
+		else test $$status -eq 0 || exit $$status; fi; \
+	done
+else
+completion-fork-capsule-test:
+endif
+
 $(eval $(call completion-image,harness,$(COMPLETION_SOURCES),$(COMPLETION_HARNESS_CFLAGS)))
 $(eval $(call completion-image,bridge-default-probe,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_BASE_CFLAGS)))
 $(eval $(call completion-image,core-read-probe,$(COMPLETION_CORE_READ_SOURCES),$(COMPLETION_BASE_CFLAGS) $(COMPLETION_CORE_READ_DEFINES)))
@@ -233,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -555,7 +584,8 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
-	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
+	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
 completion-test-images: $(COMPLETION_TEST_IMAGES)
 
 # Manual calibration, never a correctness or automatic performance input.
@@ -799,7 +829,7 @@ completion-windows-wine:
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
+	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

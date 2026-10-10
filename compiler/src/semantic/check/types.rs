@@ -79,6 +79,7 @@ pub(super) enum Placement {
     Reference,
     BoxContent,
     SharedState,
+    Exchange,
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -1463,11 +1464,16 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(CheckedValue::Unit);
         }
         if bytes.ends_with(b"_f32") || bytes.ends_with(b"_f64") {
-            return parse_float_literal(bytes).ok_or_else(|| {
+            return parse_float_literal(bytes).map_err(|canonical_spelling| {
+                let mechanical_fix =
+                    super::repairs::float_literal_repair(canonical_spelling.as_deref());
                 self.issue_value(
                     SemanticRule::Form7,
                     node,
-                    SemanticIssueKind::InvalidFloatLiteral,
+                    SemanticIssueKind::InvalidFloatLiteral {
+                        canonical_spelling,
+                        mechanical_fix,
+                    },
                 )
             });
         }
@@ -1590,7 +1596,11 @@ impl<'unit> TypeContext<'unit> {
             );
             let map = matches!(ty, CheckedType::Nominal(id) if matches!(cx.nominals[id.0 as usize].kind, CheckedNominalKind::Shared { shape: super::super::model::CheckedShared::Map { .. }, .. }));
             if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
-                || map && !matches!(position, Placement::SharedState | Placement::Reference)
+                || map
+                    && !matches!(
+                        position,
+                        Placement::SharedState | Placement::Reference | Placement::Exchange
+                    )
             {
                 return Some((ty, position));
             }
@@ -1599,9 +1609,18 @@ impl<'unit> TypeContext<'unit> {
             }
             match ty {
                 CheckedType::Nominal(id) => match &cx.nominals[id.0 as usize].kind {
-                    CheckedNominalKind::Box { referent, .. } => {
-                        visit(cx, *referent, Placement::BoxContent, seen)
-                    }
+                    CheckedNominalKind::Box {
+                        referent, release, ..
+                    } => visit(
+                        cx,
+                        *referent,
+                        if *release == super::super::model::CheckedReleaseClass::Frozen {
+                            Placement::Value
+                        } else {
+                            Placement::BoxContent
+                        },
+                        seen,
+                    ),
                     CheckedNominalKind::Shared {
                         state,
                         shape: super::super::model::CheckedShared::Object,
@@ -1636,24 +1655,32 @@ impl<'unit> TypeContext<'unit> {
             return Ok(());
         }
         let owner = self.declarations.tree.path(node)?.components();
-        let parameter_uses = self
-            .declarations
-            .resolved
-            .lexical_uses()
-            .iter()
-            .filter_map(|usage| {
-                if !usage.origin().node().components().starts_with(owner) {
-                    return None;
-                }
-                match usage.target() {
-                    ResolvedTarget::Source {
-                        declaration,
-                        class: DeclarationClass::GenericType,
-                    } => Some(declaration),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
+        let parameter_uses = if matches!(position, Placement::Exchange)
+            && let Some(parameter) = self.behavior.exchange_parameters.get(&node)
+        {
+            vec![*parameter]
+        } else {
+            // A written `fn swap::<T>` can be resolved concretely before
+            // the canonical symbolic body records its exchange. Its targ
+            // still names the supplying parameter directly [TYPE-9, FN-2].
+            self.declarations
+                .resolved
+                .lexical_uses()
+                .iter()
+                .filter_map(|usage| {
+                    if !usage.origin().node().components().starts_with(owner) {
+                        return None;
+                    }
+                    match usage.target() {
+                        ResolvedTarget::Source {
+                            declaration,
+                            class: DeclarationClass::GenericType,
+                        } => Some(declaration),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
         let mut source = node;
         for (key, argument) in substitution.entries() {
             let super::generics::GenericArgument::Type(argument) = argument else {
@@ -1662,7 +1689,9 @@ impl<'unit> TypeContext<'unit> {
             let super::generics::GenericParameterKey::Source(declaration) = key else {
                 continue;
             };
-            if !parameter_uses.is_empty() && !parameter_uses.contains(declaration) {
+            if (!parameter_uses.is_empty() || matches!(position, Placement::Exchange))
+                && !parameter_uses.contains(declaration)
+            {
                 continue;
             }
             if visit(self, *argument, Placement::Value, &mut HashSet::new()).map(|(ty, _)| ty)
@@ -1680,8 +1709,11 @@ impl<'unit> TypeContext<'unit> {
                 Placement::Reference => "a reference referent",
                 Placement::BoxContent => "Box content",
                 Placement::SharedState => "shared-object state",
+                Placement::Exchange => "the exchange of a `swap`",
             };
-            let repair = if matches!(found, CheckedType::Nominal(_)) {
+            let repair = if matches!(refused_position, Placement::Exchange) {
+                "swap the owning `Box` values instead of their contents"
+            } else if matches!(found, CheckedType::Nominal(_)) {
                 "make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead"
             } else {
                 "put the runtime-capacity storage behind a Box and pass a reference to its content"
@@ -1690,6 +1722,8 @@ impl<'unit> TypeContext<'unit> {
                 "this type argument would place `{}` as {position}; {repair}",
                 self.checked_type_name(found)?
             )
+        } else if matches!(refused_position, Placement::Exchange) {
+            "swap the owning `Box` values instead of their contents".to_owned()
         } else if matches!(found, CheckedType::Nominal(_)) {
             "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned()
         } else if matches!(
@@ -1748,13 +1782,22 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::Segments { element } => (14, Some(element)),
-            CheckedType::KeySet => (20, None),
-            CheckedType::Entries { element } => (21, Some(element)),
-            CheckedType::Bool => (22, None),
+            CheckedType::KeySet => (21, None),
+            CheckedType::Entries { element } => (22, Some(element)),
+            CheckedType::Bool => (23, None),
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominals[id.0 as usize].kind
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominals[id.0 as usize].kind
                 {
-                    result.push("016".to_owned());
+                    result.push(
+                        if release == super::super::model::CheckedReleaseClass::Frozen {
+                            "019"
+                        } else {
+                            "016"
+                        }
+                        .to_owned(),
+                    );
                     result.extend(self.atomic_type_order(referent)?);
                     return Ok(result);
                 }
@@ -1766,12 +1809,12 @@ impl<'unit> TypeContext<'unit> {
                         "Box" => 16,
                         "Shared" => 17,
                         "SharedRead" => 18,
-                        "ConcurrentHashMap" => 19,
-                        "Option" => 23,
-                        "Result" => 24,
-                        "Overflow" => 25,
-                        "DivError" => 26,
-                        "NarrowError" => 27,
+                        "ConcurrentHashMap" => 20,
+                        "Option" => 24,
+                        "Result" => 25,
+                        "Overflow" => 26,
+                        "DivError" => 27,
+                        "NarrowError" => 28,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));
@@ -1798,19 +1841,19 @@ impl<'unit> TypeContext<'unit> {
                 }
                 match self.prelude_type(id) {
                     Some(PreludeType::Option(t)) => {
-                        result.push("023".to_owned());
+                        result.push("024".to_owned());
                         result.extend(self.atomic_type_order(t)?);
                         return Ok(result);
                     }
                     Some(PreludeType::Result(a, b)) => {
-                        result.push("024".to_owned());
+                        result.push("025".to_owned());
                         result.extend(self.atomic_type_order(a)?);
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
-                    Some(PreludeType::Overflow) => (25, None),
-                    Some(PreludeType::DivError) => (26, None),
-                    Some(PreludeType::NarrowError) => (27, None),
+                    Some(PreludeType::Overflow) => (26, None),
+                    Some(PreludeType::DivError) => (27, None),
+                    Some(PreludeType::NarrowError) => (28, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -1907,19 +1950,19 @@ impl<'unit> TypeContext<'unit> {
                                         CheckedNominalKind::Box {
                                             referent: a,
                                             region: ar,
-                                            ..
+                                            release: ac,
                                         },
                                         CheckedNominalKind::Box {
                                             referent: b,
                                             region: br,
-                                            ..
+                                            release: bc,
                                         },
                                     ) => {
                                         // [TYPE-9] Box has no brand. intern_box_nominal
                                         // is its sole constructor and sets region to None,
                                         // including symbolic and concrete instances.
                                         debug_assert!(ar.is_none() && br.is_none());
-                                        if ar != br {
+                                        if ar != br || ac != bc {
                                             return Ok(false);
                                         }
                                         pending.push((
