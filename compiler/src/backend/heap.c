@@ -10,7 +10,7 @@
  * without a lock, while realloc always takes the owning arena's lock, so
  * parallel workers growing many small buffers queue on that lock. */
 #ifndef WF_HEAP_RETAKE_COPY_BELOW
-#define WF_HEAP_RETAKE_COPY_BELOW UINT64_C(1024)
+#define WF_HEAP_RETAKE_COPY_BELOW UINT64_C(131072)
 #endif
 
 void *wf__heap_take(uint64_t bytes) {
