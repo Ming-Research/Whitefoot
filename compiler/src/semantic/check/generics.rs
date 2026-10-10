@@ -16,7 +16,10 @@ use super::super::model::{
     CheckedConst, CheckedGenericRequirement, CheckedNominalKind, CheckedType, IntegerType,
     NominalId,
 };
-use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate, PreludeType};
+use super::super::entailment::{EntailmentCallee, finalize_function_entailment};
+use super::{
+    CheckStop, CheckedFunctionInventory, Checker, FunctionSignature, FunctionTemplate, PreludeType,
+};
 
 /// [FN-2, PROV-6] the at most one bound a type parameter carries.
 ///
@@ -1344,6 +1347,100 @@ impl<'unit> Checker<'_, 'unit> {
         self.analysis.postcondition_selectors.clear();
         self.admit_postcondition_selectors_including(check_context, &retained_concrete)?;
         Ok(range_stop)
+    }
+
+    /// Checks every source-generic body once with symbolic arguments, even when
+    /// no concrete instantiation is reachable from the executable program.
+    /// The ordinary entailment engine is the only acceptance path: generic
+    /// bodies do not receive a separate proof language or an assertion-based
+    /// exception.
+    fn validate_generic_body_entailment(
+        &mut self,
+        functions: &mut [CheckedFunctionInventory],
+        canonical: &[(usize, DeclarationId)],
+        callees: &[EntailmentCallee],
+    ) -> Result<Option<CheckStop>, CheckStop> {
+        let optimistic_batch = functions.iter().any(|checked| {
+            !checked.function.postconditions.is_empty()
+                || Checker::statements_contain_value_if(
+                    checked.function.body.as_deref().unwrap_or_default(),
+                )
+        });
+        // Only the canonical instances are judged below, and a judged body
+        // reads another function's analysis solely through the postcondition
+        // summaries of its callees. Every other body of this symbolic view —
+        // every nongeneric function among them — is analyzed only when its
+        // component can publish a summary such a body reads; the concrete
+        // phase analyzes the nongeneric ones again, so analyzing the rest
+        // here would repeat that cost for a result nothing reads.
+        let analyzed = Checker::generic_validation_scope(functions, canonical)?;
+        let mut judged = vec![false; functions.len()];
+        for (index, _) in canonical {
+            judged[*index] = true;
+        }
+        self.analyze_function_inventory(
+            functions,
+            callees,
+            optimistic_batch,
+            Some(&analyzed),
+            false,
+            Some(&judged),
+        )?;
+        if optimistic_batch {
+            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
+                if *analyzed && !self.analysis.renamed_summaries[index] {
+                    finalize_function_entailment(&mut checked.function.entailment);
+                }
+            }
+        }
+        if !self.reject_entailment {
+            return Ok(None);
+        }
+        for checked in functions.iter_mut() {
+            checked.function.body_disposition = checked.function.entailment.body_disposition;
+        }
+        let range_functions = functions
+            .iter()
+            .map(|checked| &checked.function)
+            .collect::<Vec<_>>();
+        let ranges = super::super::range_judgment::judge_program(
+            &range_functions,
+            &self.types.nominals,
+            &self.types.elements,
+            &judged,
+            &self.types.checked_constants,
+            super::super::range_judgment::JudgmentScope::Symbolic,
+            self.types.declarations.resolved,
+        );
+        for (index, declaration) in canonical {
+            let checked = functions
+                .get(*index)
+                .filter(|checked| checked.function.declaration == *declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            self.types.entailment_rejection_after_range(
+                &checked.function,
+                &ranges[*index].discharged,
+                &ranges[*index].inconclusive,
+            )?;
+        }
+        if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+            matches!(
+                issue,
+                super::super::range_judgment::RangeIssue::Unsupported { .. }
+                    | super::super::range_judgment::RangeIssue::Undischarged {
+                        capacity: Some(_),
+                        ..
+                    }
+            )
+        }) {
+            return Ok(Some(self.range_issue(issue)));
+        }
+        for (index, _) in canonical {
+            if let Some(issue) = ranges[*index].issues.first() {
+                return Err(self.range_issue(issue));
+            }
+        }
+        Ok(None)
     }
 
     /// The symbolic discovery walk already found every written source call.
