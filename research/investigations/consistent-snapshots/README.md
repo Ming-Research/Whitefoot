@@ -13,11 +13,13 @@ specification v0.119. No proposal below is an approved rule or implemented
 capability. No build, test or measurement was run. Repository citations are
 `file:line` at that revision; cross-branch records are identified separately.
 
-**Provisional recommendation:** specify an opt-in frozen dataset view and its
-resource policy before selecting its mechanism. Compare software versioning
-with a restricted fork backend; do not expose unrestricted fork merely to
-separate memory counters. Neither fork nor versioning guarantees both
-uninterrupted writes and substantially less than twice the memory under
+**Provisional recommendation:** first prototype an opt-in persistent dataset
+library under existing ownership rules, against an explicit cut and resource
+contract. No library operation requiring a language change has yet been
+identified; a new storage domain is a fallback if the prototype finds one. Compare the
+library with reconciled scan-plus-log and a qualified restricted fork backend;
+keep fork out of the source abstraction. Neither fork nor versioning guarantees
+both uninterrupted writes and substantially less than twice the memory under
 arbitrary mutation. Small embedded systems remain a design constraint, not
 a claim that the current compiler already targets them
 (`docs/constitution.md:16`, `:28`, `:48`, `:56`).
@@ -90,8 +92,8 @@ budget guarantee would be new behavior, not something those rules establish.
 
 ## Comparison fixed before future measurements
 
-Compare the current closed-log replay with (1) a frozen versioned dataset,
-(2) restricted fork over the same logical dataset, and (3) a correctly
+Compare the current closed-log replay with (1) an opt-in persistent dataset
+library, (2) restricted fork over the same logical dataset, and (3) a correctly
 reconciled batched export. Redis is an external reference, not the oracle for
 Whitefoot safety. Compare no snapshot, snapshot support present but unused,
 capture, active export and reclamation. Include read-mostly traffic both with
@@ -177,14 +179,40 @@ path, as the versioned kernel source above shows.
 
 **Versioning must cover the transitive data.** An epoch for table reclamation
 prevents freeing an old table; it does not stop a `Box` below an entry from
-changing. Arbitrary V is not automatically cloneable, and `SharedRead<T>`
-retains the same live object rather than freezing it (SHARE-1/2,
-`spec/kernel-spec.md:2270`, `:2295`). Persistent values need an ordinary
-ownership/representation contract for shared immutable nodes and safe updates.
-A new frozen-map representation must cover nested objects, deletes, growth,
-clear and swap and publish all of a multi-target atomic statement together.
-Changing the current map's interior mutation rules or making shared versions
-of unique owners is a language decision; this record assumes neither exists.
+changing. Arbitrary V is not automatically cloneable: OWN-1 classifies owners,
+and PROV-6's `T: drop` grants move and release, not copy
+(`spec/kernel-spec.md:654`, `:799`). `SharedRead<T>` retains the same live
+object and restricts writes through that handle; it does not freeze writers
+using another handle (SHARE-1/2, `spec/kernel-spec.md:2270`, `:2295`).
+Automatically freezing an existing mutable representation would need a new
+contract covering nested objects, deletes, growth, clear and swap, with one
+publication point for a multi-target atomic statement.
+
+**An opt-in persistent library is a separate route.** SHARE-1 already permits
+moving a unique owner into a shared object, retaining a read handle and
+releasing the only writable handle. Minimal uncompiled Whitefoot witness:
+
+```wf
+fn freeze(value: Box<u64>) -> result: SharedRead<Box<u64>> pure {
+    let writer = shared_new::<Box<u64>>(value: move value);
+    let frozen = shared_read::<Box<u64>>(shared: &writer);
+    return move frozen;
+}
+```
+
+The return releases `writer`, leaving one read handle; it never copies the
+`Box` owner. SHARE-1 retains the state until the last handle is released and
+offers no read-to-write conversion (`spec/kernel-spec.md:2269`–`:2271`);
+SHARE-2 makes its owned descendants read-only. The emitter retains the same
+object and releases its state only on the last handle
+(`compiler/src/backend/emitter/shared.rs:856`,
+`compiler/src/backend/emitter/cleanup.rs:127`,
+`compiler/src/backend/completion/bridge.c:2803`). Persistent nodes can use
+this pattern with only immutable shared edges, retaining old roots and
+building replacement paths instead of mutating old nodes. It does not freeze
+a nested shared object with an outside writer. No single operation that
+existing rules cannot express has been identified here; the library route
+may need no language change, pending a complete dataset prototype.
 
 **The prior fuzzy-scan objection still holds.** Firn's
 [AOF rewrite investigation](https://github.com/Ming-Research/Firn-wf/blob/68b57bb705615c1ebc0ce779b8aefbc24c73cabf/research/investigations/aof-rewrite/README.md#why-firn-cannot-copy-this-directly),
@@ -195,8 +223,12 @@ base; obtain `x=2`. Reopen this route only with new machinery: per-record
 sequence numbers and idempotent after-images/tombstones can reconstruct an
 **end** cut; before-images or versions are needed for a chosen **start** cut.
 Multi-key transactions, create/delete/reinsert and expiry must share the
-protocol. Scanning alone offers neither guarantee: each map_scan step has
-its own atomic observation (SHARE-1/3, `spec/kernel-spec.md:2276`, `:2311`).
+protocol. Its expression in today's language remains a proposal pending a
+minimal protocol witness, including per-record sequence numbers and
+after-images; this record does not establish that it needs no language change.
+Scanning alone offers neither guarantee: scans in separate atomic statements
+may observe different points. Several scans inside one atomic statement
+share its point (SHARE-1/3, `spec/kernel-spec.md:2276`, `:2311`).
 Replaying an immutable closed log remains correct but retains its second
 keyspace and replay work; putting it in another process only relocates them.
 
@@ -240,11 +272,11 @@ not a claim that the existing runtime can discharge them.
 
 | Boundary and current rule | What a safe snapshot child requires |
 | --- | --- |
-| **Atomic cut and locks.** SHARE-3 gives whole statements one point (`spec/kernel-spec.md:2311`); the runtime locks by type/object/key and releases after the block (`design/compiler/waiting-contexts/state-locks.md:3`, `:7`). | Holding whole-map locks for every captured map across fork suffices for the dataset cut if they cover all transitive mutations and the child reads only frozen data without entering copied locks (`compiler/src/backend/concurrent_map.c:1363`). Unrelated drivers need not quiesce; their copied state must be unreachable. Resetting a copied lock cannot repair half-written data. Shared mappings and external writers need exclusion or coordination; allocator consistency is a separate platform assumption below. |
+| **Atomic cut and locks.** SHARE-3 gives each atomic statement one point; ordinary statements have no such atomicity (`spec/kernel-spec.md:2311`). The runtime locks by type/object/key and releases after the block (`design/compiler/waiting-contexts/state-locks.md:3`, `:7`). | Holding whole-map locks for every captured map across fork suffices for the dataset cut if they cover all transitive mutations and the child reads only frozen data without entering copied locks (`compiler/src/backend/concurrent_map.c:1363`). Leaving unrelated drivers active also requires a qualified fork-safe frontier for allocator and library state, beyond making their copied queues unreachable. Resetting a copied lock cannot repair half-written data. Shared mappings and external writers need exclusion or coordination. |
 | **Contexts/drivers.** WAIT-2/3 define calls, starts and joins (`spec/kernel-spec.md:2246`, `:2256`); contexts reside in resumable frames and driver-owned queues (`design/compiler/waiting-contexts.md:1`, `:3`, `:13`). | Create a fresh child root running only the designated job. Do not resume copied ready/parked frames or join missing sibling contexts. Parent contexts retain their existing joins. A rendezvous must not wait for clients to finish pending network operations. |
 | **Compute workers and --par.** PAR-1/2 hide worker identity and allow sequential execution (`spec/kernel-spec.md:2159`, `:2167`, `:2234`); workers steal/help (`design/compiler/parallel-lowering/parallel-runtime.md:1`, `:5`). | Drain computation writing the captured dataset and its publications. A copied started pool (`wf__par_started` and lane count, `compiler/src/backend/sched/core.c:1261`, `:1280`) has no lane threads. Publishing can call `wf__par_signal`, which deadlocks if its lane wait lock was held at fork (`:765`, `:791`, `:1328`, `compiler/src/backend/sched/prim_host.c:286`). Child --par code needs a runtime reset to “no pool”; sequential lowering is permitted, but --par on/off cannot select source safety. |
 | **Completion, timers, cancellation.** One pending record per context, per-driver deadlines and route-owned cancellation (`design/compiler/waiting-contexts.md:7`, `design/compiler/waiting-contexts/bounded-waits.md:1`, `:3`). PRE-2 defines watches and transfer races (`spec/kernel-spec.md:2558`). | Parent owns pending operations and completion buffers. Linux rings are live `MAP_SHARED` mappings, not a COW snapshot (`compiler/src/backend/completion/linux_io_uring.c:258`, `:276`, `:291`, `:311`). The child retains the calling driver's adapter (`compiler/src/backend/completion/bridge.c:348`, `:3365`); submissions or completion consumption corrupt the parent's ring (`compiler/src/backend/completion/linux_io_uring.c:625`, `:1095`). Prove no child completion path is reachable, or add `MADV_DONTFORK` to the rings: stray ring access then faults instead of corrupting the parent, which still cannot count as a safe export. On macOS the stop-signal kqueue is not inherited (`compiler/src/backend/completion/stop_signals.c:214`; [kqueue contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html)); file helper threads are absent, so helper-dependent requests can wait forever (`compiler/src/backend/completion/file_adapter.c:279`, `:592`). Child timers/watches need fresh state or IPC; copying CancelWatch cannot convey later parent firing. |
-| **Linear handles and host order.** PRE-2 opaque handles, shared factory budget and Inputs (`spec/kernel-spec.md:2554`, `:2564`, `:2962`); HOST-1 orders through overlapping state (`:2241`). | No duplicated source owners for sockets, files, listeners, factories or invocation capabilities. The Linux epoll descriptor shares the parent's open file description (`compiler/src/backend/completion/linux_io_uring.c:121`; POSIX fork above). Transfer designated output authority, or create a fresh private output; close unwanted copies through an audited child path. Shared offsets, socket shutdown and factory credits make blind duplication wrong. No copied close/finalizer pass may operate on all parent owners. |
+| **Linear handles and host order.** PRE-2 opaque handles, shared factory budget and Inputs (`spec/kernel-spec.md:2554`, `:2564`, `:2962`); HOST-1 orders through overlapping state (`:2241`). | No duplicated source owners for sockets, files, listeners, factories or invocation capabilities. The Linux epoll descriptor shares the parent's open file description (`compiler/src/backend/completion/linux_io_uring.c:121`; POSIX fork above). Transfer designated output authority, or create a fresh private output; close unwanted copies through an audited child path. Shared offsets, socket shutdown and factory credits make blind duplication wrong. Fieldless host handles have empty release: a copied handle's drop does not close it, and linear handles must be consumed (PROV-6, `spec/kernel-spec.md:775`). No copied cleanup pass may close all parent owners. |
 | **Memory and release.** Process meter (`spec/kernel-spec.md:2560`); single heap and ordinary releases (`:844`, `:855`). | Define child logical heap and snapshot accounting separately. The copied meter retains every thread's slots, including vanished threads (`compiler/src/backend/completion/bridge.c:1357`, `:1362`, `:1383`); COW physical copies are not source allocations. Do not decrement parent credits or counters on child exit. Count aggregate physical/commit pressure separately. |
 | **Lifetime and exit.** ExitStatus is reported when entry returns (`spec/kernel-spec.md:2975`); source cleanup has defined edges (`:855`). | Parent owns a job that reports creation failure, completion, I/O error or cancellation and is always reaped. A child consumes its new output/scratch owners, reports status, then uses a minimal exit path without running parent cleanup. Failed/cancelled output is unpublished; parent publishes only after successful completion. No orphan child may indefinitely retain a snapshot. |
 
@@ -310,27 +342,46 @@ for source and linked bodies, not a list of privileged host operation names
 `design/language/system-interface.md:20`). The scoped-meter record also
 identifies the generic runner body-provider choice: PRE-2 host
 modules have no source implementation records and FN-5 binds direct calls
-(`spec/kernel-spec.md:2552`, `:2133`). Its branch uses a checked Whitefoot
+(`spec/kernel-spec.md:2552`, `:1362`). Its branch uses a checked Whitefoot
 runner; that proposed host-module extension is absent from main. A native
 fork wrapper calling arbitrary waiting functions still needs an account of
 who supplies its instantiated body. A general frozen view usable
 by ordinary in-process code may avoid the restricted child altogether.
 
-**Specification impact if selected.** Preserve SCOPE-3's conditional no-UB
-promise, rather than exempting fork. Add capture/cut, frozen-view reachability,
-lifetime, resource-refusal and export-job rules; extend SHARE-1/2/3 and
+**Specification impact if a new storage domain or fork is selected.** Preserve
+SCOPE-3's conditional no-UB promise, rather than exempting fork. Add capture/cut,
+frozen-view reachability, lifetime, resource-refusal and export-job rules; extend SHARE-1/2/3 and
 PRE-1 if views of shared datasets become language-supported. PRE-2 must
 define process/job authority, handle transfer, child inputs, cancellation,
 exit and meter meaning. WAIT-1 remains the waiting boundary; WAIT-2 needs
 the child execution and progress relation. WAIT-3 can remain structured
 in-process spawn if a separate job API owns the child; a fork-spelling spawn
-would instead require changing its argument/result/join rules. PAR-1/2 need
-no permission relaxation: runtime capture must honor existing joins and may
-run child computation sequentially. CAP-1's one-concurrency-construct account
+would instead require changing its argument/result/join rules. Preserve
+PAR-1/2's logical overlap permissions, but define generation identity and
+synchronize physically shared COW publication, pins and reclamation metadata
+in the trusted base; disjoint logical writes can share a page. Capture must
+honor existing joins and may run child computation sequentially.
+CAP-1's one-concurrency-construct account
 (`spec/kernel-spec.md:2146`) must be reconciled if child execution is exposed.
 STOR-8/REF/OWN/PROV need examination for regions or shared immutable owners;
 an ordinary opaque snapshot value is not permission to duplicate arbitrary
-linear values. These are proposed rule deltas, not amendments made here.
+linear values. In particular, any new representation must account for:
+
+- **STOR-1** (`spec/kernel-spec.md:811`): type fixes storage class; a new
+  domain must account for frame, unique heap and shared storage explicitly.
+- **STOR-3** (`:855`): exactly-once compiler-derived release and SHARE-1's
+  shared-state release boundary must retain frozen generations until their last use.
+- **STOR-5** (`:882`): stored values contain no references; retained roots
+  need owned handles, not saved borrows into live storage.
+- **STOR-7** (`:841`): byte copying permits relocation of an owner, not
+  duplication of its ownership or release obligation.
+- **TYPE-8** (`:548`): references are not value types and cannot be fields,
+  generic payloads or the returned representation of a frozen view.
+- **TYPE-9** (`:556`): Box content and storage-shape/map placement rules
+  constrain where descriptors and elements can reside in a new generation.
+
+These are proposed obligations or rule deltas, not amendments made here;
+an ordinary persistent library may satisfy them without changing the rules.
 
 **Can no undefined behavior still hold?** In principle yes, with statically
 enforced capture restrictions and a runtime/OS implementation satisfying all
@@ -437,6 +488,113 @@ live-versus-retained accounting because allocation origin cannot classify a
 block that later becomes snapshot-only. This strengthens decision 4's
 recommendation to keep #322 paused, rather than selecting it before a consumer.
 
+## Contracts required before implementation
+
+Each route must specify these boundaries, not merely its capture operation.
+Here **software** means mutable-map versions, epochs or software COW;
+**library** means the opt-in persistent representation; **scan-plus-log**
+means reconciled export; **fork** means a restricted private-memory child.
+
+1. **Frozen storage ownership and reclamation — software, library,
+   scan-plus-log.** Delete or clear can free a `Box` payload still being
+   exported; duplicating its owner would free it twice. Specify who retains
+   and releases each generation through multiple readers, delete, clear and
+   swap. STOR-7 permits byte relocation, not an extra owner
+   (OWN-1/STOR-3, `spec/kernel-spec.md:654`, `:841`, `:855`). Private-address-space
+   COW fork does not share this source-storage reclamation hazard.
+2. **Transitive capture closure — all routes.** An in-process captured
+   `SharedRead<Cell>` still changes through a live `Shared<Cell>`; copying
+   only map entries also leaves in-place writes into an inner `Box` uncovered.
+   Specify admitted structures and traversal across owned values,
+   Shared/SharedRead edges, private fields and aliases, including outside
+   writers. Private COW protects owned private memory, not shared mappings or
+   external state (SHARE-1/2, `spec/kernel-spec.md:2269`, `:2295`).
+3. **One complete storage generation and cut — all routes.** Mixing a new
+   length descriptor with old elements can read uninitialized storage,
+   contrary to WIN-1 (`spec/kernel-spec.md:817`); separately capturing two
+   maps, or KeySet then Entries, can mix transaction states. Publish only a
+   complete generation covering descriptors, elements, payloads, membership,
+   tombstones and the transaction/log-suffix boundary. For scan-plus-log this
+   is the reconstructed generation. Specify frozen lookup and enumeration
+   separately; never store or return Entries references, which are scoped to
+   their atomic block (SHARE-2/REF-3, `spec/kernel-spec.md:2301`, `:2304`, `:694`).
+4. **Physical sharing under logical overlap — software, library,
+   scan-plus-log; fork for fresh runtime metadata.** Two permitted workers
+   copying the same software-COW page can lose an update; unsynchronized pins
+   can reclaim a page still being read. Preserve PAR-1/2's logical permissions,
+   define generation identity, and synchronize COW publication, pins and
+   reclamation metadata in the trusted base wherever physical sharing occurs
+   (`spec/kernel-spec.md:2150`, `:2174`). OS private-page COW has its own
+   platform contract; it does not synchronize application metadata.
+5. **Proof facts across capture — all routes.** A bound proved before a
+   waiting capture can be invalid after a concurrent shrink. Distinguish
+   call-entry state from the selected cut; range facts belong to one
+   storage-version identity (RANGE-2, `spec/kernel-spec.md:4068`). An owned
+   result carries only its declared contract facts, not arbitrary argument
+   facts (CALL-2, `:3286`); specify what the capture publishes.
+6. **Resource disposition — all job routes, especially fork.** Duplicated
+   WriteFile/TcpSend authority or factory registrations can perform effects,
+   close resources or refund credits twice. Specify each resource's destination
+   on success, refusal, child completion and cancellation; refuse host
+   resources inside a capture unless their snapshot semantics are defined.
+   Fieldless host handles have empty release, so dropping a copied handle
+   does not close it; linear owners still require consumption, and factories
+   share credits (PRE-2/PROV-6, `spec/kernel-spec.md:2554`, `:2564`, `:775`).
+7. **Fork-safe execution frontier — fork.** Another native thread can be
+   inside the allocator; child `box_new` or output can block on an inherited
+   lock, while resuming copied completion frames can reissue requests. Define
+   the frontier for allocator, workers, drivers, completion queues and library
+   state, the child's permitted native call closure, and fresh synchronization
+   and completion state. Dataset quiescence and `pure`/`waits`/`no_heap` prove
+   none of this (runtime hazards and platform assumptions above).
+8. **Cancellation, release and bounded cleanup — all routes.** Releasing a
+   generation while `append_once` borrows its bytes is use-after-free;
+   retaining it during stalled file I/O has no current bounded-cleanup promise.
+   Starting a SnapshotJob must transfer the view, output and scratch together
+   or return all moved resources on refusal. Retain borrowed storage until
+   confirmed stop, distinct from a cancel request. PRE-2 gives file calls no
+   deadline/cancel bound and firing does not mean cleanup completed
+   (`spec/kernel-spec.md:2558`–`:2559`, `:2824`). Specify
+   how cancellation reaches a child: private-memory COW does not deliver a
+   later parent firing to its copied watch.
+9. **Library expressibility boundary — library, before a new language
+   domain.** Treating every retained `Box` as a duplicated owner would force
+   an unnecessary language change: the uncompiled witness above retains one
+   owner via SHARE-1. Identify the smallest operation the existing rules
+   cannot express before proposing a rule delta. None is identified here;
+   complete persistent updates, capture and enumeration remain to be prototyped.
+
+## Questions the design must answer
+
+“Settled” below means established by the cited rules or deduction, not an
+approved mechanism. The implementation contracts remain open.
+
+1. **Which abstraction, and smallest spec change? — decision 2.** Automatic
+   freezing, a persistent library and a new storage domain are distinct.
+   Settled: immutable shared ownership is expressible. Open: the full library
+   prototype and any minimal operation requiring a rule change.
+2. **Which types and aliases belong to the dataset? — decision 2.** Open:
+   admitted types, nested Shared/SharedRead edges, private fields, host handles
+   and outside writers. Settled: a read handle alone freezes no outside writer.
+3. **Who retains and frees each generation? — decisions 1/2.** Open:
+   multiple readers, delete, clear, swap, refusal and cancellation. Settled:
+   ordinary ownership/release rules do not permit duplicated unique owners.
+4. **What is captured atomically? — decisions 2/3.** Required: generation,
+   transaction sequence and log-suffix boundary together, with frozen
+   enumeration independent of live KeySet/Entries. Open: each route's protocol;
+   SHARE-3 settles only the existing atomic statement's point.
+5. **Which proof facts cross capture? — decision 2.** Settled: facts denote
+   storage versions and owned results carry declared facts. Open: capture's
+   postconditions for its selected cut, distinct from call entry.
+6. **Which resource and progress commitments are added? — decisions 1/3/4.**
+   Settled: WAIT-2 gives no wall-clock bound, PRE-2 no bounded file cancellation
+   or total-footprint reserve. Open: resource transfer, refusal, confirmed stop,
+   cleanup, capture latency and the accounting consumer.
+7. **Which qualified fork contract on each supported OS? — decisions 2/3.**
+   Open: native call closure, safe frontier, fresh runtime state and cancellation
+   delivery. Settled: current runtime source supplies no such fork integration;
+   neither a Linux result nor dataset quiescence qualifies another platform.
+
 ## Decisions for the owner
 
 These four proposals are in dependency order; none is assumed decided.
@@ -458,47 +616,57 @@ larger failure model. A can admit C as an explicit deployment policy later.
 **Confidence 5/5** in the impossibility boundary; **3/5** in recommending A.
 Mandatory checkpoint deadlines or a firn durability requirement could favor B/C.
 
-### 2. Is the public abstraction a frozen dataset or a general fork?
+### 2. How should a frozen dataset be represented and exposed?
 
 **Background.** The named consumers need old data, not duplicated sockets,
-drivers or continuations. SharedRead and batched scan do not provide it today.
+drivers or continuations. SharedRead does not automatically freeze an existing
+mutable map, and separate batched scans need reconciliation. SHARE-1 does
+permit immutable shared nodes without copying their unique owners; the full
+persistent dataset library has not been prototyped.
 
-**Options.** **A, recommended:** an opt-in frozen dataset domain and owned
-export job; define transitive capture and one multi-object cut. It needs a
-new ownership/representation contract but confines obligations to participants.
-**B:** restricted fork running one read-only function with designated outputs;
-avoids a full per-entry version design on Unix but requires the child safety
-closure above and another route elsewhere. **C:** general fork returning into
-both continuations; largest expressiveness, but broad changes to ownership,
-contexts, handles and platform guarantees, with no independent consumer here.
-A permits B as a backend without making fork the source abstraction.
+**Options.** **A, recommended:** an opt-in persistent dataset library under
+existing ownership rules, with retained immutable roots and replacement paths.
+It confines costs to users and may need no rule change; transitive closure,
+publication, enumeration and reclamation still need a prototype. **B:** a new
+language storage domain for frozen data; can support capture beyond the
+library's reach, but adds storage, ownership and proof rules. Use it as the
+fallback only when a prototype identifies an operation existing rules cannot
+express. **C:** restricted fork running one read-only export function with
+designated outputs; avoids per-entry versions on qualified Unix systems but
+needs the complete child execution contract and another route elsewhere.
+Keep it as a possible backend behind the dataset abstraction. **D:** general
+fork returning into both continuations; broader expressiveness at the cost
+of new context, handle and platform contracts, with no independent consumer
+here. Keep fork out of the source abstraction for this dataset task.
 
-**Confidence 4/5.** The current contracts establish the missing snapshot and
-fork hazards; a real consumer needing process continuation could reopen C.
+**Confidence 3/5.** The node ownership witness supports A, not a complete
+dataset. A minimal unexpressible update/capture/enumeration operation could
+favor B; a consumer requiring process continuation could reopen D.
 
 ### 3. Which mechanisms deserve the first comparative implementation?
 
 **Background.** No Whitefoot measurement ranks software versions, a safe
 fork and a reconciled scan-plus-log export. Redis's result establishes
 motivation, not a portable winner. The firn-maxmem-scope ruling names the
-scan-plus-log route explicitly; it is correct only with the per-record
-sequence numbers and after-images described under routes.
+scan-plus-log route explicitly; it still needs a language protocol witness for
+per-record sequence numbers, after-images/tombstones and transaction boundaries.
 
 **Options.** **A, recommended:** implement the three candidates of the fixed
-comparison, an opt-in versioned dataset, restricted Unix fork and a
+comparison, the persistent dataset library, qualified restricted Unix fork and a
 reconciled batched export, against one cut/resource contract and one trace
-set; the first and third are the Windows/MMU-less paths. Cost: three bounded
-research implementations, no commitment yet to change every
-ConcurrentHashMap. **B:** start with the reconciled batched export alone,
-since it needs no new language representation and the ruling names it; the
-risk is a write-heavy workload whose log outruns the scan, which only the
-comparison would expose. **C:** fork first and defer other hosts; quickest
-access to OS COW, but leaves platform coverage and post-fork safety
-unresolved and does not by itself meet the footprint ruling. Full copy and
+set, after their contract and expressibility witnesses. The first and third
+are prospective Windows/MMU-less paths. Cost: three bounded research
+implementations, no commitment yet to change every ConcurrentHashMap.
+**B:** start with the reconciled batched export alone,
+since the ruling names it; whether it needs a language change remains open,
+as does a write-heavy workload whose log outruns the scan. **C:** fork first
+and defer other hosts; direct access to OS COW, but leaves platform coverage
+and post-fork safety unresolved and does not by itself meet the footprint ruling. Full copy and
 replay remain controls, not hidden fallbacks.
 
-**Confidence 3/5.** Workload dirtiness, value representation, capture pause,
-native-call safety and measured inactive cost can change the ranking.
+**Confidence 3/5.** An unexpressible library/protocol operation, an unsafe
+native call closure, or measured dirtiness, capture pause and inactive cost
+could overturn the comparison's feasibility or ranking.
 
 ### 4. What happens to scoped metering (#322)?
 
