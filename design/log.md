@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Header-only construction of constant-capacity windows
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the request "approve the new storage-representation decision: when constructing a value containing a constant-capacity window, initialize only the header and value-bearing fields and do not zero the element slots past len?" (translated).
+
+Summary: Constructing a value with constant-capacity Slots or Ring storage writes only headers and value-bearing fields, because WIN-1 makes slots past `len` unobservable and Snowghost's profile showed the whole-value zero fill of a short-lived 64-frame window as a large share of style computation; inactive enum payload zeroing and complete Array initialization are kept, and zero-filling the whole value was the refused alternative.
+
 ## 2026-10-09 Segment and page selectors as direct bases
 
 Nodes: language/ownership/range-reference, language/checks-and-proofs/proof-identity
