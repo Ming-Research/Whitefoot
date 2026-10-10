@@ -142,12 +142,14 @@ to release wf-fe5589ec5f45 (this branch's base); turns: the same tree pinned
 to experiment release wf-exp-5f6dca744b8f (this branch at 5f6dca744); a
 second control build as the noise control. Both pinned trees pass firn's
 gate. Requests per second and p50 / p99 in ms, pass 1 / pass 2 (the client
-reports no maximum):
+reports no maximum). The Redis line is the host's Ubuntu 26.04 package,
+which the run's tool check reports as `Redis server v=8.0.5`, not firn's
+reference 7.0.15:
 
 | Line | Connections | Rate | p50 | p99 |
 |---|---:|---|---|---|
-| Redis 7.0.15 | 8 | 228,770 / 228,835 | 0.029 / 0.029 | 0.059 / 0.058 |
-| Redis 7.0.15 | 50 | 231,140 / 231,900 | 0.202 / 0.201 | 0.410 / 0.408 |
+| Redis 8.0.5 | 8 | 228,770 / 228,835 | 0.029 / 0.029 | 0.059 / 0.058 |
+| Redis 8.0.5 | 50 | 231,140 / 231,900 | 0.202 / 0.201 | 0.410 / 0.408 |
 | control | 8 | 159,068 / 159,481 | 0.018 / 0.018 | 0.793 / 0.742 |
 | control | 50 | 211,012 / 209,346 | 0.087 / 0.071 | 1.500 / 1.628 |
 | control twin | 8 | 159,278 / 159,617 | 0.018 / 0.018 | 0.724 / 0.699 |
