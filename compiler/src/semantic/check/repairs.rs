@@ -44,6 +44,14 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [OP-16] name the first excluded part, without suggesting that copy alone
+/// grants equality or that comparing storage bytes implements value equality.
+pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {
+    format!(
+        "{part} has non-equality type `{ty}`; replace this comparison with an explicit comparison of the intended observable values using operations admitted for their types, or, if the data model permits it, change this part to an equality type [OP-16]"
+    )
+}
+
 /// [FN-6] repair the changed argument under the callee's ordinary kind and
 /// bound requirements, or move its construction outside the cycle.
 pub(super) const fn instantiation_cycle_repair() -> &'static str {

@@ -755,12 +755,14 @@ impl<'unit> TypeContext<'unit> {
             .collect::<Vec<_>>();
         let elements = &self.elements;
         let const_parameter_types = self.const_generic_types().collect();
+        let copy_type_parameters = self.copy_type_parameters();
         let context = EntailmentContext {
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,
             constant_ids: &self.constants,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &copy_type_parameters,
             nominals: &self.nominals,
             elements,
             contract_queries: &[],

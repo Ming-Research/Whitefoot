@@ -147,7 +147,7 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. }
+        | CheckedExpression::ValueEquality { arguments, .. }
         | CheckedExpression::ConstructStruct {
             fields: arguments, ..
         }

@@ -911,7 +911,7 @@ pub enum IrOperation {
         operation: IrBooleanOperation,
         arguments: Vec<IrValueId>,
     },
-    EnumEquality {
+    ValueEquality {
         equal: bool,
         operand_type: IrType,
         arguments: [IrValueId; 2],

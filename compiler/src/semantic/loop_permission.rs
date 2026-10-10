@@ -2340,7 +2340,7 @@ impl<'check, 'run> Survey<'check, 'run> {
             | CheckedExpression::NumericConversion { .. }
             | CheckedExpression::Reinterpret { .. }
             | CheckedExpression::BooleanOperation { .. }
-            | CheckedExpression::EnumEquality { .. }
+            | CheckedExpression::ValueEquality { .. }
             | CheckedExpression::ConstructStruct { .. }
             | CheckedExpression::ConstructEnum { .. }
             // Naming a path reads no element content [REF-1, REF-4]; the

@@ -1,0 +1,14 @@
+struct Entry {
+  first: Bool;
+  second: Bool;
+}
+
+fn inspect(rows: &[Entry]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].first != rows^[k].second;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

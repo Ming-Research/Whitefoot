@@ -14,6 +14,12 @@ use crate::{DeclarationId, NodePath};
 
 use super::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType, IntegerType};
 
+/// [RANGE-3] the shared structural allowance for instances of one fact.
+pub(crate) const MAX_RANGE_INSTANCES: usize = 256;
+
+/// [RANGE-3] the structural allowance for atoms after definitions are added.
+pub(crate) const MAX_RANGE_ATOMS: usize = 4096;
+
 /// What a range term's place or value starts from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeRoot {
@@ -32,6 +38,9 @@ pub(crate) enum CheckedRangeRoot {
 pub(crate) struct CheckedRangePlace {
     pub(crate) root: CheckedRangeRoot,
     pub(crate) path: Vec<CheckedRangeStep>,
+    /// A concrete fixed Array's length is its type's N [MSR-1], including
+    /// when a user function publishes no explicit length postcondition.
+    pub(crate) fixed_length: Option<u64>,
 }
 
 /// One step below a range place's root.
@@ -76,12 +85,26 @@ pub(crate) enum CheckedRangeShape {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeTerm {
     Constant(i128),
+    /// A symbolic const generic retains the supplied declaration's identity
+    /// [MSR-6]; concrete substitutions form `Constant` instead.
+    ConstGeneric {
+        declaration: DeclarationId,
+        ty: IntegerType,
+    },
     /// The clause's bound variable at this position.
     Bound(u32),
     /// One of a cross-iteration certificate's two iterations [RANGE-5].
     Iteration(u32),
     /// The current value of an own integer binding.
     Value(CheckedRangeRoot),
+    /// Compiler-formed integer projection of a copy aggregate value [RANGE-1].
+    /// Array indices here are in bounds by construction from the concrete type.
+    ValueProjection {
+        root: CheckedRangeRoot,
+        indices: Vec<CheckedRangeTerm>,
+        projection: Vec<CheckedRangeProjection>,
+        element: IntegerType,
+    },
     /// One measure of a place: `p.len` or `p.cap`. The shape is the measured
     /// value's, a `Segments` counting its segments.
     Measure {
@@ -101,6 +124,12 @@ pub(crate) enum CheckedRangeTerm {
         indices: Vec<CheckedRangeTerm>,
         projection: Vec<CheckedRangeProjection>,
         element: IntegerType,
+        /// Tuple positions introduced by expanding a concrete fixed Array;
+        /// their bounds follow from its type, not a storage measure.
+        implicit_indices: Vec<u32>,
+        /// Payload steps from this offset were introduced by aggregate
+        /// equality and guard their own conclusion, not the whole clause.
+        guarded_from: Option<usize>,
     },
     /// `constant + sum(coefficient * term)`.
     Sum {
@@ -127,6 +156,9 @@ pub(crate) struct CheckedRangeRelation {
     pub(crate) left: CheckedRangeTerm,
     pub(crate) comparison: RangeComparison,
     pub(crate) right: CheckedRangeTerm,
+    /// One relation emitted by aggregate expansion, counted against the
+    /// written fact's shared structural allowance.
+    pub(crate) projected: bool,
 }
 
 /// One bound variable's half-open range.
@@ -263,7 +295,12 @@ impl CheckedRangeTerm {
     /// Every place this term reads, its measures included.
     pub(crate) fn collect_places(&self, out: &mut Vec<CheckedRangePlace>) {
         match self {
-            Self::Constant(_) | Self::Bound(_) | Self::Iteration(_) | Self::Value(_) => {}
+            Self::Constant(_)
+            | Self::ConstGeneric { .. }
+            | Self::Bound(_)
+            | Self::Iteration(_)
+            | Self::Value(_)
+            | Self::ValueProjection { .. } => {}
             Self::Measure { place, .. } => out.push(place.clone()),
             Self::SegmentLength { place, segment } => {
                 out.push(place.clone());
@@ -286,8 +323,11 @@ impl CheckedRangeTerm {
     /// Every root whose current value this term reads.
     pub(crate) fn collect_values(&self, out: &mut Vec<CheckedRangeRoot>) {
         match self {
-            Self::Constant(_) | Self::Bound(_) | Self::Iteration(_) => {}
-            Self::Value(binding) => out.push(*binding),
+            Self::Constant(_) | Self::ConstGeneric { .. } | Self::Bound(_) | Self::Iteration(_) => {
+            }
+            Self::Value(binding) | Self::ValueProjection { root: binding, .. } => {
+                out.push(*binding)
+            }
             Self::Measure { .. } => {}
             Self::SegmentLength { segment, .. } => segment.collect_values(out),
             Self::Read { indices, .. } => {
@@ -333,7 +373,8 @@ impl CheckedRangeClause {
     pub(crate) fn with_subject(&self, root: CheckedRangeRoot, reference: bool) -> Self {
         fn term(value: &mut CheckedRangeTerm, root: CheckedRangeRoot, reference: bool) {
             match value {
-                CheckedRangeTerm::Value(subject) => *subject = root,
+                CheckedRangeTerm::Value(subject)
+                | CheckedRangeTerm::ValueProjection { root: subject, .. } => *subject = root,
                 CheckedRangeTerm::Measure { place, .. }
                 | CheckedRangeTerm::SegmentLength { place, .. }
                 | CheckedRangeTerm::Read { place, .. } => {

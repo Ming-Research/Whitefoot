@@ -631,7 +631,7 @@ impl<'a> SnapshotFacts<'a> {
                 | IrOperation::NumericConversion { .. }
                 | IrOperation::Reinterpret { .. }
                 | IrOperation::Boolean { .. }
-                | IrOperation::EnumEquality { .. }
+                | IrOperation::ValueEquality { .. }
                 | IrOperation::ProjectAddress { .. }
                 | IrOperation::Load { .. }
                 | IrOperation::ProjectStruct {

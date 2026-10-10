@@ -1,0 +1,14 @@
+opaque struct EqEmpty {
+}
+
+fn same(left: EqEmpty, right: EqEmpty) -> result: Bool pure {
+  return left == right;
+}
+
+fn different(left: EqEmpty, right: EqEmpty) -> result: Bool pure {
+  return left != right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

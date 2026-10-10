@@ -12,6 +12,28 @@ Nodes: compiler/parallel-lowering
 Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose A on the card "when a statement group meets an unrelated non-call statement, should the calls before and after it stay in one group?" (translated), whose option A read "cross the unrelated non-call statement: change as in PR #329, and change the design-tree decision, recording 'end the group at every non-call' as a rejected alternative because PAR-1 already proves the whole run pairwise independent" (translated).
 
 Summary: Lowering kept a statement group's calls only up to the first non-call member, so two independent calls around an ordinary statement never overlapped although PAR-1 proves the whole run independent. The non-call statement now stays on the owning thread at its source position inside the group's window, checked against the group's calls with the release-and-borrow boundary, and a `set` that displaces a releasing owner counts as a release; ending the group at every non-call is recorded as rejected.
+## 2026-10-10 Statement groups end before an implicit context await
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item gran-p0-await-window to the request "approve #331's change to the design tree's parallel-lowering: a statement group also ends before a statement preceded by an implicit context await (reason: the await may suspend and resume on another driver, while the group's hand-outs and join belong to the original thread's task queue). Recommended: approve; it is required to fix a P0 defect on main, and waiting-contexts already assumes no suspension between hand-out and join" (translated).
+
+Summary: Lowering inserts the await of a bound context's result before the statement that reads it without a new IR block, so a compute group could hand out a call, suspend at that await, resume on another driver and then join and release on the first thread's compute lane, whose state only its owner may write. A site preceded by an implicit await now ends the current group before it, restoring the waiting-contexts premise that no suspension falls between a compute offer and its join.
+
+## 2026-10-10 Value equality
+
+Nodes: language/data-model/tag-only-equality, language/data-model/value-equality, language/checks-and-proofs/range-facts, compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, after investigation #326 the owner chose option A on each of six cards: "which types can == compare, decided by what rule?" (structure decides, automatically); "can a struct with a float field use ==, and how do floats count in value equality?" (floats and types with a float part are not comparable; floats keep feq); "should eeq/ene merge into ==/!= and retire?" (merge and retire); "how does generic code use ==: is an eq bound needed?" (keep the bound, meaning copy with no float part, and admit opaque copy structs); "how do proofs use value equality: decompose by definition or an opaque predicate?" (decompose by definition); and "what happens to #323?" (rewrite it in place into the full implementation) (all translated).
+
+Summary: tag-only-equality is retired into the new value-equality node, which records `==`/`!=` as one value equality over structurally decided equality types, opaque copy structs included; floats outside it; `eeq`/`ene` retired; the `Eq` bound for generic code; and proofs reading equality by the same definition, keeping the old node's rejected alternatives and refusing the range-clause-only expansion this branch first proposed. range-facts and range-judgment cite value equality for generic and non-generic range clauses and keep a by-value parameter's entry snapshot for postconditions; range-judgment adds the solver's single probe per run of rules sharing one guard list. Grounds are in [the value-equality investigation](../research/investigations/value-equality/DESIGN.md).
+## 2026-10-10 Frozen dataset library and service-first snapshot retention
+
+Nodes: language/data-model/frozen-datasets, language/data-model/frozen-datasets/retention-budget
+
+Owner-approved: On the shared status board on 2026-10-10, the owner answered "choose A" (translated from Chinese) on each of cards firn-q-snap-budget and firn-q-snap-form.
+
+Summary: Frozen datasets begin as an opt-in persistent library under existing ownership rules, with a new storage domain considered only after a prototype identifies an inexpressible operation and restricted fork retained as a possible backend. Snapshot reserve exhaustion aborts the attempt, preserves the previous authoritative base and log, and requires bounded cleanup and consumer-set pause/latency targets because service availability takes priority over persistence progress.
 
 ## 2026-10-10 Cite status board items instead of docs/todo.md
 
