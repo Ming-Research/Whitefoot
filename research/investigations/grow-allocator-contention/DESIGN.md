@@ -55,4 +55,29 @@ If both values of `C` pass, the smaller one is preferred, because it keeps
 
 ## Results
 
-Pending.
+### Halo, single thread (i9-14900K)
+
+Halo-wf run 38018817431 (2026-10-10, branch `claude/grow-copy-bench` at
+Halo-wf 5bb82f9 plus a temporary workflow): one Halo source built by main's
+`wf-87fa2524f4da`, its twin, `wf-exp-fe2f48fbd8cc` (1 KiB) and
+`wf-exp-4d073028396d` (128 KiB), full LTO, compared with Halo's
+`research/experiments/halo-bench/run.py` at 1, 3 and 6 interleaved pairs.
+Ratios are experiment time over control time at 6 pairs:
+
+| kernel | twin | 1 KiB | 128 KiB |
+|---|---:|---:|---:|
+| integer-table | 0.997 | 1.004 | 1.006 |
+| sort | 0.992 | 1.001 | 0.995 |
+| fib | 1.002 | 0.993 | 0.983 |
+| loop | 1.002 | 1.001 | 1.002 |
+| string-key | 1.000 | 1.002 | 0.990 |
+| concat | 1.002 | 1.003 | 1.001 |
+| binary-trees | 0.996 | 0.993 | 0.998 |
+
+The twin ranged 0.997 to 1.013 on integer-table and 0.992 to 0.998 on sort
+across the three pair counts. Neither value of `C` makes either kernel slower
+beyond that spread, so the Halo criterion passes for both.
+
+### Snowghost, four workers
+
+Pending (Snowghost-wf's measurement).
