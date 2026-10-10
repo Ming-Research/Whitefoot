@@ -549,10 +549,12 @@ fn build_linked_executable_inner(
     let needs_heap = llvm.contains("@wf__heap_take(")
         || llvm.contains("@wf__heap_give(")
         || llvm.contains("@wf__heap_retake(")
+        || llvm.contains("@wf__empty_window")
         || host.is_some_and(|source| {
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")
                 || source.contains("wf__heap_retake(")
+                || source.contains("wf__empty_window")
         });
     if defines.is_empty() && library_defines.is_empty() {
         // These inputs and options are immutable for this test executable.

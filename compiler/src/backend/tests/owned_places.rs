@@ -1598,6 +1598,9 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
 #include <stdlib.h>
 #include <string.h>
 
+/* STOR-1: capacity-zero runtime windows allocate nothing and are never freed. */
+extern const unsigned char wf__empty_window[64];
+
 static void *held[{slots}];
 static size_t requested[{slots}];
 static unsigned attempts;
@@ -1630,6 +1633,7 @@ void *wf_test_allocate(size_t size) {{
 }}
 
 void wf_test_release(void *allocation, uint64_t bytes) {{
+    if (allocation == (const void *)&wf__empty_window) return;
     lock_observer();
     for (unsigned id = 1; id <= attempts && id <= {limit}; ++id) {{
         if (allocation != NULL && held[id] == allocation) {{
@@ -1649,6 +1653,12 @@ void wf_test_release(void *allocation, uint64_t bytes) {{
    A-then-F events the former malloc, copy and free produced, and a refusal of
    the request returns NULL with the old block still held. */
 void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
+    if (allocation == (const void *)&wf__empty_window) {{
+        if (size <= old_bytes) return allocation;
+        void *fresh = wf_test_allocate(size);
+        if (fresh != NULL) memcpy(fresh, allocation, (size_t)old_bytes);
+        return fresh;
+    }}
     if (allocation == NULL) return wf_test_allocate(size);
     lock_observer();
     unsigned id = ++attempts;
