@@ -556,3 +556,36 @@ once the starter's driver has resumed the child; the deadline itself must be
 serviced by someone else, which needs the ownership protocol of section 2
 (try-borrow for D, reassignment for A). The change is reverted: it added
 wakes with no measured benefit.
+
+## Result: idle drivers borrowing a computing driver's due timers (D)
+
+Change: c5d8308d0 (service-ownership token: SERVICE while a driver services
+its own state, OUTSIDE while its thread runs a context; an idle driver may
+borrow an OUTSIDE driver for one bounded pass that completes due sleeps and
+detaches already-published terminal records; idle parking capped at 1 ms
+with several drivers) and 89c928258 (notify a driver started before the
+count reached two, so it cannot park unbounded; per-driver counters printed
+with `WF_SCHED_REPORT=2`). Witness run
+[compute-bench 38045645745](https://github.com/Ming-Research/Whitefoot/actions/runs/38045645745)
+(experiment `ctx-starvation`, hosted ubuntu-24.04, 455,702,991 iterations,
+about 2.0 s of computation, three passes per arm):
+
+| Arm | Drivers | CPUs | 100 ms timer fired at | Counters (driver 1 unless noted) |
+|---|---|---|---|---|
+| a | 1 | 1 | 1.988 to 1.994 s | no borrower exists |
+| b | 2 | 1 | 0.1029 s | 3,779 borrows, 1 borrowed sleep |
+| c (no computation) | 1 | 1 | 0.1027 to 0.1028 s | none |
+| d | 2 | 2 | 0.1025 to 0.1028 s | 3,729 borrows, 1 borrowed sleep; driver 0 stole 1 context |
+| e (no computation) | 2 | 2 | 0.1031 to 0.1035 s | none |
+
+The timer is serviced by a borrow in both two-driver arms (`borrowed_sleeps=1`),
+so the result is attributed to D, not to the computation being stolen; with
+one CPU the kernel time-slices the borrower against the computing thread and
+the timer still fires within 1 ms of its deadline. The earlier 1.99 s in arm
+b (c5d8308d0 alone) was the startup race 89c928258 fixes. The cost side is
+visible in the counters: an idle driver capped at 1 ms parks borrows about
+1,900 times a second while another computes; whether that and the per-resume
+token operations stay inside the owner's cost criterion (3 percent
+throughput, 5 percent p99 on ordinary I/O) needs the 14900K comparison. One
+driver on one CPU (arm a) still waits the whole computation, which is the
+whole-role reassignment of step 2.
