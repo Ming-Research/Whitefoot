@@ -4,8 +4,8 @@ Status: NON-AUTHORITATIVE DETAIL.
 
 This file preserves candidate mechanisms, unresolved research questions, and
 possible experiments. Follow-up work found during design or implementation,
-including validation of unverified improvement opportunities, belongs in
-[todo](todo.md). A selected investigation belongs in
+including validation of unverified improvement opportunities, belongs on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip). A selected investigation belongs in
 `research/investigations/`, and settled choices in
 `design/`, under the reading and workflow rules in [AGENTS.md](../AGENTS.md).
 Current capabilities are what the conformance report states. An idea here
@@ -120,7 +120,8 @@ Compare those candidates with static and captured-extent estimates, including
 profiling cost, unseen inputs and wall/CPU tradeoffs. Profiles select among
 already legal schedules; they cannot authorize a source operation or replace
 a required proof. Offline PGO and online adaptation remain alternatives for
-the dedicated study tracked in [TODO](todo.md), not selected mechanisms.
+the dedicated study tracked in [status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) item
+`coord-wfbl-03-27`, not selected mechanisms.
 
 ### A proof-gap performance coach
 

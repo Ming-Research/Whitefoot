@@ -420,8 +420,8 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// as it has helpers and fail here too (`WAITS.md`, the readiness route).
 /// Windows has no readiness wait, so there a context's socket wait without
 /// the completion port is exactly such a helper wait, and only the port's
-/// route runs (`docs/todo.md`, "Only Linux with a ring runs several
-/// drivers").
+/// route runs (status board item coord-wfbl-03-41, "only Linux with a ring
+/// runs several drivers").
 /// [PRE-2] a deadline ends an accept no client answers and a receive the peer
 /// never feeds, each only once the clock has reached it and with nothing
 /// transferred: a byte sent afterwards arrives whole, and a sleeping context
