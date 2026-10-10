@@ -25,7 +25,11 @@ int wf__par_pool_active(void);
  * accessor returns the same word for native probes. World selection
  * (wf__par_pool_active) starts the pool and registers the word. */
 #if defined(WF_PAR_DEMAND)
+#if defined(_WIN32)
 extern _Thread_local uint64_t wf__par_demand_word;
+#else
+extern __attribute__((tls_model("initial-exec"))) _Thread_local uint64_t wf__par_demand_word;
+#endif
 #endif
 uint64_t wf__par_demand_requested(void);
 uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);

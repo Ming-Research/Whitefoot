@@ -335,7 +335,11 @@ pub(super) fn demand_runtime(windows: bool) -> Result<Module, BackendFailure> {
     if windows {
         module.declare_global(DEMAND_WORD_SYMBOL, "thread_local global", "i64", 8);
     } else {
-        module.weak_global(DEMAND_WORD_SYMBOL, "thread_local global", "i64", "0", 8);
+        // Initial-exec: every image is a statically linked executable, so the
+        // word is reached at a fixed offset from the thread pointer. The
+        // default general-dynamic model in a position-independent image made
+        // each poll a call of __tls_get_addr (the sixth rerun's records.o.s).
+        module.weak_global(DEMAND_WORD_SYMBOL, "thread_local(initialexec) global", "i64", "0", 8);
     }
     module.text("\n");
     Ok(module)

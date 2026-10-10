@@ -209,7 +209,7 @@ fn demand_polls_a_thread_local_word_and_never_calls_the_runtime_accessor() {
     ] {
         let module = emit_lowered(source, DEMAND);
         assert!(
-            module.contains("@wf__par_demand_word = weak thread_local global i64 0, align 8"),
+            module.contains("@wf__par_demand_word = weak thread_local(initialexec) global i64 0, align 8"),
             "{module}"
         );
         assert!(module.contains(POLL), "{module}");

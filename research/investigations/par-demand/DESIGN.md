@@ -895,3 +895,28 @@ work: `large_helper` 0.525 wall at 2.10 and 4.19 times the sequential CPU,
 Pinning did not bring the twin spreads under 2 percent: most cells still range
 from 3 to 36 percent, so most cells decide nothing and the noise measure
 goes back to the owner, as stated before the run.
+
+## The poll was still a call; the seventh change, fixed before it measures
+
+Inspection of the sixth rerun's `demand/records.o.s` shows that the poll the
+fifth change meant as one thread-local load compiled to the general-dynamic
+TLS sequence, `leaq wf__par_demand_word@TLSGD(%rip)` and `callq
+__tls_get_addr@PLT`: the image is position-independent and the word a weak
+external, so LLVM assumed it might live in a shared library. So the fifth and
+sixth reruns still polled through a call, and `large_helper`'s recovery in the
+sixth came from the wider interval, not from the cheaper poll. `records`'s
+chunk is instruction for instruction the same in the second and sixth
+reruns' images and its driver differs only in the poll, while its 1.07
+held at both intervals; the cause is not settled, and `records` is the kernel
+recorded as sensitive to code placement on some hosts.
+
+Change: the module declares the word `thread_local(initialexec)` and the
+runtime defines and declares it with `tls_model("initial-exec")` (not on
+Windows), valid because every image is a statically linked executable. A
+clang check of the same IR at `-O2 -fPIC` gives `movq
+wf__par_demand_word@GOTTPOFF(%rip), %rax; movq %fs:(%rax), %rax` with no call,
+against the `__tls_get_addr` call without the model.
+
+Prediction at four and eight workers: `large_helper`, `small_split`,
+`recursion`, `hot_helper`, `spine` as in the sixth rerun; `records` lower than
+1.07 if the poll's call contributed to it, unchanged if its cost is placement.

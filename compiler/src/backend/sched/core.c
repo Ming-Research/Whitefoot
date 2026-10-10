@@ -362,7 +362,11 @@ static unsigned wf__par_demand_initialized;
  * replaced by this one at link; the lane layout stays private. A thief writes
  * it through the owner's registered address, which is valid while the owner
  * thread lives: every lane owner here lives as long as the pool. */
+#if defined(_WIN32)
 _Thread_local uint64_t wf__par_demand_word;
+#else
+__attribute__((tls_model("initial-exec"))) _Thread_local uint64_t wf__par_demand_word;
+#endif
 static void wf__par_enable_demand(void) {
     atomic_store_explicit(&wf__par_demand_posts, WF_PAR_DEMAND_MODE() ? wf__sched_demand_requests() : 0, memory_order_relaxed);
 }
