@@ -1,0 +1,19 @@
+fn exchange<T: drop>(target: &T, incoming: &T) -> result: unit writes(target), writes(incoming) {
+  doc "FN-2: T takes the exchange place through its use by swap in this body.";
+  swap(first: target, second: incoming);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: instantiate the exchanging parameter at the owning Box type and exchange complete allocations.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  exchange::<Box<Slots<u64>>>(target: &small, incoming: &large);
+  if small.inner.cap != 64_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if large.inner.cap != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

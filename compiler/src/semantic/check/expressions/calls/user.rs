@@ -465,6 +465,33 @@ impl<'unit> Checker<'_, 'unit> {
             effects = effects.union(argument.effects);
             arguments.push(argument.expression);
         }
+        // [TYPE-9, FN-2] `swap`'s operand-supplied type parameter takes
+        // the exchange place even though its value parameters are references.
+        // In a user generic body, retain the caller's substitution so a
+        // refused instance cites the written type argument that supplied it.
+        // Judge placement before OP-11's copy refusal at the same call.
+        if Checker::is_swap_row(signature)
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?
+        {
+            if function.substitution.is_symbolic()
+                && let CheckedType::Generic(parameter) = signature.parameters[0].ty
+            {
+                self.types
+                    .behavior
+                    .exchange_parameters
+                    .insert(node, parameter);
+            }
+            self.types.reject_placement(
+                node,
+                signature.parameters[0].ty,
+                super::super::super::types::Placement::Exchange,
+                &function.substitution,
+            )?;
+        }
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
         self.types

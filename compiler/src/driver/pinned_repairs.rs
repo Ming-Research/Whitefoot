@@ -51,6 +51,34 @@ struct RepairPair {
 
 const REPAIRS: &[RepairPair] = &[
     RepairPair {
+        name: "type9-neg-runtime-slots-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
+        )],
+    },
+    RepairPair {
+        name: "type9-neg-generic-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-generic-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: this type argument would place `Slots<u64>` as the exchange of a `swap`; swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-generic-runtime-box-swap.wf"
+        )],
+    },
+    RepairPair {
         name: "const2-neg-whole-nocopy-struct.wf",
         rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
         rule: "OWN-1",

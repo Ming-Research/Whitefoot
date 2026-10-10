@@ -79,6 +79,7 @@ pub(super) enum Placement {
     Reference,
     BoxContent,
     SharedState,
+    Exchange,
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -1595,7 +1596,11 @@ impl<'unit> TypeContext<'unit> {
             );
             let map = matches!(ty, CheckedType::Nominal(id) if matches!(cx.nominals[id.0 as usize].kind, CheckedNominalKind::Shared { shape: super::super::model::CheckedShared::Map { .. }, .. }));
             if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
-                || map && !matches!(position, Placement::SharedState | Placement::Reference)
+                || map
+                    && !matches!(
+                        position,
+                        Placement::SharedState | Placement::Reference | Placement::Exchange
+                    )
             {
                 return Some((ty, position));
             }
@@ -1641,24 +1646,32 @@ impl<'unit> TypeContext<'unit> {
             return Ok(());
         }
         let owner = self.declarations.tree.path(node)?.components();
-        let parameter_uses = self
-            .declarations
-            .resolved
-            .lexical_uses()
-            .iter()
-            .filter_map(|usage| {
-                if !usage.origin().node().components().starts_with(owner) {
-                    return None;
-                }
-                match usage.target() {
-                    ResolvedTarget::Source {
-                        declaration,
-                        class: DeclarationClass::GenericType,
-                    } => Some(declaration),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
+        let parameter_uses = if matches!(position, Placement::Exchange) {
+            self.behavior
+                .exchange_parameters
+                .get(&node)
+                .copied()
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            self.declarations
+                .resolved
+                .lexical_uses()
+                .iter()
+                .filter_map(|usage| {
+                    if !usage.origin().node().components().starts_with(owner) {
+                        return None;
+                    }
+                    match usage.target() {
+                        ResolvedTarget::Source {
+                            declaration,
+                            class: DeclarationClass::GenericType,
+                        } => Some(declaration),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
         let mut source = node;
         for (key, argument) in substitution.entries() {
             let super::generics::GenericArgument::Type(argument) = argument else {
@@ -1667,7 +1680,9 @@ impl<'unit> TypeContext<'unit> {
             let super::generics::GenericParameterKey::Source(declaration) = key else {
                 continue;
             };
-            if !parameter_uses.is_empty() && !parameter_uses.contains(declaration) {
+            if (!parameter_uses.is_empty() || matches!(position, Placement::Exchange))
+                && !parameter_uses.contains(declaration)
+            {
                 continue;
             }
             if visit(self, *argument, Placement::Value, &mut HashSet::new()).map(|(ty, _)| ty)
@@ -1685,8 +1700,11 @@ impl<'unit> TypeContext<'unit> {
                 Placement::Reference => "a reference referent",
                 Placement::BoxContent => "Box content",
                 Placement::SharedState => "shared-object state",
+                Placement::Exchange => "the exchange of a `swap`",
             };
-            let repair = if matches!(found, CheckedType::Nominal(_)) {
+            let repair = if matches!(refused_position, Placement::Exchange) {
+                "swap the owning `Box` values instead of their contents"
+            } else if matches!(found, CheckedType::Nominal(_)) {
                 "make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead"
             } else {
                 "put the runtime-capacity storage behind a Box and pass a reference to its content"
@@ -1695,6 +1713,8 @@ impl<'unit> TypeContext<'unit> {
                 "this type argument would place `{}` as {position}; {repair}",
                 self.checked_type_name(found)?
             )
+        } else if matches!(refused_position, Placement::Exchange) {
+            "swap the owning `Box` values instead of their contents".to_owned()
         } else if matches!(found, CheckedType::Nominal(_)) {
             "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned()
         } else if matches!(

@@ -72,6 +72,10 @@ pub(super) struct BehaviorInventory {
     pub(super) actuals: HashMap<DeclarationId, ActualGroup>,
     references: RefCell<Vec<FunctionReference>>,
     binding_sites: RefCell<Vec<BindingSite>>,
+    /// [TYPE-9, FN-2] the parameter selected by each exchange in its
+    /// canonical symbolic body. Equal concrete arguments must retain their
+    /// distinct parameter identities when a placement refusal is attributed.
+    pub(super) exchange_parameters: HashMap<NodeId, DeclarationId>,
     pub(super) declaration_arguments: Vec<FunctionArgument>,
 }
 
