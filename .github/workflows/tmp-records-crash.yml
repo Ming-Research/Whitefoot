@@ -19,14 +19,15 @@ jobs:
           make -C research/experiments/par-demand build BUILD="$RUNNER_TEMP/pd" EXPERIMENT=2
       - name: Repeat records verify per arm, width and setting
         run: |
+          set +e
           ulimit -c unlimited
           echo "$RUNNER_TEMP/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
           nproc
-          for arm in seq par demand idle1; do
-            for width in 4 8 16; do
+          for arm in demand idle1 twin; do
+            for width in 8 16; do
               for setting in on off-never-request; do
                 bad=0; slow=0
-                for i in $(seq 1 60); do
+                for i in $(seq 1 150); do
                   start=$(date +%s%N)
                   WF_WORKERS=$width WF_PAR_DEMAND=$setting timeout 60 "$RUNNER_TEMP/pd/$arm/records" verify > /dev/null 2> "$RUNNER_TEMP/err.txt"
                   status=$?

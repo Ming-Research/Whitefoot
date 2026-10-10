@@ -91,17 +91,17 @@ measure: build
 summarize:
 	python3 summarize.py "$(BUILD)/measurements.tsv" --inspection "$(BUILD)/inspection.json" --experiment $(EXPERIMENT)
 # CI supplies the pre-prototype compiler; this compares complete --par modules.
-# The revision immediately before the idle-policy experiment. Compare both
-# macro-off scheduler objects, so the candidate cannot alter the shipped arm
-# or experiment 1's demand arm even through code placement. CI only.
+# The revision immediately before the idle-policy experiment. Compare the
+# macro-off scheduler object, so the candidate cannot alter the shipped arm
+# even through code placement. The demand object is not compared: experiment 2
+# deliberately carries the fix that withdraws an exiting owner's request word
+# (DESIGN.md, "A crash at exit in the demand prototype"). CI only.
 IDLE_BASE := 75f91b6ba6637a6d33340d8116b2a512ff12b33a
-idle-policy-identity: $(BUILD)/native/sched/core.o $(BUILD)/demand-core.o
+idle-policy-identity: $(BUILD)/native/sched/core.o
 	@mkdir -p $(BUILD)/idle-base
 	git -C "$(ROOT)" show $(IDLE_BASE):compiler/src/backend/sched/core.c > $(BUILD)/idle-base/core.c
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-core.o
 	cmp $(BUILD)/idle-base-core.o $(BUILD)/native/sched/core.o
-	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-demand-core.o
-	cmp $(BUILD)/idle-base-demand-core.o $(BUILD)/demand-core.o
 
 legacy-identity:
 	test -n "$(BASE_WFC)"

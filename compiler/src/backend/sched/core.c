@@ -331,6 +331,9 @@ struct wf__par_lane {
      * its owner attaches and null before. A private cache line keeps the
      * thieves' reads of the address away from the owner's deque fields. */
     _Alignas(WF_PAR_CACHE_LINE) uint64_t *request_word;
+    /* Thieves inside wf__par_request; the exiting owner waits for zero after
+     * withdrawing request_word, so no thief writes its freed word. */
+    unsigned request_users;
 #endif
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
@@ -361,7 +364,10 @@ static unsigned wf__par_demand_initialized;
  * thread-local load per poll) and the module's own weak zero definition is
  * replaced by this one at link; the lane layout stays private. A thief writes
  * it through the owner's registered address, which is valid while the owner
- * thread lives: every lane owner here lives as long as the pool. */
+ * thread lives. Workers live as long as the process, but lane 0 belongs to
+ * whichever thread attached first -- the program's own thread or a driver --
+ * and that thread can exit while workers still scan, so its exit withdraws
+ * the address and waits out every thief already holding it. */
 #if defined(_WIN32)
 _Thread_local uint64_t wf__par_demand_word;
 #else
@@ -370,18 +376,41 @@ __attribute__((tls_model("initial-exec"))) _Thread_local uint64_t wf__par_demand
 static void wf__par_enable_demand(void) {
     atomic_store_explicit(&wf__par_demand_posts, WF_PAR_DEMAND_MODE() ? wf__sched_demand_requests() : 0, memory_order_relaxed);
 }
-/* An owner publishes its word's address once, at attachment. */
+#if defined(_WIN32)
+#error "the demand prototype withdraws a lane's request word at thread exit, which needs a POSIX thread-specific destructor"
+#endif
+#include <pthread.h>
+/* Withdraw, then wait: a thief that counted itself in before the withdrawal
+ * may still store to the word; one that counts itself in after it reads null.
+ * Both sides are sequentially consistent, so one of the two always holds. */
+static void wf__par_withdraw_word(void *opaque) {
+    struct wf__par_lane *lane = opaque;
+    __atomic_store_n(&lane->request_word, (uint64_t *)NULL, __ATOMIC_SEQ_CST);
+    while (__atomic_load_n(&lane->request_users, __ATOMIC_SEQ_CST) != 0) wf_prim_yield();
+}
+static pthread_key_t wf__par_word_key;
+static void wf__par_word_key_create(void) {
+    if (pthread_key_create(&wf__par_word_key, wf__par_withdraw_word) != 0) abort();
+}
+/* An owner publishes its word's address once, at attachment, and arranges
+ * its withdrawal for when the thread exits. */
 static void wf__par_register_word(struct wf__par_lane *lane) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
     __atomic_store_n(&lane->request_word, &wf__par_demand_word, __ATOMIC_RELEASE);
+    if (pthread_once(&once, wf__par_word_key_create) != 0
+        || pthread_setspecific(wf__par_word_key, lane) != 0) abort();
 }
 /* Write-if-zero: a word already asked stays asked, a lane without an owner yet
- * cannot be asked, and a request is one relaxed store, never a read-modify-write. */
+ * cannot be asked, and the word itself gets one relaxed store, never a
+ * read-modify-write; the count around it is on the thief's idle path. */
 static void wf__par_request(struct wf__par_lane *victim) {
     uint64_t *word;
     if (!atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) return;
-    word = __atomic_load_n(&victim->request_word, __ATOMIC_ACQUIRE);
+    __atomic_fetch_add(&victim->request_users, 1u, __ATOMIC_SEQ_CST);
+    word = __atomic_load_n(&victim->request_word, __ATOMIC_SEQ_CST);
     if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0)
         __atomic_store_n(word, (uint64_t)1, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&victim->request_users, 1u, __ATOMIC_RELEASE);
 }
 
 #endif

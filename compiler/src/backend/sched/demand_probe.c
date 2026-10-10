@@ -12,6 +12,11 @@
 static unsigned executed;
 static uint64_t idle_word;
 static void run(void *frame) { (void)frame; ++executed; }
+static void *register_and_exit(void *lane) {
+    wf__par_register_word(lane);
+    assert(((struct wf__par_lane *)lane)->request_word == &wf__par_demand_word);
+    return NULL;
+}
 int main(void) {
     int enabled = strcmp(getenv("WF_PAR_DEMAND"), "off-never-request") != 0;
     wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);
@@ -47,6 +52,15 @@ int main(void) {
     wf__par_self = idle;
     assert(wf__par_find(idle) == NULL);
     assert(wf__par_demand_requested() == (uint64_t)enabled);
+    /* A lane owner that exits withdraws its word: lane 0 can belong to the
+     * program's own thread, which exits while workers still scan. */
+    pthread_t owner;
+    assert(pthread_create(&owner, NULL, register_and_exit, victim) == 0);
+    assert(pthread_join(owner, NULL) == 0);
+    assert(__atomic_load_n(&victim->request_word, __ATOMIC_SEQ_CST) == NULL);
+    assert(victim->request_users == 0);
+    wf__par_self = idle;
+    assert(wf__par_find(idle) == NULL); /* asks nobody, writes no freed word */
     puts("demand posting/clearing PASS");
     return 0;
 }

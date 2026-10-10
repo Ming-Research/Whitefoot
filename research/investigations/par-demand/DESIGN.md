@@ -1303,3 +1303,27 @@ final scan (as a worker does) so that a publish can wake it to help; a lane
 that loses the spinner slot parks at once, and without that announcement a
 parked joiner could not be given other work. So E2-idle compares the policy
 as built, both changes together, not the spin rule alone.
+
+### A crash at exit in the demand prototype
+
+The hosted build of experiment 2 ([compute-bench run 38051814229](https://github.com/Ming-Research/Whitefoot/actions/runs/38051814229))
+stopped when `twin/records verify` died with SIGSEGV at eight workers on a
+four-CPU runner; `demand/records`, the same bytes, had passed just before. A
+repetition job on the same runner type (temporary workflow, run
+38052790854) passed `seq` and `par` 360 times each at widths 4, 8 and 16 and
+caught the crash in `demand` at width 8: a worker faulted in `wf.par_find`
+while the main thread was already in `exit()`. The cause is the prototype's
+request word. A thief writes the lane owner's thread-local word through the
+address the owner registered; lane 0 belongs to whichever thread attached
+first, here the program's own thread that `wf_floor` starts and joins before
+`exit()`, so a worker still scanning wrote into that thread's freed storage.
+Production `--par` has no such address and is not affected.
+
+The fix withdraws the address at the owner's thread exit (a POSIX
+thread-specific destructor) and waits until no thief that read it before the
+withdrawal is still inside `wf__par_request`; thieves count themselves in and
+out around the read and store. That adds two atomic operations to every failed
+scan of the `demand` and `idle1` arms, on the idle path only, so experiment 2
+measures the demand arm with this cost and experiment 1's demand arm without
+it. The scheduler probe now checks that an exited owner's word is withdrawn.
+
