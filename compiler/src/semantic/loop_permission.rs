@@ -143,8 +143,9 @@ use super::model::{
     CheckedValue, FunctionId, WindowShape, expression_children,
 };
 use super::permission::{
-    CallProjection, Footprint, Program, argument_places, call_projection, collect_consumed_places,
-    collect_operand_reads, container_steps, field_steps, set_target_place, visit_read_bindings,
+    CallProjection, Footprint, Program, argument_places, binding_read_projection, call_projection,
+    collect_consumed_places, collect_operand_reads, container_steps, field_steps, set_target_place,
+    visit_read_bindings,
 };
 use super::places::{PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations};
 use super::range_facts::CheckedCertifiedLoop;
@@ -2140,6 +2141,7 @@ impl<'check, 'run> Survey<'check, 'run> {
     /// caller storage and is not classified here would leave the read out of
     /// condition 2 and *widen* permission.
     fn record_reads(&mut self, expression: &CheckedExpression) {
+        let (expression, projection) = binding_read_projection(expression);
         if let Some(call) = call_projection(expression)
             && self
                 .indexed_calls
@@ -2245,7 +2247,7 @@ impl<'check, 'run> Survey<'check, 'run> {
             CheckedExpression::Binding { binding, .. }
             | CheckedExpression::DerefAddressed { binding, .. } => Some((
                 *binding,
-                self.places.resolve(PlaceRoot::Binding(*binding), &[]),
+                self.places.resolve(PlaceRoot::Binding(*binding), &projection),
             )),
             // [REF-4, MSR-2] a read through a range reference reads the path
             // the reference names; its own offset is this node's child.
