@@ -16,6 +16,7 @@ jobs:
         run: cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
       - name: Check every single-file case with a time limit
         run: |
+          set +e
           bin=compiler/target/gate/whitefootc
           : > "$RUNNER_TEMP/times.txt"
           for f in tests/conformance/cases/*.wf; do
