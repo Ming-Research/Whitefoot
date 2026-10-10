@@ -1439,3 +1439,27 @@ kept, so its rounds are not reused. Prediction, fixed now: `hot_helper`'s
 no other cell's `demand` or `idle1` result moves outside its sample interval
 except through fewer hand-outs of calls below the work unit.
 
+### Experiment 2 with the call grain: the six-round sample
+
+[Compute-bench run 38058755664](https://github.com/Ming-Research/Whitefoot/actions/runs/38058755664)
+(revision 037c2add2, native 14900K, 14:16–14:20 UTC, one logical CPU per
+performance core) judges nothing by the round-count rule. The prediction
+fixed before it holds for `hot_helper`: `demand / seq` and `idle1 / seq` wall
+are 1.000 at four and eight workers, intervals within 1.001. Cells whose
+six-round interval already lies wholly beyond a bound, to be decided by the
+decisive run:
+
+- E2-keep (`demand / par` where `par` speeds up, bound 1.05): `mandelbrot`
+  at eight workers 1.176 [1.124, 1.244], `stencil` at eight 1.123
+  [1.083, 1.144], `recursion` at eight 1.093 [1.059, 1.153]; `idle1` is
+  further out on `mandelbrot` (1.122 at four, 1.396 at eight) and `stencil`
+  at eight (1.192).
+- E2-H3 (CPU beyond 1.1 × sequential plus a tenth of the saved wall per
+  worker, bound 0): `stencil` at four and eight for both arms.
+- E2-idle (`idle1 / demand`, bound 1.02): `mandelbrot` at eight 1.191,
+  `fir` at eight 1.041.
+
+`histogram` at eight is void: its twin disagreed. By the rule, every cell's
+interval is narrower than its distance to its bound only well beyond thirty
+rounds for several cells, so the decisive run takes thirty.
+
