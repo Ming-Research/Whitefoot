@@ -2,8 +2,9 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes complete aggregate
-//! representations, and keeps a defensive abort edge for enum discriminants.
+//! check, emits no overflow or alias promises, initializes aggregate values
+//! while leaving unoccupied window storage alone, and keeps a defensive abort
+//! edge for enum discriminants.
 
 mod array;
 mod boxes;
@@ -11,13 +12,14 @@ mod buffer;
 mod cleanup;
 mod contexts;
 mod conversion;
-mod dispatch;
+pub(super) mod dispatch;
 mod floating;
 mod floor;
 mod frames;
 mod frontier;
 mod handler_words;
 mod indexed;
+mod indexed_blocks;
 mod integer;
 mod operations;
 mod paged;
@@ -29,6 +31,7 @@ mod segments;
 mod shared;
 mod slice;
 mod union_enums;
+mod value_equality;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -278,6 +281,7 @@ fn emit_module(
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
     let mut functions = Module::default();
+    let mut linked_declarations = std::collections::HashMap::new();
     for (ordinal, function) in program.functions().iter().enumerate() {
         // A member of a budgeted component keeps its ordinary symbol and its
         // ordinary signature, and that symbol obtains the initial budget and
@@ -306,7 +310,20 @@ fn emit_module(
                 dispatch_layout,
             },
         )?;
-        functions.append(emitter.emit()?);
+        let emitted = emitter.emit()?;
+        if function.blocks().is_empty() {
+            // PRE-2's generic instances retain their own checked signature
+            // and call operands, but link to one definition. Emit its
+            // declarations once and refuse any inconsistent linked ABI.
+            if let Some(previous) = linked_declarations.get(function.name()) {
+                if previous != &emitted.declarations {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                continue;
+            }
+            linked_declarations.insert(function.name().to_owned(), emitted.declarations.clone());
+        }
+        functions.append(emitted);
     }
     // The budget-carrying half of each family: one variant per member, the
     // same emitter over the same IR as every other function of this module,
@@ -1108,6 +1125,8 @@ enum FunctionSlot {
     OwnedValue(usize),
     ArrayFillIndex(IrValueId),
     Address(IrValueId),
+    IndexedDirectory(IrValueId),
+    IndexedReference(IrValueId, usize),
     /// The slot a register-returned definition's public entry gives its
     /// body to construct the result in.
     Result,
@@ -1153,12 +1172,13 @@ struct PlannedFunctionSlot {
     pointer: String,
 }
 
-/// The one physical frame an ordinary generated function owns.
+/// The planned allocation roots an ordinary generated function owns.
 ///
 /// Planning walks the already-selected IR schedule before emission and gives
-/// every actual materialization a semantic key. Target layout then turns the
-/// logical slots into one explicitly padded struct. Emission can only obtain a
-/// pointer by that key; it has no string-shaped `alloca` escape hatch.
+/// each planned materialization a semantic key. Target layout then turns the
+/// logical slots into an explicitly padded struct or qualified independent
+/// allocations. Emission obtains each planned pointer by that key; context
+/// groups, shared records, dispatch pins and cleanup temporaries are separate.
 struct FunctionFramePlan {
     target: TargetFramePlan,
     slots: HashMap<FunctionSlot, PlannedFunctionSlot>,
@@ -1191,6 +1211,7 @@ impl FunctionFramePlan {
             if Some(slot) != result_slot
                 && storage.destination(slot).is_none()
                 && storage.field_destination(slot).is_none()
+                && storage.needs_snapshot_backing(slot)
             {
                 push_function_slot(
                     &mut specifications,
@@ -1245,6 +1266,33 @@ impl FunctionFramePlan {
                             TargetStorageType::integer(64),
                             None,
                         )?;
+                    }
+                    IrOperation::IndexedBlocks { .. } => {
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            FunctionSlot::IndexedDirectory(*result),
+                            TargetStorageType::source(IrType::Address(IrAddressed::Unit)),
+                            None,
+                        )?;
+                    }
+                    IrOperation::IndexedReference { original, roots } => {
+                        let Some(IrType::Address(referent)) = function.value_type(*original) else {
+                            return Err(BackendFailure::InvalidIr);
+                        };
+                        for (index, (_, ty)) in
+                            indexed_blocks::reference_slots(program, referent.ty(), roots)?
+                                .iter()
+                                .enumerate()
+                        {
+                            push_function_slot(
+                                &mut specifications,
+                                &mut ordered,
+                                FunctionSlot::IndexedReference(*result, index),
+                                TargetStorageType::source(*ty),
+                                None,
+                            )?;
+                        }
                     }
                     IrOperation::AddressOf { referent, .. } => {
                         let storage = TargetStorageType::source(referent.ty());
@@ -1371,6 +1419,7 @@ impl FunctionFramePlan {
 
     fn render(
         &self,
+        target: TargetLayout,
         program: &IrProgram,
         references: &mut References,
     ) -> Result<String, BackendFailure> {
@@ -1384,10 +1433,15 @@ impl FunctionFramePlan {
             .map(|field| llvm_storage_type_with_references(program, field, &mut references.types))
             .collect::<Result<Vec<_>, _>>()?;
         let mut output = String::new();
-        if let Some(alignment) = self.target.independent_slot_alignment() {
-            // The complete frame was qualified before this representation
-            // choice. Keep each full allocation root, including parents of
-            // reused result fields; only unrelated roots gain distinct LLVM
+        if self
+            .target
+            .independent_extent(target)
+            .map_err(BackendFailure::TargetLayout)?
+            .is_some()
+        {
+            // The bound uses each root's emitted alignment. Keep each full
+            // allocation root, including parents of reused result fields;
+            // only unrelated roots gain distinct LLVM
             // allocation provenance. Storage interference is unchanged.
             for key in &self.ordered {
                 let slot = self.slots.get(key).ok_or(BackendFailure::InvalidIr)?;
@@ -1398,6 +1452,7 @@ impl FunctionFramePlan {
                 let ty = fields
                     .get(field.physical_index() as usize)
                     .ok_or(BackendFailure::InvalidIr)?;
+                let alignment = field.alignment();
                 writeln!(
                     output,
                     "  {} = alloca {ty}, align {alignment}",
@@ -1411,7 +1466,7 @@ impl FunctionFramePlan {
         writeln!(
             output,
             "  %wf.frame = alloca {frame_type}, align {}",
-            self.target.layout().align()
+            self.target.struct_layout().align()
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         for key in &self.ordered {
@@ -1430,6 +1485,29 @@ impl FunctionFramePlan {
         }
         Ok(output)
     }
+}
+
+/// Ordinary roots before call hand-out emission, for fixtures without split
+/// dispatch, context groups or shared records. This deliberately does not run
+/// the emitter: an allocation added while actualizing a call is not a root.
+#[cfg(test)]
+pub(super) fn ordinary_frame_prelude_for_test(
+    program: &IrProgram,
+    target: TargetLayout,
+    function: &IrFunction,
+) -> Result<String, BackendFailure> {
+    let storage = FunctionStoragePlan::build(program, function)?;
+    let frame = FunctionFramePlan::build(
+        target,
+        program,
+        function,
+        FunctionFrameContents {
+            storage: &storage,
+            result_slot: places::returned_storage_slot(function, &storage),
+            spills: &[],
+        },
+    )?;
+    frame.render(target, program, &mut References::default())
 }
 
 /// Reserves one logical frame slot under its semantic key.
@@ -1486,6 +1564,8 @@ struct FunctionEmitter<'program, 'state> {
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
+    /// Read-through slots privately captured for the current operation only.
+    snapshot_copies: BTreeSet<usize>,
     /// Arguments a split part hands to a callee through its pin slot
     /// instead of the reference itself, for the duration of that call
     /// (compiler/match-dispatch-lowering).
@@ -1620,10 +1700,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 spills: &[],
             },
         )?;
-        let mut output = FunctionBody::default();
-        let mut entry_prelude = frame.render(program, &mut output.references)?;
-        entry_prelude.push_str(&contexts::context_group_prelude(function));
-        entry_prelude.push_str(&shared::record_prelude(function));
         Ok(Self {
             program,
             function,
@@ -1631,13 +1707,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             window_address_facts,
             intrinsics,
             incoming: Vec::new(),
-            output,
-            entry_prelude,
+            output: FunctionBody::default(),
+            entry_prelude: String::new(),
             frame,
             storage,
             result_slot,
             incoming_places: HashMap::new(),
             materialized: HashMap::new(),
+            snapshot_copies: BTreeSet::new(),
             pin_names: HashMap::new(),
             temporary: 0,
             parallel,
@@ -1932,6 +2009,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 abi.result().uses_destination(),
                 &result,
             )?;
+            if self.dispatch.is_none() {
+                // Select split dispatch first: its shared struct does not
+                // need the bound for independently reordered allocations.
+                self.entry_prelude =
+                    self.frame
+                        .render(self.target, self.program, &mut self.output.references)?;
+                self.entry_prelude
+                    .push_str(&contexts::context_group_prelude(self.function));
+                self.entry_prelude
+                    .push_str(&shared::record_prelude(self.function));
+            }
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
@@ -2150,8 +2238,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ty = public.result().ty();
         let (mut parameters, mut references) = self.signature_parameters(body)?;
         let result = llvm_type_with_references(self.program, ty, &mut references.types)?;
-        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?
-            .render(self.program, &mut references)?;
+        let frame = FunctionFramePlan::returned_value(self.target, self.program, ty)?.render(
+            self.target,
+            self.program,
+            &mut references,
+        )?;
         let mut arguments = ordinary_call_arguments(self.program, self.function, body)?;
         if self.grain.is_some() {
             parameters.push(Parameter::named("i64", "%wf.budget"));
@@ -2278,6 +2369,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         index: usize,
         instruction: &IrInstruction,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, index)?;
         match instruction {
             IrInstruction::StoreSlice {
                 slice,
@@ -2375,11 +2467,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Ok(());
         }
         match operation {
-            // These operations transfer their payload from storage when its
-            // representation is stored. Materializing that payload as an SSA
-            // aggregate first lets SROA scalarize large arrays before the
+            // These operations read stored payloads through typed addresses.
+            // Eager SSA materialization would load unused representation
+            // bytes for equality and scalarize large arrays before BoxNew's
             // typed storage copy can be emitted.
-            IrOperation::BoxNew { .. } => {}
+            IrOperation::BoxNew { .. } | IrOperation::ValueEquality { .. } => {}
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;
             }
@@ -2499,11 +2591,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 operation,
                 arguments,
             } => self.emit_boolean(result, ty, *operation, arguments),
-            IrOperation::EnumEquality {
+            IrOperation::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
-            } => self.emit_enum_equality(result, ty, *equal, *operand_type, *arguments),
+            } => self.emit_value_equality(result, ty, *equal, *operand_type, *arguments),
             IrOperation::ArrayFill {
                 value,
                 target_domain,
@@ -2607,6 +2699,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SliceRange { slice, start, end } => {
                 self.emit_slice_range(result, ty, *slice, *start, *end, None)
             }
+            IrOperation::IndexedBlocks { address } => {
+                self.emit_indexed_blocks(result, ty, *address)
+            }
+            IrOperation::IndexedBlock { blocks } => self.emit_indexed_block(result, *blocks),
+            IrOperation::IndexedReference { original, roots } => {
+                self.emit_indexed_reference(result, *original, roots)
+            }
             IrOperation::IndexedRange {
                 slice,
                 start,
@@ -2705,8 +2804,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 table,
                 key,
                 read,
+                inserts,
                 stable_absence,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
+            } => self.emit_table_lock_entry(
+                result,
+                *record,
+                *table,
+                *key,
+                *read,
+                *inserts,
+                *stable_absence,
+            ),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
@@ -2853,6 +2961,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         block: IrBlockId,
         terminator: &IrTerminator,
     ) -> Result<(), BackendFailure> {
+        self.prepare_snapshot_use(block, self.block(block)?.instructions().len())?;
         match terminator {
             IrTerminator::Unreachable => {
                 writeln!(self.output, "  unreachable").map_err(|_| BackendFailure::TextEmission)

@@ -273,7 +273,7 @@ struct DeliveryEdgeContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     /// The carrier term c whose relations the edge substitutes [ENT-5]: a
-    /// bare atom itself, or the given value of a literal or named const.
+    /// bare atom itself, or the given value of an admitted expression.
     carrier: TermId,
     receiver: TermId,
     event: FlowEventId,
@@ -284,9 +284,9 @@ struct DeliveryEdgeContext<'a> {
 enum DeliveryCarrier {
     /// A direct non-consuming bare atom's place term, its own carrier term.
     Atom(TermId),
-    /// A typed integer literal or integer-typed named const, delivered
-    /// through the give's evaluated value.
-    Constant,
+    /// A literal, named const or computed integer, bound through the same
+    /// ENT-3 sources as a let to the give's evaluated value.
+    Evaluated,
 }
 
 /// One bare-atom give edge's carrier equality `x = d` [ENT-5], sourced from
@@ -1326,6 +1326,11 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
             input: Input {
                 context,
                 function,
+                range_participant: super::super::range_judgment::takes_part(function, |callee| {
+                    context
+                        .callee(callee)
+                        .is_some_and(|callee| callee.range_boundary)
+                }),
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
@@ -1712,6 +1717,7 @@ struct Analyzer<'check, 'unit> {
 struct Input<'check, 'unit> {
     context: &'check EntailmentContext<'unit>,
     function: &'check CheckedFunction,
+    range_participant: bool,
     /// [REF-1] place resolution for this function.
     places: PlaceMap,
     entry_images: Vec<EntryImageRecord>,
@@ -1989,6 +1995,7 @@ mod indexed_goal_kill_tests {
             constants: &[],
             constant_ids: &constant_ids,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &[],
             nominals: &[],
             elements: &[],
             contract_queries: &[],
@@ -2201,6 +2208,7 @@ mod range_argument_kill_tests {
 
     fn view_source() -> CheckedRangeSource {
         CheckedRangeSource::Range(CheckedRangeRoot {
+            formation: None,
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
@@ -2221,6 +2229,7 @@ mod range_argument_kill_tests {
             constants: &[],
             constant_ids: &constant_ids,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &[],
             nominals: &[],
             elements: &[],
             contract_queries: &[],

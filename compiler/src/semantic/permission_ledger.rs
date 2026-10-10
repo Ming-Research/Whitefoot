@@ -13,9 +13,12 @@
 //! pairs and three separate permitted pairs read identically as pairs and are
 //! completely different work, so every eligible chain gets a `run` line naming
 //! its members. What the *backend* then keeps is narrower still — one call
-//! definition per site, all members in one block, no addressed binding but the
-//! last — and that narrowing happens after this ledger is rendered, so a `run`
+//! definition per call site, all calls in one block, no addressed call binding
+//! but the last, with non-call statements left in place — and that narrowing
+//! happens after this ledger is rendered, so a `run`
 //! line states what the judgment permits and not what the emitter actualizes.
+//! Storage-conflict text is prepared here and retained on its pair; lowering
+//! emits it through the actualization ledger only when that pair ends a group.
 //!
 //! A `loop` line is the same statement for a counted loop, whose iterations
 //! are judged by their own rule rather than as a pair. It names the condition
@@ -40,7 +43,7 @@ use crate::NodePath;
 
 use super::loop_permission::{LoopDenial, LoopPermission, LoopVerdict};
 use super::permission::{
-    Access, Denial, ExitKind, PairSide, PermissionMetadata, PermissionVerdict,
+    Access, Denial, ExitKind, PairSide, PermissionMetadata, PermissionVerdict, StoragePlace,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +67,49 @@ pub(crate) trait LedgerSource {
 
     /// The exact canonical source spelling of one node.
     fn spelling(&self, path: &NodePath) -> Result<String, Self::Error>;
+}
+
+/// Preserve source citations for the later lowering boundary. These are not
+/// permission verdicts and are not printed just because a pair was analyzed.
+pub(crate) fn prepare_storage_ledger<Source: LedgerSource>(
+    metadata: &mut PermissionMetadata,
+    source: &Source,
+) -> Result<(), Source::Error> {
+    for permissions in &mut metadata.functions {
+        for pair in &mut permissions.storage_pairs {
+            let Some(conflict) = &pair.conflict else {
+                continue;
+            };
+            let (path, line) = source.location(&pair.first)?;
+            let (_, second_line) = source.location(&pair.second)?;
+            let (releasing, borrowing) = match conflict.releasing {
+                PairSide::First => ("s1", "s2"),
+                PairSide::Second => ("s2", "s1"),
+            };
+            pair.ledger = format!(
+                "PAR actualization  {path}:{line}  pair({}, {}) through line {second_line}  narrowed: release/borrow conflict; {releasing} releases {} overlapping {} borrowed by {borrowing}",
+                pair.first_name,
+                pair.second_name,
+                storage_place(&conflict.released, source)?,
+                storage_place(&conflict.borrowed, source)?,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn storage_place<Source: LedgerSource>(
+    place: &StoragePlace,
+    source: &Source,
+) -> Result<String, Source::Error> {
+    let spelling = source.spelling(&place.source)?;
+    Ok(if place.place.is_none() {
+        format!("unknown storage at {spelling}")
+    } else if place.owner {
+        format!("owner storage at {spelling}")
+    } else {
+        format!("storage at {spelling}")
+    })
 }
 
 /// Renders the whole permission table as ledger lines in source order.

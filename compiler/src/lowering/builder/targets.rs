@@ -66,7 +66,7 @@ impl IrBuilder<'_> {
         let address_kind = |address, referent| TargetStorage::Address { address, referent };
         let kind = match target {
             CheckedSetTarget::Storage(root) => {
-                let address = self.lower_place_address(root)?;
+                let address = self.lower_write_place_address(root)?;
                 let IrType::Address(referent) = self.value_type(address)? else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };

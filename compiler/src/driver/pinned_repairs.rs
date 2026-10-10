@@ -7,7 +7,7 @@
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
 //! its family module; the repairs still printed without one are listed in
-//! `docs/todo.md`.
+//! status board item coord-wfbl-01-25.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
@@ -15,6 +15,7 @@ use crate::SourceInput;
 mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod floats;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -49,6 +50,64 @@ struct RepairPair {
 }
 
 const REPAIRS: &[RepairPair] = &[
+    RepairPair {
+        name: "const2-neg-whole-nocopy-struct.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
+        rule: "OWN-1",
+        sentences: &[
+            "]: BareAffineUse\n",
+            "\n  mechanical_fix: read the const through a field, subscript or measure supported by its type, or take a `&` reference\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/const2-pos-nocopy-struct-field-read.wf"
+        )],
+    },
+    RepairPair {
+        name: "value-equality-float-field.wf",
+        rejected: br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-1",
+        sentences: &[
+            "]: InvalidEqualityType\n",
+            "\n  mechanical_fix: operand type, field `value` has non-equality type `f64`; replace this comparison with an explicit comparison of the intended observable values using operations admitted for their types, or, if the data model permits it, change this part to an equality type [OP-16]\n",
+        ],
+        repaired: &[
+            br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return feq(left.value, right.value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct EqualityReading {
+  value: u64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // [FORM-7] a text item's one spelling and a `u8` character's range.
     // -------------------------------------------------------------------
@@ -2133,6 +2192,85 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [OP-4, INV-1] a counted loop's header invariant read at its binder:
+    // the element need not exist at the empty run's entry or the last
+    // backedge, so the per-element fact moves to a range clause [RANGE-1].
+    RepairPair {
+        name: "loop-invariant-element-at-the-binder.wf",
+        rejected: br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant fits: rows^[i].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n",
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`; when the input guarantees it, require it of every element, `requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;`\n",
+        ],
+        repaired: &[
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) contract {
+  requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+} {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (i in 0_u64..n) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // Repairs that no goal selects.
     // -------------------------------------------------------------------
@@ -2905,7 +3043,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);
@@ -3588,6 +3726,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
+        .chain(floats::FLOATS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {

@@ -94,6 +94,32 @@ void wf__completion_file_append_submit(
     void *record
 );
 
+/* Sources and watches retain an ordinary shared unit; the pending call
+ * borrows a live watch through its finish. */
+void *wf__cancel_new(void);
+void *wf__cancel_never(void);
+/* A retained never state maps to the no-watch host-wait sentinel. */
+void *wf__cancel_wait_state(void *state);
+void wf__cancel_fire_held(void *source);
+/* Start returns 3: retry context_wait on resume until it acquires the unit. */
+int wf__shared_start(void *object, void *operation);
+/* Non-null fireable states only; pending watched submissions return 2,
+ * completed ones 1, matching an ordinary host start. */
+int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record);
+int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
+                                                uint64_t count, void *cancel, void *record);
+
+int wf__completion_file_read_watched_submit(int descriptor, void *buffer, uint64_t count,
+                                             void *cancel, void *record);
+int wf__completion_file_write_watched_submit(int descriptor, const void *buffer, uint64_t count,
+                                              void *cancel, void *record);
+int wf__completion_socket_connect_watched_submit(uint64_t low, uint64_t high, uint32_t tag,
+                                                  void *cancel, void *record);
+int wf__completion_socket_send_watched_submit(int descriptor, const void *buffer, uint64_t count,
+                                               void *cancel, void *record);
+int wf__completion_sleep_watched_submit(uint64_t deadline, void *cancel, void *record);
+int wf__completion_stop_next_watched_submit(void *cancel, void *record);
+
 /* Hands every byte written to the file before it to the host's durability
  * mechanism [PRE-2]. */
 void wf__completion_file_sync_submit(
@@ -138,6 +164,8 @@ void wf__completion_next_deadline(uint64_t deadline);
 /* Whether the record's deadline ended its operation: the driver cancelled
  * it and it transferred nothing. */
 int wf__completion_deadline_passed(const void *record);
+/* The supplied watch ended the operation, with nothing transferred. */
+int wf__completion_cancelled(const void *record);
 
 /* The monotonic clock the deadlines are readings of. */
 uint64_t wf__completion_monotonic_ns(void);
@@ -416,6 +444,11 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, stru
                               uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *));
+/* Releases the cells a table keeps as its reserve for the next move of its
+ * size and returns their bytes, or 0 when it keeps none or another thread
+ * holds the table's own lock; it changes no entry and needs no hold
+ * [SHARE-1]. */
+uint64_t wf__keyed_table_release_reserve(void *table);
 
 /* One key: locks the entry, or reads it beside other readers when `read`
  * is nonzero, and returns its `Option<V>` slot, filled with zeros, `None`,
@@ -506,6 +539,9 @@ int wf__resident_bytes(uint64_t *bytes);
 unsigned wf__driver_index(void);
 void *wf__runtime_take(uint64_t bytes);
 void wf__runtime_give(void *block, uint64_t bytes);
+/* The size the pool grants a request of `bytes`, as the heap reading counts
+ * a live block of that request [PRE-2]. */
+uint64_t wf__runtime_granted(uint64_t bytes);
 void wf__runtime_yield(void);
 _Noreturn void wf__runtime_exhausted(void);
 

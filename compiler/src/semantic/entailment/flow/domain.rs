@@ -92,25 +92,21 @@ impl Input<'_, '_> {
                 if place.readonly_field_term(self.context.nominals)
                     == Some(SubscriptedTerm::Represented) =>
             {
-                Some(ResolvedPlace::from_path(
-                    place.root.binding,
-                    place.place_path(),
-                ))
+                Some(place.proof_place())
             }
             _ => None,
         }
     }
 
     /// [OWN-1] whether a value of this type is read without being consumed,
-    /// so a place of it is an ordinary goal datum. A type parameter standing
-    /// for itself answers false here: the flow state keeps no fact about a
-    /// value of a type it cannot see.
+    /// so a place of it is an ordinary goal datum. A symbolic parameter
+    /// contributes exactly the capability granted by its written bound.
     pub(super) fn is_copy(&self, ty: CheckedType) -> bool {
         crate::semantic::model::type_has_copy_capability(
             ty,
             self.context.nominals,
             self.context.elements,
-            &|_| Some(false),
+            &|parameter| Some(self.context.copy_type_parameters.contains(&parameter)),
         )
         .unwrap_or(false)
     }

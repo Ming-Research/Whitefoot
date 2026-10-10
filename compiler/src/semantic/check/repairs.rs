@@ -44,8 +44,25 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [OP-16] name the first excluded part, without suggesting that copy alone
+/// grants equality or that comparing storage bytes implements value equality.
+pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {
+    format!(
+        "{part} has non-equality type `{ty}`; replace this comparison with an explicit comparison of the intended observable values using operations admitted for their types, or, if the data model permits it, change this part to an equality type [OP-16]"
+    )
+}
+
 /// [FN-6] repair the changed argument under the callee's ordinary kind and
 /// bound requirements, or move its construction outside the cycle.
+/// [FORM-7] a non-canonical float literal: write its canonical spelling, or,
+/// when it denotes no finite value of its type, one that does.
+pub(super) fn float_literal_repair(canonical_spelling: Option<&str>) -> String {
+    match canonical_spelling {
+        Some(spelling) => format!("write the literal as `{spelling}`"),
+        None => "replace the literal with a canonical spelling of a finite value representable in its stated type".to_owned(),
+    }
+}
+
 pub(super) const fn instantiation_cycle_repair() -> &'static str {
     "use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle"
 }
@@ -1205,6 +1222,40 @@ pub(super) fn local_invariant(disposition: Disposition, name: &str) -> String {
             "`{name}` is not proved from the facts that reach it: establish them before it, add `use` steps naming the facts it follows from, or weaken it"
         ),
     }
+}
+
+/// [OP-4, INV-1] a loop invariant's subscript whose bound an incoming header
+/// instance does not prove.
+pub(super) fn loop_invariant_formation(name: &str) -> String {
+    format!("prove this subscript bound on every incoming instance of invariant `{name}`")
+}
+
+/// [OP-4, INV-1, RANGE-1] a counted loop's header invariant subscripted at
+/// its binder, whose element need not exist at an incoming header: the empty
+/// run's entry and the last iteration's backedge have none. The per-element
+/// fact is stated instead over the elements the body has processed, when the
+/// body establishes it, or over every element of the run, when the input
+/// guarantees it.
+pub(super) fn counted_element_invariant(
+    name: &str,
+    element: &crate::semantic::entailment::CountedElementRelation,
+    extent: &str,
+) -> String {
+    let crate::semantic::entailment::CountedElementRelation {
+        binder_name,
+        lower,
+        variable,
+        relation,
+        requirement,
+        ..
+    } = element;
+    let mut repair = format!(
+        "`{name}` reads the element at `{binder_name}`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall {name}({variable} in {lower}..{binder_name}): {relation}`"
+    );
+    if element.requirement_in_scope {
+        repair.push_str(&format!("; when the input guarantees it, require it of every element, `requires forall {requirement}({variable} in 0_u64..{extent}): {relation};`"));
+    }
+    repair
 }
 
 /// [INV-1] a loop invariant's base judgment on entry to the loop.

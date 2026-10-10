@@ -76,7 +76,10 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
       break @sending;
     }
     let no_deadline = None<std::time::Instant>();
-    match send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         set sent = next;
       }
@@ -103,7 +106,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure
     let available = 0_u64;
     let ended = 0_u8;
     let no_deadline = None<std::time::Instant>();
-    match receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: endpoint) => {
         set available = endpoint;
       }
@@ -191,7 +197,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           }
         }
         let no_deadline = None<std::time::Instant>();
-        match tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline) {
+        let wait_cancel_3 = std::time::cancel_never();
+        let wait_outcome_3 = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &wait_cancel_3);
+        std::time::close_cancel_watch(watch: move wait_cancel_3);
+        match move wait_outcome_3 {
           Ok(value: next) => {
             let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
             let factory = factory_share(factory: &handles);

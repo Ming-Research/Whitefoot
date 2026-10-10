@@ -40,7 +40,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 /// A named const is immutable and is read by subscript, measure member, field
-/// suffix, or `&` reference [CONST-2].
+/// suffix, `&` reference, or whole-value copy under v0.121 [CONST-2].
 ///
 /// Two v0.59 cases retire with their subjects. `let old = replace rows[..] =
 /// 5_u64;` was [SET-2]'s statement, which is gone: [SET-1] writes the place

@@ -375,11 +375,29 @@ fn linked_definitions_return_their_declared_register_results() {
                 .into_string();
             assert_classification_matches_emitted_leaves(program, &module);
             let mut linked = Vec::new();
+            let mut waiting = Vec::new();
             for function in program.functions() {
                 let result = FunctionAbi::build(program, function)
                     .expect("callable ABI")
                     .result();
                 if !function.blocks().is_empty() || !matches!(result, ResultAbi::StoredValue(_)) {
+                    continue;
+                }
+                if function.waits() {
+                    // A waiting host entry constructs its result through a
+                    // destination whatever its ordinary ABI, so its linked
+                    // start and finish both take the result pointer first.
+                    for part in ["start", "finish"] {
+                        let symbol = format!(" @wf_{}.{part}(ptr %result, ", function.name());
+                        assert!(
+                            ORDINARY_VALUES_LLVM
+                                .lines()
+                                .any(|line| line.starts_with("define ") && line.contains(&symbol)),
+                            "{} has no {part} definition taking its result pointer",
+                            function.name()
+                        );
+                    }
+                    waiting.push(function.name().to_owned());
                     continue;
                 }
                 let declared = llvm_type(program, result.ty()).expect("result type");
@@ -405,12 +423,26 @@ fn linked_definitions_return_their_declared_register_results() {
                 );
                 linked.push(function.name().to_owned());
             }
-            // Both `Result<u64, Utf8Error>` and the resident reading's
-            // `Option<u64>` fit the register-result budget.
+            // The two Instant producers, the four cancellation constructors, whose
+            // results are one-field structs over a shared handle [PRE-2],
+            // `Result<u64, Utf8Error>` and the resident reading's `Option<u64>`
+            // fit the register-result budget.
             assert_eq!(
                 linked,
-                ["std.text.host_utf8_len", "std.process.resident_bytes"]
+                [
+                    "std.time.now",
+                    "std.time.instant_after",
+                    "std.time.cancel_source",
+                    "std.time.cancel_share",
+                    "std.time.cancel_watch",
+                    "std.time.cancel_never",
+                    "std.text.host_utf8_len",
+                    "std.process.resident_bytes",
+                ]
             );
+            // `sleep_until`'s `Result<unit, unit>` fits the budget too, and
+            // reaches its caller only through the waiting entry's destination.
+            assert_eq!(waiting, ["std.time.sleep_until"]);
         },
     );
 }

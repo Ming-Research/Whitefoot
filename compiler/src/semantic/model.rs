@@ -253,11 +253,13 @@ pub(crate) enum CheckedProofMultiplicity {
 ///
 /// A named source is the immutable theorem image published by the resolved
 /// invariant declaration. A relation source is independently proved by AUTO
-/// in the local invariant's entering context.
+/// in the local invariant's entering context. A range instance belongs to
+/// that target's range problem and is ignored by ordinary entailment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedProofUseSource {
     Named(DeclarationId),
     Relation(CheckedAffineRelation),
+    Range(super::range_facts::CheckedRangeUse),
 }
 
 /// One erased source-written local invariant. Every `use` and the target are
@@ -1038,6 +1040,8 @@ pub(crate) struct CheckedTarget {
     pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,
     pub(crate) reads: bool,
+    /// Conservative permission to replace a map entry variant.
+    pub(crate) inserts: bool,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
 }
 
@@ -1682,22 +1686,61 @@ fn proof_place_below(
     place
 }
 
-/// One range reference's own root [REF-4].
+/// One bound range reference or directly selected run [REF-4, OP-4].
 ///
-/// A range reference is the pointer-and-count pair the binding itself holds:
-/// [TYPE-8] makes `&[T]` a reference kind and not a type, so no storage ever
-/// holds one and no field path reaches one, and the root is that binding
-/// alone. The element type travels beside it because [TYPE-7] makes the
+/// A bound range reference holds its pointer-and-count pair in the binding
+/// alone: [TYPE-8] makes `&[T]` a reference kind, not a stored type. A direct
+/// run carries the same formation inline and retains its source binding.
+/// The element type travels beside it because [TYPE-7] makes the
 /// referent a `^` selects the element type, so [MSR-1]'s one `len` row
 /// cannot be recovered from the selected type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedRangeRoot {
     pub(crate) binding: BindingId,
+    /// A directly selected run evaluates the same formation as `&s[i]` or
+    /// `&p.pages[k]`, without introducing a source binding or a new value kind.
+    pub(crate) formation: Option<Box<CheckedExpression>>,
     /// The complete stored element type, interned in this checked program.
     pub(crate) element: CheckedElement,
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+}
+
+impl CheckedRangeRoot {
+    /// The written storage path, shared by direct and borrowed run consumers.
+    pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
+        match self.formation.as_deref() {
+            Some(CheckedExpression::BorrowSegment { root, segment, .. }) => {
+                let (_, mut path) = root.place();
+                path.push(segment.place_step());
+                path
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        match self.formation.as_deref() {
+            Some(CheckedExpression::BorrowSegment { root, segment, .. }) => {
+                let mut place = match root {
+                    CheckedSegmentSource::Storage(root) => root.proof_place(),
+                    CheckedSegmentSource::Element(element) => element.proof_place(),
+                };
+                place.path.push(match segment {
+                    CheckedSegmentSelect::Page(index) => {
+                        // [ENT-2, MSR-1] a direct selection reads the current
+                        // extent, so its selector compares as an index. This
+                        // is not the captured path of a source `&p.pages[k]`.
+                        super::places::PlaceStep::Page(index.captured.goal_identity())
+                    }
+                    _ => segment.place_step(),
+                });
+                place
+            }
+            _ => super::places::ResolvedPlace::binding(self.binding),
+        }
+    }
 }
 
 /// The storage one range reference is formed over [REF-4].
@@ -1725,7 +1768,10 @@ impl CheckedRangeSource {
     pub(crate) fn place(&self) -> (super::places::PlaceRoot, Vec<super::places::PlaceStep>) {
         match self {
             Self::Storage(root) => (root.root, root.place_path()),
-            Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+            Self::Range(root) => (
+                super::places::PlaceRoot::Binding(root.binding),
+                root.place_path(),
+            ),
             Self::Element(place) => (
                 super::places::PlaceRoot::Binding(place.root.binding),
                 place.place_path(),
@@ -1870,25 +1916,49 @@ impl CheckedRangeElementPlace {
     /// The outer range offset followed by every nested subscript offset, in
     /// source evaluation order [SET-1, OP-4].
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
-        std::iter::once(&self.offset).chain(self.path.iter().filter_map(|step| match step {
-            CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-        }))
+        self.root
+            .formation
+            .as_deref()
+            .into_iter()
+            .chain(std::iter::once(&self.offset))
+            .chain(self.path.iter().filter_map(|step| match step {
+                CheckedPlaceStep::Subscript(index) => Some(&index.offset),
+                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            }))
     }
 
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
-        std::iter::once(&mut self.offset).chain(self.path.iter_mut().filter_map(
-            |step| match step {
+        self.root
+            .formation
+            .as_deref_mut()
+            .into_iter()
+            .chain(std::iter::once(&mut self.offset))
+            .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
                 CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-            },
-        ))
+            }))
     }
 
     pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
-        std::iter::once(super::places::PlaceStep::Index(self.captured))
+        self.root
+            .place_path()
+            .into_iter()
+            .chain(std::iter::once(super::places::PlaceStep::Index(
+                self.captured,
+            )))
             .chain(self.path.iter().map(CheckedPlaceStep::place_step))
             .collect()
+    }
+
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        let mut place = self.root.proof_place();
+        place
+            .path
+            .push(super::places::PlaceStep::Index(self.captured));
+        place
+            .path
+            .extend(self.path.iter().map(CheckedPlaceStep::place_step));
+        place
     }
 
     pub(crate) fn goal_projections(&self) -> Vec<super::goal::GoalProjection> {
@@ -2270,8 +2340,9 @@ pub(crate) struct CheckedResultBorrow {
 pub(crate) enum CheckedExpression {
     Constant(CheckedValue),
     /// A named const read retains declaration identity for exact goal-origin
-    /// equality while lowering the same immutable value as before.
+    /// equality and static storage identity for aggregate copy lowering.
     NamedConstant {
+        constant: CheckedConstantId,
         declaration: DeclarationId,
         value: CheckedValue,
     },
@@ -2360,7 +2431,7 @@ pub(crate) enum CheckedExpression {
         operation: CheckedBooleanOperation,
         arguments: Vec<CheckedExpression>,
     },
-    EnumEquality {
+    ValueEquality {
         carrier: NodePath,
         equal: bool,
         operand_type: CheckedType,
@@ -2559,7 +2630,7 @@ impl CheckedExpression {
             | Self::NumericConversion { carrier, .. }
             | Self::Reinterpret { carrier, .. }
             | Self::BooleanOperation { carrier, .. }
-            | Self::EnumEquality { carrier, .. }
+            | Self::ValueEquality { carrier, .. }
             | Self::ArrayIndex { carrier, .. }
             | Self::BufferIndex { carrier, .. }
             | Self::RangeOf { carrier, .. }
@@ -2593,7 +2664,7 @@ impl CheckedExpression {
                 operand_type,
                 ..
             } => operation.result_type(*operand_type),
-            Self::BooleanOperation { .. } | Self::EnumEquality { .. } => CheckedType::Bool,
+            Self::BooleanOperation { .. } | Self::ValueEquality { .. } => CheckedType::Bool,
             Self::ArrayMeasure { .. } => CheckedType::Integer(IntegerType::U64),
             Self::ArrayIndex { element_type, .. } => *element_type,
             Self::BufferMeasure { .. }
@@ -2783,6 +2854,10 @@ pub(crate) enum CheckedStatement {
         /// target shape. A read-out or revived binding displaces no old value;
         /// a reference rebinding has no owned value to release either.
         displaces_live_value: bool,
+        /// Whether that displacement may reclaim storage. The ordinary type
+        /// release graph supplies this scheduling boundary; permission keeps
+        /// borrowed storage alive across an overlapped call's entry.
+        releases_displaced_storage: bool,
     },
     /// [GRAM-4] an expression statement whose discarded result needs no
     /// release: a copy value or a borrow-mode reference.
@@ -3303,8 +3378,10 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         | CheckedExpression::ArrayMeasure { .. }
         | CheckedExpression::BufferMeasure { .. }
         | CheckedExpression::DerefAddressed { .. }
-        | CheckedExpression::RangeMeasure { .. }
         | CheckedExpression::Project { .. } => Vec::new(),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            root.formation.as_deref().into_iter().collect()
+        }
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.offsets().collect(),
@@ -3315,7 +3392,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. } => arguments.iter().collect(),
+        | CheckedExpression::ValueEquality { arguments, .. } => arguments.iter().collect(),
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
@@ -3323,14 +3400,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::BoxTake { .. } => Vec::new(),
         CheckedExpression::ArrayIndex { offset, .. } => vec![offset.as_ref()],
         CheckedExpression::BufferIndex { offset, .. } => vec![offset.as_ref()],
-        CheckedExpression::RangeElementMeasure { place, .. } => {
-            let mut children = vec![&place.offset];
-            children.extend(place.path.iter().filter_map(|step| match step {
-                CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
-            }));
-            children
-        }
+        CheckedExpression::RangeElementMeasure { place, .. } => place.offsets().collect(),
         CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => place.offsets().collect(),
         // [REF-4] both endpoints are evaluated once where the range is

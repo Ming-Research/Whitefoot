@@ -50,6 +50,7 @@ enum TableTake {
         record: IrRecord,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     },
     Hold {
@@ -179,6 +180,9 @@ impl IrBuilder<'_> {
                                     record,
                                     key,
                                     read,
+                                    // Guards keep the existing reservation until their watch is registered.
+                                    inserts: target.inserts
+                                        || guard_roots.iter().any(|r| r.binding == target.binding),
                                     stable_absence: targets.len() > 1,
                                 }
                             }
@@ -457,6 +461,7 @@ impl IrBuilder<'_> {
                             record,
                             key,
                             read,
+                            inserts,
                             stable_absence,
                         } => {
                             self.define(
@@ -466,6 +471,7 @@ impl IrBuilder<'_> {
                                     table: *table,
                                     key: *key,
                                     read: *read,
+                                    inserts: *inserts,
                                     stable_absence: *stable_absence,
                                 },
                             )?;
@@ -848,7 +854,7 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. }
+        | CheckedExpression::ValueEquality { arguments, .. }
         | CheckedExpression::ConstructStruct {
             fields: arguments, ..
         }
@@ -893,7 +899,13 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
             expression_bindings(start, roots);
             expression_bindings(end, roots);
         }
-        CheckedExpression::RangeMeasure { root, .. } => roots.push(Root::whole(root.binding)),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref() {
+                expression_bindings(formation, roots);
+            } else {
+                roots.push(Root::whole(root.binding));
+            }
+        }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
         | CheckedExpression::BorrowRangeIndex { place, .. } => element_roots(place, roots),
@@ -938,7 +950,11 @@ fn container_roots(root: &CheckedContainerRoot, roots: &mut Vec<Root>) {
 }
 
 fn element_roots(place: &CheckedRangeElementPlace, roots: &mut Vec<Root>) {
-    roots.push(Root::whole(place.root.binding));
+    if let Some(formation) = place.root.formation.as_deref() {
+        expression_bindings(formation, roots);
+    } else {
+        roots.push(Root::whole(place.root.binding));
+    }
     expression_bindings(&place.offset, roots);
     steps_roots(&place.path, roots);
 }

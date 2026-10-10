@@ -258,6 +258,10 @@ impl<'unit> Checker<'_, 'unit> {
         // or path, so the judgment that settled them records its answer here
         // for lowering [SET-1, LIV-1, DIAG-2].
         let displaces_live_value = root_live_after_rhs && !atomic_read_out;
+        let releases_displaced_storage = displaces_live_value
+            && self
+                .types
+                .may_release_storage(target_type, CheckedMode::Own)?;
         // Every source rejection of this statement is judged above; a target
         // this compiler cannot lower stops here and nowhere earlier [DIAG-1].
         if let Some(feature) = mutation.unsupported {
@@ -287,6 +291,7 @@ impl<'unit> Checker<'_, 'unit> {
                 target: mutation.target,
                 value: value.expression,
                 displaces_live_value,
+                releases_displaced_storage,
             },
             effects,
         ))
@@ -508,6 +513,7 @@ impl<'unit> Checker<'_, 'unit> {
                 value: value.expression,
                 // [REF-1] a reference rebinding displaces no owner.
                 displaces_live_value: false,
+                releases_displaced_storage: false,
             },
             value.effects,
         )))

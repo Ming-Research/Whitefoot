@@ -49,6 +49,8 @@ mod payload_enums;
 /// rules [VIEW-1], [VIEW-4] and [VIEW-6] gave them. Each retirement is
 /// recorded beside the tests that replace it inside the module.
 mod ranges;
+mod read_through;
+mod value_equality;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
 // returning `&uniq 'r target^`, the child chain through a `box<u64>`

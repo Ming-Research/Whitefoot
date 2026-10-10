@@ -17,6 +17,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         constants: &[],
         constant_ids: &constant_ids,
         const_parameter_types: &const_parameter_types,
+        copy_type_parameters: &[],
         nominals: &[],
         elements: &[],
         contract_queries: &[],

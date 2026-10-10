@@ -905,118 +905,157 @@ impl Reasoning<'_, '_, '_> {
         // definition DAG into a tree.
         memo.insert((goal, sign), None);
 
-        let proof = match expression {
-            GoalExpression::Operation {
-                row:
-                    GoalOperation::NumericConversion {
-                        mode: CheckedConversionMode::Defined,
-                        ..
-                    },
-                ..
-            } if sign == GoalSign::Positive => {
-                self.conversion_goal_bound_proof(context, expression, goal)
-            }
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child_sign = match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive)
-                    | (CheckedBooleanOperation::Or, GoalSign::Positive) => GoalSign::Positive,
-                    (CheckedBooleanOperation::And, GoalSign::Negative)
-                    | (CheckedBooleanOperation::Or, GoalSign::Negative) => GoalSign::Negative,
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
-                    (CheckedBooleanOperation::ExclusiveOr, _) => {
-                        return None;
-                    }
-                };
-                let requires_all = matches!(
-                    (operation, sign),
-                    (CheckedBooleanOperation::And, GoalSign::Positive)
-                        | (CheckedBooleanOperation::Or, GoalSign::Negative)
-                        | (CheckedBooleanOperation::Not, _)
-                );
-                let parents = if requires_all {
-                    let mut parents = Vec::with_capacity(arguments.len());
-                    let mut complete = true;
-                    for argument in arguments {
-                        let Some(parent) = self
-                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
-                        else {
-                            complete = false;
-                            break;
-                        };
+        let proof = if let Some((all, child_sign, fields)) =
+            self.vocabulary.goals.struct_reconstruction(goal, sign)
+        {
+            let fields = fields.to_vec();
+            let mut parents = Vec::new();
+            let mut complete = true;
+            for field in fields {
+                let expression = self.vocabulary.goals.expression(field).clone();
+                match self.signed_goal_affine_proof(context, &expression, child_sign, closed, memo)
+                {
+                    Some(parent) => {
                         parents.push(parent);
-                    }
-                    complete.then_some(parents)
-                } else {
-                    let mut best = None;
-                    for argument in arguments {
-                        let Some(candidate) = self
-                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
-                        else {
-                            continue;
-                        };
-                        // Existential Boolean introductions use the first
-                        // successful child in source order. Later witnesses
-                        // cannot change acceptance, only diagnostics.
-                        if best.is_none() {
-                            best = Some(candidate);
+                        if !all {
+                            break;
                         }
                     }
-                    best.map(|parent| vec![parent])
-                };
-                parents.map(|parents| {
-                    self.vocabulary
-                        .derivations
-                        .intern(DerivationNode::BooleanIntroduction {
-                            goal,
-                            sign,
-                            parents,
-                        })
-                })
-            }
-            GoalExpression::Operation { .. } => {
-                self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
-            }
-            GoalExpression::Datum(GoalDatum::Place {
-                root,
-                projections,
-                ty,
-            }) if context.origin_view == OriginView::Prepared => context
-                .facts
-                .goal_origins
-                .get(root)
-                .copied()
-                .and_then(|origin| {
-                    let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
-                    for projection in projections {
-                        let result = self
-                            .input
-                            .goal_projection_type(definition.ty(), *projection)?;
-                        definition = definition.with_projection(*projection, result)?;
+                    None if all => {
+                        complete = false;
+                        break;
                     }
-                    if definition.ty() != *ty {
-                        return None;
-                    }
-                    let from = self.intern_goal_expression(definition.clone());
-                    let parent =
-                        self.signed_goal_affine_proof(context, &definition, sign, closed, memo)?;
-                    Some(
+                    None => {}
+                }
+            }
+            (complete && (all || !parents.is_empty())).then(|| {
+                self.vocabulary
+                    .derivations
+                    .intern(DerivationNode::BooleanIntroduction {
+                        goal,
+                        sign,
+                        parents,
+                    })
+            })
+        } else {
+            match expression {
+                GoalExpression::Operation {
+                    row:
+                        GoalOperation::NumericConversion {
+                            mode: CheckedConversionMode::Defined,
+                            ..
+                        },
+                    ..
+                } if sign == GoalSign::Positive => {
+                    self.conversion_goal_bound_proof(context, expression, goal)
+                }
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child_sign = match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive)
+                        | (CheckedBooleanOperation::Or, GoalSign::Positive) => GoalSign::Positive,
+                        (CheckedBooleanOperation::And, GoalSign::Negative)
+                        | (CheckedBooleanOperation::Or, GoalSign::Negative) => GoalSign::Negative,
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
+                        (CheckedBooleanOperation::ExclusiveOr, _) => {
+                            return None;
+                        }
+                    };
+                    let requires_all = matches!(
+                        (operation, sign),
+                        (CheckedBooleanOperation::And, GoalSign::Positive)
+                            | (CheckedBooleanOperation::Or, GoalSign::Negative)
+                            | (CheckedBooleanOperation::Not, _)
+                    );
+                    let parents = if requires_all {
+                        let mut parents = Vec::with_capacity(arguments.len());
+                        let mut complete = true;
+                        for argument in arguments {
+                            let Some(parent) = self.signed_goal_affine_proof(
+                                context, argument, child_sign, closed, memo,
+                            ) else {
+                                complete = false;
+                                break;
+                            };
+                            parents.push(parent);
+                        }
+                        complete.then_some(parents)
+                    } else {
+                        let mut best = None;
+                        for argument in arguments {
+                            let Some(candidate) = self.signed_goal_affine_proof(
+                                context, argument, child_sign, closed, memo,
+                            ) else {
+                                continue;
+                            };
+                            // Existential Boolean introductions use the first
+                            // successful child in source order. Later witnesses
+                            // cannot change acceptance, only diagnostics.
+                            if best.is_none() {
+                                best = Some(candidate);
+                            }
+                        }
+                        best.map(|parent| vec![parent])
+                    };
+                    parents.map(|parents| {
                         self.vocabulary
                             .derivations
-                            .intern(DerivationNode::OriginTransport {
-                                from,
+                            .intern(DerivationNode::BooleanIntroduction {
                                 goal,
                                 sign,
-                                parent,
-                                origins: Box::new([origin.proof]),
-                            }),
-                    )
-                }),
-            GoalExpression::Datum(_) => None,
+                                parents,
+                            })
+                    })
+                }
+                GoalExpression::Operation { .. } => {
+                    self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
+                }
+                GoalExpression::Datum(GoalDatum::Place {
+                    root,
+                    projections,
+                    ty,
+                }) if context.origin_view == OriginView::Prepared => context
+                    .facts
+                    .goal_origins
+                    .get(root)
+                    .copied()
+                    .and_then(|origin| {
+                        let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
+                        for projection in projections {
+                            let result = self
+                                .input
+                                .goal_projection_type(definition.ty(), *projection)?;
+                            definition = definition.with_projection(*projection, result)?;
+                        }
+                        if definition.ty() != *ty {
+                            return None;
+                        }
+                        let from = self.intern_goal_expression(definition.clone());
+                        let parent = self.signed_goal_affine_proof(
+                            context,
+                            &definition,
+                            sign,
+                            closed,
+                            memo,
+                        )?;
+                        Some(
+                            self.vocabulary
+                                .derivations
+                                .intern(DerivationNode::OriginTransport {
+                                    from,
+                                    goal,
+                                    sign,
+                                    parent,
+                                    origins: Box::new([origin.proof]),
+                                }),
+                        )
+                    }),
+                GoalExpression::Datum(_) => None,
+            }
         };
         memo.insert((goal, sign), proof);
         proof

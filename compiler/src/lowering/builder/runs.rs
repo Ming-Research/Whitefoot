@@ -63,33 +63,43 @@ impl IrBuilder<'_> {
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                 self.lower_fixed_measure(length)
             }
-            // A `Segments` block is reached through its cell and its count
-            // is the word heading it [TYPE-9].
-            MeasureCell::ExactRuntime if matches!(root.ty, CheckedType::Segments { .. }) => {
-                let segments = self.lower_place_address(root)?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::SegmentsMeasure { segments },
-                )
-            }
             MeasureCell::ExactExtent | MeasureCell::ExactRuntime | MeasureCell::Bounded => {
-                let container = self.container_root_value(root)?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::ContainerMeasure {
-                        measure: lower_measure(measure),
-                        container,
-                    },
-                )
+                let container = if matches!(root.ty, CheckedType::Segments { .. }) {
+                    self.lower_place_address_access(root, false)?
+                } else {
+                    self.container_root_value(root)?
+                };
+                self.lower_runtime_measure(measure, root.ty, container)
             }
             MeasureCell::Absent => Err(LoweringFailure::InvalidCheckedProgram),
         }
+    }
+
+    /// Runtime measure dispatch is independent of how the place was reached.
+    /// A Segments count heads its block; other shapes use their descriptor.
+    pub(super) fn lower_runtime_measure(
+        &mut self,
+        measure: CheckedMeasure,
+        ty: CheckedType,
+        container: IrValueId,
+    ) -> Result<IrValueId, LoweringFailure> {
+        let operation = if matches!(ty, CheckedType::Segments { .. }) {
+            IrOperation::SegmentsMeasure {
+                segments: container,
+            }
+        } else {
+            IrOperation::ContainerMeasure {
+                measure: lower_measure(measure),
+                container,
+            }
+        };
+        self.define(
+            IrType::Integer {
+                width: 64,
+                signed: false,
+            },
+            operation,
+        )
     }
 
     /// Reads one measured place's value out of the value at its root:
@@ -141,7 +151,7 @@ impl IrBuilder<'_> {
         root: &CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
         let Some(binding) = root.binding() else {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         };
         if self
             .bindings
@@ -149,7 +159,7 @@ impl IrBuilder<'_> {
             .copied()
             .is_some_and(|storage| matches!(self.value_type(storage), Ok(IrType::Address(_))))
         {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         }
         let value = self.binding_value(binding)?;
         let value = self.project_place_path(value, &root.path)?;

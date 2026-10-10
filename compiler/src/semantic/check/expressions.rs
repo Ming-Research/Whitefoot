@@ -1,4 +1,5 @@
 pub(in crate::semantic::check) mod calls;
+pub(in crate::semantic::check) mod equality;
 pub(in crate::semantic::check) mod flat_storage;
 mod places;
 
@@ -462,6 +463,13 @@ impl<'unit> Checker<'_, 'unit> {
                     .types
                     .declarations
                     .infix_operation(self.types.declarations.clause_operator_node(operator)?)?;
+                self.types.preflight_value_equality(
+                    context,
+                    node,
+                    operation,
+                    &[left, right],
+                    bindings,
+                )?;
                 let left = (
                     left,
                     self.check_clause_affine(
@@ -484,8 +492,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -560,8 +572,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             Production::AffineTerm => {
                 let factors = self
@@ -602,6 +618,7 @@ impl<'unit> Checker<'_, 'unit> {
                             )?,
                         );
                         self.types.check_integer_operation_operands(
+                            context.check_context,
                             node,
                             CheckedIntegerOperation::MultiplyExact,
                             vec![left, right],
@@ -1175,31 +1192,20 @@ impl<'unit> Checker<'_, 'unit> {
                     .copied()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let constant = self.types.constant(constant)?;
-                if matches!(
-                    constant.ty,
-                    CheckedType::Array { .. }
-                        | CheckedType::Buffer { .. }
-                        | CheckedType::Window { .. }
-                ) {
+                if !self.types.is_copy_type(check_context, constant.ty)? {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "read a const Array<T, n> through a subscript, or read one of its measures as `p.len`",
+                            mechanical_fix: "read the const through a field, subscript or measure supported by its type, or take a `&` reference",
                         },
                     );
                 }
-                if matches!(constant.value, CheckedValue::Struct { .. }) {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Own1,
-                        use_node,
-                        SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "read a const struct through its fields",
-                        },
-                    );
-                }
+                // [CONST-2, OWN-1] a whole const read requires copy;
+                // immutable static storage is rooted at no parameter [EFF-2].
                 Ok(TypedExpression::owned(
                     CheckedExpression::NamedConstant {
+                        constant: constant.id,
                         declaration,
                         value: constant.value.clone(),
                     },
@@ -1962,8 +1968,8 @@ impl<'unit> DeclarationInventory<'unit> {
     ///
     /// Bare `+ - * / %` are proof-required exact rows; `defined` names their
     /// total Bool domain queries. The remaining suffixes keep their existing
-    /// value-result policies. The six `compare_op` spellings are the total
-    /// integer comparison rows.
+    /// value-result policies. Equality shares this token mapping, then selects
+    /// the value-equality judgment; ordering keeps the integer judgment.
     pub(super) fn infix_operation(
         &self,
         operator: NodeId,

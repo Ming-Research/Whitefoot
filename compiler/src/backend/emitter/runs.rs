@@ -172,25 +172,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map(|pointer| format!("%{pointer}"))
     }
 
-    /// [BLK-2] `fixed_vector`: the empty window over `n` raw slots.
-    ///
-    /// The value is the zero aggregate, so both descriptor words start at
-    /// zero, which is exactly the row's four published relations.
+    /// [OP-13] The empty window over `n` raw slots. Only descriptor words
+    /// hold values: WIN-1 leaves every element slot uninitialized.
     pub(super) fn emit_fixed_vector(
         &mut self,
         result: IrValueId,
         ty: IrType,
     ) -> Result<(), BackendFailure> {
-        let Some(_) = RunShape::of(ty) else {
+        let Some(shape) = RunShape::of(ty) else {
             return Err(BackendFailure::InvalidIr);
         };
-        let run_type = self.output.type_name(self.program, ty)?;
+        if shape.capacity.is_none() || shape.shape == IrWindowShape::Paged {
+            return Err(BackendFailure::InvalidIr);
+        }
         let destination = self.value_place(result)?;
-        writeln!(
-            self.output,
-            "  store {run_type} zeroinitializer, ptr {destination}",
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        for field in 0..shape.slots_field() {
+            let address = self.aggregate_field_pointer(ty, &destination, field as usize)?;
+            writeln!(self.output, "  store i64 0, ptr {address}")?;
+        }
+        Ok(())
     }
 
     /// [MSR-1] one measure of a storage shape, read at run time.
@@ -1132,12 +1132,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `grow`: the cell's content is reallocated at the new
     /// capacity.
     ///
-    /// One `realloc` keeps the header and the filled slots, possibly in
-    /// place, and the cell's pointer slot takes the
-    /// returned block, which then records the new capacity. [STOR-7] makes
-    /// an address change legal at every value, because no judgment depends
-    /// on the block's address; a failed `realloc` leaves the old block and
-    /// terminates [STOR-8].
+    /// One `wf__heap_retake` keeps the header and the filled slots: the
+    /// runtime copies a block below 1024 bytes into a fresh one and calls
+    /// `realloc`, possibly in place, for a larger block. The cell's pointer
+    /// slot takes the returned block, which then records the new capacity.
+    /// [STOR-7] makes an address change legal at every value, because no
+    /// judgment depends on the block's address; a failed retake leaves the
+    /// old block and terminates [STOR-8].
     pub(super) fn emit_window_grow(
         &mut self,
         result: IrValueId,

@@ -66,6 +66,31 @@ const PERMITTED_FOLD: &[u8] = include_bytes!("../../../../tests/programs/paralle
 const TABLE_READ_FOLD: &[u8] =
     include_bytes!("../../../../tests/programs/parallel/map_read_fold.wf");
 
+#[test]
+fn reference_sibling_field_map_splits_without_copying_its_referent() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-affine-sibling-field-read.wf");
+    let module = emit_with_overlap(source);
+    let chunks = synthesized_symbols(&module, "@wf__par_chunk_");
+    let chunk = chunks
+        .iter()
+        .find(|name| name.starts_with("@wf__par_chunk_fill."))
+        .expect("the sibling scalar read must permit fill's split");
+    let body = function_body(&module, chunk);
+    assert!(
+        body.contains("load i64, ptr"),
+        "the chunk must load the scalar: {body}"
+    );
+    assert!(
+        body.contains("store i64 "),
+        "the chunk must write the element: {body}"
+    );
+    assert!(
+        !body.contains("llvm.memcpy"),
+        "the field read must not copy the whole referent: {body}"
+    );
+}
+
 fn table_read_fold_with_sibling_writes() -> String {
     std::str::from_utf8(TABLE_READ_FOLD)
         .expect("UTF-8 map reader")
@@ -454,7 +479,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let window = &report.inner[0_u64..8_u64];
   let stored = spell(destination: window, at: 0_u64, value: value);
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -519,7 +547,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let size = report.inner.len;
   let source = &report.inner[0_u64..size];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -1477,7 +1508,10 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     // emitted release shape of one `Box<Array<u8>>` per return path [STOR-3].
     // If the release lowering of a boxed run changes, re-derive the counts.
     assert!(!chunk.contains("call void @wf__heap_give("), "{chunk}");
-    assert!(!splitter.contains("call void @wf__heap_give("), "{splitter}");
+    assert!(
+        !splitter.contains("call void @wf__heap_give("),
+        "{splitter}"
+    );
     for outer in ["@wf_main", "@wf__par_seq_main"] {
         let body = function_body(&split, outer);
         // The entry waits, so each source return leaves by a branch to the
@@ -2129,8 +2163,11 @@ fn admitted_combine_source() -> Vec<u8> {
     }
     source.push_str(&format!(
         "  let no_deadline = None<std::time::Instant>();\n  \
-         match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
-         end: {width}_u64, deadline: no_deadline) {{\n    Ok(value: accepted) => {{\n      \
+         let wait_cancel_1 = std::time::cancel_never();\n  \
+         let wait_outcome_1 = std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
+         end: {width}_u64, deadline: no_deadline, cancel: &wait_cancel_1);\n  \
+         std::time::close_cancel_watch(watch: move wait_cancel_1);\n  \
+         match wait_outcome_1 {{\n    Ok(value: accepted) => {{\n      \
          return std::process::exit_status(code: 0_u8);\n    }}\n    Err(error: problem) => {{\n      \
          return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n}}\n"
     ));

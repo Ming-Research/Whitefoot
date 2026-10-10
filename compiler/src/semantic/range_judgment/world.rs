@@ -9,12 +9,13 @@
 //! reach one container. Every write makes a new *version* of its container
 //! defined by the old one, which is what lets a fact stated about an old
 //! version answer a question about a newer one: a read of the newer version
-//! is the written value at the written index and the old version's element
-//! everywhere else.
+//! is the written value's projection at the written index, and the old
+//! version's projection at other indices or at a disjoint sibling field.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::super::model::{BindingId, CheckedMeasure, IntegerType};
+use super::super::range_facts::CheckedRangeProjection;
 use super::solver::{AtomId, Linear, Literal, Relation};
 
 /// What owns a location's storage.
@@ -35,7 +36,12 @@ pub(super) enum Origin {
 pub(super) enum Step {
     Field(u32),
     BoxContent,
-    Payload { variant: u32, field: u32 },
+    Payload {
+        variant: u32,
+        field: u32,
+        variants: u32,
+    },
+    Tag(u32),
 }
 
 /// One storage location: an origin and the steps below it.
@@ -84,14 +90,23 @@ pub(super) struct Container {
 pub(super) enum VersionDef {
     /// The contents the container held when the judgment first saw it.
     Initial,
+    /// A collection reached below an aggregate copy. Its elements and initial
+    /// descriptor retain the immutable source definition captured by the copy.
+    Copied { source: ReadSource, arity: usize },
     /// Contents nothing here describes.
     Fresh,
-    /// The previous version with one element written. A value of `None` is
-    /// an element the judgment does not represent.
+    /// A located write, with the scalar projections of its value that the
+    /// walk can name. Missing projections are unknown at the written tuple.
     Write {
         previous: VersionId,
         indices: Vec<Linear>,
-        value: Option<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        values: BTreeMap<Vec<CheckedRangeProjection>, Stored>,
+    },
+    /// Unknown writes at any tuple, retaining disjoint projections.
+    Forget {
+        previous: VersionId,
+        projections: BTreeSet<Vec<CheckedRangeProjection>>,
     },
     /// One of the versions of a join's arms, by the arm taken.
     Join {
@@ -114,6 +129,7 @@ pub(super) enum AtomDef {
     Read {
         version: VersionId,
         indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
     },
     /// A measure of a container in one generation of its descriptor; the
     /// world interns one atom per container, generation and measure.
@@ -140,13 +156,18 @@ pub(super) struct Atom {
 #[derive(Debug, Default)]
 pub(super) struct World {
     pub(super) atoms: Vec<Atom>,
-    reads: HashMap<(VersionId, Vec<Linear>), AtomId>,
+    const_generics: HashMap<crate::DeclarationId, AtomId>,
+    reads: HashMap<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>), AtomId>,
     measures: HashMap<(ContainerId, u32, CheckedMeasure), AtomId>,
     segment_lengths: HashMap<(ContainerId, u32, Linear), AtomId>,
     pub(super) containers: Vec<Container>,
     container_index: HashMap<Location, ContainerId>,
     pub(super) versions: Vec<Version>,
     initial: HashMap<ContainerId, VersionId>,
+    copies: HashMap<(ContainerId, ReadSource), (VersionId, u32)>,
+    descriptor_copies: HashMap<(ContainerId, u32), ReadSource>,
+    /// Descriptor generations selected by a join, indexed lazily by measure.
+    descriptor_joins: HashMap<(ContainerId, u32), (JoinId, Vec<u32>)>,
     /// Each join's arms: the literals each arm added since the fork.
     pub(super) joins: Vec<Vec<Vec<Literal>>>,
     next_origin: u32,
@@ -160,6 +181,7 @@ pub(super) struct World {
 pub(super) struct Modified {
     pub(super) containers: BTreeSet<ContainerId>,
     pub(super) descriptors: BTreeSet<ContainerId>,
+    pub(super) projections: BTreeMap<ContainerId, BTreeSet<Vec<CheckedRangeProjection>>>,
     pub(super) bindings: BTreeSet<BindingId>,
     pub(super) slots: BTreeSet<Location>,
     /// Scalar bindings a reference was taken to [`State::exposed`].
@@ -173,6 +195,21 @@ impl World {
         Linear::atom(self.push(AtomDef::Opaque, ty))
     }
 
+    /// All reads of a symbolic const generic denote the same typed integer
+    /// [MSR-6], including reads in a callee's substituted postcondition.
+    pub(super) fn const_generic(
+        &mut self,
+        declaration: crate::DeclarationId,
+        ty: IntegerType,
+    ) -> Linear {
+        if let Some(atom) = self.const_generics.get(&declaration) {
+            return Linear::atom(*atom);
+        }
+        let atom = self.push(AtomDef::Opaque, Some(ty));
+        self.const_generics.insert(declaration, atom);
+        Linear::atom(atom)
+    }
+
     fn push(&mut self, def: AtomDef, ty: Option<IntegerType>) -> AtomId {
         let id = AtomId::try_from(self.atoms.len()).unwrap_or(AtomId::MAX);
         self.atoms.push(Atom { def, ty });
@@ -183,13 +220,21 @@ impl World {
         &mut self,
         version: VersionId,
         indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
         ty: Option<IntegerType>,
     ) -> Linear {
-        let key = (version, indices.clone());
+        let key = (version, indices.clone(), projection.clone());
         if let Some(atom) = self.reads.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(AtomDef::Read { version, indices }, ty);
+        let atom = self.push(
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            },
+            ty,
+        );
         self.reads.insert(key, atom);
         Linear::atom(atom)
     }
@@ -204,7 +249,32 @@ impl World {
         if let Some(atom) = self.measures.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(AtomDef::Measure, Some(IntegerType::U64));
+        if let Some(source) = self
+            .descriptor_copies
+            .get(&(container, generation))
+            .cloned()
+        {
+            let mut projection = source.projection;
+            projection.push(CheckedRangeProjection::Measure(measure));
+            return self.read(
+                source.version,
+                source.indices,
+                projection,
+                Some(IntegerType::U64),
+            );
+        }
+        let def = if let Some((join, generations)) =
+            self.descriptor_joins.get(&(container, generation)).cloned()
+        {
+            let values = generations
+                .into_iter()
+                .map(|generation| self.measure(container, generation, measure))
+                .collect();
+            AtomDef::Joined { join, values }
+        } else {
+            AtomDef::Measure
+        };
+        let atom = self.push(def, Some(IntegerType::U64));
         self.measures.insert(key, atom);
         Linear::atom(atom)
     }
@@ -219,16 +289,47 @@ impl World {
         if let Some(atom) = self.segment_lengths.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(
+        if let Some(source) = self
+            .descriptor_copies
+            .get(&(container, generation))
+            .cloned()
+        {
+            let mut projection = source.projection;
+            projection.push(CheckedRangeProjection::Index(source.indices.len() as u32));
+            projection.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+            let mut indices = source.indices;
+            indices.push(row);
+            return self.read(source.version, indices, projection, Some(IntegerType::U64));
+        }
+        let def = if let Some((join, generations)) =
+            self.descriptor_joins.get(&(container, generation)).cloned()
+        {
+            let values = generations
+                .into_iter()
+                .map(|generation| self.segment_length(container, generation, row.clone()))
+                .collect();
+            AtomDef::Joined { join, values }
+        } else {
             AtomDef::SegmentLength {
                 container,
                 generation,
                 row,
-            },
-            Some(IntegerType::U64),
-        );
+            }
+        };
+        let atom = self.push(def, Some(IntegerType::U64));
         self.segment_lengths.insert(key, atom);
         Linear::atom(atom)
+    }
+
+    /// Preserve ordinary branch facts and give the value a stable enum tag.
+    /// Only a constant fixes that tag; RANGE-2 leaves other expression values
+    /// unknown. Copies retain the tag, while each new value gets its own.
+    pub(super) fn boolean(&mut self, condition: Cond) -> Value {
+        let tag = match &condition {
+            Cond::Constant(truth) => Linear::constant(i128::from(!*truth)),
+            _ => self.opaque(Some(IntegerType::U8)),
+        };
+        Value::Bool(condition, tag)
     }
 
     pub(super) fn joined(
@@ -269,6 +370,22 @@ impl World {
         let version = self.new_version(VersionDef::Initial);
         self.initial.insert(container, version);
         version
+    }
+
+    fn copied_container(&mut self, container: ContainerId, source: ReadSource) -> (VersionId, u32) {
+        let key = (container, source.clone());
+        if let Some(snapshot) = self.copies.get(&key) {
+            return *snapshot;
+        }
+        let version = self.new_version(VersionDef::Copied {
+            source: source.clone(),
+            arity: self.containers[container as usize].arity,
+        });
+        let generation = self.new_generation();
+        self.descriptor_copies
+            .insert((container, generation), source);
+        self.copies.insert(key, (version, generation));
+        (version, generation)
     }
 
     pub(super) fn new_version(&mut self, def: VersionDef) -> VersionId {
@@ -370,6 +487,8 @@ pub(super) fn negated(literal: &Literal) -> Literal {
 /// What a reference names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum View {
+    /// An exposed scalar: read its current binding value, never a borrow-time snapshot.
+    Scalar(BindingId),
     /// A run: element `k` is the container's element at `prefix ++ [offset + k]`.
     Run {
         container: ContainerId,
@@ -381,6 +500,8 @@ pub(super) enum View {
     Element {
         container: ContainerId,
         indices: Vec<Linear>,
+        /// None for a descendant outside the range projection vocabulary.
+        projection: Option<Vec<CheckedRangeProjection>>,
     },
     /// A whole place.
     Place(Location),
@@ -391,7 +512,9 @@ pub(super) enum View {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Value {
     Int(Linear),
-    Bool(Cond),
+    /// Keep the ordinary condition and the declaration-order enum tag.
+    /// Bool's prelude order is True = 0, False = 1 [PRE-1, RANGE-2].
+    Bool(Cond, Linear),
     Ref(View),
     /// An owned aggregate stored at this location.
     Owned(Location),
@@ -400,7 +523,29 @@ pub(super) enum Value {
     /// An enum value being constructed.
     Variant {
         variant: u32,
+        variants: u32,
         fields: Vec<Value>,
+    },
+    Unknown,
+}
+
+/// Immutable contents captured by an aggregate read.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct ReadSource {
+    pub(super) version: VersionId,
+    pub(super) indices: Vec<Linear>,
+    pub(super) projection: Vec<CheckedRangeProjection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Stored {
+    Int(Linear),
+    Read(ReadSource),
+    Collection {
+        container: ContainerId,
+        version: VersionId,
+        generation: u32,
+        arity: usize,
     },
     Unknown,
 }
@@ -410,6 +555,8 @@ pub(super) enum Value {
 pub(super) enum Slot {
     /// The storage moved here from another location.
     Alias(Location),
+    Read(ReadSource),
+    Unknown,
     Int(Linear),
     Ref(View),
 }
@@ -438,6 +585,71 @@ pub(super) struct State {
 }
 
 impl State {
+    /// Materializes a collection only when first reached, retaining a copied
+    /// ancestor's immutable contents even if no collection at that path was
+    /// named before the copy.
+    pub(super) fn container(
+        &mut self,
+        world: &mut World,
+        location: Location,
+        arity: usize,
+    ) -> Option<ContainerId> {
+        let location = self.resolve(&location);
+        let container = world.container(location, arity)?;
+        let (version, generation) = self.snapshot_container(world, container);
+        self.versions.insert(container, version);
+        self.generations.insert(container, generation);
+        Some(container)
+    }
+
+    /// The snapshot belongs to this path: another arm may have forgotten
+    /// this location before either arm first materializes the collection.
+    pub(super) fn snapshot_container(
+        &self,
+        world: &mut World,
+        container: ContainerId,
+    ) -> (VersionId, u32) {
+        if let Some(version) = self.versions.get(&container) {
+            return (*version, self.generation(container));
+        }
+        let location = self.resolve(&world.containers[container as usize].location);
+        if let Some(source) = self.read_source(&location) {
+            let (version, generation) = world.copied_container(container, source);
+            return (
+                version,
+                self.generations
+                    .get(&container)
+                    .copied()
+                    .unwrap_or(generation),
+            );
+        }
+        (world.initial_version(container), self.generation(container))
+    }
+
+    /// Nearest stored definition wins, including a write that shadows a
+    /// source definition at an ancestor. An alias is resolved before lookup.
+    pub(super) fn read_source(&self, location: &Location) -> Option<ReadSource> {
+        for length in (0..=location.steps.len()).rev() {
+            let prefix = Location {
+                origin: location.origin.clone(),
+                steps: location.steps[..length].to_vec(),
+            };
+            if let Some(slot) = self.slots.get(&prefix) {
+                return match slot {
+                    Slot::Read(source) => {
+                        let mut source = source.clone();
+                        source
+                            .projection
+                            .extend(owned_projection(&location.steps[length..])?);
+                        Some(source)
+                    }
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
     /// The literals and choices every query in this state starts from.
     pub(super) fn premises(&self, world: &World) -> (Vec<Literal>, Vec<Vec<Vec<Literal>>>) {
         let choices = self
@@ -449,10 +661,7 @@ impl State {
     }
 
     pub(super) fn version(&self, world: &mut World, container: ContainerId) -> VersionId {
-        match self.versions.get(&container) {
-            Some(version) => *version,
-            None => world.initial_version(container),
-        }
+        self.snapshot_container(world, container).0
     }
 
     pub(super) fn generation(&self, container: ContainerId) -> u32 {
@@ -495,17 +704,22 @@ impl State {
         world: &mut World,
         container: ContainerId,
         indices: Vec<Linear>,
-        value: Option<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        values: BTreeMap<Vec<CheckedRangeProjection>, Stored>,
     ) {
         let previous = self.version(world, container);
         let version = world.new_version(VersionDef::Write {
             previous,
             indices,
-            value,
+            projection: projection.clone(),
+            values,
         });
         self.versions.insert(container, version);
         if let Some(log) = &mut world.log {
-            log.containers.insert(container);
+            log.projections
+                .entry(container)
+                .or_default()
+                .insert(projection);
         }
     }
 
@@ -549,6 +763,7 @@ impl State {
                 log.slots.insert(slot);
             }
         }
+        self.slots.insert(location.clone(), Slot::Unknown);
         self.forget_variants(&location);
         if let Some(log) = &mut world.log {
             log.slots.insert(location);
@@ -580,7 +795,7 @@ impl State {
         for (binding, ty) in exposed {
             let fresh = match self.values.get(&binding) {
                 Some(Value::Int(_)) => Value::Int(world.opaque(ty)),
-                Some(Value::Bool(_)) => Value::Bool(Cond::Unknown),
+                Some(Value::Bool(..)) => world.boolean(Cond::Unknown),
                 _ => continue,
             };
             // Logged as a written binding, so a loop header forgets it too.
@@ -637,6 +852,19 @@ pub(super) fn join_states(
     if arms.len() <= 1 {
         return arms.pop().map(|state| (state, None));
     }
+    // A container discovered in only one arm still has the other arm's
+    // source or unknown contents, never the discovering arm's initial image.
+    let materialized: BTreeSet<_> = arms
+        .iter()
+        .flat_map(|arm| arm.versions.keys().copied())
+        .collect();
+    for arm in &mut arms {
+        for container in &materialized {
+            let (version, generation) = arm.snapshot_container(world, *container);
+            arm.versions.insert(*container, version);
+            arm.generations.insert(*container, generation);
+        }
+    }
     let deltas: Vec<Vec<Literal>> = arms
         .iter()
         .map(|arm| arm.conds.get(fork_conds..).unwrap_or_default().to_vec())
@@ -653,28 +881,47 @@ pub(super) fn join_states(
         let Some(all) = all else {
             continue;
         };
-        out.values.insert(*binding, join_values(world, join, &all));
+        let value = join_values(world, join, &all, &arms, &mut out);
+        out.values.insert(*binding, value);
     }
-    for (location, slot) in &first.slots {
-        let all: Option<Vec<&Slot>> = arms.iter().map(|arm| arm.slots.get(location)).collect();
-        let Some(all) = all else {
-            continue;
-        };
-        if all.iter().all(|other| *other == slot) {
-            out.slots.insert(location.clone(), slot.clone());
-        } else if let Some(values) = all
-            .iter()
-            .map(|slot| match slot {
-                Slot::Int(value) => Some(value.clone()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
+    let locations: BTreeSet<Location> = arms
+        .iter()
+        .flat_map(|arm| arm.slots.keys().cloned())
+        .collect();
+    for location in locations {
+        let all: Vec<_> = arms.iter().map(|arm| arm.slots.get(&location)).collect();
+        if let Some(slot) = all[0]
+            && all.iter().all(|other| *other == Some(slot))
         {
-            out.slots.insert(
-                location.clone(),
-                Slot::Int(world.joined(join, values, None)),
-            );
+            out.slots.insert(location, slot.clone());
+            continue;
         }
+        // An absent override in one arm means that arm's ancestor source,
+        // never permission to discard another arm's write. Unsupported
+        // definitions remain unknown and still shadow an ancestor source.
+        let versions = arms
+            .iter()
+            .map(|arm| {
+                let mut stored = BTreeMap::new();
+                stored_projections(
+                    world,
+                    arm,
+                    &Value::Owned(location.clone()),
+                    &mut Vec::new(),
+                    &mut stored,
+                );
+                snapshot_version(world, stored)
+            })
+            .collect();
+        let version = world.new_version(VersionDef::Join { join, versions });
+        out.slots.insert(
+            location,
+            Slot::Read(ReadSource {
+                version,
+                indices: Vec::new(),
+                projection: Vec::new(),
+            }),
+        );
     }
     let containers: BTreeSet<ContainerId> = arms
         .iter()
@@ -701,7 +948,11 @@ pub(super) fn join_states(
         let generation = if generations.iter().all(|value| *value == generations[0]) {
             generations[0]
         } else {
-            world.new_generation()
+            let generation = world.new_generation();
+            world
+                .descriptor_joins
+                .insert((container, generation), (join, generations));
+            generation
         };
         out.generations.insert(container, generation);
     }
@@ -741,7 +992,13 @@ pub(super) fn join_states(
 }
 
 /// One value every arm holds, joined.
-pub(super) fn join_values(world: &mut World, join: JoinId, all: &[&Value]) -> Value {
+pub(super) fn join_values(
+    world: &mut World,
+    join: JoinId,
+    all: &[&Value],
+    arms: &[State],
+    out: &mut State,
+) -> Value {
     if all.iter().all(|value| *value == all[0]) {
         return all[0].clone();
     }
@@ -755,5 +1012,244 @@ pub(super) fn join_values(world: &mut World, join: JoinId, all: &[&Value]) -> Va
     {
         return Value::Int(world.joined(join, values, None));
     }
+    if let Some(tags) = all
+        .iter()
+        .map(|value| match value {
+            Value::Bool(_, tag) => Some(tag.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        // Independently evaluated copies of the same comparison have distinct
+        // tags, but still carry the same condition on every incoming arm.
+        let condition = match all[0] {
+            Value::Bool(condition, _)
+                if all
+                    .iter()
+                    .all(|value| matches!(value, Value::Bool(other, _) if other == condition)) =>
+            {
+                condition.clone()
+            }
+            _ => Cond::Unknown,
+        };
+        return Value::Bool(condition, world.joined(join, tags, Some(IntegerType::U8)));
+    }
+    if all.iter().all(|value| {
+        matches!(
+            value,
+            Value::Owned(_) | Value::Struct(_) | Value::Variant { .. }
+        )
+    }) {
+        let versions = all
+            .iter()
+            .zip(arms)
+            .map(|(value, state)| {
+                let mut stored = BTreeMap::new();
+                stored_projections(world, state, value, &mut Vec::new(), &mut stored);
+                snapshot_version(world, stored)
+            })
+            .collect();
+        let version = world.new_version(VersionDef::Join { join, versions });
+        let location = Location::root(Origin::Constructed(world.new_origin()));
+        out.slots.insert(
+            location.clone(),
+            Slot::Read(ReadSource {
+                version,
+                indices: Vec::new(),
+                projection: Vec::new(),
+            }),
+        );
+        return Value::Owned(location);
+    }
     Value::Unknown
+}
+
+/// Sibling struct fields are disjoint; payload storage of different variants
+/// overlaps even when their field ordinals differ. Measures overlap when
+/// they read the same descriptor word [MSR-2], so a length write also
+/// invalidates a page-count read without identifying their values.
+pub(super) fn projections_overlap(
+    left: &[CheckedRangeProjection],
+    right: &[CheckedRangeProjection],
+) -> bool {
+    for (left, right) in left.iter().zip(right) {
+        if left == right {
+            continue;
+        }
+        if let (CheckedRangeProjection::Measure(left), CheckedRangeProjection::Measure(right)) =
+            (left, right)
+        {
+            return left.support_word() == right.support_word();
+        }
+        return matches!((left, right),
+            (CheckedRangeProjection::Payload { variant: a, .. }, CheckedRangeProjection::Payload { variant: b, .. }) if a != b);
+    }
+    true
+}
+
+/// Owned paths name stored scalar projections, including enum tags.
+pub(super) fn owned_projection(steps: &[Step]) -> Option<Vec<CheckedRangeProjection>> {
+    steps
+        .iter()
+        .map(|step| match step {
+            Step::Field(field) => Some(CheckedRangeProjection::Field(*field)),
+            Step::BoxContent => Some(CheckedRangeProjection::BoxContent),
+            Step::Payload {
+                variant,
+                field,
+                variants,
+            } => Some(CheckedRangeProjection::Payload {
+                variant: *variant,
+                field: *field,
+                variants: *variants,
+            }),
+            Step::Tag(variants) => Some(CheckedRangeProjection::Tag(*variants)),
+        })
+        .collect()
+}
+
+pub(super) fn stored_projections(
+    world: &mut World,
+    state: &State,
+    value: &Value,
+    path: &mut Vec<CheckedRangeProjection>,
+    values: &mut BTreeMap<Vec<CheckedRangeProjection>, Stored>,
+) {
+    match value {
+        Value::Int(value) => {
+            values.insert(path.clone(), Stored::Int(value.clone()));
+        }
+        Value::Bool(_, tag) => {
+            path.push(CheckedRangeProjection::Tag(2));
+            values.insert(path.clone(), Stored::Int(tag.clone()));
+            path.pop();
+        }
+        Value::Struct(fields) => {
+            for (ordinal, field) in fields.iter().enumerate() {
+                path.push(CheckedRangeProjection::Field(ordinal as u32));
+                stored_projections(world, state, field, path, values);
+                path.pop();
+            }
+        }
+        Value::Variant {
+            variant,
+            variants,
+            fields,
+        } => {
+            path.push(CheckedRangeProjection::Tag(*variants));
+            values.insert(
+                path.clone(),
+                Stored::Int(Linear::constant(*variant as i128)),
+            );
+            path.pop();
+            for (ordinal, field) in fields.iter().enumerate() {
+                path.push(CheckedRangeProjection::Payload {
+                    variant: *variant,
+                    field: ordinal as u32,
+                    variants: *variants,
+                });
+                stored_projections(world, state, field, path, values);
+                path.pop();
+            }
+        }
+        Value::Owned(location) => {
+            let location = state.resolve(location);
+            if let Some(source) = state.read_source(&location) {
+                values.insert(path.clone(), Stored::Read(source));
+            }
+            // Snapshot named scalar contents before the destination write.
+            // Sources are immutable versions; later writes cannot change them.
+            for (slot, value) in &state.slots {
+                if !slot.starts_with(&location) {
+                    continue;
+                }
+                let Some(suffix) = owned_projection(&slot.steps[location.steps.len()..]) else {
+                    continue;
+                };
+                let length = path.len();
+                path.extend(suffix);
+                match value {
+                    Slot::Int(value) => {
+                        values.insert(path.clone(), Stored::Int(value.clone()));
+                    }
+                    Slot::Alias(source) => stored_projections(
+                        world,
+                        state,
+                        &Value::Owned(source.clone()),
+                        path,
+                        values,
+                    ),
+                    Slot::Read(source) => {
+                        values.insert(path.clone(), Stored::Read(source.clone()));
+                    }
+                    Slot::Unknown => {
+                        values.insert(path.clone(), Stored::Unknown);
+                    }
+                    Slot::Ref(_) => {}
+                }
+                path.truncate(length);
+            }
+            for container in world.containers_under(&location) {
+                let at = &world.containers[container as usize].location;
+                let Some(suffix) = owned_projection(&at.steps[location.steps.len()..]) else {
+                    continue;
+                };
+                let length = path.len();
+                path.extend(suffix);
+                let (version, generation) = state.snapshot_container(world, container);
+                values.insert(
+                    path.clone(),
+                    Stored::Collection {
+                        container,
+                        version,
+                        generation,
+                        arity: world.containers[container as usize].arity,
+                    },
+                );
+                for measure in [
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Pages,
+                ] {
+                    path.push(CheckedRangeProjection::Measure(measure));
+                    let value = world.measure(container, generation, measure);
+                    values.insert(path.clone(), Stored::Int(value));
+                    path.pop();
+                }
+                path.truncate(length);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Capture aggregate definitions in a zero-index version for lazy projections.
+pub(super) fn snapshot_version(
+    world: &mut World,
+    values: BTreeMap<Vec<CheckedRangeProjection>, Stored>,
+) -> VersionId {
+    let previous = world.new_version(VersionDef::Fresh);
+    world.new_version(VersionDef::Write {
+        previous,
+        indices: Vec::new(),
+        projection: Vec::new(),
+        values,
+    })
+}
+
+/// Retarget absolute tuple positions when a copied projection acquires a prefix.
+pub(super) fn shift_projection(
+    projection: &[CheckedRangeProjection],
+    from: usize,
+    to: usize,
+) -> Vec<CheckedRangeProjection> {
+    projection
+        .iter()
+        .map(|step| match step {
+            CheckedRangeProjection::Index(position) => {
+                CheckedRangeProjection::Index((*position as usize - from + to) as u32)
+            }
+            other => *other,
+        })
+        .collect()
 }

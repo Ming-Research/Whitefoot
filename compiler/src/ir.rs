@@ -911,7 +911,7 @@ pub enum IrOperation {
         operation: IrBooleanOperation,
         arguments: Vec<IrValueId>,
     },
-    EnumEquality {
+    ValueEquality {
         equal: bool,
         operand_type: IrType,
         arguments: [IrValueId; 2],
@@ -1146,6 +1146,21 @@ pub enum IrOperation {
         end: IrValueId,
         private_type: IrType,
     },
+    /// A singleton block-pointer directory borrowing the source allocation.
+    /// Split sites replace it with one separately allocated block per leaf.
+    IndexedBlocks {
+        address: IrValueId,
+    },
+    /// Borrow the first block of a leaf's directory (also the sequential root).
+    IndexedBlock {
+        blocks: IrValueId,
+    },
+    /// Rebuild the borrowed argument's fixed ancestor slots around private
+    /// blocks. No ownership or cleanup authority passes to the callee.
+    IndexedReference {
+        original: IrValueId,
+        roots: Vec<IrIndexedRootReference>,
+    },
     SliceMeasure {
         slice: IrValueId,
     },
@@ -1269,7 +1284,7 @@ pub enum IrOperation {
         table: IrValueId,
     },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
-    /// table `table`, creating it holding `None` when absent, and keeps the
+    /// table `table`, creating it holding `None` when absent only if `inserts`, and keeps the
     /// lock in `record`; with `read`, beside the other statements that only
     /// read it. Defines `Unit`; [`Self::TableEntrySlot`] reads the entry's
     /// address.
@@ -1278,6 +1293,7 @@ pub enum IrOperation {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     },
     /// The address of the entry the lock in `record` holds, an `Option<V>` of
@@ -1521,6 +1537,23 @@ pub struct IrIndexedReduction {
     pub count: usize,
     pub projection: IrIndexedProjection,
     pub kind: IrIndexedFamilyKind,
+    /// None denotes the established dense family slab. Root-shaped families
+    /// share `capture` and `private` with every family in the same owner.
+    pub root: Option<IrIndexedRoot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedRoot {
+    pub block_type: IrType,
+    /// Fixed fields from the owning block to this Array or Slots root.
+    pub fields: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedRootReference {
+    pub block: IrValueId,
+    /// Typed path from the actual reference to the block's owning place.
+    pub path: Vec<IrPlaceStep>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1543,9 +1576,24 @@ pub enum IrIndexedFamilyKind {
 
 impl IrIndexedReduction {
     pub(crate) fn private_type(&self) -> IrType {
+        if self.root.is_some() {
+            return self.projection.value_type;
+        }
         match self.kind {
             IrIndexedFamilyKind::Reduce { .. } => self.projection.value_type,
             IrIndexedFamilyKind::Mark { .. } => IrType::Bool,
+        }
+    }
+
+    pub(crate) fn private_identity(&self) -> IrConstant {
+        match self.kind {
+            IrIndexedFamilyKind::Reduce { identity, .. } => identity,
+            IrIndexedFamilyKind::Mark { constant } if self.root.is_some() => match constant {
+                IrConstant::Bool(value) => IrConstant::Bool(!value),
+                IrConstant::Integer { ty, bits } => IrConstant::Integer { ty, bits: bits ^ 1 },
+                _ => unreachable!("checked indexed marks are integer or Bool"),
+            },
+            IrIndexedFamilyKind::Mark { .. } => IrConstant::Bool(false),
         }
     }
 }
@@ -1719,6 +1767,9 @@ pub enum RecursionBudget {
 /// block of one function. The compute scheduler may hand out every member but
 /// the last, runs that source-last member on the calling lane, and joins the
 /// handed-out calls before any value use or block exit.
+/// Independent non-call statements between members keep their instruction
+/// positions on the calling lane, inside that window. They neither add a
+/// member nor move the join beyond the last call.
 ///
 /// The group is a permission the target stage may take, never an obligation:
 /// a target that hands nothing out emits exactly the sequential code, because

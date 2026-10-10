@@ -1,0 +1,11 @@
+fn invalid(values: &Paged<u64>, page_index: u64, slot: u64) -> result: u64 reads(values) contract {
+  requires page_index < values^.pages.len;
+} {
+  doc "Selecting a page does not discharge the element offset within it.";
+  return values^.pages[page_index][slot];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The preceding function is rejected at its invalid run-place use.";
+  return std::process::exit_status(code: 0_u8);
+}

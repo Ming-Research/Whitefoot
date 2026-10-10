@@ -93,8 +93,9 @@ COMPLETION_RUNTIME_SOURCES := \
 	$(COMPLETION_DIR)/bridge.c \
 	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/linux_io_uring.c
+# ordinary_values.c's map reserve release calls the keyed tables' unit.
 COMPLETION_SOURCES := $(COMPLETION_RUNTIME_SOURCES) \
-	src/backend/wf_floor.c \
+	src/backend/wf_floor.c src/backend/keyed_table.c \
 	src/backend/ordinary_values.c src/backend/ordinary_values_probe.c \
 	src/backend/ordinary_values.ll src/backend/ordinary_values_probe.ll \
 	$(COMPLETION_DIR)/harness.c
@@ -232,7 +233,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -421,13 +422,20 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefil
 
 # The same test built to check every read and write of memory, which is the
 # only witness of a read of a freed node: such a read's result is discarded,
-# so no outcome differs. It is not part of completion-test, whose budget it
-# would exceed; docs/todo.md asks whether it joins the gate.
+# so no outcome differs; and built under ThreadSanitizer, which sees a race
+# between two threads that no outcome of one run reveals. Neither is part of
+# completion-test, whose budget they would exceed; map-sanitizers.yml runs
+# both on every change to the map's runtime or its tests.
 concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
 		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
 	ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
+concurrent-map-test-tsan: $(CONCURRENT_MAP_SOURCES) Makefile
+	@mkdir -p "$(COMPLETION_TMP)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=thread \
+		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-tsan"
+	TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/concurrent-map-test-tsan"
 
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c),
@@ -443,10 +451,27 @@ SHARED_OBJECT_TEST_OBJECTS := \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
 # The keyed tables' unit compiles the map's source in.
 $(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o: src/backend/concurrent_map.c
+$(COMPLETION_TMP)/objects/harness/keyed_table.o: src/backend/concurrent_map.c
+$(COMPLETION_TMP)/objects/harness-sanitize/keyed_table.o: src/backend/concurrent_map.c
 $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
+
+# Cancellation runtime probe uses the private bridge/ordinary bodies in its
+# own translation unit to control park/fire interleavings. Other native
+# objects are the default-route probe's existing compatible construction.
+CANCEL_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/cancel_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/cancel_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c
+$(COMPLETION_TMP)/cancel-test: $(CANCEL_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+.PHONY: cancel-test
+cancel-test: $(COMPLETION_TMP)/cancel-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/cancel-test"
+	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/cancel-test"
 
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
@@ -459,7 +484,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
-	$(COMPLETION_TMP)/shared-object-test \
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
 completion-test-images: $(COMPLETION_TEST_IMAGES)
 
@@ -556,6 +581,8 @@ WINDOWS_LINK_LIBRARIES := -lws2_32 -lshell32
 # per-unit variants. Real Windows execution remains a separate requirement.
 WINDOWS_OBJECT_DIR := $(COMPLETION_TMP)/objects/windows
 WINDOWS_CONFIG := $(WINDOWS_OBJECT_DIR)/configuration.txt
+# The keyed tables' unit compiles the map's source in.
+$(WINDOWS_OBJECT_DIR)/keyed_table.o: src/backend/concurrent_map.c
 WINDOWS_OBJECTS := $(patsubst src/backend/%.c,$(WINDOWS_OBJECT_DIR)/%.o,$(WINDOWS_LINK_SOURCES))
 WINDOWS_NATIVE_SOURCES := $(SCHED_DIR)/core.c $(SCHED_DIR)/prim_windows.c \
     $(SCHED_DIR)/entry.c $(COMPLETION_DIR)/runtime.c $(COMPLETION_DIR)/wait_windows.c \
@@ -592,7 +619,13 @@ $(COMPLETION_TMP)/windows-default-route-probe.exe: $(WINDOWS_OBJECTS) $(WINDOWS_
 $(COMPLETION_TMP)/windows-adapter-probe.exe: $(WINDOWS_NATIVE_OBJECTS) $(WINDOWS_OBJECT_DIR)/completion/native_adapter_probe.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
 
-$(COMPLETION_TMP)/windows-ordinary-values-probe.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/file_windows.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/file-windows-observed.o $(WINDOWS_OBJECT_DIR)/ordinary_values.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe.o $(WINDOWS_OBJECT_DIR)/ordinary_values_ir.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe_ir.o
+# Like cancel-test, this probe owns the bridge/ordinary translation unit so
+# it can hold completion harvesting until a real firing or deadline.
+$(WINDOWS_OBJECT_DIR)/completion/windows_bounded_send_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c
+$(COMPLETION_TMP)/windows-bounded-send-test.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/bridge.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/keyed_table.o $(WINDOWS_OBJECT_DIR)/completion/windows_bounded_send_test.o
+	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
+
+$(COMPLETION_TMP)/windows-ordinary-values-probe.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/file_windows.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/file-windows-observed.o $(WINDOWS_OBJECT_DIR)/ordinary_values.o $(WINDOWS_OBJECT_DIR)/keyed_table.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe.o $(WINDOWS_OBJECT_DIR)/ordinary_values_ir.o $(WINDOWS_OBJECT_DIR)/ordinary_values_probe_ir.o
 	$(WINDOWS_CC) $(WINDOWS_CFLAGS) $^ -o "$@" $(WINDOWS_LINK_LIBRARIES)
 
 $(COMPLETION_TMP)/windows-bridge-init-fail-stop-probe.exe: $(filter-out $(WINDOWS_OBJECT_DIR)/completion/bridge.o,$(WINDOWS_OBJECTS)) $(WINDOWS_OBJECT_DIR)/bridge-init-fault.o $(WINDOWS_OBJECT_DIR)/completion/windows_bridge_init_fail_stop_probe.o
@@ -636,6 +669,7 @@ windows-runtime-sources:
 
 completion-windows-route-build: $(COMPLETION_TMP)/windows-default-route-probe.exe $(COMPLETION_TMP)/windows-adapter-probe.exe
 completion-windows-cross: completion-windows-route-build \
+    $(COMPLETION_TMP)/windows-bounded-send-test.exe \
     $(COMPLETION_TMP)/windows-ordinary-values-probe.exe \
     $(COMPLETION_TMP)/windows-bridge-init-fail-stop-probe.exe \
     $(WINDOWS_OBJECT_DIR)/wf_floor_windows.o \
@@ -693,7 +727,7 @@ completion-windows-wine:
 
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
-.PHONY: concurrent-map-test-sanitized
+.PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
 	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \

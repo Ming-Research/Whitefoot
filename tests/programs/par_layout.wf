@@ -277,7 +277,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let first = spell_hex(destination: window, at: 0_u64, value: last_bits);
   let second = spell_hex(destination: window, at: 17_u64, value: banded_bits);
   let no_deadline = None<std::time::Instant>();
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 34_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 34_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: next) => {
       return exit_status(code: 0_u8);
     }

@@ -683,8 +683,12 @@ can hand the facts back as range postconditions, `ensures when Some(value:
 made): forall ...` for a builder that may refuse its input [RANGE-3], so the
 validating pass is one function its consumers call. A fact holds of the
 storage versions it was stated over and reaches a later write only through
-the derivation, and no fact outlives the pass that built its arrays: each
-pass pays for that walk.
+the derivation, so a fact a pass builds lasts until its arrays are written
+and each pass pays for that walk. When a struct's own writers keep the
+relation between its stores, state it once as a range type invariant of the
+struct [TYPE-11]: every function that receives the struct assumes it, and
+each writer of the declaring module proves it at its exit, so no consumer
+pays a validating pass.
 [A scatter through a left inverse](../tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf),
 [a children array kept free of repeats by fresh values](../tests/conformance/cases/range5-pos-children-fresh-values.wf)
 and [a level-by-level cascade over a tree](../tests/conformance/cases/range5-pos-level-cascade.wf)
@@ -730,8 +734,8 @@ value is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
-Current unresolved language and compiler questions are recorded in
-[todo.md](todo.md) and the relevant investigation directories. A missing
+Current unresolved language and compiler questions are recorded on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) and in the relevant investigation directories. A missing
 pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.

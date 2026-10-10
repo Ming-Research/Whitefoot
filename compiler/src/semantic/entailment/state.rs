@@ -501,7 +501,7 @@ pub(crate) enum DerivationNode {
         detail: Box<IndexSeparationDetail>,
     },
     /// One finite truth-table introduction for an already-interned Boolean
-    /// parent (`band`, `bor`, or `bnot`).
+    /// parent (`band`, `bor`, `bnot`, or a struct value equality).
     BooleanIntroduction {
         goal: GoalId,
         sign: GoalSign,
@@ -2322,6 +2322,7 @@ pub(crate) struct OriginEquality {
 #[derive(Clone, Debug)]
 struct GoalRecord {
     expression: GoalExpression,
+    struct_equality_fields: Option<(bool, Vec<GoalId>)>,
     projection: Option<Relation>,
     normalization: Option<GoalNormalization>,
     support: Vec<GoalSupport>,
@@ -2373,6 +2374,7 @@ impl GoalTable {
         self.ids.insert(expression.clone(), id);
         self.records.push(GoalRecord {
             expression,
+            struct_equality_fields: None,
             projection,
             normalization,
             support,
@@ -2382,6 +2384,46 @@ impl GoalTable {
             .checked_add(1)
             .expect("goal revision fits usize");
         id
+    }
+
+    pub(crate) fn set_struct_equality_fields(
+        &mut self,
+        goal: GoalId,
+        equal: bool,
+        fields: Vec<GoalId>,
+    ) {
+        let record = &mut self.records[goal.0 as usize];
+        if let Some(existing) = &record.struct_equality_fields {
+            debug_assert_eq!(existing, &(equal, fields));
+        } else {
+            record.struct_equality_fields = Some((equal, fields));
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .expect("goal revision fits usize");
+        }
+    }
+
+    /// [ENT-4] Equality requires all positive fields; inequality requires
+    /// one negative field. An empty struct is therefore always equal.
+    pub(crate) fn struct_reconstruction(
+        &self,
+        goal: GoalId,
+        sign: GoalSign,
+    ) -> Option<(bool, GoalSign, &[GoalId])> {
+        let (equal, fields) = self.records[goal.0 as usize]
+            .struct_equality_fields
+            .as_ref()?;
+        let all = *equal == (sign == GoalSign::Positive);
+        Some((
+            all,
+            if all {
+                GoalSign::Positive
+            } else {
+                GoalSign::Negative
+            },
+            fields,
+        ))
     }
 
     /// Includes metadata supplied to an existing goal, not only new identities.
@@ -3817,7 +3859,8 @@ impl FactState {
 /// One offset disequality, with endpoint reversal negating its offset.
 /// Stored arithmetic follows the saturating i128 convention of difference
 /// bounds, including reversal at MIN. This is not an unbounded integer
-/// representation; the source-folding limit is tracked in docs/todo.md.
+/// representation; the source-folding limit is tracked in status board item
+/// lm-bl-i128-constants.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
 
 pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {
@@ -4564,43 +4607,57 @@ impl ClosedState {
         if !visiting.insert((goal, sign)) {
             return false;
         }
-        let result = match goals.expression(goal) {
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child =
-                    |argument: &GoalExpression,
-                     child_sign: GoalSign,
-                     visiting: &mut WordHashSet<(GoalId, GoalSign)>| {
-                        goals.id(argument).is_some_and(|child| {
-                            self.derives_goal_inner(child, child_sign, goals, visiting)
-                        })
-                    };
-                match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive) => arguments
-                        .iter()
-                        .all(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::And, GoalSign::Negative) => arguments
-                        .iter()
-                        .any(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Or, GoalSign::Positive) => arguments
-                        .iter()
-                        .any(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::Or, GoalSign::Negative) => arguments
-                        .iter()
-                        .all(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
-                        .first()
-                        .is_some_and(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
-                        .first()
-                        .is_some_and(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::ExclusiveOr, _) => false,
-                }
+        let result = if let Some((all, child_sign, fields)) =
+            goals.struct_reconstruction(goal, sign)
+        {
+            if all {
+                fields
+                    .iter()
+                    .all(|child| self.derives_goal_inner(*child, child_sign, goals, visiting))
+            } else {
+                fields
+                    .iter()
+                    .any(|child| self.derives_goal_inner(*child, child_sign, goals, visiting))
             }
-            GoalExpression::Datum(_) | GoalExpression::Operation { .. } => false,
+        } else {
+            match goals.expression(goal) {
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child =
+                        |argument: &GoalExpression,
+                         child_sign: GoalSign,
+                         visiting: &mut WordHashSet<(GoalId, GoalSign)>| {
+                            goals.id(argument).is_some_and(|child| {
+                                self.derives_goal_inner(child, child_sign, goals, visiting)
+                            })
+                        };
+                    match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive) => arguments
+                            .iter()
+                            .all(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::And, GoalSign::Negative) => arguments
+                            .iter()
+                            .any(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Or, GoalSign::Positive) => arguments
+                            .iter()
+                            .any(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::Or, GoalSign::Negative) => arguments
+                            .iter()
+                            .all(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
+                            .first()
+                            .is_some_and(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
+                            .first()
+                            .is_some_and(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::ExclusiveOr, _) => false,
+                    }
+                }
+                GoalExpression::Datum(_) | GoalExpression::Operation { .. } => false,
+            }
         };
         visiting.remove(&(goal, sign));
         result
@@ -4664,7 +4721,8 @@ impl ClosedState {
                 difference,
             } => {
                 let forward = self.bound_proof(*left, *right, *difference, ledger)?;
-                let reverse = self.bound_proof(*right, *left, difference.saturating_neg(), ledger)?;
+                let reverse =
+                    self.bound_proof(*right, *left, difference.saturating_neg(), ledger)?;
                 Some(ledger.intern(DerivationNode::Equality {
                     left: *left,
                     right: *right,
@@ -4799,79 +4857,108 @@ impl ClosedState {
         if !visiting.insert((goal, sign)) {
             return None;
         }
-        let proof = match goals.expression(goal) {
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child_proof =
-                    |argument: &GoalExpression,
-                     child_sign: GoalSign,
-                     visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                     ledger: &mut DerivationLedger| {
-                        let child = goals.id(argument)?;
-                        self.goal_proof_inner(child, child_sign, goals, ledger, visiting)
-                    };
-                let all = |child_sign: GoalSign,
-                           visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                           ledger: &mut DerivationLedger| {
-                    arguments
-                        .iter()
-                        .map(|argument| child_proof(argument, child_sign, visiting, ledger))
-                        .collect::<Option<Vec<_>>>()
-                };
-                let any = |child_sign: GoalSign,
-                           visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                           ledger: &mut DerivationLedger| {
-                    let mut best = None;
-                    for argument in arguments {
-                        let Some(candidate) = child_proof(argument, child_sign, visiting, ledger)
-                        else {
-                            continue;
-                        };
-                        if best.is_none_or(|current| ledger.better(candidate, current)) {
-                            best = Some(candidate);
-                        }
+        let proof = if let Some((all, child_sign, fields)) = goals.struct_reconstruction(goal, sign)
+        {
+            let parents = if all {
+                fields
+                    .iter()
+                    .map(|child| self.goal_proof_inner(*child, child_sign, goals, ledger, visiting))
+                    .collect::<Option<Vec<_>>>()
+            } else {
+                let mut best = None;
+                for child in fields {
+                    if let Some(candidate) =
+                        self.goal_proof_inner(*child, child_sign, goals, ledger, visiting)
+                        && best.is_none_or(|current| ledger.better(candidate, current))
+                    {
+                        best = Some(candidate);
                     }
-                    best.map(|parent| vec![parent])
-                };
-                let parents = match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive) => {
-                        all(GoalSign::Positive, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::And, GoalSign::Negative) => {
-                        any(GoalSign::Negative, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Or, GoalSign::Positive) => {
-                        any(GoalSign::Positive, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Or, GoalSign::Negative) => {
-                        all(GoalSign::Negative, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
-                        .first()
-                        .and_then(|argument| {
-                            child_proof(argument, GoalSign::Negative, visiting, ledger)
-                        })
-                        .map(|parent| vec![parent]),
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
-                        .first()
-                        .and_then(|argument| {
-                            child_proof(argument, GoalSign::Positive, visiting, ledger)
-                        })
-                        .map(|parent| vec![parent]),
-                    (CheckedBooleanOperation::ExclusiveOr, _) => None,
-                };
-                parents.map(|parents| {
-                    ledger.intern(DerivationNode::BooleanIntroduction {
-                        goal,
-                        sign,
-                        parents,
-                    })
+                }
+                best.map(|parent| vec![parent])
+            };
+            parents.map(|parents| {
+                ledger.intern(DerivationNode::BooleanIntroduction {
+                    goal,
+                    sign,
+                    parents,
                 })
+            })
+        } else {
+            match goals.expression(goal) {
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child_proof =
+                        |argument: &GoalExpression,
+                         child_sign: GoalSign,
+                         visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                         ledger: &mut DerivationLedger| {
+                            let child = goals.id(argument)?;
+                            self.goal_proof_inner(child, child_sign, goals, ledger, visiting)
+                        };
+                    let all = |child_sign: GoalSign,
+                               visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                               ledger: &mut DerivationLedger| {
+                        arguments
+                            .iter()
+                            .map(|argument| child_proof(argument, child_sign, visiting, ledger))
+                            .collect::<Option<Vec<_>>>()
+                    };
+                    let any = |child_sign: GoalSign,
+                               visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                               ledger: &mut DerivationLedger| {
+                        let mut best = None;
+                        for argument in arguments {
+                            let Some(candidate) =
+                                child_proof(argument, child_sign, visiting, ledger)
+                            else {
+                                continue;
+                            };
+                            if best.is_none_or(|current| ledger.better(candidate, current)) {
+                                best = Some(candidate);
+                            }
+                        }
+                        best.map(|parent| vec![parent])
+                    };
+                    let parents = match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive) => {
+                            all(GoalSign::Positive, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::And, GoalSign::Negative) => {
+                            any(GoalSign::Negative, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Or, GoalSign::Positive) => {
+                            any(GoalSign::Positive, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Or, GoalSign::Negative) => {
+                            all(GoalSign::Negative, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
+                            .first()
+                            .and_then(|argument| {
+                                child_proof(argument, GoalSign::Negative, visiting, ledger)
+                            })
+                            .map(|parent| vec![parent]),
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
+                            .first()
+                            .and_then(|argument| {
+                                child_proof(argument, GoalSign::Positive, visiting, ledger)
+                            })
+                            .map(|parent| vec![parent]),
+                        (CheckedBooleanOperation::ExclusiveOr, _) => None,
+                    };
+                    parents.map(|parents| {
+                        ledger.intern(DerivationNode::BooleanIntroduction {
+                            goal,
+                            sign,
+                            parents,
+                        })
+                    })
+                }
+                GoalExpression::Datum(_) | GoalExpression::Operation { .. } => None,
             }
-            GoalExpression::Datum(_) | GoalExpression::Operation { .. } => None,
         };
         visiting.remove(&(goal, sign));
         proof
@@ -7930,7 +8017,10 @@ pub(crate) mod tests {
                     &terms,
                     &mut NoProofs,
                 );
-                assert_eq!(result.dense.get(left, right).map(|cell| cell.0), Some(strict));
+                assert_eq!(
+                    result.dense.get(left, right).map(|cell| cell.0),
+                    Some(strict)
+                );
             }
         }
     }

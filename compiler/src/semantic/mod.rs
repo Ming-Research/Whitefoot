@@ -15,7 +15,12 @@ mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
-pub(crate) use places::{PlaceRoot as CheckedPlaceRoot, ResolvedPlace as CheckedResolvedPlace};
+#[cfg(test)]
+pub(crate) use places::UnprovedSeparations;
+pub(crate) use places::{
+    PlaceMap as CheckedPlaceMap, PlaceRoot as CheckedPlaceRoot, PlaceStep as CheckedResolvedStep,
+    ResolvedPlace as CheckedResolvedPlace,
+};
 mod postcondition;
 mod range_facts;
 mod range_judgment;
@@ -614,7 +619,13 @@ pub enum SemanticIssueKind {
     /// A literal is not the unique in-range FORM-7 spelling.
     InvalidIntegerLiteral,
     /// A float literal is not FORM-5's unique finite canonical spelling.
-    InvalidFloatLiteral,
+    InvalidFloatLiteral {
+        /// The finite value's unique canonical literal, including its suffix;
+        /// absent when the candidate has no finite representable value.
+        canonical_spelling: Option<String>,
+        /// A source change repairing the rejected literal.
+        mechanical_fix: String,
+    },
     /// [FORM-7] a text item of a character literal or STRING is not its
     /// value's one spelling, or denotes no Unicode scalar value.
     InvalidTextItem {
@@ -930,6 +941,11 @@ pub enum SemanticIssueKind {
     },
     /// The selected operation family has no row for the written arguments.
     InvalidOperation,
+    /// [OP-16] equality has no row for this type or one of its parts.
+    InvalidEqualityType {
+        /// The first non-equality part, in declaration order, and its repair.
+        mechanical_fix: String,
+    },
     /// A contract predicate is not exactly `own Bool`.
     InvalidPredicateCondition,
     /// A conditional was written in a form GRAM-6 does not admit for its
@@ -1479,11 +1495,17 @@ pub enum UnsupportedSemanticFeature {
     /// checker's 128-bit integers. It names no rule: the specified
     /// arithmetic has no bound, so reaching here is a checker gap.
     RangeArithmetic,
+    /// A selected ordinary goal whose site the range walk cannot represent or
+    /// reach. Goals outside RANGE-2's range-term shape keep their ordinary verdict.
+    RangeOrdinaryGoal,
     /// A range judgment that left a fact unproved after a loop header forgot
     /// everything, because the loop nest was deeper, or the header's
     /// written set took more walks to settle, than the checker follows;
     /// RANGE-2 forgets only what the body can write.
     RangeLoopNesting,
+    /// A range walk through atomic targets that may name the same shared object.
+    /// The checker does not yet version these targets with their alias relation.
+    RangeAtomicAliases,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.
@@ -1505,6 +1527,9 @@ impl SemanticUnsupported {
 /// Trusted semantic-checker invariant failure, never a source verdict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SemanticCompilerFailure {
+    /// A generic host boundary needs an ABI this compiler cannot share across
+    /// all type arguments. This is a compiler capability stop, not rejection.
+    UnsupportedGenericHostAbi,
     /// Canonical production topology had an impossible local shape.
     InvalidCanonicalTree,
     /// A resolved declaration or use record was missing or inconsistent.

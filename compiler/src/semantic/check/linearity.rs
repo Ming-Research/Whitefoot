@@ -235,7 +235,10 @@ impl<'unit> TypeContext<'unit> {
                     return Ok(true);
                 }
                 CheckedType::Nominal(id) => {
-                    if matches!(self.nominal(id)?.kind, CheckedNominalKind::Box { .. }) {
+                    if matches!(
+                        self.nominal(id)?.kind,
+                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. }
+                    ) {
                         return Ok(true);
                     }
                     pending.extend(self.owned_components(id)?);
@@ -398,8 +401,8 @@ impl<'unit> TypeContext<'unit> {
     }
     /// [PROV-6, FN-2] the class a type parameter's bound grants its body.
     ///
-    /// A `gparam` writes a `capability_bound`, a numeric marker TYPEID —
-    /// `Int` or `Float`, each of which implies copy [OP-1, OWN-1] — or no
+    /// A `gparam` writes a `capability_bound`, a built-in bound TYPEID —
+    /// `Int`, `Float` or `Eq`, each of which implies copy [FN-2, OWN-1] — or no
     /// bound at all, which grants no capability and is the linear class. The
     /// reader is over the parameter's own declaration and never over a use of
     /// it.
@@ -408,6 +411,21 @@ impl<'unit> TypeContext<'unit> {
         check_context: &CheckContext<'_>,
         declaration: crate::DeclarationId,
     ) -> Result<LinearityClass, CheckStop> {
+        Ok(
+            match self.generic_parameter_bound(check_context, declaration)? {
+                super::generics::GenericBound::Class(class) => class,
+                super::generics::GenericBound::Int
+                | super::generics::GenericBound::Float
+                | super::generics::GenericBound::Eq => LinearityClass::Copy,
+            },
+        )
+    }
+
+    pub(super) fn generic_parameter_bound(
+        &self,
+        check_context: &CheckContext<'_>,
+        declaration: crate::DeclarationId,
+    ) -> Result<super::generics::GenericBound, CheckStop> {
         let record = self
             .declarations
             .resolved
@@ -450,32 +468,12 @@ impl<'unit> TypeContext<'unit> {
                 } = parameter
                     && candidate == declaration
                 {
-                    return Ok(match bound {
-                        super::generics::GenericBound::Class(class) => class,
-                        super::generics::GenericBound::Int
-                        | super::generics::GenericBound::Float => LinearityClass::Copy,
-                    });
+                    return Ok(bound);
                 }
             }
             return Err(crate::SemanticCompilerFailure::InvalidResolution.into());
         }
-        if let Some(class) = self.declarations.written_linearity_bound(node)? {
-            return Ok(class);
-        }
-        // A `gparam` with no `capability_bound` child writes a numeric marker
-        // after its colon, or nothing: the colon tells the two apart.
-        Ok(
-            if self
-                .declarations
-                .tree
-                .direct_token_with(node, TerminalPredicate::Fixed(crate::FixedTerminal::Colon))?
-                .is_some()
-            {
-                LinearityClass::Copy
-            } else {
-                LinearityClass::Linear
-            },
-        )
+        self.written_generic_bound(node)
     }
     /// [PROV-6] an instantiation whose argument's class does not satisfy the
     /// written bound is refused at the call, naming the parameter, the bound

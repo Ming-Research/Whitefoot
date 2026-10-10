@@ -60,13 +60,13 @@ describe evidence, not a workflow step.
 - Programs in this repository were written to exercise the compiler
   (`design/language.md`): a program that fails still witnesses a gap, and
   measuring a change's effect on them is still evidence.
-- **Fix or record what you notice** in `docs/todo.md` and the PR's *Found
-  along the way* section. `make static` requires every compiler source file
-  over 4,000 lines to be named in the Code structure section of
-  `docs/todo.md`.
-- The design tree's maintained TODO is `docs/todo.md`, and `make
-  design-ready` also requires an approved `spec/log.md` entry for a changed
-  specification.
+- **Fix or record what you notice**, and list each item in the PR's *Found
+  along the way* section. `make static` requires every Rust source file under
+  `compiler/src/` over 4,000 lines to be listed in
+  `.github/oversized-sources.txt` with the key of the status board item that
+  records its split.
+- `make design-ready` also requires an approved `spec/log.md` entry for a
+  changed specification.
 
 ## Branch and main boundary
 
@@ -80,7 +80,9 @@ Whitefoot's extra merge preconditions:
    never a gate dependency. `make check-groups` lists the groups and
    [Checks](#checks) says where each runs.
 2. Specification approvals are recorded in `spec/log.md`.
-3. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
+3. When the merge changes the concurrent map's runtime or its test,
+   `map-sanitizers.yml` passes on the exact revision being merged.
+4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
@@ -159,8 +161,6 @@ read.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.
-- `docs/todo.md`: defects, costs, improvement opportunities and their
-  validation, removed when resolved.
 - `docs/patterns.md`: writer problems, usable forms, examples, applicability
   and costs; not acceptance rules or universal performance claims.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
@@ -196,9 +196,9 @@ build time apart from test and program execution.
 - `make static`, before every push and in `gate.yml` on every push:
   repository invariants, the specification archives, the README and its
   translation changed together, prose integrity, guidance references,
-  compiler sources over 4,000 lines named in `docs/todo.md`, and the design
-  tree's form. It needs the `design/skill` submodule
-  (`git submodule update --init`).
+  Rust sources under `compiler/src/` over 4,000 lines listed in
+  `.github/oversized-sources.txt`, and the design tree's form. It needs the
+  `design/skill` submodule (`git submodule update --init`).
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
@@ -207,6 +207,9 @@ build time apart from test and program execution.
   Linux (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
+  `map-sanitizers.yml` on every push to a PR that changes the concurrent
+  map's runtime or its test (that test under AddressSanitizer and
+  ThreadSanitizer, on the PR's head),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
   experiments and never a gate.

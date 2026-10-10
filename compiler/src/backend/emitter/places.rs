@@ -170,7 +170,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                self.load_place_result(result, ty, &self.value_name(*address))?;
+                if self
+                    .storage
+                    .slot(result)
+                    .and_then(|slot| self.storage.read_through(slot))
+                    .is_none()
+                {
+                    self.load_place_result(result, ty, &self.value_name(*address))?;
+                }
             }
             IrOperation::ConstructStruct { nominal, fields } => {
                 if ty != IrType::Nominal(*nominal) {
@@ -340,8 +347,168 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(())
     }
 
-    /// Zeroes a constructed value's slot and stores its tag, returning the
-    /// slot's address.
+    /// Whether the inline representation can contain unoccupied window
+    /// elements. Stop at pointers: a Box's referent is separate storage.
+    fn contains_window_storage(&self, ty: IrType) -> Result<bool, BackendFailure> {
+        match ty {
+            IrType::Window {
+                capacity: Some(capacity),
+                ..
+            } => Ok(capacity != 0),
+            IrType::Array { element, length } => Ok(length != 0
+                && self.contains_window_storage(
+                    self.program
+                        .element(element)
+                        .ok_or(BackendFailure::InvalidIr)?,
+                )?),
+            IrType::Nominal(nominal) => {
+                let fields = match self.nominal(nominal)?.kind() {
+                    IrNominalKind::Struct { fields } => fields.iter().collect::<Vec<_>>(),
+                    IrNominalKind::Enum { variants } => variants
+                        .iter()
+                        .flat_map(|variant| variant.fields())
+                        .collect(),
+                    _ => return Ok(false),
+                };
+                for field in fields {
+                    if self.contains_window_storage(field.ty())? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn zero_value_at(&mut self, ty: IrType, destination: &str) -> Result<(), BackendFailure> {
+        let llvm = self.output.type_name(self.program, ty)?;
+        writeln!(
+            self.output,
+            "  store {llvm} zeroinitializer, ptr {destination}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Retain the ordinary zero initializer except for active fields with
+    /// window storage. Construction writes every active field immediately
+    /// afterwards, copying its headers and initialized elements, so clearing
+    /// that field first would only touch WIN-1's unoccupied slots again.
+    /// This also covers nested structs, enums and Arrays: the field copy
+    /// supplies every Array element, rather than treating an Array as empty.
+    fn initialize_construction(
+        &mut self,
+        ty: IrType,
+        destination: &str,
+        tag: Option<u32>,
+    ) -> Result<(), BackendFailure> {
+        let IrType::Nominal(nominal) = ty else {
+            return self.zero_value_at(ty, destination);
+        };
+        let union = union_enums::is_union_enum(self.program, nominal)?;
+        let mut fields = Vec::new();
+        match self.nominal(nominal)?.kind() {
+            IrNominalKind::Struct { fields: declared } => {
+                for field in declared {
+                    fields.push((field.ty(), self.contains_window_storage(field.ty())?));
+                }
+            }
+            IrNominalKind::Enum { variants } => {
+                fields.push((
+                    IrType::Integer {
+                        width: 32,
+                        signed: false,
+                    },
+                    false,
+                ));
+                for variant in variants {
+                    let active = tag == Some(variant.tag());
+                    if union && !active {
+                        continue;
+                    }
+                    for field in variant.fields() {
+                        fields.push((
+                            field.ty(),
+                            active && self.contains_window_storage(field.ty())?,
+                        ));
+                    }
+                }
+            }
+            _ => return self.zero_value_at(ty, destination),
+        }
+        if !fields.iter().any(|(_, skip)| *skip) {
+            return self.zero_value_at(ty, destination);
+        }
+        if !union {
+            for (index, (field, skip)) in fields.into_iter().enumerate() {
+                if !skip {
+                    let address = self.aggregate_field_pointer(ty, destination, index)?;
+                    self.zero_value_at(field, &address)?;
+                }
+            }
+            return Ok(());
+        }
+
+        // A union's inactive bytes are an explicit byte-array field. Keep
+        // them zero, including the suffix beyond the active view; exclude
+        // only active fields that will be copied in with window storage.
+        // Natural frame fields use the same target struct layout as that
+        // view (tag followed by active payload), without duplicating its
+        // alignment arithmetic here. Hidden handler words remain zeroed
+        // until begin_enum_construction writes their final addresses.
+        let slots = fields
+            .iter()
+            .map(|(field, _)| TargetFrameSlot::natural(TargetStorageType::source(*field)))
+            .collect::<Vec<_>>();
+        let view = plan_target_frame(self.target, self.program, &slots)
+            .map_err(BackendFailure::TargetLayout)?;
+        let size =
+            validate_static_storage(self.target, self.program, &TargetStorageType::source(ty))
+                .map_err(BackendFailure::TargetLayout)?
+                .size();
+        let mut start = 0;
+        for (index, (field, skip)) in fields.into_iter().enumerate() {
+            if skip {
+                let offset = view
+                    .logical_field(index)
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .offset();
+                self.zero_construction_bytes(destination, start, offset)?;
+                let field_size = validate_static_storage(
+                    self.target,
+                    self.program,
+                    &TargetStorageType::source(field),
+                )
+                .map_err(BackendFailure::TargetLayout)?
+                .size();
+                start = offset
+                    .checked_add(field_size)
+                    .ok_or(BackendFailure::CounterOverflow)?;
+            }
+        }
+        self.zero_construction_bytes(destination, start, size)
+    }
+
+    fn zero_construction_bytes(
+        &mut self,
+        destination: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<(), BackendFailure> {
+        let bytes = end.checked_sub(start).ok_or(BackendFailure::InvalidIr)?;
+        if bytes != 0 {
+            let address = self.next_temporary()?;
+            writeln!(
+                self.output,
+                "  %{address} = getelementptr inbounds i8, ptr {destination}, i64 {start}\n  store [{bytes} x i8] zeroinitializer, ptr %{address}, align 1"
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Initializes a constructed value's slot and stores its tag, returning
+    /// the slot's address. Active window-bearing fields are supplied by the
+    /// caller's subsequent stores; inactive enum payload zeroing is retained.
     fn begin_construction(
         &mut self,
         result: IrValueId,
@@ -349,15 +516,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         tag: Option<u32>,
     ) -> Result<String, BackendFailure> {
         let destination = self.value_place(result)?;
-        {
-            let emitted_type_0 = self.output.type_name(self.program, ty)?;
-            writeln!(
-                self.output,
-                "  store {} zeroinitializer, ptr {destination}",
-                emitted_type_0
-            )
-        }
-        .map_err(|_| BackendFailure::TextEmission)?;
+        self.initialize_construction(ty, &destination, tag)?;
         if let Some(tag) = tag {
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
             writeln!(self.output, "  store i32 {tag}, ptr {address}")
@@ -366,9 +525,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(destination)
     }
 
-    /// Constructs one enum value in its slot: zero bytes, the tag at field
-    /// 0, then the variant's fields at their addresses, which are a view's
-    /// for a union-laid-out enum (compiler/payload-enum-layout).
+    /// Constructs one enum value in its slot: initialize storage, store the
+    /// tag at field 0, then the variant's fields at their addresses, which
+    /// are a view's for a union-laid-out enum (compiler/payload-enum-layout).
     fn construct_enum_at(
         &mut self,
         result: IrValueId,
@@ -488,13 +647,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         for (position, ((parameter, ty), argument)) in parameters.iter().zip(arguments).enumerate()
         {
             // The storage plan proved every incoming value is the original
-            // argument's unchanged contents. Its caller's storage already
-            // holds those bytes, even if this edge's source has another slot.
-            if self
-                .storage
-                .slot(*parameter)
-                .is_some_and(|slot| self.incoming_places.contains_key(&slot))
-            {
+            // argument's or Load's unchanged contents. The selected source
+            // already holds those bytes, even if this edge has another slot.
+            if self.storage.slot(*parameter).is_some_and(|slot| {
+                self.incoming_places.contains_key(&slot)
+                    || self.storage.read_through(slot).is_some()
+            }) {
                 continue;
             }
             if self.storage.slot(*parameter).is_some()
@@ -729,7 +887,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn slot_place(&mut self, slot: usize) -> Result<String, BackendFailure> {
-        if let Some(destination) = self.storage.destination(slot) {
+        if let Some(address) = self.storage.read_through(slot)
+            && !self.snapshot_copies.contains(&slot)
+        {
+            Ok(self.value_name(address))
+        } else if let Some(destination) = self.storage.destination(slot) {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
@@ -738,6 +900,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             self.entry_slot(FunctionSlot::OwnedValue(slot))
         }
+    }
+
+    /// Consume the planner's per-use copy schedule before evaluating any
+    /// operand or effect. A later operation starts from the captured address
+    /// again, so no emitted-block order becomes a runtime initialization fact.
+    pub(super) fn prepare_snapshot_use(
+        &mut self,
+        block: IrBlockId,
+        at: usize,
+    ) -> Result<(), BackendFailure> {
+        self.snapshot_copies.clear();
+        for slot in self.storage.snapshot_copies(block.index(), at) {
+            let address = self
+                .storage
+                .read_through(slot)
+                .ok_or(BackendFailure::InvalidIr)?;
+            let ty = self.storage.slots()[slot];
+            let source = self.value_name(address);
+            self.snapshot_copies.insert(slot);
+            let destination = self.slot_place(slot)?;
+            self.copy_storage(ty, &source, &destination)?;
+        }
+        Ok(())
     }
 
     /// A value as one LLVM first-class operand, loaded from its slot when it

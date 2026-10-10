@@ -14,6 +14,7 @@ fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
 }
 
 fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
+  doc "Growth below the runtime's 1024-byte copy limit copies into a fresh block and growth from 1048 bytes reallocates; both replace the cell's counted size and keep its element.";
   let before = std::process::heap_in_use(meter: meter);
   let cell = box_slots_new::<u64>(capacity: 3_u64);
   place_back(window: &cell.inner, value: 73_u64);
@@ -46,6 +47,26 @@ fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 1_u64;
   }
+  grow(cell: &cell, capacity: 129_u64);
+  let copied = std::process::heap_in_use(meter: meter);
+  if copied >= before {
+    let bytes = copied - before;
+    if bytes != 1048_u64 {
+      return 1_u64;
+    }
+  } else {
+    return 1_u64;
+  }
+  grow(cell: &cell, capacity: 257_u64);
+  let resized = std::process::heap_in_use(meter: meter);
+  if resized >= before {
+    let bytes = resized - before;
+    if bytes != 2072_u64 {
+      return 1_u64;
+    }
+  } else {
+    return 1_u64;
+  }
   if cell.inner.len == 1_u64 {
     let held = take_back(window: &cell.inner);
     if held != 73_u64 {
@@ -55,6 +76,101 @@ fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 1_u64;
   }
+}
+
+fn map_key(index: u64) -> key: Array<u8, 3> pure {
+  let middle = index / 256_u64;
+  let high = index / 65536_u64;
+  let a = cvt.wrap::<u64, u8>(index);
+  let b = cvt.wrap::<u64, u8>(middle);
+  let c = cvt.wrap::<u64, u8>(high);
+  let bytes = array_filled::<u8, 3>(value: a);
+  set bytes[1_u64] = b;
+  set bytes[2_u64] = c;
+  return bytes;
+}
+
+fn release_map(store: Shared<ConcurrentHashMap<u64>>) -> result: unit pure {
+  return unit;
+}
+
+fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  doc "Two waves of 200000 distinct three-byte keys with inline u64 values: new chunks, then free-list reuse. Each node needs at least 32 bytes: an eight-byte length, three key bytes and an eight-byte value, rounded to the runtime's 16-byte grain. The presized cell array needs 8388608 bytes. Removing every entry must return exactly to the empty-map reading, a zero-byte tolerance with its table still live; clearing a refilled map exercises draining, and dropping the map must return exactly to the pre-map reading.";
+  let before = std::process::heap_in_use(meter: meter);
+  let store = shared_map_new::<u64>(capacity: 200000_u64);
+  let empty = std::process::heap_in_use(meter: meter);
+  for @wave (wave in 0_u64..2_u64) {
+    for @insert (index in 0_u64..200000_u64) {
+      let bytes = map_key(index: index);
+      let key = &bytes[0_u64..3_u64];
+      atomic slot = &store[key] {
+        set slot^ = Some<u64>(value: index);
+      }
+    }
+    let held = std::process::heap_in_use(meter: meter);
+    if held >= empty {
+      let growth = held - empty;
+      if growth < 6400000_u64 {
+        return 8_u8;
+      }
+    } else {
+      return 8_u8;
+    }
+    if empty >= before {
+      let table_bytes = empty - before;
+      if table_bytes < 8388608_u64 {
+        return 9_u8;
+      }
+    } else {
+      return 9_u8;
+    }
+    let counted = 0_u64;
+    atomic whole = &store {
+      set counted = map_count::<u64>(map: whole);
+    }
+    if counted != 200000_u64 {
+      return 10_u8;
+    }
+    if wave == 0_u64 {
+      for @remove (index in 0_u64..200000_u64) {
+        let bytes = map_key(index: index);
+        let key = &bytes[0_u64..3_u64];
+        atomic slot = &store[key] {
+          set slot^ = None<u64>();
+        }
+      }
+      let removed = std::process::heap_in_use(meter: meter);
+      if removed != empty {
+        return 11_u8;
+      }
+    } else {
+      atomic whole = &store {
+        map_clear::<u64>(map: whole);
+      }
+      let cleared = std::process::heap_in_use(meter: meter);
+      if cleared > empty {
+        return 12_u8;
+      }
+    }
+    let remaining = 1_u64;
+    atomic whole = &store {
+      set remaining = map_count::<u64>(map: whole);
+    }
+    if remaining != 0_u64 {
+      return 13_u8;
+    }
+  }
+  let bytes = map_key(index: 0_u64);
+  let key = &bytes[0_u64..3_u64];
+  atomic slot = &store[key] {
+    set slot^ = Some<u64>(value: 73_u64);
+  }
+  release_map(store: move store);
+  let after = std::process::heap_in_use(meter: meter);
+  if after != before {
+    return 14_u8;
+  }
+  return 0_u8;
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
@@ -88,6 +204,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let same = std::process::heap_in_use(meter: &shared_meter);
   if same != after {
     return exit_status(code: 4_u8);
+  }
+  let map_result = measure_map(meter: &meter);
+  if map_result != 0_u8 {
+    return exit_status(code: map_result);
   }
   let resident = std::process::resident_bytes(meter: &meter);
   match resident {

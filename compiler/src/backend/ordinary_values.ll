@@ -18,8 +18,9 @@
 ; `.finish`, each with the function's own parameters and then the running
 ; context's operation block: the start submits the operation into that block
 ; or answers at once, returning 0 when it wrote the result, 1 when its
-; operation has already completed and 2 when it is still pending, and the
-; finish reads the completed record into the result. The waiting function that calls them
+; operation has already completed, 2 when it is still pending, or 3 when
+; shared-unit acquisition must be retried after each wake. The finish reads
+; the completed record or updates and releases the acquired shared unit. The waiting function that calls them
 ; suspends between the two (design/compiler/waiting-contexts.md).
 
 declare void @wf__body_host_copy_bytes(ptr, ptr, ptr, i64, i64)
@@ -70,27 +71,27 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_write_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare i32 @wf__body_write_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define i32 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_write_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare void @wf__body_write_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define void @wf_std.io.write_once.finish(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.io.write_once.finish(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  call void @wf__body_write_once_finish(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  call void @wf__body_write_once_finish(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
@@ -190,75 +191,75 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_read_next_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare i32 @wf__body_read_next_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define i32 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_read_next_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare void @wf__body_read_next_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define void @wf_std.io.read_next.finish(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.io.read_next.finish(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  call void @wf__body_read_next_finish(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  call void @wf__body_read_next_finish(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_receive_next_start(ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare i32 @wf__body_receive_next_start(ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define i32 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_receive_next_finish(ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare void @wf__body_receive_next_finish(ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define void @wf_std.net.receive_next.finish(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.net.receive_next.finish(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  call void @wf__body_receive_next_finish(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  call void @wf__body_receive_next_finish(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_send_once_start(ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare i32 @wf__body_send_once_start(ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define i32 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_send_once_finish(ptr, ptr, ptr, i64, i64, ptr, ptr)
+declare void @wf__body_send_once_finish(ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
 
-define void @wf_std.net.send_once.finish(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.net.send_once.finish(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  call void @wf__body_send_once_finish(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  call void @wf__body_send_once_finish(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
@@ -434,35 +435,35 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_tcp_accept_start(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf__body_tcp_accept_start(ptr, ptr, ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  %state = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_tcp_accept_finish(ptr, ptr, ptr, ptr, ptr)
+declare void @wf__body_tcp_accept_finish(ptr, ptr, ptr, ptr, ptr, ptr)
 
-define void @wf_std.net.tcp_accept.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.net.tcp_accept.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  call void @wf__body_tcp_accept_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  call void @wf__body_tcp_accept_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_tcp_connect_start(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf__body_tcp_connect_start(ptr, ptr, ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  %state = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_tcp_connect_finish(ptr, ptr, ptr, ptr, ptr)
+declare void @wf__body_tcp_connect_finish(ptr, ptr, ptr, ptr, ptr, ptr)
 
-define void @wf_std.net.tcp_connect.finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.net.tcp_connect.finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  call void @wf__body_tcp_connect_finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation)
+  call void @wf__body_tcp_connect_finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
@@ -626,19 +627,19 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_sleep_until_start(ptr, ptr, ptr)
+declare i32 @wf__body_sleep_until_start(ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.time.sleep_until.start(ptr %result, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.time.sleep_until.start(ptr %result, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  %state = call i32 @wf__body_sleep_until_start(ptr %result, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_sleep_until_start(ptr %result, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_sleep_until_finish(ptr, ptr, ptr)
+declare void @wf__body_sleep_until_finish(ptr, ptr, ptr, ptr)
 
-define void @wf_std.time.sleep_until.finish(ptr %result, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.time.sleep_until.finish(ptr %result, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  call void @wf__body_sleep_until_finish(ptr %result, ptr %deadline, ptr %operation)
+  call void @wf__body_sleep_until_finish(ptr %result, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
@@ -660,18 +661,22 @@ entry:
 
 declare void @wf__body_now(ptr, ptr)
 
-define void @wf_std.time.now(ptr %result, ptr %clock) align 64 {
+define { i64 } @wf_std.time.now(ptr %clock) align 64 {
 entry:
+  %result = alloca { i64 }, align 8
   call void @wf__body_now(ptr %result, ptr %clock)
-  ret void
+  %value = load { i64 }, ptr %result
+  ret { i64 } %value
 }
 
 declare void @wf__body_instant_after(ptr, ptr, i64)
 
-define void @wf_std.time.instant_after(ptr %result, ptr %instant, i64 %nanoseconds) align 64 {
+define { i64 } @wf_std.time.instant_after(ptr %instant, i64 %nanoseconds) align 64 {
 entry:
+  %result = alloca { i64 }, align 8
   call void @wf__body_instant_after(ptr %result, ptr %instant, i64 %nanoseconds)
-  ret void
+  %value = load { i64 }, ptr %result
+  ret { i64 } %value
 }
 
 declare i64 @wf__body_nanoseconds_from(ptr, ptr)
@@ -844,18 +849,18 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_stop_next_start(ptr, ptr, ptr, ptr, ptr)
-declare void @wf__body_stop_next_finish(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf__body_stop_next_start(ptr, ptr, ptr, ptr, ptr, ptr)
+declare void @wf__body_stop_next_finish(ptr, ptr, ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+define i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  %state = call i32 @wf__body_stop_next_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  %state = call i32 @wf__body_stop_next_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   ret i32 %state
 }
 
-define void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+define void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
 entry:
-  call void @wf__body_stop_next_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  call void @wf__body_stop_next_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   ret void
 }
 
@@ -872,6 +877,78 @@ define void @wf_std.process.close_stop_listener.finish(ptr %result, ptr %factory
 entry:
   call void @wf__body_close_stop_listener_finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
   ret void
+}
+
+
+declare void @wf__body_cancel_source(ptr)
+define { ptr } @wf_std.time.cancel_source() align 64 {
+entry:
+  %result = alloca { ptr }, align 8
+  call void @wf__body_cancel_source(ptr %result)
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
+}
+
+declare void @wf__body_cancel_never(ptr)
+define { ptr } @wf_std.time.cancel_never() align 64 {
+entry:
+  %result = alloca { ptr }, align 8
+  call void @wf__body_cancel_never(ptr %result)
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
+}
+
+declare void @wf__body_cancel_share(ptr, ptr)
+define { ptr } @wf_std.time.cancel_share(ptr %source) align 64 {
+entry:
+  %result = alloca { ptr }, align 8
+  call void @wf__body_cancel_share(ptr %result, ptr %source)
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
+}
+
+declare void @wf__body_cancel_watch(ptr, ptr)
+define { ptr } @wf_std.time.cancel_watch(ptr %source) align 64 {
+entry:
+  %result = alloca { ptr }, align 8
+  call void @wf__body_cancel_watch(ptr %result, ptr %source)
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
+}
+
+declare ptr @wf__body_cancel_state(ptr)
+define ptr @wf_std.time.cancel_state(ptr %watch) align 64 {
+entry:
+  %state = call ptr @wf__body_cancel_state(ptr %watch)
+  ret ptr %state
+}
+
+declare i32 @wf__body_cancel_fire_start(ptr, ptr, ptr)
+define i32 @wf_std.time.cancel_fire.start(ptr %result, ptr %source, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_cancel_fire_start(ptr %result, ptr %source, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_cancel_fire_finish(ptr, ptr, ptr)
+define void @wf_std.time.cancel_fire.finish(ptr %result, ptr %source, ptr %operation) align 64 {
+entry:
+  call void @wf__body_cancel_fire_finish(ptr %result, ptr %source, ptr %operation)
+  ret void
+}
+
+declare void @wf__body_close_cancel_source(ptr)
+define i8 @wf_std.time.close_cancel_source(ptr %source) align 64 {
+entry:
+  call void @wf__body_close_cancel_source(ptr %source)
+  ret i8 0
+}
+
+declare void @wf__body_close_cancel_watch(ptr)
+define i8 @wf_std.time.close_cancel_watch(ptr %source) align 64 {
+entry:
+  call void @wf__body_close_cancel_watch(ptr %source)
+  ret i8 0
 }
 
 declare void @wf__body_meter_share(ptr, ptr)
@@ -898,4 +975,12 @@ entry:
   call void @wf__body_resident_bytes(ptr %result, ptr %meter)
   %bytes = load { i32, i64 }, ptr %result, align 8
   ret { i32, i64 } %bytes
+}
+
+declare i64 @wf__body_release_map_reserve(ptr, ptr)
+
+define i64 @wf_std.process.release_map_reserve(ptr %map, ptr %meter) align 64 {
+entry:
+  %freed = call i64 @wf__body_release_map_reserve(ptr %map, ptr %meter)
+  ret i64 %freed
 }

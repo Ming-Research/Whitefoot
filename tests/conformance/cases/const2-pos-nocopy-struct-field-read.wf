@@ -1,0 +1,14 @@
+nocopy struct Token {
+  id: u32;
+}
+
+const token: Token = Token(id: 1_u32);
+
+fn read_field() -> result: u32 pure {
+  return token.id;
+}
+
+fn read_reference() -> result: u32 pure {
+  let reference = &token;
+  return reference^.id;
+}

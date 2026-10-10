@@ -12,6 +12,182 @@ Nodes: compiler/typed-syntax-access, compiler/generic-validation-scope
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve #305's two design decisions: syntax views build node paths only when used, and declaration reads of the modules of one resolved unit share one adjacency; generic argument provenance is indexed by (substitution, parameter), still taking the minimum source position" with "agreed" (translated).
 
 Summary: A borrowed syntax view builds its node paths and reverse lookup on the first path query, and the declaration-read queries of one resolved unit share immutable adjacency and module roots while keeping separate traversal state, instead of each module rebuilding a full view only to count entries. Generic argument provenance is indexed by the ordered substitution without its region axis and by parameter key, keeping the minimum source-node index, instead of scanning every recorded site. Neither changes a judgment, diagnostic, path or read set; with a stack array for missing bound slots they take Halo's `pkg::vm` check from 8.701 to 7.729 s on the 14900K (0.888, twin 1.001) and leave the wasm interpreter and the arm series within twin spread ([check-time](../research/investigations/check-time/DESIGN.md#halos-profile-and-the-first-cost-reductions)).
+## 2026-10-10 Whole-value reads of a const item
+
+Nodes: language/ownership
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated). After the implementation narrowed the read to copy types, because a struct declared `nocopy` can be const-eligible, the owner approved the item request on the same board on 2026-10-10: "confirm limiting the whole-value read to consts of a copy type (a nocopy struct const keeps only partial reads)" (translated).
+
+Summary: language/ownership adds the decision that a const item of a copy type is also read as a whole value, a copy into the reader's storage, because copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
+## 2026-10-10 Statement groups keep their calls across an independent non-call statement
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose A on the card "when a statement group meets an unrelated non-call statement, should the calls before and after it stay in one group?" (translated), whose option A read "cross the unrelated non-call statement: change as in PR #329, and change the design-tree decision, recording 'end the group at every non-call' as a rejected alternative because PAR-1 already proves the whole run pairwise independent" (translated).
+
+Summary: Lowering kept a statement group's calls only up to the first non-call member, so two independent calls around an ordinary statement never overlapped although PAR-1 proves the whole run independent. The non-call statement now stays on the owning thread at its source position inside the group's window, checked against the group's calls with the release-and-borrow boundary, and a `set` that displaces a releasing owner counts as a release; ending the group at every non-call is recorded as rejected.
+## 2026-10-10 Statement groups end before an implicit context await
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item gran-p0-await-window to the request "approve #331's change to the design tree's parallel-lowering: a statement group also ends before a statement preceded by an implicit context await (reason: the await may suspend and resume on another driver, while the group's hand-outs and join belong to the original thread's task queue). Recommended: approve; it is required to fix a P0 defect on main, and waiting-contexts already assumes no suspension between hand-out and join" (translated).
+
+Summary: Lowering inserts the await of a bound context's result before the statement that reads it without a new IR block, so a compute group could hand out a call, suspend at that await, resume on another driver and then join and release on the first thread's compute lane, whose state only its owner may write. A site preceded by an implicit await now ends the current group before it, restoring the waiting-contexts premise that no suspension falls between a compute offer and its join.
+
+## 2026-10-10 Value equality
+
+Nodes: language/data-model/tag-only-equality, language/data-model/value-equality, language/checks-and-proofs/range-facts, compiler/range-judgment
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, after investigation #326 the owner chose option A on each of six cards: "which types can == compare, decided by what rule?" (structure decides, automatically); "can a struct with a float field use ==, and how do floats count in value equality?" (floats and types with a float part are not comparable; floats keep feq); "should eeq/ene merge into ==/!= and retire?" (merge and retire); "how does generic code use ==: is an eq bound needed?" (keep the bound, meaning copy with no float part, and admit opaque copy structs); "how do proofs use value equality: decompose by definition or an opaque predicate?" (decompose by definition); and "what happens to #323?" (rewrite it in place into the full implementation) (all translated).
+
+Summary: tag-only-equality is retired into the new value-equality node, which records `==`/`!=` as one value equality over structurally decided equality types, opaque copy structs included; floats outside it; `eeq`/`ene` retired; the `Eq` bound for generic code; and proofs reading equality by the same definition, keeping the old node's rejected alternatives and refusing the range-clause-only expansion this branch first proposed. range-facts and range-judgment cite value equality for generic and non-generic range clauses and keep a by-value parameter's entry snapshot for postconditions; range-judgment adds the solver's single probe per run of rules sharing one guard list. Grounds are in [the value-equality investigation](../research/investigations/value-equality/DESIGN.md).
+## 2026-10-10 Frozen dataset library and service-first snapshot retention
+
+Nodes: language/data-model/frozen-datasets, language/data-model/frozen-datasets/retention-budget
+
+Owner-approved: On the shared status board on 2026-10-10, the owner answered "choose A" (translated from Chinese) on each of cards firn-q-snap-budget and firn-q-snap-form.
+
+Summary: Frozen datasets begin as an opt-in persistent library under existing ownership rules, with a new storage domain considered only after a prototype identifies an inexpressible operation and restricted fork retained as a possible backend. Snapshot reserve exhaustion aborts the attempt, preserves the previous authoritative base and log, and requires bounded cleanup and consumer-set pause/latency targets because service availability takes priority over persistence progress.
+
+## 2026-10-10 Cite status board items instead of docs/todo.md
+
+Nodes: compiler/code-alignment, compiler/downstream-releases, compiler/match-dispatch-lowering, language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item coord-todo-wf to the request "approve wording edits to four design-tree nodes that change only their citations, not their decisions? ... Recommended: approve; only the place the citations point to moved" (translated).
+
+Summary: The four nodes cite status board item keys where they linked to docs/todo.md, which this branch deletes because the project's TODO list moved to the status board; no decision changed.
+## 2026-10-10 Small blocks copied on growth
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A, "split by block size: copy a block smaller than 1 KiB into a fresh block on growth and keep `realloc` for larger blocks" (translated), on the card "Box<Slots> growth takes glibc's arena lock under several threads; how to fix it?" (translated).
+
+Summary: `grow` reaches `wf__heap_retake`, which copies a block below 1024 bytes into a fresh block and calls `realloc` for larger ones, because glibc's `realloc` always takes the owning arena's lock and four workers queued on it in Snowghost's text preparation, while copying small blocks uses the per-thread cache; Halo's single-threaded integer-table and sort kernels kept #280's gain. Calling `realloc` for every size joins the rejected alternatives, and contention on larger blocks remains unmeasured.
+
+## 2026-10-10 Owner slots ordered only against releases at or above them
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the request "approve the change to the parallel-lowering overlap-group boundary decision: an owner slot loaded during reference formation conflicts only with a release at or above that slot?" (translated).
+
+Summary: An overlap group ends at a release that overlaps a loaded owner slot only when the release is at or above the slot, because storage below a Box slot lies in the block it points to and a release frees and writes only its own subtree; the full formation borrow recorded beside each slot keeps every other overlapping release ordered. Snowghost's sibling-field swaps in one element had been serialized by the symmetric prefix rule.
+
+## 2026-10-10 Header-only construction of constant-capacity windows
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the request "approve the new storage-representation decision: when constructing a value containing a constant-capacity window, initialize only the header and value-bearing fields and do not zero the element slots past len?" (translated).
+
+Summary: Constructing a value with constant-capacity Slots or Ring storage writes only headers and value-bearing fields, because WIN-1 makes slots past `len` unobservable and Snowghost's profile showed the whole-value zero fill of a short-lived 64-frame window as a large share of style computation; inactive enum payload zeroing and complete Array initialization are kept, and zero-filling the whole value was the refused alternative.
+## 2026-10-09 Cancellation handles are droppable structs over shared handles
+
+Nodes: language/system-interface/context-cancellation, language/system-interface/declaration-home, language/system-interface, language/data-model/opaque-struct, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: a cancellation source cannot be put in shared state" that asked to approve PR #319's specification text and the changes to five design nodes (context-cancellation becoming droppable structs with three rejected alternatives recorded; declaration-home, system-interface, opaque-struct and state-locks made consistent) with "agree" (translated), after choosing option A' (A-prime) on the board card firn-wf-cancel-drop-card.
+
+Summary: Cancellation sources and watches are droppable opaque structs whose private fields hold the cancellation state's shared handles, because that state is ordinary runtime memory and shared state must be droppable for a source to live in it, as wake generations need; their release is the shared handle's, through ordinary field-wise cleanup. Nodrop handles were rejected because they exposed only two forgotten-fire mistakes at compile time while keeping sources out of shared state, a host-specific nonempty release because the field-wise release needs no new rule, and droppable sources alone because a connection could still not obtain a new generation's watch. The neighbouring nodes now state that fielded opaque structs inherit their fields' release and that fieldless host handles keep an empty one.
+## 2026-10-09 A map's reserve is released through the memory meter in std::process
+
+Nodes: language/system-interface, language/system-interface/memory-statistics, compiler/prelude-records
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller" (the release takes the memory meter and writes it), option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process" (it moves to `std::process` and host functions may declare type parameters), and approved the item request asking to approve #317's compiler decision that a generic host function's instances share the host declaration's link symbol and refuse a boundary whose machine representation could depend on a type argument, together with the rewording that drops a stale count from an existing decision of the same node ("choose A", "choose A", "approve", translated).
+
+Summary: v0.111's `shared_map_release_reserve` wrote the map's handle to stay out of atomic guards, which made every caller up a server's command path write the store although an atomic statement changes the same map under `reads`. The release now writes the memory meter, as `heap_in_use` does, since its answer is a drop in the heap reading, and lives beside it in `std::process` as `release_map_reserve`, the prelude not referencing host-module types. Host functions may be generic; each instance keeps its own checked signature and effect substitution and calls the one definition the build supplies, rather than a per-instance symbol the host would have to provide for every value type.
+
+## 2026-10-09 Segment and page selectors as direct bases
+
+Nodes: language/ownership/range-reference, language/checks-and-proofs/proof-identity
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese: after Snowghost's request that `s[i].len` and `s[i][j]` be admitted and the card asking how far the direct forms should extend, recommended option A, reads and writes for `Segments` segments and `Paged` pages alike: "choose A" (translated); then, after the card that presented the OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2 and ENT-3 changes, the two design decisions and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Run-selecting places serve directly as bases of their length read and of element subscripts because they name exactly the place their borrow forms, so they add no proof or permission mechanism, instead of requiring a borrow before every length read or element access. Direct page selections and nonterminal page steps take index-step proof identity because they capture no extent and length writes kill their terms, while a page-reference borrow keeps per-formation identity because its captured extent survives growth.
+## 2026-10-09 No merging or reordering of waiting calls
+
+Nodes: language/effects
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "may `pure` merge waiting calls that change shared state?" (translated).
+
+Summary: The merge-and-reorder licence of a `pure` row covers only calls that do not wait, because a waiting function's shared-object changes take effect in the execution's order and appear in no row; redefining `pure` and a backend-only exclusion were refused.
+
+## 2026-10-09 Scientific float spelling
+
+Nodes: language/surface-form/float-literals
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option B on the card "canonical float spelling: change the compiler or the specification?" (translated).
+
+Summary: A float's canonical spelling is chosen among scientific forms (one nonzero integer digit before an exponent) and the fixed form, by bytes and then lexicographic order, so the specification agrees with what the compiler generated and with how writers spell numbers; the rejected alternatives were generating the `0.5e3` forms the old rule selected and accepting every rounding decimal.
+## 2026-10-09 Copied cells and helper-call updates in indexed reductions
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, after the card that presented Snowghost's recount of 11 of 32 candidate loops permitted by v0.107 and recommended admitting the copied-cell spelling and updates made inside helper calls: "choose A" (translated); then, after the card that presented the four PAR-2 changes (copied cells, helper-call updates through an indexed summary, families identified by resolved storage, and the recombination argument), the two design decisions, the recount of 17 of 32 against the criterion of 16 and the review findings: "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: Loop permission admits a copied-cell accumulator operand and helper calls whose callee treats a reference parameter as an indexed accumulator, identifying families by resolved storage, because both preserve the per-cell order-independence argument and recover the six natural spellings that kept Snowghost below its criterion. Lowering gives every root with a call-updated family one private block per leaf with the root's storage shape and measures, all of that root's families in it, identity-filled for operations and filled with the constant's inverted-low-bit sentinel for marks, because a callee indexes the whole root by logical index and may read its measures, so a dense family slab cannot be passed; passing dense slabs or rewriting the callee are rejected ([lowering](../research/investigations/indexed-reductions/DESIGN.md#lowering)).
+## 2026-10-09 The release/borrow group boundary uses proved separations
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request "approve adding 'with the same proved separations used by the parallel permission' to the parallel-lowering decision that keeps a released place and a borrowed place out of one overlap group" with "agree" (translated); earlier the same day, on Snowghost's card handing the owning-element serialization to Whitefoot: "choose A" (translated).
+
+Summary: The overlap-group boundary that keeps a call releasing storage apart from a call borrowing it compares released and borrowed places with the separations the permission judgment proved for that ordered pair, because the unproved oracle it used serialized sibling calls on proved-disjoint ranges of an owning-element run (Snowghost's layout lost its 4-thread parallelism between releases 631d3ff and b2209fd); unknown roots and unproved overlap still split the group, and every member's borrowed and released places now come from the same statements as its footprint, which closes conditional-call and call-rooted-match members that recorded none.
+## 2026-10-09 Guards observe cancellation through read-only shared handles
+
+Nodes: language/waiting/shared-objects, language/system-interface/context-cancellation, compiler/waiting-contexts, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: an atomic statement's guard can see cancellation" that asked to approve PR #304's specification text and the changes to the two design nodes (language/waiting/shared-objects and language/system-interface/context-cancellation) with "agree", and then the item request that asked to approve PR #304's changes to the two compiler design nodes (compiler/waiting-contexts: a host wait may also suspend for a shared-unit acquisition; state-locks: the cancellation state is protected by one ordinary shared unit, with an atomic mirror bit for host waits) with "agree" (translated), after choosing option A on the board card firn-cancel-guard-shape.
+
+Summary: A general read-only handle, `SharedRead<T>`, joins `Shared<T>` as an atomic target with the same selections, identity and lifetime, and its read-only authority follows the resolved state root through aliases, descendants and call effects, because a guard must read state that no helper or alias can turn back into a write; a cancellation-specific target and cancellation interrupting a pending statement were rejected. `cancel_state` gives that view of a watch's cancellation state, and `cancel_fire` is a waiting held transition that wakes guard watches while host waits keep find-at-fire notification. The compiler keeps the cancellation state in one ordinary shared unit, publishing an atomic mirror for host waits during the held transition, and its waiting lowering suspends for that unit's acquisition as atomic statements do.
+## 2026-10-09 Range facts below elements, route A and range type invariants
+
+Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/checks-and-proofs/automatic-facts, compiler/range-judgment, compiler/diagnostic-repairs
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve proof-facts (#315)'s specification changes (v0.112, rule by rule in the PR description) and design-tree decisions" with "agreed" (translated), covering the choices the owner made on the status board on 2026-10-08 and 2026-10-09 that the specification log entry for v0.112 lists.
+
+Summary: Range facts read integer values below an element, a range type invariant replaces the decision that live storage carries no range fact across passes, ordinary obligations whose goals are range-term comparisons are proved by the range judgment while every other undischarged obligation keeps its ordinary verdict, `place_back`/`take_back` are placed writes, a computed give delivers its relations, instantiation runs two rounds, possibly aliased atomic targets that would establish a range type invariant are an unsupported capability for now, and a counted-element repair offers its range alternatives per row; grounds and measurements are in the range-field-terms, ordinary-range-obligations and range-type-invariants investigations.
+## 2026-10-09 Selected call results produced in place and read-through snapshots
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese: on the card asking whether the compiler may read a by-value array element directly from its source when the snapshot is only read and the source is unchanged until its last use, recommended option A, a compiler rule decided from checked effect facts with the language unchanged: "choose A" (translated); and on the item request approving the design decision of #310 that unobserved join parameters are removed before storage planning so a selected call result is written directly into its final place: "agreed" (translated).
+
+Summary: Internal block parameters and their incoming arguments that no operand, scrutinee, return, drop or cleanup observes are removed before storage planning, because a continuing match carried every binding in scope and an unobserved duplicate kept a provisional call result and the selected result in separate storage, copying the whole value on the unchanged arms (Halo's `instruction_call`). A by-value snapshot that is never written or exposed reads through its source wherever checked effects prove the source unchanged up to the use, and a use that cannot read through copies from the source right before it on that path only, because Halo's `prepare` copied each called element before reading its tag; making writers borrow-match instead and making indexed by-value reads borrows were refused. Read-only facts now cover range and run parameters as well [CALL-1, REF-4]. In Halo's call path both copies are gone from the optimized IR ([read-through snapshots](../research/investigations/in-place-parameters/DESIGN.md#read-through-snapshots)).
+## 2026-10-09 A payload-only keyed statement takes nothing for an absent key
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, on the request on the item "a statement that accesses an absent key's entry allocates a node and then frees it", the owner approved both changes to this node: the new decision that a single-entry statement whose writes all pass through the `Some` payload takes no cell or node on an absent key and locks a present key exclusively, and the claim decision narrowed to writers that may make an absent entry present ("approve", translated).
+
+Summary: A GET that refreshes an access stamp inside the entry's payload may write the entry, so it claimed a cell and built a node for every absent key and freed the node at unlock; on firn's GET miss workload on the i9-14900K that cost 12 to 20 percent of throughput against a build without the stamp. The checker now marks each single-entry target that can only write inside the `Some` payload, through its own writes, call rows and aliases taken from the statement's header, and the runtime then locks a present key exclusively and runs the block on the map's shared none slot for an absent one, the miss taking effect when the absence is observed, as the read path's does. With the stamp's rows narrowed to the stamp field, firn measured 0.99 to 1.04 of the stampless build's throughput. Deferring the node until the first write was refused because it still claims and unlocks a cell.
+
+## 2026-10-09 A map's reserve is released on request without waiting
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, after the explanation of what a map's moves and its kept reserve are, the owner chose option A of the card "what form does the operation take that releases a concurrent map's reserve array when memory is tight": a one-shot operation on the handle that returns the bytes released, an ordinary call needing no atomic statement ("choose A", translated).
+
+Summary: `shared_map_release_reserve` frees the cells a map keeps for its next move of their size and answers their bytes. It only tries the map's own short lock and answers zero while a mover or a reclaim holds it, since its caller, a server over its memory limit, asks again on its next command; waiting would add a move to that command's latency.
+## 2026-10-09 A moved map keeps spare cells only of its current size
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the status board on 2026-10-09, written in Chinese, on the card asking whether the concurrent map should keep a moved table's spare cells only when they match the current table's size, recommended option A: "choose A" (translated); the same day the owner chose option A on Firn-wf's card counting the spare table in `heap_in_use`, which names this change.
+
+Summary: A map whose size holds steady still moves between two warm tables of one size (12 ms against 111 ms for 2^22 cells at four threads), but the cells a growing table leaves behind are half its size and would serve only a move back to that size, holding up to half a table of memory idle that firn's memory limit counts. `reclaim` now keeps the newest freed cells only when they match the current table's size and frees a spare of any other size. Keeping every newest freed table and freeing every host-mapped table are kept as rejected alternatives.
+## 2026-10-09 Cross-context cancellation of host waits
+
+Nodes: compiler/completion-runtime, compiler/waiting-contexts, compiler/waiting-contexts/bounded-waits, language/system-interface/context-cancellation, language/system-interface/deadlines, language/system-interface/outcome-typing
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot cross-context cancellation" that asked to approve PR #296's specification text and design nodes (PRE-2's cancellation sources and watches, the `cancel` parameter on the eight waiting host functions, `IoError::Cancelled` and its outcome rules, and design/language/system-interface/context-cancellation.md) with "agree" (translated), after choosing shape S1 on the board card firn-cancel-shape and direction A on cross-context cancellation, and agreeing that guard observation of cancellation moves to the stacked PR #304.
+
+Summary: A waiting host call names an explicit cancellation watch, shape S1, instead of an until-value, a context-scoped watch or a handle-bound watch, and the runtime finds the waits a firing ends at fire time on each driver's own list instead of registering every wait with the cancellation state, because the firing is rare and the wait common. On Windows without a completion port, bounded socket sends run non-blocking so a send ends at its bound as Winsock's blocking contract does not guarantee. Evidence and the rejected shapes are in research/investigations/context-cancellation/README.md.
+
+## 2026-10-09 Separate allocations for every ordinary frame root
+
+Nodes: compiler/storage-placement, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner approved the item request "approve #292's two design node changes (storage-placement, state-locks, see the latest log)" with "agreed" (translated), after choosing option A of the card "should every stack slot be allocated separately" ("choose A", translated); the completion report stated that the card's extent formula undercounted and that the implementation checks the corrected bound.
+
+Summary: Every positive-sized, naturally aligned root of an ordinary frame becomes its own entry allocation whatever the roots' alignments, and the target plan checks the sum over roots of size plus alignment minus one, plus the largest alignment minus one, which bounds every ordering the host may choose; split dispatch frames and their part signatures, parallel lane frames and context argument frames keep one object because their parts or runtime share its pointer and field offsets, and zero-sized or over-aligned roots keep the struct. A shared frame struct let one slot pointer passed to a surviving call pin a dead 152-byte snapshot copy; separate roots remove it in the witnesses and in Halo's `sort_compare`, where Halo's comparator sort runs 0.941 times as long and string-key 0.748 on the 14900K ([in-place parameters](../research/investigations/in-place-parameters/DESIGN.md#halo-with-separate-roots)). Uniform-alignment-only independent allocations and alignment groups were refused. The state-locks word-sized flag keeps its decision on restated grounds, since its former reason was the uniform-alignment rule.
 
 ## 2026-10-09 Offset disequalities, invariant L0 facts and origin transport
 

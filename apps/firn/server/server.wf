@@ -70,7 +70,10 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
       break @sending;
     }
     let no_deadline = None<Instant>();
-    match send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         set sent = next;
       }
@@ -147,6 +150,9 @@ fn deadline_error(error: &IoError) -> passed: Bool reads(error) {
     }
     DeadlinePassed() => {
       return True();
+    }
+    Cancelled() => {
+      return False();
     }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
@@ -295,7 +301,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
       let length = input.inner.len;
       let window = &input.inner[0_u64..length];
       let waited = False();
-      match receive_next(receive: &connection.receive, destination: window, start: held, end: length, deadline: limit) {
+      let wait_cancel_2 = std::time::cancel_never();
+      let wait_outcome_2 = receive_next(receive: &connection.receive, destination: window, start: held, end: length, deadline: limit, cancel: &wait_cancel_2);
+      std::time::close_cancel_watch(watch: move wait_cancel_2);
+      match wait_outcome_2 {
         Ok(value: next) => {
           set received = next;
         }
@@ -406,7 +415,9 @@ fn expire_keys(store: Keyspace, clock: Clock, wall: WallClock) -> result: unit p
   loop @ticks {
     let started = std::time::now(clock: &clock);
     let wake = instant_after(instant: started, nanoseconds: 100000000_u64);
-    sleep_until(deadline: wake);
+    let wait_cancel_3 = std::time::cancel_never();
+    sleep_until(deadline: wake, cancel: &wait_cancel_3);
+    std::time::close_cancel_watch(watch: move wait_cancel_3);
     let reading = read_time(wall: &wall);
     let current = reading.time.unix_ms;
     let stop = False();
@@ -895,7 +906,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           }
         }
         let no_deadline = None<Instant>();
-        match tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline) {
+        let wait_cancel_4 = std::time::cancel_never();
+        let wait_outcome_4 = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &wait_cancel_4);
+        std::time::close_cancel_watch(watch: move wait_cancel_4);
+        match move wait_outcome_4 {
           Ok(value: next) => {
             let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
             let factory = factory_share(factory: &handles);

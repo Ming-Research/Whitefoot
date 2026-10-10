@@ -7,6 +7,7 @@
 #endif
 #endif
 #include "ordinary_values.h"
+#include "concurrent_map.h"
 #include "completion/bridge.h"
 #include "completion/contract.h"
 
@@ -395,7 +396,7 @@ _Static_assert(_Alignof(wf_host_operation) <= WF_CONTEXT_OPERATION_ALIGN,
 static uint64_t wf_deadline_reading(const wf_deadline *deadline) {
     uint64_t reading;
     if (deadline == NULL || deadline->tag != WF_OPTION_SOME) return 0;
-    reading = deadline->value.words[0];
+    reading = deadline->value.ticks;
     if (reading == WF_COMPLETION_DEADLINE_FIRED) return 0;
     return reading == 0 ? 1 : reading;
 }
@@ -441,11 +442,12 @@ static void wf_transfer_read(wf_read_result *result, wf_host_operation *operatio
     int64_t amount;
     int error;
     wf__completion_file_join(&operation->record, &amount, &error);
-    if (wf__completion_deadline_passed(&operation->record)) {
+    if (wf__completion_deadline_passed(&operation->record)
+        || wf__completion_cancelled(&operation->record)) {
         memset(result, 0, sizeof(*result));
         result->tag = 1;
         result->err.error.tag = 1;
-        wf_error_class(&result->err.error.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        wf_error_class(&result->err.error.error, (wf__completion_cancelled(&operation->record) ? WF_IO_CANCELLED : WF_IO_DEADLINE_PASSED), 0, 0);
         return;
     }
     wf_read_result_value(result, amount, error, start, end - start);
@@ -456,10 +458,11 @@ static void wf_transfer_write(wf_write_result *result, wf_host_operation *operat
     int64_t amount;
     int error;
     wf__completion_file_join(&operation->record, &amount, &error);
-    if (wf__completion_deadline_passed(&operation->record)) {
+    if (wf__completion_deadline_passed(&operation->record)
+        || wf__completion_cancelled(&operation->record)) {
         memset(result, 0, sizeof(*result));
         result->tag = 1;
-        wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        wf_error_class(&result->err.error, (wf__completion_cancelled(&operation->record) ? WF_IO_CANCELLED : WF_IO_DEADLINE_PASSED), 0, 0);
         return;
     }
     wf_write_result_value(result, amount, error, start, end - start);
@@ -498,11 +501,15 @@ void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
 
 int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value *input,
                              wf_view *destination, uint64_t start, uint64_t end,
-                             const wf_deadline *deadline, wf_host_operation *operation) {
+                             const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)result;
     wf_transition(factory);
     wf_transition(input);
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_file_read_watched_submit(wf_descriptor(input),
+        wf_window(destination, start), end - start, watched, &operation->record);
     wf__completion_file_read_submit(wf_descriptor(input),
         wf_window(destination, start), end - start, &operation->record);
     return wf_submitted(operation);
@@ -510,31 +517,36 @@ int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value
 
 void wf__body_read_next_finish(wf_read_result *result, wf_value *factory, wf_value *input,
                                wf_view *destination, uint64_t start, uint64_t end,
-                               const wf_deadline *deadline, wf_host_operation *operation) {
+                               const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)factory;
     (void)input;
     (void)destination;
     (void)deadline;
+    (void)cancel;
     wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input,
                   wf_view *destination, uint64_t start, uint64_t end,
-                  const wf_deadline *deadline) {
+                  const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_read_next_start(result, factory, input, destination, start, end, deadline,
+    if (wf__body_read_next_start(result, factory, input, destination, start, end, deadline, cancel,
                                  &operation))
-        wf__body_read_next_finish(result, factory, input, destination, start, end, deadline,
+        wf__body_read_next_finish(result, factory, input, destination, start, end, deadline, cancel,
                                   &operation);
 }
 
 int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_value *output,
                               const wf_view *source, uint64_t start, uint64_t end,
-                              const wf_deadline *deadline, wf_host_operation *operation) {
+                              const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)result;
     wf_transition(factory);
     wf_transition(output);
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_file_write_watched_submit(wf_descriptor(output),
+        wf_window(source, start), end - start, watched, &operation->record);
     wf__completion_file_write_submit(wf_descriptor(output),
         wf_window(source, start), end - start, &operation->record);
     return wf_submitted(operation);
@@ -542,30 +554,35 @@ int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_val
 
 void wf__body_write_once_finish(wf_write_result *result, wf_value *factory, wf_value *output,
                                 const wf_view *source, uint64_t start, uint64_t end,
-                                const wf_deadline *deadline, wf_host_operation *operation) {
+                                const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)factory;
     (void)output;
     (void)source;
     (void)deadline;
+    (void)cancel;
     wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output,
                    const wf_view *source, uint64_t start, uint64_t end,
-                   const wf_deadline *deadline) {
+                   const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_write_once_start(result, factory, output, source, start, end, deadline,
+    if (wf__body_write_once_start(result, factory, output, source, start, end, deadline, cancel,
                                   &operation))
-        wf__body_write_once_finish(result, factory, output, source, start, end, deadline,
+        wf__body_write_once_finish(result, factory, output, source, start, end, deadline, cancel,
                                    &operation);
 }
 
 int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
                                 wf_view *destination, uint64_t start, uint64_t end,
-                                const wf_deadline *deadline, wf_host_operation *operation) {
+                                const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)result;
     wf_transition(receive);
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_socket_receive_watched_submit(wf_descriptor(receive),
+        wf_window(destination, start), end - start, watched, &operation->record);
     wf__completion_socket_receive_submit(wf_descriptor(receive),
         wf_window(destination, start), end - start, &operation->record);
     return wf_submitted(operation);
@@ -573,29 +590,34 @@ int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
 
 void wf__body_receive_next_finish(wf_read_result *result, wf_value *receive,
                                   wf_view *destination, uint64_t start, uint64_t end,
-                                  const wf_deadline *deadline, wf_host_operation *operation) {
+                                  const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)receive;
     (void)destination;
     (void)deadline;
+    (void)cancel;
     wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_receive_next(wf_read_result *result, wf_value *receive,
                      wf_view *destination, uint64_t start, uint64_t end,
-                     const wf_deadline *deadline) {
+                     const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_receive_next_start(result, receive, destination, start, end, deadline,
+    if (wf__body_receive_next_start(result, receive, destination, start, end, deadline, cancel,
                                     &operation))
-        wf__body_receive_next_finish(result, receive, destination, start, end, deadline,
+        wf__body_receive_next_finish(result, receive, destination, start, end, deadline, cancel,
                                      &operation);
 }
 
 int wf__body_send_once_start(wf_write_result *result, wf_value *send,
                              const wf_view *source, uint64_t start, uint64_t end,
-                             const wf_deadline *deadline, wf_host_operation *operation) {
+                             const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)result;
     wf_transition(send);
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_socket_send_watched_submit(wf_descriptor(send),
+        wf_window(source, start), end - start, watched, &operation->record);
     wf__completion_socket_send_submit(wf_descriptor(send),
         wf_window(source, start), end - start, &operation->record);
     return wf_submitted(operation);
@@ -603,19 +625,20 @@ int wf__body_send_once_start(wf_write_result *result, wf_value *send,
 
 void wf__body_send_once_finish(wf_write_result *result, wf_value *send,
                                const wf_view *source, uint64_t start, uint64_t end,
-                               const wf_deadline *deadline, wf_host_operation *operation) {
+                               const wf_deadline *deadline, const wf_cancel_handle *cancel, wf_host_operation *operation) {
     (void)send;
     (void)source;
     (void)deadline;
+    (void)cancel;
     wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_send_once(wf_write_result *result, wf_value *send,
                   const wf_view *source, uint64_t start, uint64_t end,
-                  const wf_deadline *deadline) {
+                  const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_send_once_start(result, send, source, start, end, deadline, &operation))
-        wf__body_send_once_finish(result, send, source, start, end, deadline, &operation);
+    if (wf__body_send_once_start(result, send, source, start, end, deadline, cancel, &operation))
+        wf__body_send_once_finish(result, send, source, start, end, deadline, cancel, &operation);
 }
 
 static int wf_open_start_mode(wf_open_result *result, wf_value *factory,
@@ -1228,6 +1251,16 @@ uint64_t wf__body_heap_in_use(wf_value *meter) {
     return wf__heap_in_use();
 }
 
+/* A Shared handle stores the object pointer; its immutable state stores the
+ * map pointer. The keyed-table unit supplies the same pool-granted and host
+ * mapping accounting used by heap_in_use. No entry hold is required. */
+uint64_t wf__body_release_map_reserve(void *const *map, wf_value *meter) {
+    wf_transition(meter);
+    void *object = *map;
+    wf_cmap *table = *(wf_cmap **)((unsigned char *)object + WF_SHARED_STATE_OFFSET);
+    return wf__keyed_table_release_reserve(table);
+}
+
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter) {
     wf_transition(meter);
     memset(result, 0, sizeof(*result));
@@ -1250,24 +1283,24 @@ void wf__body_wall_clock_share(wf_value *result, const wf_value *clock) {
     memset(result, 0, sizeof(*result));
 }
 
-void wf__body_now(wf_value *result, wf_value *clock) {
+void wf__body_now(wf_instant *result, wf_value *clock) {
     wf_transition(clock);
     memset(result, 0, sizeof(*result));
-    result->words[0] = wf__completion_monotonic_ns();
+    result->ticks = wf__completion_monotonic_ns();
 }
 
-void wf__body_instant_after(wf_value *result, const wf_value *instant, uint64_t nanoseconds) {
-    uint64_t reading = instant->words[0];
+void wf__body_instant_after(wf_instant *result, const wf_instant *instant, uint64_t nanoseconds) {
+    uint64_t reading = instant->ticks;
     memset(result, 0, sizeof(*result));
-    result->words[0] = nanoseconds > UINT64_MAX - reading ? UINT64_MAX : reading + nanoseconds;
+    result->ticks = nanoseconds > UINT64_MAX - reading ? UINT64_MAX : reading + nanoseconds;
 }
 
-uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *later) {
-    return later->words[0] > earlier->words[0] ? later->words[0] - earlier->words[0] : 0;
+uint64_t wf__body_nanoseconds_from(const wf_instant *earlier, const wf_instant *later) {
+    return later->ticks > earlier->ticks ? later->ticks - earlier->ticks : 0;
 }
 
-_Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant) {
-    return instant->words[0] >= deadline->words[0];
+_Bool wf__body_instant_reached(const wf_instant *deadline, const wf_instant *instant) {
+    return instant->ticks >= deadline->ticks;
 }
 
 int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
@@ -1287,31 +1320,37 @@ int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
 #endif
 }
 
-/* [PRE-2] waits for the monotonic clock alone: the record has no host
- * operation, and the driver completes it at the deadline. */
-int wf__body_sleep_until_start(uint8_t *result, const wf_value *deadline,
+/* [PRE-2] no host operation: the driver ends the sleep at its deadline
+ * or when its watch fires. */
+int wf__body_sleep_until_start(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel,
                                wf_host_operation *operation) {
-    uint64_t reading = deadline->words[0];
+    uint64_t reading = deadline->ticks;
     (void)result;
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_sleep_watched_submit(reading == 0 ? 1 : reading,
+            watched, &operation->record);
     wf__completion_sleep_submit(reading == 0 ? 1 : reading, &operation->record);
     return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
-void wf__body_sleep_until_finish(uint8_t *result, const wf_value *deadline,
+void wf__body_sleep_until_finish(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel,
                                  wf_host_operation *operation) {
     int64_t amount;
     int error;
     (void)deadline;
+    (void)cancel;
     /* A context's finish reads a record its driver already completed; a
      * sleep joined outside every context waits out the clock here. */
     wf__completion_file_join(&operation->record, &amount, &error);
-    *result = 0;
+    memset(result, 0, sizeof(*result));
+    result->tag = wf__completion_cancelled(&operation->record) ? 1u : 0u;
 }
 
-void wf__body_sleep_until(uint8_t *result, const wf_value *deadline) {
+void wf__body_sleep_until(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_sleep_until_start(result, deadline, &operation))
-        wf__body_sleep_until_finish(result, deadline, &operation);
+    if (wf__body_sleep_until_start(result, deadline, cancel, &operation))
+        wf__body_sleep_until_finish(result, deadline, cancel, &operation);
 }
 
 int wf__body_tcp_listen_start(wf_open_result *result, wf_value *factory,
@@ -1347,7 +1386,7 @@ void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_val
 }
 
 int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
-                               const wf_value *address, const wf_deadline *deadline,
+                               const wf_value *address, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                                wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->err.error)) {
@@ -1355,25 +1394,31 @@ int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
         return 0;
     }
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_socket_connect_watched_submit(address->words[0], address->words[1],
+                                         (uint32_t)address->words[2], watched, &operation->record);
     wf__completion_socket_connect_submit(address->words[0], address->words[1],
                                          (uint32_t)address->words[2], &operation->record);
     return wf_submitted(operation);
 }
 
 void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
-                                 const wf_value *address, const wf_deadline *deadline,
+                                 const wf_value *address, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                                  wf_host_operation *operation) {
     int64_t descriptor;
     int error;
     (void)address;
     (void)deadline;
+    (void)cancel;
     wf__completion_file_join(&operation->record, &descriptor, &error);
     memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        if (wf__completion_deadline_passed(&operation->record))
-            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        if (wf__completion_deadline_passed(&operation->record)
+        || wf__completion_cancelled(&operation->record))
+            wf_error_class(&result->err.error, (wf__completion_cancelled(&operation->record) ? WF_IO_CANCELLED : WF_IO_DEADLINE_PASSED), 0, 0);
         else wf_error(&result->err.error, error, 7);
     } else {
         wf_descriptor_value(&result->ok.value.receive, (int)descriptor);
@@ -1382,14 +1427,14 @@ void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
 }
 
 void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address,
-                          const wf_deadline *deadline) {
+                          const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_tcp_connect_start(result, factory, address, deadline, &operation))
-        wf__body_tcp_connect_finish(result, factory, address, deadline, &operation);
+    if (wf__body_tcp_connect_start(result, factory, address, deadline, cancel, &operation))
+        wf__body_tcp_connect_finish(result, factory, address, deadline, cancel, &operation);
 }
 
 int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
-                              wf_value *listener, const wf_deadline *deadline,
+                              wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                               wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     wf_transition(listener);
@@ -1398,12 +1443,15 @@ int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
         return 0;
     }
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_socket_accept_watched_submit(wf_descriptor(listener), watched, &operation->record);
     wf__completion_socket_accept_submit(wf_descriptor(listener), &operation->record);
     return wf_submitted(operation);
 }
 
 void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
-                                wf_value *listener, const wf_deadline *deadline,
+                                wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                                 wf_host_operation *operation) {
     int64_t descriptor;
     int error;
@@ -1411,14 +1459,16 @@ void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
     uint32_t tag;
     (void)listener;
     (void)deadline;
+    (void)cancel;
     wf__completion_socket_accept_join(&operation->record, &descriptor, &error,
                                       &low, &high, &tag);
     memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        if (wf__completion_deadline_passed(&operation->record))
-            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        if (wf__completion_deadline_passed(&operation->record)
+        || wf__completion_cancelled(&operation->record))
+            wf_error_class(&result->err.error, (wf__completion_cancelled(&operation->record) ? WF_IO_CANCELLED : WF_IO_DEADLINE_PASSED), 0, 0);
         else wf_error(&result->err.error, error, 6);
     } else {
         wf_descriptor_value(&result->ok.value.connection.receive, (int)descriptor);
@@ -1430,10 +1480,55 @@ void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
 }
 
 void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener,
-                         const wf_deadline *deadline) {
+                         const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_tcp_accept_start(result, factory, listener, deadline, &operation))
-        wf__body_tcp_accept_finish(result, factory, listener, deadline, &operation);
+    if (wf__body_tcp_accept_start(result, factory, listener, deadline, cancel, &operation))
+        wf__body_tcp_accept_finish(result, factory, listener, deadline, cancel, &operation);
+}
+
+void wf__body_cancel_source(wf_cancel_handle *result) {
+    result->state = wf__cancel_new();
+}
+
+void wf__body_cancel_share(wf_cancel_handle *result, const wf_cancel_handle *source) {
+    wf__shared_share(source->state);
+    *result = *source;
+}
+
+void wf__body_cancel_watch(wf_cancel_handle *result, const wf_cancel_handle *source) {
+    wf__body_cancel_share(result, source);
+}
+
+void *wf__body_cancel_state(const wf_cancel_handle *watch) {
+    wf__shared_share(watch->state);
+    return watch->state;
+}
+
+int wf__body_cancel_fire_start(uint8_t *result, const wf_cancel_handle *source,
+                               wf_host_operation *operation) {
+    (void)result;
+    return wf__shared_start(source->state, &operation->record);
+}
+
+void wf__body_cancel_fire_finish(uint8_t *result, const wf_cancel_handle *source,
+                                 wf_host_operation *operation) {
+    (void)operation;
+    wf__cancel_fire_held(source->state);
+    *result = 0;
+}
+
+void wf__body_cancel_never(wf_cancel_handle *result) {
+    result->state = wf__cancel_never();
+}
+
+void wf__body_close_cancel_source(const wf_cancel_handle *source) {
+    /* CancelState has no releasing fields; this is the same shared-handle
+     * release the compiler derives for the struct's private field. */
+    if (wf__shared_release(source->state)) wf__shared_free(source->state);
+}
+
+void wf__body_close_cancel_watch(const wf_cancel_handle *watch) {
+    wf__body_close_cancel_source(watch);
 }
 
 void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops) {
@@ -1463,37 +1558,41 @@ void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_va
 }
 
 int wf__body_stop_next_start(wf_stop_result *result, wf_value *factory,
-                             wf_value *listener, const wf_deadline *deadline,
+                             wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                              wf_host_operation *operation) {
     (void)result;
     wf_transition(factory);
     wf_transition(listener);
     wf_before_submit(deadline);
+    void *watched = wf__cancel_wait_state(cancel->state);
+    if (watched != NULL)
+        return wf__completion_stop_next_watched_submit(watched, &operation->record);
     wf__completion_stop_next_submit(&operation->record);
     return wf_submitted(operation);
 }
 
 void wf__body_stop_next_finish(wf_stop_result *result, wf_value *factory,
-                               wf_value *listener, const wf_deadline *deadline,
+                               wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel,
                                wf_host_operation *operation) {
-    (void)factory; (void)listener; (void)deadline;
+    (void)factory; (void)listener; (void)deadline; (void)cancel;
     int64_t kind;
     int error;
     wf__completion_file_join(&operation->record, &kind, &error);
     memset(result, 0, sizeof(*result));
     if (kind < 0) {
         result->tag = 1;
-        if (wf__completion_deadline_passed(&operation->record))
-            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        if (wf__completion_deadline_passed(&operation->record)
+        || wf__completion_cancelled(&operation->record))
+            wf_error_class(&result->err.error, (wf__completion_cancelled(&operation->record) ? WF_IO_CANCELLED : WF_IO_DEADLINE_PASSED), 0, 0);
         else wf_error(&result->err.error, error, 2);
     } else result->ok.value = (uint32_t)kind;
 }
 
 void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,
-                        const wf_deadline *deadline) {
+                        const wf_deadline *deadline, const wf_cancel_handle *cancel) {
     wf_host_operation operation;
-    if (wf__body_stop_next_start(result, factory, listener, deadline, &operation))
-        wf__body_stop_next_finish(result, factory, listener, deadline, &operation);
+    if (wf__body_stop_next_start(result, factory, listener, deadline, cancel, &operation))
+        wf__body_stop_next_finish(result, factory, listener, deadline, cancel, &operation);
 }
 
 int wf__body_close_stop_listener_start(wf_close_result *result, wf_value *factory,

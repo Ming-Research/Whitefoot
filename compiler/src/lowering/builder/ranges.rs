@@ -51,7 +51,7 @@ impl IrBuilder<'_> {
         };
         let slice = match source {
             CheckedRangeSource::Storage(root) => {
-                let address = self.lower_place_address(root)?;
+                let address = self.lower_place_address_access(root, false)?;
                 // A runtime-capacity `Array<T>` [TYPE-9] is one block
                 // `[len | elements]` reached by pointer, so the descriptor is
                 // read out of that block's header and its first element
@@ -107,7 +107,7 @@ impl IrBuilder<'_> {
         let element = lower_element(self.erasure, element)?;
         let segments = match root {
             crate::semantic::CheckedSegmentSource::Storage(root) => {
-                self.lower_place_address(root)?
+                self.lower_place_address_access(root, false)?
             }
             crate::semantic::CheckedSegmentSource::Element(place) => self.lower_range_address(
                 &place.root,
@@ -210,16 +210,7 @@ impl IrBuilder<'_> {
                     &place.path,
                     place.target_domain,
                 )?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::ContainerMeasure {
-                        measure: super::runs::lower_measure(measure),
-                        container,
-                    },
-                )
+                self.lower_runtime_measure(measure, place.ty, container)
             }
             MeasureCell::Absent => Err(LoweringFailure::InvalidCheckedProgram),
         }
@@ -298,7 +289,10 @@ impl IrBuilder<'_> {
         &mut self,
         root: &CheckedRangeRoot,
     ) -> Result<IrValueId, LoweringFailure> {
-        let slice = self.binding_value(root.binding)?;
+        let slice = match root.formation.as_deref() {
+            Some(formation) => self.expression(formation)?,
+            None => self.binding_value(root.binding)?,
+        };
         if !matches!(self.value_type(slice)?, IrType::Range { element } | IrType::Run { element } if element == lower_element(self.erasure, root.element)?)
         {
             return Err(LoweringFailure::InvalidCheckedProgram);

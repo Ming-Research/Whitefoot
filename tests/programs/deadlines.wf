@@ -71,6 +71,9 @@ fn deadline_passed(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return True();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: c, origin: o) => {
       return False();
     }
@@ -180,7 +183,9 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
 
 fn nap(until: Instant) -> result: unit pure waits {
   doc "Sleeps in a context of its own until the instant.";
-  sleep_until(deadline: until);
+  let wait_cancel_1 = std::time::cancel_never();
+  sleep_until(deadline: until, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return unit;
 }
 
@@ -200,7 +205,10 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
   let bound = Some<Instant>(value: soon);
   let destination = &bytes[0_u64..1_u64];
-  match receive_next(receive: &server^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: bound) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = receive_next(receive: &server^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: bound, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: received) => {
       return 20_u8;
     }
@@ -221,7 +229,10 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   set bytes[0_u64] = 120_u8;
   let source = &bytes[0_u64..1_u64];
   let no_deadline = None<Instant>();
-  match send_once(send: &client^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = send_once(send: &client^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match wait_outcome_3 {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 23_u8;
@@ -236,7 +247,10 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   let generous = instant_after(instant: later, nanoseconds: 5000000000_u64);
   let wide = Some<Instant>(value: generous);
   let again = &bytes[0_u64..1_u64];
-  match receive_next(receive: &server^.receive, destination: again, start: 0_u64, end: 1_u64, deadline: wide) {
+  let wait_cancel_4 = std::time::cancel_never();
+  let wait_outcome_4 = receive_next(receive: &server^.receive, destination: again, start: 0_u64, end: 1_u64, deadline: wide, cancel: &wait_cancel_4);
+  std::time::close_cancel_watch(watch: move wait_cancel_4);
+  match wait_outcome_4 {
     Ok(value: received) => {
       if received != 1_u64 {
         return 25_u8;
@@ -255,7 +269,10 @@ fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> re
   let cutoff = instant_after(instant: begin, nanoseconds: 60000000_u64);
   let short = Some<Instant>(value: cutoff);
   let third = &bytes[0_u64..1_u64];
-  match receive_next(receive: &server^.receive, destination: third, start: 0_u64, end: 1_u64, deadline: short) {
+  let wait_cancel_5 = std::time::cancel_never();
+  let wait_outcome_5 = receive_next(receive: &server^.receive, destination: third, start: 0_u64, end: 1_u64, deadline: short, cancel: &wait_cancel_5);
+  std::time::close_cancel_watch(watch: move wait_cancel_5);
+  match wait_outcome_5 {
     Ok(value: received) => {
       return 28_u8;
     }
@@ -282,7 +299,10 @@ fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAdd
   let started = now(clock: clock);
   let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
   let bound = Some<Instant>(value: soon);
-  match tcp_accept(factory: factory, listener: listener, deadline: bound) {
+  let wait_cancel_6 = std::time::cancel_never();
+  let wait_outcome_6 = tcp_accept(factory: factory, listener: listener, deadline: bound, cancel: &wait_cancel_6);
+  std::time::close_cancel_watch(watch: move wait_cancel_6);
+  match move wait_outcome_6 {
     Ok(value: stray) => {
       let AcceptedConnection(connection: connection, peer: unused_peer) = move stray;
       close_connection(factory: factory, connection: move connection);
@@ -303,9 +323,15 @@ fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAdd
     return 12_u8;
   }
   let no_deadline = None<Instant>();
-  match tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+  let wait_cancel_7 = std::time::cancel_never();
+  let wait_outcome_7 = tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_7);
+  std::time::close_cancel_watch(watch: move wait_cancel_7);
+  match move wait_outcome_7 {
     Ok(value: client) => {
-      match tcp_accept(factory: factory, listener: listener, deadline: no_deadline) {
+      let wait_cancel_8 = std::time::cancel_never();
+      let wait_outcome_8 = tcp_accept(factory: factory, listener: listener, deadline: no_deadline, cancel: &wait_cancel_8);
+      std::time::close_cancel_watch(watch: move wait_cancel_8);
+      match move wait_outcome_8 {
         Ok(value: accepted) => {
           let AcceptedConnection(connection: server, peer: unused_peer) = move accepted;
           let status = converse(client: &client, server: &server, clock: clock);

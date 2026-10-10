@@ -121,6 +121,9 @@ fn collect_borrowed_place_expression(
             collect_place(root, bindings);
         }
         CheckedExpression::BorrowRangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
@@ -144,7 +147,7 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. }
+        | CheckedExpression::ValueEquality { arguments, .. }
         | CheckedExpression::ConstructStruct {
             fields: arguments, ..
         }
@@ -177,14 +180,23 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         }
         CheckedExpression::ArrayIndex { offset, .. } => collect_expression(offset, bindings),
         CheckedExpression::RangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
         CheckedExpression::RangeElementMeasure { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
         CheckedExpression::BorrowRangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
             collect_expression(&place.offset, bindings);
             collect_steps(&place.path, None, bindings);
         }
@@ -209,6 +221,9 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                     collect_place(root, bindings);
                 }
                 crate::semantic::CheckedRangeSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref() {
+                        collect_expression(formation, bindings);
+                    }
                     collect_expression(&place.offset, bindings);
                     collect_steps(&place.path, None, bindings);
                 }
@@ -230,6 +245,9 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                     collect_place(root, bindings);
                 }
                 crate::semantic::CheckedSegmentSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref() {
+                        collect_expression(formation, bindings);
+                    }
                     collect_expression(&place.offset, bindings);
                     collect_steps(&place.path, None, bindings);
                 }
@@ -238,11 +256,15 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
                 collect_expression(offset, bindings);
             }
         }
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref() {
+                collect_expression(formation, bindings);
+            }
+        }
         CheckedExpression::Constant(_)
         | CheckedExpression::NamedConstant { .. }
         | CheckedExpression::Binding { .. }
         | CheckedExpression::ArrayMeasure { .. }
-        | CheckedExpression::RangeMeasure { .. }
         | CheckedExpression::DerefAddressed { .. }
         | CheckedExpression::Project { .. } => {}
     }
@@ -280,7 +302,7 @@ impl IrBuilder<'_> {
         storage: IrValueId,
     ) -> Result<Option<IrValueId>, LoweringFailure> {
         let address = match target {
-            CheckedSetTarget::Storage(root) => self.lower_place_address(root)?,
+            CheckedSetTarget::Storage(root) => self.lower_write_place_address(root)?,
             CheckedSetTarget::Place(place)
                 if matches!(self.value_type(storage)?, IrType::Address(_)) =>
             {
@@ -297,7 +319,8 @@ impl IrBuilder<'_> {
         Ok(Some(address))
     }
 
-    pub(super) fn lower_place_address(
+    /// Resolve a write target, locking or materializing held map entries on its path.
+    pub(super) fn lower_write_place_address(
         &mut self,
         root: &crate::semantic::CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
@@ -325,6 +348,9 @@ impl IrBuilder<'_> {
         {
             let offset = self.expression(&index.offset)?;
             return self.indexed_address(family, offset, index.target_domain.into());
+        }
+        if let Some(address) = self.indexed_block_address(root)? {
+            return Ok(address);
         }
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
@@ -362,8 +388,14 @@ impl IrBuilder<'_> {
         path: &[crate::semantic::CheckedPlaceStep],
         fields: &[u32],
     ) -> Option<usize> {
+        let place = self.indexed_place(root, path)?;
         self.indexed_roots.iter().rposition(|(candidate, _, _)| {
-            candidate.root.root == root && candidate.root.path == path && candidate.fields == fields
+            candidate.fields == fields
+                && self
+                    .indexed_place(candidate.root.root, &candidate.root.path)
+                    .is_some_and(|origin| {
+                        origin.path.len() == place.path.len() && origin.contains(&place)
+                    })
         })
     }
 
@@ -405,33 +437,23 @@ impl IrBuilder<'_> {
         &self,
         root: &crate::semantic::CheckedContainerRoot,
     ) -> Option<(IrValueId, IrConstant)> {
-        self.indexed_roots
+        let position = root
+            .path
             .iter()
-            .rev()
-            .find_map(|(family, _, private)| {
-                let crate::semantic::IndexedFamilyKind::Mark { constant } = &family.kind else {
-                    return None;
-                };
-                let prefix = family.root.path.len();
-                let fields = family
-                    .fields
-                    .iter()
-                    .copied()
-                    .map(crate::semantic::CheckedPlaceStep::Field)
-                    .collect::<Vec<_>>();
-                if root.root == family.root.root
-                    && root.path.get(..prefix) == Some(family.root.path.as_slice())
-                    && matches!(
-                        root.path.get(prefix),
-                        Some(crate::semantic::CheckedPlaceStep::Subscript(_))
-                    )
-                    && root.path[prefix + 1..] == fields
-                {
-                    Some((*private, lower_scalar_constant(constant).ok()?))
-                } else {
-                    None
-                }
+            .position(|step| matches!(step, crate::semantic::CheckedPlaceStep::Subscript(_)))?;
+        let fields = root.path[position + 1..]
+            .iter()
+            .map(|step| match step {
+                crate::semantic::CheckedPlaceStep::Field(field) => Some(*field),
+                _ => None,
             })
+            .collect::<Option<Vec<_>>>()?;
+        let family = self.indexed_family(root.root, &root.path[..position], &fields)?;
+        let (family, _, private) = &self.indexed_roots[family];
+        let crate::semantic::IndexedFamilyKind::Mark { constant } = &family.kind else {
+            return None;
+        };
+        Some((*private, lower_scalar_constant(constant).ok()?))
     }
 
     pub(super) fn borrow_may_write(&self, writable: bool, places: &[CheckedResolvedPlace]) -> bool {

@@ -7,6 +7,65 @@ use super::*;
 use crate::NodePath;
 
 impl Input<'_, '_> {
+    /// [ENT-2, ENT-3] The only synthesized equality goals are the ordered
+    /// fields of this exact struct comparison. Enums and Arrays stay roots.
+    fn struct_equality_fields(
+        &self,
+        expression: &GoalExpression,
+    ) -> Option<(bool, Vec<GoalExpression>)> {
+        let GoalExpression::Operation {
+            row:
+                GoalOperation::ValueEquality {
+                    equal,
+                    operand_type: CheckedType::Nominal(id),
+                },
+            arguments,
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        let fields = match &self.context.nominals.get(id.0 as usize)?.kind {
+            CheckedNominalKind::Struct { fields } => fields.as_slice(),
+            CheckedNominalKind::Opaque => &[],
+            _ => return None,
+        };
+        let [left, right] = arguments.as_slice() else {
+            return None;
+        };
+        let members = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                let projection = GoalProjection::Field(u32::try_from(index).ok()?);
+                let left = left.clone().with_projection(projection, field.ty)?;
+                let right = right.clone().with_projection(projection, field.ty)?;
+                let row = if matches!(
+                    field.ty,
+                    CheckedType::Integer(_) | CheckedType::GenericInt(_)
+                ) {
+                    GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::Equal,
+                        operand_type: field.ty,
+                    }
+                } else {
+                    GoalOperation::ValueEquality {
+                        equal: true,
+                        operand_type: field.ty,
+                    }
+                };
+                Some(GoalExpression::Operation {
+                    row,
+                    type_arguments: Vec::new(),
+                    const_arguments: Vec::new(),
+                    result: CheckedType::Bool,
+                    arguments: vec![left, right],
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((*equal, members))
+    }
+
     /// Converts one source expression to ENT-3's exact direct pure/total
     /// origin. Any excluded child excludes the whole expression.
     pub(super) fn direct_goal_expression(
@@ -47,9 +106,8 @@ impl Input<'_, '_> {
             return Some(GoalExpression::Datum(GoalDatum::Place {
                 root,
                 projections: path
-                    .path
-                    .iter()
-                    .map(goal_projection_of_step)
+                    .proof_steps()
+                    .map(|step| goal_projection_of_step(&step))
                     .collect::<Option<Vec<_>>>()?,
                 ty: expression.ty(),
             }));
@@ -67,7 +125,9 @@ impl Input<'_, '_> {
             CheckedExpression::Constant(value) => {
                 Some(GoalExpression::Datum(GoalDatum::Literal(value.clone())))
             }
-            CheckedExpression::NamedConstant { declaration, value } => {
+            CheckedExpression::NamedConstant {
+                declaration, value, ..
+            } => {
                 Some(GoalExpression::Datum(GoalDatum::NamedConst {
                     declaration: *declaration,
                     projections: Vec::new(),
@@ -206,13 +266,13 @@ impl Input<'_, '_> {
                     .map(|argument| self.goal_expression(argument, admitted_partial))
                     .collect::<Option<Vec<_>>>()?,
             ),
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
                 ..
             } => build_operation(
-                GoalOperation::EnumEquality {
+                GoalOperation::ValueEquality {
                     equal: *equal,
                     operand_type: *operand_type,
                 },
@@ -359,8 +419,7 @@ impl Input<'_, '_> {
             }
             // [MSR-1, REF-4] the one measure a range reference has.
             CheckedExpression::RangeMeasure { measure, root } => {
-                let argument =
-                    goal_binding_place(root.binding, Vec::new(), root.element_type);
+                let argument = self.goal_place_datum(&root.proof_place(), root.element_type)?;
                 build_operation(
                     // Clause formation uses the ordinary measured-place
                     // row. A body read must have that same structural goal
@@ -381,11 +440,7 @@ impl Input<'_, '_> {
                 if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let measured = place.measured()?;
-                let argument = goal_binding_place(
-                    place.root.binding,
-                    place.goal_projections(),
-                    place.ty,
-                );
+                let argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
                 build_operation(
                     GoalOperation::ContainerMeasure {
                         measure: *measure,
@@ -403,11 +458,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { place, .. }
                 if admitted_partial && place.path.is_empty() =>
             {
-                let collection = goal_binding_place(
-                    place.root.binding,
-                    Vec::new(),
-                    place.root.element_type,
-                );
+                let collection = self.goal_place_datum(&place.root.proof_place(), place.root.element_type)?;
                 build_operation(
                     GoalOperation::RunIndex {
                         measured: MeasuredKind::Range,
@@ -502,9 +553,8 @@ impl Input<'_, '_> {
         ty: CheckedType,
     ) -> Option<GoalExpression> {
         let projections = place
-            .path
-            .iter()
-            .map(goal_projection_of_step)
+            .proof_steps()
+            .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
             PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
@@ -592,7 +642,9 @@ impl Input<'_, '_> {
             }
             // [MSR-1] the same element selection a written subscript makes;
             // the offset is what the reader substitutes, not the type.
-            GoalProjection::FormalSubscript { .. } => element_type(input, self.context.elements),
+            GoalProjection::FormalSubscript { .. } | GoalProjection::FormalPage { .. } => {
+                element_type(input, self.context.elements)
+            }
         }
     }
 
@@ -651,18 +703,22 @@ impl Input<'_, '_> {
                     .body_projections(PlaceRoot::Binding(binding), projections)
                     .iter()
                     .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal } => self
+                        GoalProjection::FormalSubscript { ordinal }
+                        | GoalProjection::FormalPage { ordinal } => self
                             .function
                             .parameters
                             .get(*ordinal as usize)
                             .map(|offset| {
-                                GoalProjection::Subscript(
-                                    CapturedValue::new(
-                                        CaptureId::source(u32::MAX),
-                                        CapturedTerm::Binding(offset.binding),
-                                    )
-                                    .goal_identity(),
+                                let offset = CapturedValue::new(
+                                    CaptureId::source(u32::MAX),
+                                    CapturedTerm::Binding(offset.binding),
                                 )
+                                .goal_identity();
+                                if matches!(projection, GoalProjection::FormalPage { .. }) {
+                                    GoalProjection::Page(offset)
+                                } else {
+                                    GoalProjection::Subscript(offset)
+                                }
                             }),
                         other => Some(*other),
                     })
@@ -1135,18 +1191,39 @@ impl Reasoning<'_, '_, '_> {
                 }
             }
         }
+        let fields = self
+            .input
+            .struct_equality_fields(&expression)
+            .map(|(equal, fields)| {
+                (
+                    equal,
+                    fields
+                        .into_iter()
+                        .map(|field| self.intern_goal_expression(field))
+                        .collect(),
+                )
+            });
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
         collect_goal_support(&expression, None, &mut support);
-        self.vocabulary
+        let goal = self
+            .vocabulary
             .goals
-            .intern(expression, projection, normalization, support)
+            .intern(expression, projection, normalization, support);
+        if let Some((equal, fields)) = fields {
+            self.vocabulary
+                .goals
+                .set_struct_equality_fields(goal, equal, fields);
+        }
+        goal
     }
 
     /// [ENT-3] The signed Boolean decomposition set of one
     /// established goal: `+band` and `-bor` decompose into their signed
-    /// children recursively, `bnot` flips the sign, and every other root —
+    /// children recursively, `bnot` flips the sign, and a positive struct
+    /// equality (or negative inequality) contributes its field equalities.
+    /// Every other root —
     /// in particular `-band` and `+bor`, whose content is genuinely
     /// disjunctive, and `bxor` on either sign — contributes nothing.
     ///
@@ -1204,7 +1281,7 @@ impl Reasoning<'_, '_, '_> {
             if !matches!(
                 self.vocabulary.goals.expression(origin.goal),
                 GoalExpression::Operation {
-                    row: GoalOperation::Boolean(_),
+                    row: GoalOperation::Boolean(_) | GoalOperation::ValueEquality { .. },
                     ..
                 }
             ) {
@@ -1216,6 +1293,24 @@ impl Reasoning<'_, '_, '_> {
             let origin = self.vocabulary.goals.expression(origin.goal).clone();
             self.collect_decomposition_members(&origin, sign, state, members, following);
             following.remove(root);
+            return;
+        }
+        if let Some((equal, fields)) = self.input.struct_equality_fields(expression) {
+            if equal == (sign == GoalSign::Positive) {
+                for field in fields {
+                    let member = self.intern_goal_expression(field.clone());
+                    if !members.contains(&(member, GoalSign::Positive)) {
+                        members.push((member, GoalSign::Positive));
+                    }
+                    self.collect_decomposition_members(
+                        &field,
+                        GoalSign::Positive,
+                        state,
+                        members,
+                        following,
+                    );
+                }
+            }
             return;
         }
         let GoalExpression::Operation {
@@ -1685,8 +1780,8 @@ pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection
             field: *field,
         }),
         PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
-        // A page, like a range, retains its formation identity: its length
-        // is captured then, even if another formation selects the same page.
+        // [ENT-2] retain the supplied page identity: borrowed pages carry
+        // their formation capture; direct selectors are already canonical.
         PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
         // [REF-4] a range step's endpoint captures identify the formation
         // whose immutable affine image gives the anonymous range its length.

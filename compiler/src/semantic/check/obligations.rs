@@ -211,7 +211,7 @@ impl Records<'_> {
                 for written_use in &proof.uses {
                     match &written_use.source {
                         CheckedProofUseSource::Relation(relation) => self.affine_relation(relation),
-                        CheckedProofUseSource::Named(_) => {}
+                        CheckedProofUseSource::Named(_) | CheckedProofUseSource::Range(_) => {}
                     }
                 }
                 let rule = if proof.uses.is_empty() {
@@ -503,7 +503,7 @@ impl Records<'_> {
             CheckedExpression::BoxTake { path, .. } => self.path_subscripts(path),
             CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. } => {
+            | CheckedExpression::ValueEquality { arguments, .. } => {
                 for argument in arguments {
                     self.expression(argument);
                 }
@@ -539,12 +539,16 @@ impl Records<'_> {
             CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
             | CheckedExpression::ProjectValue { value, .. } => self.expression(value),
+            CheckedExpression::RangeMeasure { root, .. } => {
+                if let Some(formation) = root.formation.as_deref() {
+                    self.expression(formation);
+                }
+            }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
             | CheckedExpression::Binding { .. }
             | CheckedExpression::ArrayMeasure { .. }
             | CheckedExpression::BufferMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::DerefAddressed { .. }
             | CheckedExpression::Project { .. } => {}
         }
@@ -556,6 +560,9 @@ impl Records<'_> {
 
     /// [OP-4, REF-4] the outer range position, then every nested subscript.
     fn range_element_place(&mut self, place: &CheckedRangeElementPlace) {
+        if let Some(formation) = place.root.formation.as_deref() {
+            self.expression(formation);
+        }
         self.expression(&place.offset);
         self.source(
             SemanticRule::Op4,

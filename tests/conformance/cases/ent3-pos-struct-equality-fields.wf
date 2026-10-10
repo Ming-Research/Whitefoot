@@ -1,0 +1,22 @@
+struct EntPair {
+  x: u8;
+  y: u8;
+}
+
+fn increment(a: EntPair, b: EntPair) -> result: u8 pure contract {
+  requires a == b;
+  requires a.x < 255_u8;
+} {
+  return b.x + 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = EntPair(x: 0_u8, y: 9_u8);
+  if a == a {
+    let value = increment(a: a, b: a);
+    if value == 1_u8 {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}

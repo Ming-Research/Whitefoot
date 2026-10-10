@@ -168,7 +168,8 @@ impl BuiltinPreludeId {
     pub(crate) const NARROW_ERROR: Self = Self(21);
     pub(crate) const INT: Self = Self(22);
     pub(crate) const FLOAT: Self = Self(23);
-    pub(crate) const RUN: Self = Self(24);
+    pub(crate) const EQ: Self = Self(24);
+    pub(crate) const RUN: Self = Self(25);
 
     /// Returns the internal built-in record index.
     #[must_use]
@@ -230,8 +231,8 @@ pub enum DeclarationClass {
     StructConstructor,
     /// Source or prelude enum variant.
     EnumVariant,
-    /// One built-in numeric bound: Int or Float.
-    NumericBound,
+    /// One built-in bound: Int, Float or Eq.
+    BuiltinBound,
     /// A named parameter-group abbreviation.
     Interface,
     /// A named argument-group abbreviation.
@@ -255,8 +256,8 @@ pub enum DeclarationDomain {
     NominalType,
     /// Struct constructors and enum variants.
     Constructor,
-    /// Built-in numeric bounds.
-    NumericBound,
+    /// Built-in type bounds.
+    BuiltinBound,
     /// Loop labels.
     Label,
     /// Machine-checked invariant facts.
@@ -265,13 +266,13 @@ pub enum DeclarationDomain {
 
 impl DeclarationDomain {
     /// [DIAG-1] fixes the conflict-domain order as lexical-IDENT,
-    /// nominal-type, constructor, numeric-bound, LABEL, invariant.
+    /// nominal-type, constructor, built-in-bound, LABEL, invariant.
     pub(crate) const fn ordinal(self) -> u8 {
         match self {
             Self::LexicalIdentifier => 0,
             Self::NominalType => 1,
             Self::Constructor => 2,
-            Self::NumericBound => 3,
+            Self::BuiltinBound => 3,
             Self::Label => 4,
             Self::Invariant => 5,
         }
@@ -349,7 +350,7 @@ pub enum DependentDeclarationRole {
 pub enum LexicalUseRole {
     /// U01: nominal or generic type.
     Type,
-    /// U02: built-in numeric bound.
+    /// U02: built-in type bound.
     GenericBound,
     /// An interface group in a header or forwarding/member application.
     FormalGroup,

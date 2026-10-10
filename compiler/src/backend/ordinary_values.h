@@ -14,13 +14,18 @@
 
 typedef struct { alignas(16) uint64_t words[4]; } wf_value;
 typedef struct { void *data; uint64_t length; } wf_view;
+/* CancelSource and CancelWatch each contain one ordinary shared handle. */
+typedef struct { void *state; } wf_cancel_handle;
+_Static_assert(sizeof(wf_cancel_handle) == sizeof(void *) &&
+               _Alignof(wf_cancel_handle) == _Alignof(void *),
+               "cancellation shared-field layout");
 /* An enum with two or more payload-carrying variants whose tag-then-every-
  * payload product would not return in registers is laid out as a union of
  * per-variant views, each the tag followed by that variant's fields
  * (compiler/payload-enum-layout). C spells it as a union of structs that each
  * begin with the tag; `tag` reads it in every view. Every view of `IoError`
- * but `DeadlinePassed`'s carries the same two fields, and that one carries
- * none, so one struct is all of them. */
+ * but `DeadlinePassed` and `Cancelled` carries the same two fields; those
+ * two carry none, so one struct is all of them. */
 typedef struct { uint32_t tag; uint32_t code; uint8_t origin; } wf_io_error;
 /* `IoError`'s variants in the order `io/module.wfm` declares them [PRE-2],
  * which is the order that numbers their tags;
@@ -40,6 +45,7 @@ enum wf_io_error_tag {
     WF_IO_UNSUPPORTED,
     WF_IO_TIMED_OUT,
     WF_IO_DEADLINE_PASSED,
+    WF_IO_CANCELLED,
     WF_IO_BROKEN_PIPE,
     WF_IO_WRITE_ZERO,
     WF_IO_UNEXPECTED_END,
@@ -83,11 +89,16 @@ WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
 #undef WF_RESULT_UNION
-/* `Option<Instant>`: one payload-carrying variant keeps the product layout,
+/* `Instant` has its declared u64 field's representation. `Option<Instant>`:
+ * one payload-carrying variant keeps the product layout,
  * the tag and then the instant, whose first word is its reading in
  * nanoseconds of the monotonic clock. */
-typedef struct { uint32_t tag; wf_value value; } wf_deadline;
+typedef struct { uint64_t ticks; } wf_instant;
+typedef struct { uint32_t tag; wf_instant value; } wf_deadline;
 typedef struct { uint32_t tag; uint64_t value; } wf_optional_bytes;
+/* Result<unit, unit> fits the return registers and keeps both payloads. */
+typedef struct { uint32_t tag; uint8_t value; uint8_t error; } wf_sleep_result;
+_Static_assert(sizeof(wf_sleep_result) == 8, "ordinary sleep Result layout");
 #define WF_OPTION_SOME 1u
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
@@ -112,7 +123,7 @@ _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnectio
 _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                offsetof(wf_accept_result, err.error) == 4 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
-_Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
+_Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
 _Static_assert(sizeof(wf_inputs) == 352, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
@@ -124,6 +135,14 @@ _Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
  * `wf_std.<module>.<name>`, which no program function can take and no C
  * identifier can spell: ordinary_values.ll defines each one over the C body
  * below, `wf__body_<name>`. */
+/* Cancellation structs use their private shared field's ordinary ABI. */
+void wf__body_cancel_source(wf_cancel_handle *result);
+void wf__body_cancel_share(wf_cancel_handle *result, const wf_cancel_handle *source);
+void wf__body_cancel_watch(wf_cancel_handle *result, const wf_cancel_handle *source);
+void *wf__body_cancel_state(const wf_cancel_handle *watch);
+void wf__body_cancel_never(wf_cancel_handle *result);
+void wf__body_close_cancel_source(const wf_cancel_handle *source);
+void wf__body_close_cancel_watch(const wf_cancel_handle *watch);
 uint64_t wf__body_args_count(const wf_value *args);
 void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t position);
 uint64_t wf__body_host_bytes_len(const wf_value *value);
@@ -133,7 +152,7 @@ void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value, wf_v
 void wf__body_relative_path(wf_value_result *result, const wf_value *value);
 void wf__body_open_read(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_value *path);
 void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file, wf_view *destination, uint64_t file_offset, uint64_t start, uint64_t end);
-void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline);
+void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_exit_status(wf_value *result, uint8_t code);
 void wf__body_open_directory(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_open_directory_write(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
@@ -143,14 +162,14 @@ void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_valu
 void wf__body_close_read(wf_close_result *result, wf_value *factory, const wf_value *file);
 void wf__body_close_directory(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_close_directory_source(wf_close_result *result, wf_value *factory, const wf_value *source);
-void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input, wf_view *destination, uint64_t start, uint64_t end, const wf_deadline *deadline);
+void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input, wf_view *destination, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_socket_address_v4(wf_value *result, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
 void wf__body_socket_address_v6(wf_value *result, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint16_t e, uint16_t f, uint16_t g, uint16_t h, uint16_t port);
 void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address);
-void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener, const wf_deadline *deadline);
-void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address, const wf_deadline *deadline);
-void wf__body_receive_next(wf_read_result *result, wf_value *receive, wf_view *destination, uint64_t start, uint64_t end, const wf_deadline *deadline);
-void wf__body_send_once(wf_write_result *result, wf_value *send, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline);
+void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel);
+void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address, const wf_deadline *deadline, const wf_cancel_handle *cancel);
+void wf__body_receive_next(wf_read_result *result, wf_value *receive, wf_view *destination, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
+void wf__body_send_once(wf_write_result *result, wf_value *send, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener);
 void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive);
 void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send);
@@ -172,19 +191,20 @@ void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_v
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_meter_share(wf_value *result, const wf_value *meter);
 uint64_t wf__body_heap_in_use(wf_value *meter);
+uint64_t wf__body_release_map_reserve(void *const *map, wf_value *meter);
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);
-void wf__body_now(wf_value *result, wf_value *clock);
-void wf__body_instant_after(wf_value *result, const wf_value *instant, uint64_t nanoseconds);
-uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *later);
-_Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant);
+void wf__body_now(wf_instant *result, wf_value *clock);
+void wf__body_instant_after(wf_instant *result, const wf_instant *instant, uint64_t nanoseconds);
+uint64_t wf__body_nanoseconds_from(const wf_instant *earlier, const wf_instant *later);
+_Bool wf__body_instant_reached(const wf_instant *deadline, const wf_instant *instant);
 int64_t wf__body_unix_nanoseconds(const wf_value *clock);
-void wf__body_sleep_until(uint8_t *result, const wf_value *deadline);
+void wf__body_sleep_until(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel);
 
 void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops);
 void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,
-                        const wf_deadline *deadline);
+                        const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
                                   const wf_value *listener);
 

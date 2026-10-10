@@ -420,8 +420,8 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// as it has helpers and fail here too (`WAITS.md`, the readiness route).
 /// Windows has no readiness wait, so there a context's socket wait without
 /// the completion port is exactly such a helper wait, and only the port's
-/// route runs (`docs/todo.md`, "Only Linux with a ring runs several
-/// drivers").
+/// route runs (status board item coord-wfbl-03-41, "only Linux with a ring
+/// runs several drivers").
 /// [PRE-2] a deadline ends an accept no client answers and a receive the peer
 /// never feeds, each only once the clock has reached it and with nothing
 /// transferred: a byte sent afterwards arrives whole, and a sleeping context
@@ -449,6 +449,25 @@ fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
             "native ring: {native_ring}: {:?}",
             started.elapsed()
         );
+    }
+}
+
+/// One source ends a guarded atomic statement and a receive without a deadline;
+/// a fired watch also ends sleep, and fired-before-wait
+/// cancels. Never watches transfer normally, and an unfired watch preserves
+/// deadline expiry. Timer/work races disarm and join promptly; two cancellation
+/// states order an ordinary Instant target acquired after the guard targets.
+/// Silent peers stay open, so EOF cannot satisfy the case.
+#[test]
+fn cancellation_ends_waits_without_losing_bytes_on_both_routes() {
+    let program = build_program(&compile_program("cancellation.wf"));
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let child =
+            program.spawn_on_route_with(native_ring, &[("WF_DRIVERS", "1")], &[text.as_bytes()]);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
     }
 }
 
@@ -702,7 +721,10 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -717,7 +739,10 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;
@@ -734,9 +759,15 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
   let receive_first = True();
   let send_first = False();
   let no_deadline = None<std::time::Instant>();
-  match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match move wait_outcome_3 {
     Ok(value: first) => {
-      match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+      let wait_cancel_4 = std::time::cancel_never();
+      let wait_outcome_4 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_4);
+      std::time::close_cancel_watch(watch: move wait_cancel_4);
+      match move wait_outcome_4 {
         Ok(value: second) => {
           let (a, b) = cross(first: move first, second: move second);
           let first_status = close_pair(factory: factory, connection: move a, receive_first: receive_first);
@@ -751,7 +782,10 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
           if exchange_status != 0_u8 {
             return exchange_status;
           }
-          match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+          let wait_cancel_5 = std::time::cancel_never();
+          let wait_outcome_5 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_5);
+          std::time::close_cancel_watch(watch: move wait_cancel_5);
+          match move wait_outcome_5 {
             Ok(value: checkpoint) => {
               let checkpoint_status = remaining(connection: &checkpoint);
               let closed = close_pair(factory: factory, connection: move checkpoint, receive_first: receive_first);

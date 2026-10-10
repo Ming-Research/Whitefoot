@@ -691,10 +691,10 @@ variant_names! {
     ContractShapeIssue { MissingClause }
     DeclarationClass {
         Function, FunctionParameter, NamedConst, ConstGeneric, Value, GenericType, NominalType,
-        StructConstructor, EnumVariant, NumericBound, Interface, Binding, Label, Invariant,
+        StructConstructor, EnumVariant, BuiltinBound, Interface, Binding, Label, Invariant,
         OperationFamily, Module,
     }
-    DeclarationDomain { LexicalIdentifier, NominalType, Constructor, NumericBound, Label, Invariant }
+    DeclarationDomain { LexicalIdentifier, NominalType, Constructor, BuiltinBound, Label, Invariant }
     LexicalUseRole {
         Type, GenericBound, FormalGroup, TypeArgument, Construct, VariantOwner, EnsuresVariant,
         EffectRoot, EffectIndex, BreakLabel, Const, ConstValue, PlaceBase, IdentifierCallee,
@@ -716,7 +716,7 @@ variant_names! {
     UnsupportedSemanticFeature {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
-        RangeArithmetic, RangeLoopNesting,
+        RangeArithmetic, RangeOrdinaryGoal, RangeLoopNesting, RangeAtomicAliases,
     }
 }
 
@@ -831,7 +831,7 @@ impl Report for SemanticIssueKind {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         report_variants!(SemanticIssueKind, self, fields;
             InvalidIntegerLiteral;
-            InvalidFloatLiteral;
+            InvalidFloatLiteral { canonical_spelling, mechanical_fix };
             InvalidTextItem { reason, mechanical_fix };
             NonAsciiByteCharacter { mechanical_fix };
             TextLengthMismatch { declared_length, byte_length, mechanical_fix };
@@ -872,6 +872,7 @@ impl Report for SemanticIssueKind {
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
             InvalidOperation;
+            InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
             InvalidConditionalForm { mechanical_fix };
             UndischargedBoundsObligation { residual, disposition, mechanical_fix };

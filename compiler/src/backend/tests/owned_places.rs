@@ -2205,3 +2205,85 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
+
+/// A binding unused by source after a match is still live when scope cleanup
+/// owns its release. Dropping only source reads would lose this allocation;
+/// treating an edge transfer as a release would free it twice.
+#[test]
+fn a_cleanup_only_join_parameter_releases_its_owner_exactly_once() {
+    let source = format!(
+        "{}{}",
+        super::payload_enums::SELECT_STEP,
+        r#"
+struct Owner {
+  cell: Box<u64>;
+  first: u64;
+  second: u64;
+  third: u64;
+}
+
+fn release_after_match(n: u64) -> result: u64 pure {
+  let cell = box_new::<u64>(value: n);
+  let owner = Owner(cell: move cell, first: 11_u64, second: 13_u64, third: 17_u64);
+  let step = prepare(n: n);
+  match step {
+    Error() => {
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
+  }
+  return n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let result = release_after_match(n: n);
+    if result != n {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    super::system::with_ir(source.as_bytes(), |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "release_after_match")
+            .expect("cleanup function");
+        let cleanup_carries = function
+            .blocks()
+            .iter()
+            .flat_map(|block| {
+                let drops = match block.terminator() {
+                    crate::IrTerminator::Return { drops, .. } => drops.as_slice(),
+                    _ => &[],
+                };
+                block.parameters().iter().filter(move |(parameter, _)| {
+                    drops.iter().any(|drop| drop.operand() == *parameter)
+                })
+            })
+            .count();
+        assert_eq!(
+            cleanup_carries, 1,
+            "the owner reaches its return cleanup through the join"
+        );
+    });
+    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
+        let module = retain_calls(&super::emit_lowered(source.as_bytes(), overlap))
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
+        let host = allocation_observer(5, 0);
+        let output = compile_link_and_run(&module, Some(&host), &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert_eq!(output.stdout, b"A1;F1;A2;F2;A3;F3;A4;F4;A5;F5;");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+}

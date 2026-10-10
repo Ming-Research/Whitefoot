@@ -22,14 +22,16 @@ use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate, PreludeType
 ///
 /// A bound is a closed filter on the argument, derived from the language's
 /// existing classifications, and never a user trait: `Int` and `Float` are
-/// [OP-1]'s numeric rows and each implies copy, and `Class` is the class the
-/// capability bound grants the body -- copy for `T: copy`, affine for
+/// [OP-1]'s numeric rows, `Eq` admits [OP-16] equality, each implies copy,
+/// and `Class` is the class the capability bound grants the body --
+/// copy for `T: copy`, affine for
 /// `T: drop`, and linear for a parameter written with no bound. It selects no
 /// behavior and admits no contract member.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum GenericBound {
     Int,
     Float,
+    Eq,
     Class(super::linearity::LinearityClass),
 }
 
@@ -1137,7 +1139,31 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .module_symbol_base(template.declaration, &template.name);
-        let symbol = if template.generic_parameters.is_empty() {
+        let host = self
+            .types
+            .declarations
+            .declaration_home(template.declaration)
+            .is_some_and(|(package, path)| {
+                *package == crate::PackageKey::Standard && crate::library::is_host_module(path)
+            });
+        // PRE-2 supplies one definition for every instance. Until the
+        // linked ABI supports more shapes, require fixed scalars and
+        // references to statically known shapes; in particular an owned
+        // T or an &T cannot select a different ABI at a concrete instance.
+        if host
+            && !template.generic_parameters.is_empty()
+            && (!template
+                .generic_parameters
+                .iter()
+                .all(|parameter| matches!(parameter, GenericParameter::Type { .. }))
+                || !generic_host_abi_type(result_mode, result)
+                || parameters
+                    .iter()
+                    .any(|parameter| !generic_host_abi_type(parameter.mode, parameter.ty)))
+        {
+            return Err(SemanticCompilerFailure::UnsupportedGenericHostAbi.into());
+        }
+        let symbol = if template.generic_parameters.is_empty() || host {
             base
         } else {
             // An instance's symbol names its template and a digest of its
@@ -1190,7 +1216,7 @@ impl<'unit> Checker<'_, 'unit> {
     pub(super) fn validate_generic_templates(
         &mut self,
         check_context: &CheckContext<'_>,
-    ) -> Result<(), CheckStop> {
+    ) -> Result<Option<CheckStop>, CheckStop> {
         if !self.analysis.generic_requirements.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1206,7 +1232,7 @@ impl<'unit> Checker<'_, 'unit> {
             .iter()
             .all(|template| template.generic_parameters.is_empty())
         {
-            return Ok(());
+            return Ok(None);
         }
         let concrete_view = self.types.view.clone();
         let concrete_allocations = concrete_view
@@ -1284,8 +1310,8 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.install_call_requirements(check_context, &mut phase_a)?;
         self.types.form_obligation_records(&mut phase_a)?;
-        let callees = self.types.entailment_callees()?;
-        self.validate_generic_body_entailment(
+        let callees = self.types.entailment_callees(&phase_a)?;
+        let range_stop = self.validate_generic_body_entailment(
             &mut phase_a,
             &canonical_generic_signatures,
             &callees,
@@ -1300,7 +1326,7 @@ impl<'unit> Checker<'_, 'unit> {
         let retained_concrete = self.activate_schema_written_instances(check_context)?;
         self.analysis.postcondition_selectors.clear();
         self.admit_postcondition_selectors_including(check_context, &retained_concrete)?;
-        Ok(())
+        Ok(range_stop)
     }
 
     /// The symbolic discovery walk already found every written source call.
@@ -1394,7 +1420,7 @@ impl<'unit> Checker<'_, 'unit> {
                     } => GenericArgument::Type(CheckedType::GenericFloat(declaration)),
                     GenericParameter::Type {
                         declaration,
-                        bound: GenericBound::Class(_),
+                        bound: GenericBound::Class(_) | GenericBound::Eq,
                         ..
                     } => GenericArgument::Type(CheckedType::Generic(declaration)),
                     GenericParameter::Const { declaration, .. } => {
@@ -1682,6 +1708,14 @@ impl<'unit> Checker<'_, 'unit> {
                             ),
                         );
                     }
+                    if bound == GenericBound::Eq {
+                        self.types.require_equality_type(
+                            check_context,
+                            source,
+                            ty,
+                            SemanticRule::Fn2,
+                        )?;
+                    }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
                         self.types.check_linearity_bound(
@@ -1738,6 +1772,31 @@ impl<'unit> TypeContext<'unit> {
     pub(super) fn const_generic_types(
         &self,
     ) -> impl Iterator<Item = (DeclarationId, IntegerType)> + '_ {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
+                _ => None,
+            })
+    }
+    /// Copy bounds remain available to symbolic proof origins, including
+    /// Eq parameters nested inside instantiated nominal fields.
+    pub(super) fn copy_type_parameters(&self) -> Vec<DeclarationId> {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type {
+                    declaration,
+                    bound:
+                        GenericBound::Int
+                        | GenericBound::Float
+                        | GenericBound::Eq
+                        | GenericBound::Class(super::linearity::LinearityClass::Copy),
+                } => Some(*declaration),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn generic_parameters(&self) -> impl Iterator<Item = &GenericParameter> {
         self.function_templates
             .iter()
             .flat_map(|template| template.generic_parameters.iter())
@@ -1752,11 +1811,8 @@ impl<'unit> TypeContext<'unit> {
                     .values()
                     .flat_map(|formal| formal.parameters.iter()),
             )
-            .filter_map(|parameter| match parameter {
-                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
-                _ => None,
-            })
     }
+
     pub(super) fn collect_function_templates(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -2253,10 +2309,17 @@ impl<'unit> TypeContext<'unit> {
                 .declaration_at(node, DeclarationRole::GenericType)?
                 .id();
             // [GRAM-2, PROV-6] the bound is optional and never inferred: a
-            // `capability_bound` atom, a numeric marker TYPEID, or nothing,
+            // `capability_bound` atom, a built-in bound TYPEID, or nothing,
             // and an absent bound grants the body no capability, which is
             // the linear class read at the parameter.
-            let bound = match self
+            let bound = self.written_generic_bound(node)?;
+            parameters.push(GenericParameter::Type { declaration, bound });
+        }
+        Ok(parameters)
+    }
+    pub(super) fn written_generic_bound(&self, node: NodeId) -> Result<GenericBound, CheckStop> {
+        Ok(
+            match self
                 .declarations
                 .resolved
                 .lexical_uses_at(node)
@@ -2274,9 +2337,12 @@ impl<'unit> TypeContext<'unit> {
                 Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::FLOAT => {
                     GenericBound::Float
                 }
+                Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::EQ => {
+                    GenericBound::Eq
+                }
                 Some((
                     ResolvedTarget::Source {
-                        class: DeclarationClass::NumericBound,
+                        class: DeclarationClass::BuiltinBound,
                         ..
                     },
                     coordinate,
@@ -2289,10 +2355,8 @@ impl<'unit> TypeContext<'unit> {
                     );
                 }
                 Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            };
-            parameters.push(GenericParameter::Type { declaration, bound });
-        }
-        Ok(parameters)
+            },
+        )
     }
 }
 
@@ -2389,5 +2453,54 @@ pub(super) fn summary_entailment(
         loop_invariants: entailment.loop_invariants.clone(),
         postconditions,
         ..super::super::entailment::FunctionEntailment::default()
+    }
+}
+
+/// The supported part of a generic linked boundary has one ABI even at its
+/// symbolic instance. Nominal references are pointer slots irrespective of
+/// their fields or type arguments; owned aggregates and generic bare types
+/// need a representation protocol that the host boundary does not yet carry.
+fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
+    use super::super::model::CheckedMode;
+    match mode {
+        CheckedMode::Own => matches!(
+            ty,
+            CheckedType::Unit | CheckedType::Bool | CheckedType::Integer(_) | CheckedType::Float(_)
+        ),
+        CheckedMode::Reference => matches!(
+            ty,
+            CheckedType::Unit
+                | CheckedType::Bool
+                | CheckedType::Integer(_)
+                | CheckedType::Float(_)
+                | CheckedType::Nominal(_)
+                | CheckedType::Array { .. }
+                | CheckedType::KeySet
+        ),
+        CheckedMode::Range | CheckedMode::Run => false,
+    }
+}
+
+#[cfg(test)]
+mod host_abi_tests {
+    use super::*;
+    use crate::semantic::CheckedMode;
+
+    #[test]
+    fn a_generic_host_boundary_refuses_unfixed_or_unsupported_abi_shapes() {
+        let generic = CheckedType::Generic(crate::DeclarationId::from_index(0).unwrap());
+        assert!(!generic_host_abi_type(CheckedMode::Own, generic));
+        assert!(!generic_host_abi_type(CheckedMode::Reference, generic));
+        let nominal = CheckedType::Nominal(NominalId(0));
+        assert!(!generic_host_abi_type(CheckedMode::Own, nominal));
+        assert!(!generic_host_abi_type(
+            CheckedMode::Range,
+            CheckedType::Integer(IntegerType::U8)
+        ));
+        assert!(generic_host_abi_type(CheckedMode::Reference, nominal));
+        assert!(generic_host_abi_type(
+            CheckedMode::Own,
+            CheckedType::Integer(IntegerType::U64)
+        ));
     }
 }
