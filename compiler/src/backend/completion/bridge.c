@@ -1249,8 +1249,9 @@ typedef struct wf_cancel {
 } wf_cancel;
 _Static_assert(offsetof(wf_cancel, visible_fired) == WF_SHARED_STATE_OFFSET,
                "CancelState.fired uses the ordinary shared-state address");
-/* The null watch's immutable state needs no allocation. Its permanent
- * storage owns one reference, so ordinary view release never frees it. */
+/* A never watch and each of its views retain this private unfired unit.
+ * Permanent storage owns one reference, so every program handle uses
+ * ordinary shared release without freeing the permanent unit. */
 static wf_cancel wf_never_state = {
     .shared = { .handles = 1u, .lock = ATOMIC_FLAG_INIT }
 };
@@ -2008,18 +2009,15 @@ void *wf__cancel_new(void) {
     return source;
 }
 
-void wf__cancel_retain(void *source) {
-    wf__shared_share(source);
+void *wf__cancel_never(void) {
+    wf__shared_share(&wf_never_state);
+    return &wf_never_state;
 }
 
-void wf__cancel_release(void *source) {
-    if (source != NULL && wf__shared_release(source)) wf__shared_free(source);
-}
-
-void *wf__cancel_state(void *source) {
-    if (source == NULL) source = &wf_never_state;
-    wf__shared_share(source);
-    return source;
+/* Keep never watches on the existing unbounded/deadline-only host path.
+ * This translation affects wait registration, not ownership or release. */
+void *wf__cancel_wait_state(void *state) {
+    return state == &wf_never_state ? NULL : state;
 }
 
 /* The waiting call's start selects the ordinary resumable acquisition path.

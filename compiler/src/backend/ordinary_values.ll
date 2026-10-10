@@ -881,31 +881,39 @@ entry:
 
 
 declare void @wf__body_cancel_source(ptr)
-define void @wf_std.time.cancel_source(ptr %result) align 64 {
+define { ptr } @wf_std.time.cancel_source() align 64 {
 entry:
+  %result = alloca { ptr }, align 8
   call void @wf__body_cancel_source(ptr %result)
-  ret void
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
 }
 
 declare void @wf__body_cancel_never(ptr)
-define void @wf_std.time.cancel_never(ptr %result) align 64 {
+define { ptr } @wf_std.time.cancel_never() align 64 {
 entry:
+  %result = alloca { ptr }, align 8
   call void @wf__body_cancel_never(ptr %result)
-  ret void
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
 }
 
 declare void @wf__body_cancel_share(ptr, ptr)
-define void @wf_std.time.cancel_share(ptr %result, ptr %source) align 64 {
+define { ptr } @wf_std.time.cancel_share(ptr %source) align 64 {
 entry:
+  %result = alloca { ptr }, align 8
   call void @wf__body_cancel_share(ptr %result, ptr %source)
-  ret void
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
 }
 
 declare void @wf__body_cancel_watch(ptr, ptr)
-define void @wf_std.time.cancel_watch(ptr %result, ptr %source) align 64 {
+define { ptr } @wf_std.time.cancel_watch(ptr %source) align 64 {
 entry:
+  %result = alloca { ptr }, align 8
   call void @wf__body_cancel_watch(ptr %result, ptr %source)
-  ret void
+  %value = load { ptr }, ptr %result, align 8
+  ret { ptr } %value
 }
 
 declare ptr @wf__body_cancel_state(ptr)
