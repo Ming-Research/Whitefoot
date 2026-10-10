@@ -1,0 +1,68 @@
+# Temporary, explicitly requested expressibility witness for this branch only.
+# Remove this workflow before opening any pull request.
+name: frozen-dataset-witness
+
+on:
+  push:
+    branches: [claude/snap-lib-witness]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: frozen-dataset-witness-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+
+      - name: Record the revision and host
+        run: |
+          mkdir -p "$RUNNER_TEMP/frozen-dataset-witness"
+          {
+            git rev-parse HEAD
+            sha256sum spec/kernel-spec.md
+            uname -srvmo
+            clang --version
+            ld.lld --version
+            rustc --version
+            cargo --version
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            echo "WF_DRIVERS=2; WF_WORKERS=1; no --par"
+          } > "$RUNNER_TEMP/frozen-dataset-witness/host.txt"
+          cat "$RUNNER_TEMP/frozen-dataset-witness/host.txt"
+
+      - name: Fetch the recorded crate dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the compiler
+        run: make -C compiler build
+
+      - name: Compile and run the witness
+        env:
+          OUT: ${{ runner.temp }}/frozen-dataset-witness
+        run: sh research/experiments/frozen-dataset-witness/run.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frozen-dataset-witness-${{ github.sha }}
+          path: ${{ runner.temp }}/frozen-dataset-witness/

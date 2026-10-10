@@ -1,0 +1,474 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias MemoryMeter = std::process::MemoryMeter;
+alias heap_in_use = std::process::heap_in_use;
+alias exit_status = std::process::exit_status;
+
+struct Pair {
+  key: Box<Array<u8>>;
+  value: u64;
+}
+
+enum Tree {
+  Empty();
+  Branch(node: SharedRead<Node>);
+}
+
+struct Node {
+  pair: SharedRead<Pair>;
+  left: Tree;
+  right: Tree;
+}
+
+struct Current {
+  tree: Tree;
+  generation: u64;
+}
+
+struct Progress {
+  requested: u64;
+  published: u64;
+}
+
+struct Expected {
+  key: u8;
+  value: u64;
+}
+
+struct Check {
+  index: u64;
+  error: u8;
+}
+
+struct Costs {
+  pair: u64;
+  node: u64;
+}
+
+const a: Array<u8, 1> =[97_u8];
+
+const b: Array<u8, 1> =[98_u8];
+
+const c: Array<u8, 1> =[99_u8];
+
+fn freeze<T: drop>(value: T) -> result: SharedRead<T> pure {
+  let writer = shared_new::<T>(value: move value);
+  return shared_read::<T>(shared: &writer);
+}
+
+fn discard<T: drop>(value: T) -> result: unit pure {
+  return unit;
+}
+
+fn retain(tree: &Tree) -> result: Tree reads(tree) {
+  match tree^ {
+    Empty() => {
+      return Tree::Empty();
+    }
+    Branch(node: handle) => {
+      let held = shared_read_share::<Node>(shared: handle);
+      return Tree::Branch(node: move held);
+    }
+  }
+}
+
+fn node_view(handle: &SharedRead<Node>) -> result: Node reads(handle) waits {
+  atomic node = &handle^ {
+    let pair = shared_read_share::<Pair>(shared: &node^.pair);
+    let left = retain(tree: &node^.left);
+    let right = retain(tree: &node^.right);
+    return Node(pair: move pair, left: move left, right: move right);
+  }
+}
+
+fn branch(node: Node) -> result: Tree pure {
+  let handle = freeze::<Node>(value: move node);
+  return Tree::Branch(node: move handle);
+}
+
+fn pair_new(key: &[u8], value: u64) -> result: SharedRead<Pair> reads(key) {
+  let bytes = box_array_filled::<u8>(count: key^.len, value: 0_u8);
+  for (index in 0_u64..key^.len) {
+    set bytes.inner[index] = key^[index];
+  }
+  let pair = Pair(key: move bytes, value: value);
+  return freeze::<Pair>(value: move pair);
+}
+
+fn compare(left: &[u8], right: &[u8]) -> result: i32 reads(left), reads(right) {
+  for (index in 0_u64..left^.len) {
+    if index < right^.len {
+      if left^[index] < right^[index] {
+        return -1_i32;
+      }
+      if left^[index] > right^[index] {
+        return 1_i32;
+      }
+    } else {
+      return 1_i32;
+    }
+  }
+  if left^.len < right^.len {
+    return -1_i32;
+  }
+  return 0_i32;
+}
+
+fn compare_pair(key: &[u8], pair: &SharedRead<Pair>) -> result: i32 reads(key), reads(pair) waits {
+  atomic held = &pair^ {
+    return compare(left: key, right: &held^.key.inner[0_u64..held^.key.inner.len]);
+  }
+}
+
+fn join(left: &Tree, right: &Tree) -> result: Tree reads(left), reads(right) waits {
+  doc "All keys in left precede all keys in right; deletion supplies this relation.";
+  match left^ {
+    Empty() => {
+      return retain(tree: right);
+    }
+    Branch(node: handle) => {
+      let node = node_view(handle: handle);
+      set node.right = join(left: &node.right, right: right);
+      return branch(node: move node);
+    }
+  }
+}
+
+fn edit(tree: &Tree, key: &[u8], value: Option<u64>) -> result: Tree reads(tree), reads(key) waits {
+  doc "Some inserts or replaces; None deletes. Only the search path gets new nodes.";
+  match tree^ {
+    Empty() => {
+      match value {
+        None() => {
+          return Tree::Empty();
+        }
+        Some(value: number) => {
+          let pair = pair_new(key: key, value: number);
+          let left = Tree::Empty();
+          let right = Tree::Empty();
+          let node = Node(pair: move pair, left: move left, right: move right);
+          return branch(node: move node);
+        }
+      }
+    }
+    Branch(node: handle) => {
+      let node = node_view(handle: handle);
+      let order = compare_pair(key: key, pair: &node.pair);
+      if order < 0_i32 {
+        set node.left = edit(tree: &node.left, key: key, value: value);
+      } else if order > 0_i32 {
+        set node.right = edit(tree: &node.right, key: key, value: value);
+      } else {
+        match value {
+          None() => {
+            return join(left: &node.left, right: &node.right);
+          }
+          Some(value: number) => {
+            set node.pair = pair_new(key: key, value: number);
+          }
+        }
+      }
+      return branch(node: move node);
+    }
+  }
+}
+
+fn initial() -> result: Tree pure waits {
+  let tree = Tree::Empty();
+  let middle = Some<u64>(value: 20_u64);
+  set tree = edit(tree: &tree, key: &b[0_u64..1_u64], value: middle);
+  let first = Some<u64>(value: 10_u64);
+  set tree = edit(tree: &tree, key: &a[0_u64..1_u64], value: first);
+  let last = Some<u64>(value: 30_u64);
+  set tree = edit(tree: &tree, key: &c[0_u64..1_u64], value: last);
+  return move tree;
+}
+
+fn capture(current: &Shared<Current>) -> result: Current reads(current) waits {
+  atomic state = &current^ {
+    let tree = retain(tree: &state^.tree);
+    return Current(tree: move tree, generation: state^.generation);
+  }
+}
+
+fn publish(current: &Shared<Current>, tree: Tree, generation: u64) -> result: unit reads(current) waits {
+  let next = Current(tree: move tree, generation: generation);
+  atomic state = &current^ {
+    set state^ = move next;
+  }
+  return unit;
+}
+
+fn advance(progress: &Shared<Progress>, requested: u64) -> result: unit reads(progress) waits {
+  atomic state = &progress^ {
+    set state^.requested = requested;
+  }
+  atomic state = &progress^ when state^.published >= requested {
+  }
+  return unit;
+}
+
+fn enumerate(tree: &Tree, expected: &[Expected], check: &Check, progress: &Shared<Progress>, interleave: Bool) -> result: unit reads(tree), reads(expected), reads(progress), writes(check) waits {
+  match tree^ {
+    Empty() => {
+    }
+    Branch(node: handle) => {
+      let node = node_view(handle: handle);
+      enumerate(tree: &node.left, expected: expected, check: check, progress: progress, interleave: interleave);
+      atomic pair = &node.pair {
+        if check^.error == 0_u8 {
+          let index = check^.index;
+          if index < expected^.len {
+            if pair^.key.inner.len == 1_u64 {
+              if pair^.key.inner[0_u64] != expected^[index].key {
+                set check^.error = 3_u8;
+              } else if pair^.value != expected^[index].value {
+                set check^.error = 4_u8;
+              }
+            } else {
+              set check^.error = 2_u8;
+            }
+          } else {
+            set check^.error = 1_u8;
+          }
+        }
+      }
+      set check^.index = check^.index +sat 1_u64;
+      if interleave {
+        let visited = check^.index;
+        if visited <= 2_u64 {
+          let requested = visited + 1_u64;
+          advance(progress: progress, requested: requested);
+        }
+      }
+      enumerate(tree: &node.right, expected: expected, check: check, progress: progress, interleave: interleave);
+    }
+  }
+  return unit;
+}
+
+fn verify(tree: &Tree, expected: &[Expected], progress: &Shared<Progress>, interleave: Bool) -> result: u8 reads(tree), reads(expected), reads(progress) waits {
+  let check = Check(index: 0_u64, error: 0_u8);
+  enumerate(tree: tree, expected: expected, check: &check, progress: progress, interleave: interleave);
+  if check.error != 0_u8 {
+    return check.error;
+  }
+  if check.index != expected^.len {
+    return 5_u8;
+  }
+  return 0_u8;
+}
+
+fn costs(meter: &MemoryMeter) -> result: Costs writes(meter) {
+  doc "Measure the two allocation primitives in isolation, not an update's output.";
+  let before = heap_in_use(meter: meter);
+  let pair = pair_new(key: &a[0_u64..1_u64], value: 10_u64);
+  let after_pair = heap_in_use(meter: meter);
+  let held_pair = shared_read_share::<Pair>(shared: &pair);
+  let left = Tree::Empty();
+  let right = Tree::Empty();
+  let node = Node(pair: move held_pair, left: move left, right: move right);
+  let held_node = branch(node: move node);
+  let after_node = heap_in_use(meter: meter);
+  let pair_bytes = after_pair -wrap before;
+  let node_bytes = after_node -wrap after_pair;
+  return Costs(pair: pair_bytes, node: node_bytes);
+}
+
+fn update_reclaim(meter: &MemoryMeter, progress: &Shared<Progress>) -> result: u8 reads(progress), writes(meter) waits {
+  let before_costs = heap_in_use(meter: meter);
+  let bytes = costs(meter: meter);
+  let after_costs = heap_in_use(meter: meter);
+  if after_costs != before_costs {
+    return 1_u8;
+  }
+  if bytes.pair == 0_u64 {
+    return 2_u8;
+  }
+  if bytes.node == 0_u64 {
+    return 3_u8;
+  }
+  let empty_tree = Tree::Empty();
+  let state = Current(tree: move empty_tree, generation: 0_u64);
+  let current = shared_new::<Current>(value: move state);
+  let empty_heap = heap_in_use(meter: meter);
+  let tree = initial();
+  publish(current: &current, tree: move tree, generation: 0_u64);
+  let live_heap = heap_in_use(meter: meter);
+  let first = capture(current: &current);
+  let second = capture(current: &current);
+  let captured_heap = heap_in_use(meter: meter);
+  if captured_heap != live_heap {
+    return 4_u8;
+  }
+  let ea = Expected(key: 97_u8, value: 10_u64);
+  let eb = Expected(key: 98_u8, value: 20_u64);
+  let ec = Expected(key: 99_u8, value: 30_u64);
+  let expected = array_filled::<Expected, 3>(value: ea);
+  set expected[1_u64] = eb;
+  set expected[2_u64] = ec;
+  let quiet = False();
+  let inserted = verify(tree: &first.tree, expected: &expected[0_u64..3_u64], progress: progress, interleave: quiet);
+  if inserted != 0_u8 {
+    return inserted +wrap 10_u8;
+  }
+  let replacement = Some<u64>(value: 11_u64);
+  let changed = edit(tree: &first.tree, key: &a[0_u64..1_u64], value: replacement);
+  publish(current: &current, tree: move changed, generation: 1_u64);
+  let both_heap = heap_in_use(meter: meter);
+  let observed_growth = both_heap -wrap live_heap;
+  let two_nodes = bytes.node +wrap bytes.node;
+  let expected_growth = two_nodes +wrap bytes.pair;
+  if observed_growth != expected_growth {
+    return 5_u8;
+  }
+  let unchanged = verify(tree: &second.tree, expected: &expected[0_u64..3_u64], progress: progress, interleave: quiet);
+  if unchanged != 0_u8 {
+    return unchanged +wrap 20_u8;
+  }
+  discard::<Current>(value: move first);
+  let one_reader_heap = heap_in_use(meter: meter);
+  if one_reader_heap != both_heap {
+    return 6_u8;
+  }
+  discard::<Current>(value: move second);
+  let no_reader_heap = heap_in_use(meter: meter);
+  if no_reader_heap != live_heap {
+    return 7_u8;
+  }
+  let live = capture(current: &current);
+  set expected[0_u64].value = 11_u64;
+  let replaced = verify(tree: &live.tree, expected: &expected[0_u64..3_u64], progress: progress, interleave: quiet);
+  if replaced != 0_u8 {
+    return replaced +wrap 30_u8;
+  }
+  let deletion = None<u64>();
+  let removed = edit(tree: &live.tree, key: &b[0_u64..1_u64], value: deletion);
+  publish(current: &current, tree: move removed, generation: 2_u64);
+  discard::<Current>(value: move live);
+  let remaining = capture(current: &current);
+  let da = Expected(key: 97_u8, value: 11_u64);
+  let reduced = array_filled::<Expected, 2>(value: da);
+  set reduced[1_u64] = ec;
+  let deleted = verify(tree: &remaining.tree, expected: &reduced[0_u64..2_u64], progress: progress, interleave: quiet);
+  if deleted != 0_u8 {
+    return deleted +wrap 40_u8;
+  }
+  let absent = edit(tree: &remaining.tree, key: &b[0_u64..1_u64], value: deletion);
+  let missing = verify(tree: &absent, expected: &reduced[0_u64..2_u64], progress: progress, interleave: quiet);
+  if missing != 0_u8 {
+    return missing +wrap 50_u8;
+  }
+  discard::<Tree>(value: move absent);
+  let without_a = edit(tree: &remaining.tree, key: &a[0_u64..1_u64], value: deletion);
+  let without_c = edit(tree: &without_a, key: &c[0_u64..1_u64], value: deletion);
+  publish(current: &current, tree: move without_c, generation: 3_u64);
+  discard::<Tree>(value: move without_a);
+  discard::<Current>(value: move remaining);
+  let cleared_heap = heap_in_use(meter: meter);
+  if cleared_heap != empty_heap {
+    return 8_u8;
+  }
+  let empty = capture(current: &current);
+  let cleared = verify(tree: &empty.tree, expected: &expected[0_u64..0_u64], progress: progress, interleave: quiet);
+  if cleared != 0_u8 {
+    return cleared +wrap 60_u8;
+  }
+  return 0_u8;
+}
+
+fn writer(current: Shared<Current>, progress: Shared<Progress>) -> result: unit pure waits {
+  for (generation in 1_u64..4_u64) {
+    atomic state = &progress when state^.requested >= generation {
+    }
+    let old = capture(current: &current);
+    let av = 10_u64 + generation;
+    let cv = 30_u64 + generation;
+    let first = Some<u64>(value: av);
+    let last = Some<u64>(value: cv);
+    let partial = edit(tree: &old.tree, key: &a[0_u64..1_u64], value: first);
+    let complete = edit(tree: &partial, key: &c[0_u64..1_u64], value: last);
+    publish(current: &current, tree: move complete, generation: generation);
+    atomic state = &progress {
+      set state^.published = generation;
+    }
+  }
+  return unit;
+}
+
+fn concurrent(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  let bytes = costs(meter: meter);
+  let tree = initial();
+  let state = Current(tree: move tree, generation: 0_u64);
+  let current = shared_new::<Current>(value: move state);
+  let start = Progress(requested: 1_u64, published: 0_u64);
+  let progress = shared_new::<Progress>(value: start);
+  let writer_root = shared_share::<Current>(shared: &current);
+  let writer_progress = shared_share::<Progress>(shared: &progress);
+  let finished = spawn writer(current: move writer_root, progress: move writer_progress);
+  let captured = capture(current: &current);
+  advance(progress: &progress, requested: 1_u64);
+  let ea = Expected(key: 97_u8, value: 10_u64);
+  let eb = Expected(key: 98_u8, value: 20_u64);
+  let ec = Expected(key: 99_u8, value: 30_u64);
+  let expected = array_filled::<Expected, 3>(value: ea);
+  set expected[1_u64] = eb;
+  set expected[2_u64] = ec;
+  if captured.generation == 1_u64 {
+    set expected[0_u64].value = 11_u64;
+    set expected[2_u64].value = 31_u64;
+  }
+  let interleave = True();
+  let observed = verify(tree: &captured.tree, expected: &expected[0_u64..3_u64], progress: &progress, interleave: interleave);
+  advance(progress: &progress, requested: 3_u64);
+  let joined = finished;
+  if captured.generation > 1_u64 {
+    return 70_u8;
+  }
+  if observed != 0_u8 {
+    return observed +wrap 70_u8;
+  }
+  let retained_heap = heap_in_use(meter: meter);
+  discard::<Current>(value: move captured);
+  let released_heap = heap_in_use(meter: meter);
+  let freed = retained_heap -wrap released_heap;
+  let two_nodes = bytes.node +wrap bytes.node;
+  let three_nodes = two_nodes +wrap bytes.node;
+  let two_pairs = bytes.pair +wrap bytes.pair;
+  let expected_freed = three_nodes +wrap two_pairs;
+  if freed != expected_freed {
+    return 86_u8;
+  }
+  let final = capture(current: &current);
+  if final.generation != 3_u64 {
+    return 80_u8;
+  }
+  set expected[0_u64].value = 13_u64;
+  set expected[2_u64].value = 33_u64;
+  let quiet = False();
+  let live = verify(tree: &final.tree, expected: &expected[0_u64..3_u64], progress: &progress, interleave: quiet);
+  if live != 0_u8 {
+    return live +wrap 80_u8;
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = Progress(requested: 0_u64, published: 0_u64);
+  let progress = shared_new::<Progress>(value: start);
+  let before = heap_in_use(meter: &meter);
+  let serial = update_reclaim(meter: &meter, progress: &progress);
+  if serial != 0_u8 {
+    return exit_status(code: serial);
+  }
+  let after = heap_in_use(meter: &meter);
+  if after != before {
+    return exit_status(code: 9_u8);
+  }
+  let parallel = concurrent(meter: &meter);
+  return exit_status(code: parallel);
+}
