@@ -1,7 +1,7 @@
 //! Concrete aggregate equality in generic range clauses [RANGE-1].
 
 use super::*;
-use crate::semantic::range_facts::MAX_RANGE_INSTANCES;
+use crate::semantic::range_facts::MAX_RANGE_ATOMS;
 
 /// A noninteger operand survives only until its enclosing comparison decides
 /// whether to expand it. Arithmetic and all other uses leave the clause empty.
@@ -61,6 +61,14 @@ impl Checker<'_, '_> {
             }
             && self.types.is_copy_type(context.check_context, ty)?
         {
+            // A call made while checking a generic body can substitute an
+            // Array whose length (or nested element type) is still symbolic.
+            // Defer the whole clause, including any already concrete fields,
+            // until the concrete instance can form every projection.
+            if self.range_projection_count(ty)?.is_none() {
+                names.unformed.set(true);
+                return Ok(Vec::new());
+            }
             let mut out = Vec::new();
             self.expand_range_equality(ty, left.term, right.term, &path, &mut out)?;
             return Ok(out);
@@ -76,47 +84,69 @@ impl Checker<'_, '_> {
 
     /// Count only up to the existing structural allowance. In particular an
     /// Array of empty/noninteger-only structs has no integer projections,
-    /// regardless of its length, and need not enumerate its elements.
-    fn range_projection_count(&self, ty: CheckedType) -> Result<usize, CheckStop> {
-        let ceiling = MAX_RANGE_INSTANCES + 1;
+    /// regardless of its length, and need not enumerate its elements. A
+    /// symbolic descendant returns None for the whole expansion, including
+    /// beyond the cap; memoization keeps repeated field types shared.
+    fn range_projection_count(&self, ty: CheckedType) -> Result<Option<usize>, CheckStop> {
+        self.count_range_projections(ty, &mut HashMap::new())
+    }
+
+    fn count_range_projections(
+        &self,
+        ty: CheckedType,
+        counts: &mut HashMap<CheckedType, Option<usize>>,
+    ) -> Result<Option<usize>, CheckStop> {
+        if let Some(count) = counts.get(&ty) {
+            return Ok(*count);
+        }
+        let ceiling = MAX_RANGE_ATOMS + 1;
         let count = match ty {
             CheckedType::Integer(_) | CheckedType::Bool => 1,
             CheckedType::Array { element, length } => {
-                let length = length
-                    .value()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let Some(length) = length.value() else {
+                    return Ok(None);
+                };
                 if length == 0 {
-                    return Ok(0);
+                    return Ok(Some(0));
                 }
-                let element = self.range_projection_count(self.types.element_type(element)?)?;
+                let Some(element) =
+                    self.count_range_projections(self.types.element_type(element)?, counts)?
+                else {
+                    return Ok(None);
+                };
                 element.saturating_mul(usize::try_from(length).unwrap_or(usize::MAX))
             }
             CheckedType::Nominal(id) => match &self.types.nominal(id)?.kind {
                 CheckedNominalKind::Struct { fields } => {
                     let mut count = 0_usize;
                     for field in fields {
-                        count = count.saturating_add(self.range_projection_count(field.ty)?);
-                        if count >= ceiling {
-                            break;
-                        }
+                        let Some(field) = self.count_range_projections(field.ty, counts)? else {
+                            return Ok(None);
+                        };
+                        count = count.saturating_add(field).min(ceiling);
                     }
                     count
                 }
                 CheckedNominalKind::Enum { variants } => {
                     let mut count = 1_usize;
                     for field in variants.iter().flat_map(|variant| &variant.fields) {
-                        count = count.saturating_add(self.range_projection_count(field.ty)?);
-                        if count >= ceiling {
-                            break;
-                        }
+                        let Some(field) = self.count_range_projections(field.ty, counts)? else {
+                            return Ok(None);
+                        };
+                        count = count.saturating_add(field).min(ceiling);
                     }
                     count
                 }
                 _ => 0,
             },
+            CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
+                return Ok(None);
+            }
             _ => 0,
         };
-        Ok(count.min(ceiling))
+        let count = Some(count.min(ceiling));
+        counts.insert(ty, count);
+        Ok(count)
     }
 
     fn expand_range_equality(
@@ -127,10 +157,11 @@ impl Checker<'_, '_> {
         node: &crate::NodePath,
         out: &mut Vec<CheckedRangeRelation>,
     ) -> Result<(), CheckStop> {
-        // One over the existing instance ceiling is enough to retain the
-        // clause and report RANGE-3 at its obligation, without materializing
-        // an arbitrarily large fixed Array in the checker.
-        if out.len() > MAX_RANGE_INSTANCES {
+        // Distinct projections supply distinct read atoms when an instance
+        // is formed. One beyond the atom ceiling is enough to report RANGE-3
+        // there, without materializing an arbitrarily large fixed Array.
+        // A template alone consumes neither atoms nor fact instances.
+        if out.len() > MAX_RANGE_ATOMS {
             return Ok(());
         }
         match ty {
@@ -158,11 +189,11 @@ impl Checker<'_, '_> {
                 let length = length
                     .value()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if length == 0 || self.range_projection_count(element)? == 0 {
+                if length == 0 || self.range_projection_count(element)? == Some(0) {
                     return Ok(());
                 }
                 for index in 0..length {
-                    if out.len() > MAX_RANGE_INSTANCES {
+                    if out.len() > MAX_RANGE_ATOMS {
                         break;
                     }
                     self.expand_range_equality(

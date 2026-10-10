@@ -396,6 +396,31 @@ pub(super) const fn comparison(comparison: RangeComparison) -> Relation {
     }
 }
 
+/// An empty range contributes no tuple and no projected reads to a problem.
+/// Compare affine endpoints before forming the clause's guards/conclusions;
+/// fresh binders preserve dependencies between two written ranges.
+pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Frame) -> bool {
+    let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
+    let mut former = Former {
+        world,
+        frame,
+        binders: &binders,
+        iterations: &[],
+        bounds: Vec::new(),
+        guards: Vec::new(),
+    };
+    clause.binders.iter().any(|binder| {
+        let Some(start) = former.term(&binder.start) else {
+            return false;
+        };
+        let Some(end) = former.term(&binder.end) else {
+            return false;
+        };
+        end.minus(&start)
+            .is_some_and(|width| width.is_constant() && width.constant <= 0)
+    })
+}
+
 /// Forms `clause` in `frame` at the tuple `binders`, or `None` where the
 /// frame cannot view one of its places.
 pub(super) fn form(
@@ -522,10 +547,10 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
     }
 }
 
+/// The largest number of atoms one problem may reach.
+pub(super) use super::super::range_facts::MAX_RANGE_ATOMS as MAX_ATOMS;
 /// The largest number of instances one fact contributes to one problem.
 pub(super) use super::super::range_facts::MAX_RANGE_INSTANCES as MAX_INSTANCES;
-/// The largest number of atoms one problem may reach.
-pub(super) const MAX_ATOMS: usize = 4096;
 
 /// One obligation's problem under construction, over world atoms.
 #[derive(Default)]
@@ -645,13 +670,25 @@ pub(super) fn judge(
         for fact_id in active {
             let fact = &facts[*fact_id as usize];
             let mut triggers = Vec::new();
-            let weight = instance_weight(&fact.clause);
-            let overflowing = weight > MAX_INSTANCES;
+            if vacuous(world, &fact.clause, &fact.frame) {
+                continue;
+            }
+            let mut projections = BTreeMap::new();
+            for relation in fact
+                .clause
+                .relations()
+                .filter(|relation| relation.projected)
+            {
+                *projections.entry(&relation.node).or_insert(0_usize) += 1;
+            }
             for binder in &fact.clause.binders {
-                collect_triggers(&binder.start, &mut triggers, overflowing);
-                collect_triggers(&binder.end, &mut triggers, overflowing);
+                collect_triggers(&binder.start, &mut triggers, false);
+                collect_triggers(&binder.end, &mut triggers, false);
             }
             for relation in fact.clause.relations() {
+                let overflowing = projections
+                    .get(&relation.node)
+                    .is_some_and(|count| *count > MAX_ATOMS);
                 collect_triggers(&relation.left, &mut triggers, overflowing);
                 collect_triggers(&relation.right, &mut triggers, overflowing);
             }
@@ -712,10 +749,7 @@ pub(super) fn judge(
             let formed = candidates
                 .iter()
                 .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
-            if formed
-                .and_then(|formed| formed.checked_mul(weight))
-                .is_none_or(|formed| formed > MAX_INSTANCES)
-            {
+            if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
                 return Err(Capacity::Instances);
             }
             let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
@@ -732,7 +766,7 @@ pub(super) fn judge(
             }
             for tuple in tuples {
                 if seen.insert((*fact_id, tuple.clone(), Vec::new())) {
-                    count_instance(&mut counts, *fact_id, weight)?;
+                    count_instance(&mut counts, *fact_id)?;
                     instances.push((*fact_id, tuple));
                 }
             }
@@ -747,8 +781,10 @@ pub(super) fn judge(
     // do not seed additional automatic rounds.
     for (fact_id, binders, iterations) in written {
         let fact = &facts[*fact_id as usize];
-        if seen.insert((*fact_id, binders.clone(), iterations.clone())) {
-            count_instance(&mut counts, *fact_id, instance_weight(&fact.clause))?;
+        if !vacuous(world, &fact.clause, &fact.frame)
+            && seen.insert((*fact_id, binders.clone(), iterations.clone()))
+        {
+            count_instance(&mut counts, *fact_id)?;
             query.add_instance(world, fact, binders, iterations, &mut atoms);
         }
     }
@@ -773,23 +809,10 @@ pub(super) fn judge(
     localize(world, &atoms, query).judge()
 }
 
-/// Expansion shares the written fact's existing allowance; it does not mint
-/// an independent 256-instance allowance for every integer projection.
-fn instance_weight(clause: &CheckedRangeClause) -> usize {
-    clause
-        .relations()
-        .filter(|relation| relation.projected)
-        .count()
-        .max(1)
-}
-
-fn count_instance(
-    counts: &mut BTreeMap<FactId, usize>,
-    fact: FactId,
-    weight: usize,
-) -> Result<(), Capacity> {
+/// Charge one tuple, irrespective of the number of its conclusions.
+fn count_instance(counts: &mut BTreeMap<FactId, usize>, fact: FactId) -> Result<(), Capacity> {
     let count = counts.entry(fact).or_default();
-    *count = count.checked_add(weight).ok_or(Capacity::Instances)?;
+    *count += 1;
     if *count > MAX_INSTANCES {
         return Err(Capacity::Instances);
     }
@@ -1251,13 +1274,30 @@ mod aggregate_tests {
     }
 
     #[test]
-    fn projected_conclusions_share_the_instance_ceiling() {
+    fn projected_conclusions_belong_to_one_instance() {
+        let mut world = World::default();
+        let fact = projected_fact(&mut world, MAX_INSTANCES + 1);
+        assert_eq!(
+            judge(&mut world, &[fact], &[0], &[], Query::default()),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn written_instance_ceiling_counts_tuples_not_conclusions() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
         for count in [MAX_INSTANCES, MAX_INSTANCES + 1] {
             let mut world = World::default();
-            let fact = projected_fact(&mut world, count);
-            let result = judge(&mut world, &[fact], &[0], &[], Query::default());
+            let mut fact = projected_fact(&mut world, 2);
+            fact.clause.binders.push(CheckedRangeBinder {
+                start: CheckedRangeTerm::Constant(0),
+                end: CheckedRangeTerm::Constant(1000),
+            });
+            let written: Vec<_> = (0..count)
+                .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
+                .collect();
             assert_eq!(
-                result,
+                judge(&mut world, &[fact], &[], &written, Query::default()),
                 if count == MAX_INSTANCES {
                     Ok(Verdict::Open)
                 } else {
@@ -1265,6 +1305,30 @@ mod aggregate_tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn a_vacuous_expansion_adds_neither_instances_nor_atoms() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, MAX_ATOMS + 1);
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Constant(0),
+        });
+        let written: Vec<_> = (0..=MAX_INSTANCES)
+            .map(|index| (0, vec![Linear::constant(index as i128)], Vec::new()))
+            .collect();
+        assert_eq!(
+            judge(&mut world, &[fact], &[0], &written, Query::default()),
+            Ok(Verdict::Open)
+        );
+        assert!(
+            world
+                .atoms
+                .iter()
+                .all(|atom| !matches!(atom.def, AtomDef::Read { .. }))
+        );
     }
 
     #[test]
@@ -1297,7 +1361,7 @@ mod aggregate_tests {
     fn a_read_of_an_unmaterialized_field_still_reports_capacity() {
         use crate::semantic::range_facts::CheckedRangeBinder;
         let mut world = World::default();
-        let mut fact = projected_fact(&mut world, MAX_INSTANCES + 1);
+        let mut fact = projected_fact(&mut world, MAX_ATOMS + 1);
         let place = CheckedRangePlace {
             root: CheckedRangeRoot::Result(0),
             path: Vec::new(),
@@ -1340,12 +1404,12 @@ mod aggregate_tests {
         }
         for (projection, expected) in [
             (
-                vec![CheckedRangeProjection::Field(999)],
-                Err(Capacity::Instances),
+                vec![CheckedRangeProjection::Field(9999)],
+                Err(Capacity::Atoms),
             ),
             (
                 vec![
-                    CheckedRangeProjection::Field(999),
+                    CheckedRangeProjection::Field(9999),
                     CheckedRangeProjection::Measure(CheckedMeasure::Length),
                 ],
                 Ok(Verdict::Open),

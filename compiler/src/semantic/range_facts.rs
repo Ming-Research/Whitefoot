@@ -17,6 +17,9 @@ use super::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType, Intege
 /// [RANGE-3] the shared structural allowance for instances of one fact.
 pub(crate) const MAX_RANGE_INSTANCES: usize = 256;
 
+/// [RANGE-3] the structural allowance for atoms after definitions are added.
+pub(crate) const MAX_RANGE_ATOMS: usize = 4096;
+
 /// What a range term's place or value starts from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeRoot {

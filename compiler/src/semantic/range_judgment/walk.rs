@@ -513,13 +513,8 @@ impl<'program> Walker<'program> {
         clause: &CheckedRangeClause,
         frame: &Frame,
     ) -> Result<Option<Option<NodePath>>, Capacity> {
-        if clause
-            .relations()
-            .filter(|relation| relation.projected)
-            .count()
-            > facts::MAX_INSTANCES
-        {
-            return Err(Capacity::Instances);
+        if facts::vacuous(&mut self.world, clause, frame) {
+            return Ok(None);
         }
         let binders: Vec<Linear> = clause
             .binders

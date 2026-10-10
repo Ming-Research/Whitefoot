@@ -1,0 +1,43 @@
+struct Row<const n: u64> {
+  marker: u8;
+  entries: Array<u8, n>;
+}
+
+fn fill<T: copy>(value: T) -> result: Array<T, 1> pure contract {
+  ensures forall same(k in 0_u64..result.len): result[k] == value;
+} {
+  let made = array_filled::<T, 1>(value: value);
+  return made;
+}
+
+fn arrays<const n: u64>(value: Array<u8, n>) -> result: Array<Array<u8, n>, 1> pure {
+  return fill::<Array<u8, n>>(value: value);
+}
+
+fn rows<const n: u64>(value: Row<n>) -> result: Array<Row<n>, 1> pure {
+  return fill::<Row<n>>(value: value);
+}
+
+fn need(targets: &[Row<2>]) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..targets^.len): targets^[k].marker == 7_u8, targets^[k].entries[0_u64] == 5_u8, targets^[k].entries[1_u64] == 5_u8;
+} {
+  return unit;
+}
+
+fn need_arrays(targets: &[Array<u8, 2>]) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..targets^.len): targets^[k][0_u64] == 5_u8, targets^[k][1_u64] == 5_u8;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let value = array_filled::<u8, 2>(value: 5_u8);
+  let relayed_arrays = arrays::<2>(value: value);
+  let targets = fill::<Array<u8, 2>>(value: value);
+  need_arrays(targets: &targets[0_u64..1_u64]);
+  let row = Row<2>(marker: 7_u8, entries: value);
+  let relayed_rows = rows::<2>(value: row);
+  let row_targets = fill::<Row<2>>(value: row);
+  need(targets: &row_targets[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

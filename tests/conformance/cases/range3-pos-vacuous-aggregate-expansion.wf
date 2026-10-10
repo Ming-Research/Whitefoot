@@ -1,0 +1,14 @@
+fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {
+  requires forall same(k in 0_u64..0_u64): targets^[k] == value;
+} {
+  return unit;
+}
+
+fn forward(targets: &[Array<u8, 257>], value: Array<u8, 257>) -> result: unit pure {
+  same::<Array<u8, 257>>(targets: targets, value: value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

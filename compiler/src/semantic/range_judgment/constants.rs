@@ -99,6 +99,9 @@ pub(crate) fn judge(
         };
         frame.places.insert(place, view);
     }
+    if facts::vacuous(&mut world, clause, &frame) {
+        return None;
+    }
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let failure = |relation, capacity| RangeIssue::Undischarged {
         node: node.clone(),

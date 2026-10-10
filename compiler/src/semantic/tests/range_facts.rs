@@ -2867,17 +2867,16 @@ fn aggregate_range_postconditions_read_the_parameter_at_entry() {
 }
 
 #[test]
-fn aggregate_range_large_array_reports_the_existing_instance_ceiling() {
-    let source = field_range_program(
-        "fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<u32, 1000000000>], value: Array<u32, 1000000000>) -> result: unit pure {\n  same::<Array<u32, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
-    );
-    with_semantics(&source, |outcome| {
+fn aggregate_range_large_array_reports_the_atom_ceiling() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-atom-ceiling.wf");
+    with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
             panic!("{outcome:?}")
         };
         assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
         assert!(
-            matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, missing, .. } if *site == "a call" && missing.contains("256 instances")),
+            matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, missing, .. } if *site == "a call" && missing.contains("4096 atoms")),
             "{issue:?}"
         );
     });
@@ -2903,5 +2902,79 @@ fn aggregate_range_large_array_without_integer_projections_is_empty() {
             "the aggregate equality forms even when its projection conjunction is empty"
         );
         assert!(function.range_facts.requirements[0].conclusions.is_empty());
+    });
+}
+
+#[test]
+fn aggregate_range_vacuity_does_not_form_projected_reads() {
+    let source = include_str!(
+        "../../../../tests/conformance/cases/range3-pos-vacuous-aggregate-expansion.wf"
+    );
+    // The minimal witness crosses the former instance limit; the larger
+    // expansion also crosses the atom limit if any reads are formed.
+    for length in [257, 1000000000] {
+        field_range_verdict(source.replace("257", &length.to_string()).as_bytes(), None);
+    }
+}
+
+#[test]
+fn aggregate_range_symbolic_arrays_defer_the_whole_expansion() {
+    use super::super::model::{CheckedConst, CheckedNominalKind, CheckedType};
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/range1-pos-aggregate-symbolic-array.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("symbolic Array lengths must not panic or partially expand: {outcome:?}");
+        };
+        let mut observed = [false; 4];
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| function.name == "fill")
+        {
+            let (length, fields) = match function.parameters[0].ty {
+                CheckedType::Array { length, .. } => (length, 0),
+                CheckedType::Nominal(id) => {
+                    let CheckedNominalKind::Struct { fields } =
+                        &program.data.nominals[id.0 as usize].kind
+                    else {
+                        continue;
+                    };
+                    let CheckedType::Array { length, .. } = fields[1].ty else {
+                        panic!("Row's second field is an Array");
+                    };
+                    (length, 1)
+                }
+                _ => continue,
+            };
+            let clause = function
+                .range_facts
+                .postconditions
+                .iter()
+                .find(|post| post.clause.name == "same");
+            match length {
+                CheckedConst::Value(2) => {
+                    assert_eq!(
+                        clause.expect("concrete expansion").clause.conclusions.len(),
+                        2 + fields
+                    );
+                    observed[fields] = true;
+                }
+                CheckedConst::Parameter(_) => {
+                    assert!(
+                        clause.is_none(),
+                        "even a concrete sibling field must wait for the complete shape"
+                    );
+                    observed[2 + fields] = true;
+                }
+                other => panic!("unexpected Array length: {other:?}"),
+            }
+        }
+        assert!(
+            observed.into_iter().all(|seen| seen),
+            "direct/nested, symbolic/concrete instances must all be inspected"
+        );
     });
 }
