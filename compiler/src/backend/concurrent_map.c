@@ -360,6 +360,7 @@ static void free_cells(cell *c, uint64_t count) {
     if (bytes < HUGE_BYTES)
         WF_CMAP_GIVE(c, bytes);
     else {
+        /* Origin-tag pass: debit the cell array's retained origin here. */
         WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
         host_unmap(c, bytes);
     }
@@ -771,6 +772,7 @@ static void free_node(wf_cmap_user *u, node *n, uint64_t bytes) {
         WF_CMAP_GIVE(n, bytes);
         return;
     }
+    /* Origin-tag pass: debit the node chunk's retained origin here. */
     WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
     unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
     free_entry *f = (free_entry *)(void *)n;
@@ -2737,6 +2739,7 @@ void *wf_cmap_drain(wf_cmap *map) {
         if (map->pending_bytes > ENTRY_LARGEST)
             WF_CMAP_GIVE(map->pending, map->pending_bytes);
         else
+            /* Origin-tag pass: debit the pending node's chunk origin here. */
             WF_CMAP_HEAP_CHANGE(-(int64_t)map->pending_bytes);
         map->pending = NULL;
     }

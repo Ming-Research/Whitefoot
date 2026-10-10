@@ -968,3 +968,56 @@ entry:
   %bytes = load { i32, i64 }, ptr %result, align 8
   ret { i32, i64 } %bytes
 }
+
+; scope_run is a checked Whitefoot definition. Its private entry/leave calls
+; use these ordinary nonwaiting boundaries, including Bool/unit returns.
+declare void @wf__body_scope_open(ptr, ptr)
+define void @wf_std.process.scope_open(ptr %result, ptr %meter) align 64 {
+entry:
+  call void @wf__body_scope_open(ptr %result, ptr %meter)
+  ret void
+}
+
+declare void @wf__body_scope_open_child(ptr, ptr, ptr)
+define void @wf_std.process.scope_open_child(ptr %result, ptr %meter, ptr %parent) align 64 {
+entry:
+  call void @wf__body_scope_open_child(ptr %result, ptr %meter, ptr %parent)
+  ret void
+}
+
+declare void @wf__body_scope_view(ptr, ptr)
+define void @wf_std.process.scope_view(ptr %result, ptr %scope) align 64 {
+entry:
+  call void @wf__body_scope_view(ptr %result, ptr %scope)
+  ret void
+}
+
+declare void @wf__body_scope_bytes(ptr, ptr)
+define { i32, i64 } @wf_std.process.scope_bytes(ptr %view) align 64 {
+entry:
+  %result = alloca { i32, i64 }, align 8
+  call void @wf__body_scope_bytes(ptr %result, ptr %view)
+  %bytes = load { i32, i64 }, ptr %result, align 8
+  ret { i32, i64 } %bytes
+}
+
+declare void @wf__body_scope_close(ptr, ptr, ptr)
+define void @wf_std.process.scope_close(ptr %result, ptr %meter, ptr %scope) align 64 {
+entry:
+  call void @wf__body_scope_close(ptr %result, ptr %meter, ptr %scope)
+  ret void
+}
+
+declare zeroext i1 @wf__body_scope_enter(ptr)
+define i1 @wf_std.process.scope_enter(ptr %scope) align 64 {
+entry:
+  %entered = call zeroext i1 @wf__body_scope_enter(ptr %scope)
+  ret i1 %entered
+}
+
+declare void @wf__body_scope_leave(ptr)
+define i8 @wf_std.process.scope_leave(ptr %scope) align 64 {
+entry:
+  call void @wf__body_scope_leave(ptr %scope)
+  ret i8 0
+}

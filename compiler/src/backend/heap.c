@@ -17,6 +17,7 @@ void *wf__heap_take(uint64_t bytes) {
 void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {
     void *resized = realloc(block, (size_t)new_bytes);
     if (resized != NULL) {
+        /* Origin-tag pass: resize must charge the block's retained origin. */
         wf__heap_change((int64_t)new_bytes - (int64_t)old_bytes);
     }
     return resized;
@@ -24,6 +25,7 @@ void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {
 
 void wf__heap_give(void *block, uint64_t bytes) {
     if (block != NULL) {
+        /* Origin-tag pass: free must debit the block's retained origin. */
         wf__heap_change(-(int64_t)bytes);
     }
     free(block);

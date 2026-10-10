@@ -88,7 +88,7 @@ void wf__stop_observe(unsigned kind) {
             /* No finite queue can promise to retain every observed request.
              * Grow in the runtime pool, whose exhaustion reports and stops
              * [SCOPE-3], rather than overwriting or silently dropping one. */
-            wf_stop_request *request = wf__runtime_take(sizeof(*request));
+            wf_stop_request *request = wf__runtime_take_default(sizeof(*request));
             request->next = NULL;
             request->kind = kind;
             if (wf_stop_tail != NULL) wf_stop_tail->next = request;
@@ -446,7 +446,7 @@ static void wf_stop_clear(void) {
     while (wf_stop_head != NULL) {
         wf_stop_request *request = wf_stop_head;
         wf_stop_head = request->next;
-        wf__runtime_give(request, sizeof(*request));
+        wf__runtime_give_default(request, sizeof(*request));
     }
     wf_stop_tail = NULL;
     wf_prim_wait_unlock(&wf_stop_queue);
@@ -480,7 +480,7 @@ void wf__stop_next(wf_completion_record *record) {
         unsigned kind = request->kind;
         wf_stop_head = request->next;
         if (wf_stop_head == NULL) wf_stop_tail = NULL;
-        wf__runtime_give(request, sizeof(*request));
+        wf__runtime_give_default(request, sizeof(*request));
         wf_stop_complete(record, (int)kind, 0);
     } else if (wf_stop_expired(record)) {
         wf_stop_complete(record, -1, wf_file_cancelled_error());

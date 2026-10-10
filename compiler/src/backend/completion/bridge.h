@@ -530,6 +530,17 @@ void wf__heap_change(int64_t change);
 uint64_t wf__heap_in_use(void);
 int wf__resident_bytes(uint64_t *bytes);
 
+/* Target scope capacity includes the permanent default account (slot 0,
+ * generation 1). Handles carry a slot and a generation; views retain none
+ * of the lifecycle state. These entries never allocate. */
+#define WF_SCOPE_CAPACITY 64u
+int wf__scope_open(uint64_t parent, uint64_t parent_generation,
+                    uint64_t *slot, uint64_t *generation);
+int wf__scope_bytes(uint64_t slot, uint64_t generation, uint64_t *bytes);
+int wf__scope_close(uint64_t slot, uint64_t generation);
+int wf__scope_enter(uint64_t slot, uint64_t generation);
+void wf__scope_leave(uint64_t slot, uint64_t generation);
+
 /* What the runtime's concurrent maps take from this runtime: the number of
  * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a
  * map's users; blocks from the context pool, never from the program's
@@ -538,6 +549,10 @@ int wf__resident_bytes(uint64_t *bytes);
 unsigned wf__driver_index(void);
 void *wf__runtime_take(uint64_t bytes);
 void wf__runtime_give(void *block, uint64_t bytes);
+/* Process-wide support storage, including the stop-request queue, is always
+ * in the default account, even when consumed by an explicitly scoped call. */
+void *wf__runtime_take_default(uint64_t bytes);
+void wf__runtime_give_default(void *block, uint64_t bytes);
 /* The size the pool grants a request of `bytes`, as the heap reading counts
  * a live block of that request [PRE-2]. */
 uint64_t wf__runtime_granted(uint64_t bytes);

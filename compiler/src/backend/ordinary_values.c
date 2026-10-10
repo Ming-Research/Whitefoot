@@ -1254,6 +1254,58 @@ void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter) {
     }
 }
 
+static void wf_open_scope(wf_scope_open_result *result, wf_value *meter,
+                          uint64_t parent, uint64_t generation) {
+    wf_transition(meter);
+    memset(result, 0, sizeof(*result));
+    if (!wf__scope_open(parent, generation, &result->ok.value.words[0],
+                       &result->ok.value.words[1])) {
+        result->tag = 1u; /* Err(CapacityExhausted), the error's sole tag is 0. */
+    }
+}
+
+void wf__body_scope_open(wf_scope_open_result *result, wf_value *meter) {
+    wf_open_scope(result, meter, 0u, 1u);
+}
+
+void wf__body_scope_open_child(wf_scope_open_result *result, wf_value *meter,
+                               const wf_value *parent) {
+    wf_open_scope(result, meter, parent->words[0], parent->words[1]);
+}
+
+void wf__body_scope_view(wf_value *result, const wf_value *scope) {
+    *result = *scope;
+}
+
+void wf__body_scope_bytes(wf_optional_bytes *result, const wf_value *view) {
+    /* The declared write orders observations; never use wf_transition here,
+     * since word 1 is identity, not the process meter's transition counter. */
+    memset(result, 0, sizeof(*result));
+    if (wf__scope_bytes(view->words[0], view->words[1], &result->value)) {
+        result->tag = WF_OPTION_SOME;
+    }
+}
+
+void wf__body_scope_close(wf_scope_close_result *result, wf_value *meter,
+                          const wf_value *scope) {
+    /* Capture before writing the destination, including a busy return. */
+    wf_value owner = *scope;
+    wf_transition(meter);
+    memset(result, 0, sizeof(*result));
+    if (!wf__scope_close(owner.words[0], owner.words[1])) {
+        result->tag = 1u;
+        result->err.error = owner;
+    }
+}
+
+_Bool wf__body_scope_enter(const wf_value *scope) {
+    return wf__scope_enter(scope->words[0], scope->words[1]) != 0;
+}
+
+void wf__body_scope_leave(const wf_value *scope) {
+    wf__scope_leave(scope->words[0], scope->words[1]);
+}
+
 /* [PRE-2] `std::time`.  A clock handle carries nothing: the host has one
  * monotonic clock and one calendar time, and a handle is the authority to
  * read one of them.  An `Instant` holds its reading in nanoseconds in its

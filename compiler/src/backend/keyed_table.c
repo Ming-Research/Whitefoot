@@ -31,6 +31,8 @@
 #define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
 #endif
 #ifndef WF_CMAP_HEAP_CHANGE
+/* Origin-tag pass: map releases/resizes must debit each structure's retained
+ * origin; wf__heap_change currently selects the freeing thread's account. */
 #define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
 #endif
 /* A table keeps the watches of the guards that read it. */

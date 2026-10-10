@@ -232,7 +232,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test scope-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -469,6 +469,27 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/cancel-test"
 	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/cancel-test"
 
+# Scope-table probes reach private generation state and deque operations by
+# including their owning units. Context resumption uses the shipped bridge
+# object and native coroutine stand-ins, like shared-object-test. Compatible
+# support objects are shared with the default-route probe.
+SCOPE_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c $(SCHED_DIR)/core.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c $(SCHED_DIR)/core.c
+$(COMPLETION_TMP)/scope-test: $(SCOPE_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+SCOPE_CONTEXT_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/ordinary_values.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_context_probe.o
+$(COMPLETION_TMP)/scope-context-probe: $(SCOPE_CONTEXT_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+.PHONY: scope-test
+scope-test: $(COMPLETION_TMP)/scope-test $(COMPLETION_TMP)/scope-context-probe
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/scope-test"
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/scope-context-probe"
+
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
 # one after another was about two thirds of the group's time, while several
@@ -481,6 +502,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test \
+	$(COMPLETION_TMP)/scope-test $(COMPLETION_TMP)/scope-context-probe \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
 completion-test-images: $(COMPLETION_TEST_IMAGES)
 

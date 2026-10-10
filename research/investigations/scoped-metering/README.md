@@ -372,6 +372,70 @@ Resolve these details before implementing:
   rewrite first caused shared infrastructure to grow. Accounting machinery
   itself is process/default overhead, not rewrite storage.
 
+## Runtime core implementation boundary
+
+The edit-only continuation of scoped memory metering's phase 2
+implements the table, native callable boundaries and logical-work propagation
+before origin tags. Its requested choices are 64 slots including default,
+the existing process total unchanged, per-thread scope rows and explicit
+typed capacity refusal. The existing host-value representation carries the
+slot in word 0 and generation in word 1 for both the linear owner and the
+non-retaining view; the remaining words are zero. Ordinary LLVM wrappers
+provide the destination-returned open/view/close results, register-returned
+optional reading, and private Bool/unit enter/leave calls. The checked
+Whitefoot runner continues to supply the generic body.
+
+The scope table in `compiler/src/backend/completion/bridge.c` serializes
+open, close, entry, leave and ancestry enumeration under one lock. Generation
+exhaustion withholds a slot permanently. Scope rows retain their modular
+deltas through thread exit and reuse; close requires a raw aggregate of zero,
+and no row is cleared by a different writer. Context records preserve the
+scope before suspension publishes them. Compute frames capture it at
+publication, and both owner-reclaim paths and the steal/help path restore
+the prior thread scope before returning or announcing completion.
+
+**Deliberate incomplete behavior.** Free and resize still select the current
+scope, with origin-tag-pass comments at the accounting boundaries. Busy
+close checks activity, descendants, ownership and raw slot sums only.
+Zero-byte retained structures and cross-scope transfer are not implemented;
+this is not PRE-2's completed origin-accounting behavior and cannot yet
+justify subtracting a rewrite scope from admission memory. The next pass
+must retain origins through map/runtime/emitted storage, free and resize,
+and use retained-storage lifecycle for retirement. It must cover an
+inactive origin resized elsewhere and a zero-byte origin-bearing block.
+
+**Review finding fixed.** Pool accounting originally registered every
+allocating thread. Windows console-handler threads are host-created and
+may be transient, so queued stop requests could exhaust the permanent
+driver/compute row inventory. Default-account pool charges instead use the
+existing pool lock without registering a row; stop-request queue allocation
+and release explicitly select default, as do driver and timer-capacity
+storage. This leaves the process-total algorithm unchanged. The broader
+origin-tag inventory remains deferred to its already requested pass.
+
+A separate read-only Codex review covered the working-tree diff from
+`7dc39ad56`, including the new probes and design node, the C/LLVM boundaries,
+lifecycle and ancestry, context and compute propagation, and CI wiring.
+It re-reviewed the host-thread repair and reported no unresolved concrete
+findings within this temporary phase. Inspection did not establish native
+ABI execution, LLVM linkage, sanitizer or conformance success, or cost.
+
+**Evidence prepared, not executed.** `completion/scope_test.c` covers
+capacity, last-generation refusal, reuse with stale views, inclusive
+readings, entry refusal/restoration, busy-owner return, pool grants,
+cross-thread row cancellation, concurrent observation and retirement,
+host-default allocations without row registration, and deterministic
+compute helping, stealing and both owner reclaims.
+`completion/scope_context_probe.c` checks inherited scopes across sibling
+resumptions and structured joins. Both are wired into the existing
+`compiler/Makefile` completion images and `completion-test`, used by CI.
+No build, test, probe, lint, formatter, conformance run or performance
+measurement was executed in this pass, as requested; the code and probes
+remain unvalidated. No specification, conformance expectation or approval
+record changes are part of this pass. Run conformance and the applicable
+project gates after the edit-only restriction is lifted; full acceptance
+still needs the origin, lifecycle and performance evidence below.
+
 ## Firn worked example and evidence owed
 
 The admission context opens a rewrite scope, retains a droppable view,

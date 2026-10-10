@@ -81,6 +81,11 @@ typedef struct { wf_list_status result; uint64_t next; uint64_t entries; } wf_li
 WF_RESULT_UNION(wf_close_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_stop_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
+/* Scope owners and non-retaining views use wf_value: word 0 is the slot,
+ * word 1 its generation, and words 2/3 are zero. Their contents are immutable;
+ * ownership (nodrop owner versus droppable view) is checked in Whitefoot. */
+WF_RESULT_UNION(wf_scope_open_result, wf_value, uint8_t);
+WF_RESULT_UNION(wf_scope_close_result, uint8_t, wf_value);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
 #undef WF_RESULT_UNION
@@ -113,6 +118,12 @@ _Static_assert(offsetof(wf_list_result, next) == 24 &&
                sizeof(wf_list_result) == 40, "ordinary directory three-result layout");
 _Static_assert(sizeof(wf_close_result) == 16, "ordinary close Result layout");
 _Static_assert(sizeof(wf_open_result) == 48, "ordinary open Result layout");
+_Static_assert(offsetof(wf_scope_open_result, ok.value) == 16 &&
+               offsetof(wf_scope_open_result, err.error) == 4 &&
+               sizeof(wf_scope_open_result) == 48, "ordinary scope open Result layout");
+_Static_assert(offsetof(wf_scope_close_result, ok.value) == 4 &&
+               offsetof(wf_scope_close_result, err.error) == 16 &&
+               sizeof(wf_scope_close_result) == 48, "ordinary scope close Result layout");
 _Static_assert(sizeof(wf_connect_result) == 80, "ordinary connect Result layout");
 _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnection layout");
 _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
@@ -187,6 +198,15 @@ void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, 
 void wf__body_meter_share(wf_value *result, const wf_value *meter);
 uint64_t wf__body_heap_in_use(wf_value *meter);
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);
+void wf__body_scope_open(wf_scope_open_result *result, wf_value *meter);
+void wf__body_scope_open_child(wf_scope_open_result *result, wf_value *meter,
+                               const wf_value *parent);
+void wf__body_scope_view(wf_value *result, const wf_value *scope);
+void wf__body_scope_bytes(wf_optional_bytes *result, const wf_value *view);
+void wf__body_scope_close(wf_scope_close_result *result, wf_value *meter,
+                          const wf_value *scope);
+_Bool wf__body_scope_enter(const wf_value *scope);
+void wf__body_scope_leave(const wf_value *scope);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_now(wf_instant *result, wf_value *clock);
