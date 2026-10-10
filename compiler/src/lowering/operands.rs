@@ -118,7 +118,7 @@ macro_rules! operation_operands {
             | IrOperation::Integer { arguments, .. }
             | IrOperation::Float { arguments, .. }
             | IrOperation::Boolean { arguments, .. } => arguments.$iter().map($value).collect(),
-            IrOperation::EnumEquality { arguments, .. } => arguments.$iter().map($value).collect(),
+            IrOperation::ValueEquality { arguments, .. } => arguments.$iter().map($value).collect(),
             IrOperation::NumericConversion { value, .. }
             | IrOperation::Reinterpret { value, .. }
             | IrOperation::ArrayFill { value, .. }

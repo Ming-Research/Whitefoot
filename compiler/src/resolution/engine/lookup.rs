@@ -598,7 +598,7 @@ fn admissible_classes(role: LexicalUseRole, spelling: &str) -> Vec<DeclarationCl
         ],
         LexicalUseRole::FormalGroup => vec![DeclarationClass::Interface, DeclarationClass::Binding],
         LexicalUseRole::GenericBound => {
-            vec![DeclarationClass::NumericBound]
+            vec![DeclarationClass::BuiltinBound]
         }
         LexicalUseRole::Construct => vec![
             DeclarationClass::StructConstructor,
@@ -673,7 +673,7 @@ fn universe_classes(role: LexicalUseRole) -> Vec<DeclarationClass> {
             DeclarationClass::Binding,
         ],
         LexicalUseRole::GenericBound => {
-            vec![DeclarationClass::NumericBound]
+            vec![DeclarationClass::BuiltinBound]
         }
         LexicalUseRole::Construct | LexicalUseRole::EnsuresVariant => {
             vec![

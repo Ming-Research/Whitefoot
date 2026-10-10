@@ -16,6 +16,7 @@ use super::super::entailment::ObligationFamily;
 use super::super::obligations::ObligationSubject;
 use crate::NodePath;
 
+mod aggregate;
 mod ordinary;
 mod type_invariants;
 mod windows;
@@ -114,6 +115,7 @@ pub(super) struct Walker<'program> {
     gives: Vec<Vec<(State, Value)>>,
     /// Each parameter's value at entry.
     entry: BTreeMap<BindingId, Value>,
+    entry_aggregates: BTreeMap<CheckedRangeRoot, super::world::VersionId>,
     binding_types: BTreeMap<BindingId, IntegerType>,
     /// The node the walk cites for an access it records.
     cite: NodePath,
@@ -217,6 +219,7 @@ impl<'program> Walker<'program> {
             continues: BTreeMap::new(),
             gives: Vec::new(),
             entry: BTreeMap::new(),
+            entry_aggregates: BTreeMap::new(),
             binding_types: BTreeMap::new(),
             cite: empty_path(),
             selected: vec![false; function.range_facts.postconditions.len()],
@@ -257,10 +260,17 @@ impl<'program> Walker<'program> {
                 ))),
                 CheckedMode::Own => match parameter.ty {
                     CheckedType::Integer(ty) => Value::Int(self.world.opaque(Some(ty))),
-                    CheckedType::Bool => Value::Bool(Cond::Unknown),
+                    CheckedType::Bool => self.world.boolean(Cond::Unknown),
                     _ => Value::Owned(Location::root(Origin::Parameter(parameter.binding))),
                 },
             };
+            if parameter.mode == CheckedMode::Own
+                && matches!(value, Value::Owned(_) | Value::Bool(..))
+            {
+                let version = self.snapshot_aggregate(&mut state, &value);
+                self.entry_aggregates
+                    .insert(CheckedRangeRoot::Binding(parameter.binding), version);
+            }
             self.entry.insert(parameter.binding, value.clone());
             state.values.insert(parameter.binding, value);
         }
@@ -271,8 +281,9 @@ impl<'program> Walker<'program> {
             }
         }
         for clause in &function.range_facts.requirements {
-            let frame = self.frame(&mut state.clone(), clause, &|root| match root {
-                CheckedRangeRoot::Binding(binding) => state.values.get(&binding).cloned(),
+            let roots = state.values.clone();
+            let frame = self.frame(&mut state, clause, &|root| match root {
+                CheckedRangeRoot::Binding(binding) => roots.get(&binding).cloned(),
                 _ => None,
             });
             let id = self.add_fact(clause.clone(), frame);
@@ -356,12 +367,28 @@ impl<'program> Walker<'program> {
         for term in &terms {
             term.collect_values(&mut values);
         }
+        values.sort();
+        values.dedup();
         for root in values {
-            let value = match roots(root) {
-                Some(Value::Int(value)) => value,
-                _ => self.world.opaque(None),
-            };
-            frame.values.insert(root, value);
+            match roots(root) {
+                Some(Value::Int(value)) => {
+                    frame.values.insert(root, value);
+                }
+                Some(
+                    value @ (Value::Owned(_)
+                    | Value::Struct(_)
+                    | Value::Variant { .. }
+                    | Value::Bool(..)),
+                ) => {
+                    // Symbolic type-parameter values still form integer terms.
+                    frame.values.insert(root, self.world.opaque(None));
+                    let version = self.snapshot_aggregate(state, &value);
+                    frame.aggregates.insert(root, version);
+                }
+                _ => {
+                    frame.values.insert(root, self.world.opaque(None));
+                }
+            }
         }
         frame
     }
@@ -486,6 +513,9 @@ impl<'program> Walker<'program> {
         clause: &CheckedRangeClause,
         frame: &Frame,
     ) -> Result<Option<Option<NodePath>>, Capacity> {
+        if facts::vacuous(&mut self.world, clause, frame) {
+            return Ok(None);
+        }
         let binders: Vec<Linear> = clause
             .binders
             .iter()
@@ -497,12 +527,24 @@ impl<'program> Walker<'program> {
         for (position, conclusion) in formed.conclusions.iter().enumerate() {
             let (units, choices) = state.premises(&self.world);
             let mut query = Query {
+                type_facts: formed.type_facts.clone(),
                 units,
                 choices,
                 ..Query::default()
             };
             query.units.extend(formed.premises.iter().cloned());
-            let negation = conclusion_negation(conclusion);
+            query.units.extend(conclusion.guards.iter().cloned());
+            query.rules.extend(formed.conditions.iter().cloned());
+            query.support.extend(
+                formed
+                    .conclusions
+                    .iter()
+                    .zip(&clause.conclusions)
+                    .filter(|(_, written)| written.projected)
+                    .flat_map(|(rule, _)| rule.guards.iter().chain(&rule.conclusions))
+                    .cloned(),
+            );
+            let negation = conclusion_negation(&conclusion.conclusions[0]);
             match negation.as_slice() {
                 [single] => query.units.push(single.clone()),
                 _ => query
@@ -882,7 +924,7 @@ impl<'program> Walker<'program> {
                 self.enter_atomic(&mut state, node_path);
                 if let Some(guard) = guard {
                     let condition = match self.eval(&mut state, guard) {
-                        Value::Bool(condition) => condition,
+                        Value::Bool(condition, _) => condition,
                         _ => Cond::Unknown,
                     };
                     if condition.excludes(true) {
@@ -993,7 +1035,7 @@ impl<'program> Walker<'program> {
         match enum_type {
             CheckedEnumType::Bool => {
                 let cond = match value {
-                    Value::Bool(cond) => cond,
+                    Value::Bool(cond, _) => cond,
                     _ => Cond::Unknown,
                 };
                 for arm in arms {
@@ -1196,7 +1238,7 @@ impl<'program> Walker<'program> {
             }
             Value::Unknown => match ty {
                 CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),
-                CheckedType::Bool => Value::Bool(Cond::Unknown),
+                CheckedType::Bool => self.world.boolean(Cond::Unknown),
                 CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
                 _ => Value::Owned(Location::root(Origin::Binding(
                     binding,
@@ -1252,7 +1294,12 @@ impl<'program> Walker<'program> {
                     self.place_fields(state, &at, &inner, Some((*inner_variant, *variants)));
                     state.variants.insert(state.resolve(&at), *inner_variant);
                 }
-                Value::Bool(_) | Value::Unknown => {}
+                Value::Bool(_, tag) => state.set_slot(
+                    &mut self.world,
+                    at.child(Step::Tag(2)),
+                    Slot::Int(tag.clone()),
+                ),
+                Value::Unknown => {}
             }
         }
     }
@@ -1275,6 +1322,16 @@ impl<'program> Walker<'program> {
                 Some(integer),
             ));
         }
+        if ty == CheckedType::Bool {
+            let Value::Int(tag) = self.read_location(
+                state,
+                &location.child(Step::Tag(2)),
+                CheckedType::Integer(IntegerType::U64),
+            ) else {
+                unreachable!("an enum tag is an integer")
+            };
+            return Value::Bool(Cond::Unknown, tag);
+        }
         match ty {
             CheckedType::Integer(integer) => {
                 // One unknown field reads as one value until it is written.
@@ -1282,7 +1339,7 @@ impl<'program> Walker<'program> {
                 state.slots.insert(location, Slot::Int(value.clone()));
                 Value::Int(value)
             }
-            CheckedType::Bool => Value::Bool(Cond::Unknown),
+            CheckedType::Bool => self.world.boolean(Cond::Unknown),
             CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
             _ => Value::Owned(location),
         }
@@ -1400,7 +1457,12 @@ impl<'program> Walker<'program> {
                 self.place_fields(state, &location, &fields, Some((variant, variants)));
                 state.variants.insert(location, variant);
             }
-            Value::Bool(_) | Value::Unknown => {
+            Value::Bool(_, tag) => state.set_slot(
+                &mut self.world,
+                location.child(Step::Tag(2)),
+                Slot::Int(tag),
+            ),
+            Value::Unknown => {
                 let _ = ty;
             }
         }
@@ -1764,7 +1826,7 @@ impl<'program> Walker<'program> {
     fn opaque_of(&mut self, ty: CheckedType) -> Value {
         match ty {
             CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),
-            CheckedType::Bool => Value::Bool(Cond::Unknown),
+            CheckedType::Bool => self.world.boolean(Cond::Unknown),
             _ => Value::Unknown,
         }
     }
@@ -1950,14 +2012,16 @@ impl<'program> Walker<'program> {
                 let mut parts = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     parts.push(match self.eval(state, argument) {
-                        Value::Bool(cond) => cond,
+                        Value::Bool(condition, _) => condition,
                         _ => Cond::Unknown,
                     });
                 }
-                Value::Bool(ordinary::boolean(*operation, parts).unwrap_or(Cond::Unknown))
+                self.world
+                    .boolean(ordinary::boolean(*operation, parts).unwrap_or(Cond::Unknown))
             }
+
             CheckedExpression::FloatOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. } => {
+            | CheckedExpression::ValueEquality { arguments, .. } => {
                 for argument in arguments {
                     let _ = self.eval(state, argument);
                 }
@@ -2194,7 +2258,7 @@ impl<'program> Walker<'program> {
                     && root.path.is_empty()
                     && matches!(
                         state.values.get(&binding),
-                        Some(Value::Int(_) | Value::Bool(_))
+                        Some(Value::Int(_) | Value::Bool(..))
                     )
                 {
                     let ty = match root.ty {
@@ -2417,6 +2481,14 @@ impl<'program> Walker<'program> {
                 let version = state.version(&mut self.world, container);
                 Value::Int(self.world.read(version, indices, projection, Some(integer)))
             }
+            (CheckedType::Bool, Some(mut projection)) => {
+                let version = state.version(&mut self.world, container);
+                projection.push(CheckedRangeProjection::Tag(2));
+                let tag = self
+                    .world
+                    .read(version, indices, projection, Some(IntegerType::U64));
+                Value::Bool(Cond::Unknown, tag)
+            }
             (other, Some(projection))
                 if !matches!(
                     other,
@@ -2452,13 +2524,12 @@ impl<'program> Walker<'program> {
         for argument in arguments {
             values.push(self.int(state, argument));
         }
-        let comparison = |relation| match values.as_slice() {
-            [left, right] => Value::Bool(Cond::Literal(literal(
-                left.clone(),
-                relation,
-                right.clone(),
-            ))),
-            _ => Value::Bool(Cond::Unknown),
+        let mut comparison = |relation| {
+            let condition = match values.as_slice() {
+                [left, right] => Cond::Literal(literal(left.clone(), relation, right.clone())),
+                _ => Cond::Unknown,
+            };
+            self.world.boolean(condition)
         };
         match operation {
             CheckedIntegerOperation::Equal => comparison(Relation::Equal),
@@ -2552,7 +2623,7 @@ impl<'program> Walker<'program> {
     ) -> Value {
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            values.push(self.eval(state, argument));
+            values.push(self.stored_value(state, argument));
         }
         let Some(callee) = self.functions.get(function.0 as usize) else {
             self.forget_all(state, call);
@@ -2666,7 +2737,7 @@ impl<'program> Walker<'program> {
         }
         let value = match result {
             CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),
-            CheckedType::Bool => Value::Bool(Cond::Unknown),
+            CheckedType::Bool => self.world.boolean(Cond::Unknown),
             CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
             _ => Value::Owned(Location::root(Origin::CallResult(self.world.new_origin()))),
         };
@@ -2822,7 +2893,12 @@ impl<'program> Walker<'program> {
                 CheckedRangeRoot::Binding(binding) => entry.get(&binding).cloned(),
                 CheckedRangeRoot::Result(ordinal) => results.get(ordinal as usize).cloned()?,
             };
-            let frame = self.frame(state, &post.clause, &roots);
+            let mut frame = self.frame(state, &post.clause, &roots);
+            for (root, version) in &self.entry_aggregates {
+                if let Some(entry) = frame.aggregates.get_mut(root) {
+                    *entry = *version;
+                }
+            }
             self.require(state, &post.clause, &frame, node, site);
         }
     }
@@ -2999,7 +3075,7 @@ impl<'program> Walker<'program> {
                     Value::Int(_) => {
                         Value::Int(self.world.opaque(self.binding_types.get(binding).copied()))
                     }
-                    Value::Bool(_) => Value::Bool(Cond::Unknown),
+                    Value::Bool(..) => self.world.boolean(Cond::Unknown),
                     Value::Owned(_) => Value::Owned(Location::root(Origin::Binding(
                         *binding,
                         self.world.new_origin(),
@@ -3426,6 +3502,7 @@ impl<'program> Walker<'program> {
                 left: term.clone(),
                 comparison: super::super::range_facts::RangeComparison::Equal,
                 right: term.clone(),
+                projected: false,
             }],
         };
         let _ = frame;
@@ -3435,7 +3512,7 @@ impl<'program> Walker<'program> {
         formed
             .conclusions
             .first()
-            .map(|conclusion| conclusion.left.clone())
+            .map(|conclusion| conclusion.conclusions[0].left.clone())
     }
 
     // ----- affine relations -----
@@ -3473,7 +3550,9 @@ impl<'program> Walker<'program> {
                     _ => Err(GoalFailure::Unrepresentable),
                 }
             }
-            CheckedAffineExpressionKind::ConstGeneric { .. } => Err(GoalFailure::Unrepresentable),
+            CheckedAffineExpressionKind::ConstGeneric {
+                declaration, ty, ..
+            } => Ok(self.world.const_generic(*declaration, *ty)),
         }
     }
 
@@ -3788,7 +3867,10 @@ fn constant(value: &CheckedValue) -> Value {
         CheckedValue::Integer { ty, bits } => Value::Int(Linear::constant(
             super::super::entailment::integer_value(*ty, *bits),
         )),
-        CheckedValue::Bool(truth) => Value::Bool(Cond::Constant(*truth)),
+        CheckedValue::Bool(truth) => Value::Bool(
+            Cond::Constant(*truth),
+            Linear::constant(i128::from(!*truth)),
+        ),
         _ => Value::Unknown,
     }
 }

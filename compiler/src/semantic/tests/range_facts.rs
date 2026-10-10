@@ -1228,8 +1228,8 @@ fn generic_range_postcondition_is_judged_at_concrete_instances() {
                     .iter()
                     .any(|post| post.owed && post.clause.name == "same"))
                 .count(),
-            1,
-            "only the integer instance owes the content postcondition"
+            2,
+            "integer and copy aggregate instances both owe the content postcondition"
         );
     });
 }
@@ -1253,11 +1253,15 @@ fn generic_noninteger_range_postcondition_owes_no_selected_exit() {
 }
 
 #[test]
-fn generic_call_range_requirement_is_owed_at_the_integer_instance() {
-    let source = |ty: &str, value: &str| {
+fn generic_call_range_requirement_is_owed_at_integer_and_copy_aggregate_instances() {
+    let source = |ty: &str, value: &str, comparison: &str| {
         format!(
-            "fn require_same<T: copy>(values: &[T], value: T) -> result: unit pure contract {{
-  requires forall same(k in 0_u64..values^.len): values^[k] == value;
+            "struct Block {{
+  entry_slot: u64;
+}}
+
+fn require_same<T: copy>(values: &[T], value: T) -> result: unit pure contract {{
+  requires forall same(k in 0_u64..values^.len): values^[k] {comparison} value;
 }} {{
   return unit;
 }}
@@ -1276,23 +1280,48 @@ fn main() -> status: std::process::ExitStatus pure {{
 "
         )
     };
-    with_semantics(source("Bool", "True()").as_bytes(), |outcome| {
-        assert!(
-            matches!(outcome, SemanticOutcome::Complete(_)),
-            "a noninteger instance owes no range requirement: {outcome:?}"
-        );
-    });
-    with_semantics(source("u64", "7_u64").as_bytes(), |outcome| {
-        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("the integer forward instance owes the requirement: {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Range3);
-        let SemanticIssueKind::UndischargedRangeFact { fact, site, .. } = issue.kind() else {
-            panic!("expected an undischarged range requirement: {issue:?}");
-        };
-        assert_eq!(fact, "same");
-        assert_eq!(*site, "a call");
-    });
+    // The forwarding body has no requirement of its own. The integer,
+    // prelude Bool enum and copy Block instances each owe the equality.
+    for (ty, value) in [
+        ("u64", "7_u64"),
+        ("Bool", "True()"),
+        ("Block", "Block(entry_slot: 7_u64)"),
+    ] {
+        let source = source(ty, value, "==");
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the {ty} forward instance owes the requirement: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range3);
+            let SemanticIssueKind::UndischargedRangeFact { fact, site, .. } = issue.kind() else {
+                panic!("expected an undischarged range requirement: {issue:?}");
+            };
+            assert_eq!(fact, "same");
+            assert_eq!(*site, "a call");
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(
+                source[start..].starts_with("require_same::<T>("),
+                "{issue:?}"
+            );
+        });
+    }
+    // A non-equality over the same copy struct still states nothing at this
+    // concrete instance; it must neither be owed nor become an active fact.
+    with_semantics(
+        source("Block", "Block(entry_slot: 7_u64)", "!=").as_bytes(),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("Block disequality owes no range requirement: {outcome:?}");
+            };
+            let instance = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "require_same")
+                .unwrap();
+            assert!(instance.range_facts.requirements.is_empty());
+        },
+    );
 }
 
 #[test]
@@ -2599,4 +2628,463 @@ fn a_state_excluded_match_continuation_discharges_its_deferred_sites() {
         "enum Route {\n  Live();\n  Dead();\n}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n      return unit;\n    }\n    Dead() => {\n    }\n  }\n  let value = xs^[i];\n  return unit;\n}\n",
     );
     field_range_verdict(&source, None);
+}
+
+#[test]
+fn range_const_generic_substitution_keeps_concrete_and_symbolic_length_facts() {
+    use super::super::model::{CheckedExpression, CheckedStatement};
+    use super::super::range_facts::CheckedRangeTerm as Term;
+    let source =
+        b"fn filled<const count: u64>(value: u32) -> result: Array<u32, count> pure contract {
+  ensures result.len == count;
+  ensures forall same(k in 0_u64..count): result[k] == value;
+} {
+  let made = array_filled::<u32, count>(value: value);
+  return made;
+}
+
+fn need(values: &[u32]) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..values^.len): values^[k] == 5_u32;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = filled::<2>(value: 5_u32);
+  need(values: &values[0_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("const-generic range terms must form in both scopes: {outcome:?}");
+        };
+        let functions = &program.data.functions;
+        let mut concrete = false;
+        let mut symbolic = false;
+        for function in functions.iter().filter(|f| f.name == "filled") {
+            let clause = &function
+                .range_facts
+                .postconditions
+                .iter()
+                .find(|post| post.clause.name == "same")
+                .unwrap()
+                .clause;
+            let end = &clause.binders[0].end;
+            match end {
+                Term::Constant(2) => concrete = true,
+                Term::ConstGeneric { .. } => symbolic = true,
+                other => panic!("unexpected count: {other:?}"),
+            }
+            let CheckedStatement::Let {
+                value:
+                    CheckedExpression::UserCall {
+                        function: callee, ..
+                    },
+                ..
+            } = &function.body.as_ref().unwrap()[0]
+            else {
+                panic!("filled calls the prelude through an ordinary call")
+            };
+            let callee = &functions[callee.0 as usize];
+            assert!(
+                callee
+                    .range_facts
+                    .postconditions
+                    .iter()
+                    .any(|post| !post.owed
+                        && post
+                            .clause
+                            .conclusions
+                            .iter()
+                            .any(|relation| &relation.right == end)),
+                "the callee's n must become the caller's count in its length fact"
+            );
+        }
+        assert!(
+            concrete && symbolic,
+            "both instantiation scopes were inspected"
+        );
+    });
+}
+
+#[test]
+fn aggregate_range_negatives_name_the_consumer_call() {
+    for (source, callee) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-filled-struct.wf"
+            )
+            .as_slice(),
+            "need(",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-filled-enum.wf"
+            )
+            .as_slice(),
+            "need(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-enum-tag.wf")
+                .as_slice(),
+            "same::<Flow>(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-bool-tag.wf")
+                .as_slice(),
+            "same::<Bool>(",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range3-neg-aggregate-bool-write.wf"
+            )
+            .as_slice(),
+            "same::<Bool>(",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-noncopy.wf")
+                .as_slice(),
+            "need(",
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected the consumer's range rejection: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+            assert!(
+                matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, .. } if *site == "a call"),
+                "{issue:?}"
+            );
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(source[start..].starts_with(callee.as_bytes()), "{issue:?}");
+        });
+    }
+}
+
+#[test]
+fn aggregate_range_enum_expansion_retains_separate_payload_domains() {
+    use super::super::range_facts::{
+        CheckedRangeProjection as Projection, CheckedRangeTerm as Term,
+    };
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/range1-pos-aggregate-generic-requirement.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the enum requirement must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        let clause = &function.range_facts.requirements[0];
+        assert_eq!(
+            clause.conclusions.len(),
+            3,
+            "one tag and both declared payloads"
+        );
+        for (index, relation) in clause.conclusions.iter().enumerate() {
+            assert!(relation.projected);
+            let Term::Read {
+                projection,
+                guarded_from,
+                ..
+            } = &relation.left
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(*guarded_from, Some(0));
+            let Term::ValueProjection {
+                projection: value_path,
+                ..
+            } = &relation.right
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(
+                projection, value_path,
+                "both sides select the same integer path"
+            );
+            match (index, projection.as_slice()) {
+                (0, [Projection::Tag(2)]) => {}
+                (
+                    1,
+                    [
+                        Projection::Payload {
+                            variant: 0,
+                            field: 0,
+                            variants: 2,
+                        },
+                    ],
+                ) => {}
+                (
+                    2,
+                    [
+                        Projection::Payload {
+                            variant: 1,
+                            field: 0,
+                            variants: 2,
+                        },
+                    ],
+                ) => {}
+                _ => panic!("{relation:?}"),
+            }
+        }
+    });
+}
+
+#[test]
+fn aggregate_range_postconditions_read_the_parameter_at_entry() {
+    let good =
+        include_str!("../../../../tests/conformance/cases/range1-pos-aggregate-entry-value.wf");
+    let bad = good.replace(
+        "  let made = array_filled::<T, 1>(value: value);\n  set value = other;",
+        "  set value = other;\n  let made = array_filled::<T, 1>(value: value);",
+    );
+    assert_ne!(
+        bad, good,
+        "the negative must move replacement before the fill"
+    );
+    for (source, rejected) in [(good.as_bytes(), false), (bad.as_bytes(), true)] {
+        with_semantics(source, |outcome| match (rejected, outcome) {
+            (false, SemanticOutcome::Complete(_)) => {}
+            (true, SemanticOutcome::SourceIssue { issue, .. }) => {
+                assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+                let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+                let start = usize::try_from(coordinate.start().value()).unwrap();
+                assert!(
+                    source[start..].starts_with(b"return made;"),
+                    "the changed value must fail at its producer's return: {issue:?}"
+                );
+            }
+            (_, outcome) => panic!("rejected={rejected}: {outcome:?}"),
+        });
+    }
+}
+
+#[test]
+fn aggregate_range_large_array_reports_the_atom_ceiling() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-atom-ceiling.wf");
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3, "{issue:?}");
+        assert!(
+            matches!(issue.kind(), SemanticIssueKind::UndischargedRangeFact { site, missing, .. } if *site == "a call" && missing.contains("4096 atoms")),
+            "{issue:?}"
+        );
+    });
+}
+
+#[test]
+fn aggregate_range_float_parts_make_the_whole_generic_clause_unformed() {
+    let source = field_range_program(
+        "struct Flag {\n  value: f32;\n}\n\nfn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<Flag, 1000000000>], value: Array<Flag, 1000000000>) -> result: unit pure {\n  same::<Array<Flag, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        assert!(
+            function.range_facts.requirements.is_empty(),
+            "RANGE-1 admits value equality only at OP-16 equality types; a float part leaves the whole generic clause unformed"
+        );
+    });
+}
+
+#[test]
+fn aggregate_range_unit_parts_form_an_empty_conjunction_without_enumerating_elements() {
+    let source = field_range_program(
+        "struct Flag {\n  value: unit;\n}\n\nfn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<Flag, 1000000000>], value: Array<Flag, 1000000000>) -> result: unit pure {\n  same::<Array<Flag, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        assert_eq!(function.range_facts.requirements.len(), 1);
+        assert!(function.range_facts.requirements[0].conclusions.is_empty());
+    });
+}
+
+#[test]
+fn aggregate_range_vacuity_does_not_form_projected_reads() {
+    let source = include_str!(
+        "../../../../tests/conformance/cases/range3-pos-vacuous-aggregate-expansion.wf"
+    );
+    // The fixture crosses the atom limit if any reads are formed; the
+    // larger expansion also detects work proportional to the array length.
+    field_range_verdict(source.as_bytes(), None);
+    let larger = source.replace("Array<u8, 4097>", "Array<u8, 1000000000>");
+    assert_ne!(
+        larger, source,
+        "the larger case must change the array length"
+    );
+    field_range_verdict(larger.as_bytes(), None);
+}
+
+#[test]
+fn aggregate_range_symbolic_arrays_defer_the_whole_expansion() {
+    use super::super::model::{CheckedConst, CheckedNominalKind, CheckedType};
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/range1-pos-aggregate-symbolic-array.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("symbolic Array lengths must not panic or partially expand: {outcome:?}");
+        };
+        let mut observed = [false; 4];
+        for function in program
+            .data
+            .functions
+            .iter()
+            .filter(|function| function.name == "fill")
+        {
+            let (length, fields) = match function.parameters[0].ty {
+                CheckedType::Array { length, .. } => (length, 0),
+                CheckedType::Nominal(id) => {
+                    let CheckedNominalKind::Struct { fields } =
+                        &program.data.nominals[id.0 as usize].kind
+                    else {
+                        continue;
+                    };
+                    let CheckedType::Array { length, .. } = fields[1].ty else {
+                        panic!("Row's second field is an Array");
+                    };
+                    (length, 1)
+                }
+                _ => continue,
+            };
+            let clause = function
+                .range_facts
+                .postconditions
+                .iter()
+                .find(|post| post.clause.name == "same");
+            match length {
+                CheckedConst::Value(2) => {
+                    assert_eq!(
+                        clause.expect("concrete expansion").clause.conclusions.len(),
+                        2 + fields
+                    );
+                    observed[fields] = true;
+                }
+                CheckedConst::Parameter(_) => {
+                    assert!(
+                        clause.is_none(),
+                        "even a concrete sibling field must wait for the complete shape"
+                    );
+                    observed[2 + fields] = true;
+                }
+                other => panic!("unexpected Array length: {other:?}"),
+            }
+        }
+        assert!(
+            observed.into_iter().all(|seen| seen),
+            "direct/nested, symbolic/concrete instances must all be inspected"
+        );
+    });
+}
+
+#[test]
+fn nongeneric_equality_forms_bool_tags_and_variant_conditioned_payloads() {
+    use super::super::range_facts::{CheckedRangeProjection as P, CheckedRangeTerm as T};
+    let source = field_range_program(
+        "enum RangeChoice {\n  Absent();\n  Present(index: u64);\n}\n\nstruct RangeRecord {\n  enabled: Bool;\n  choice: RangeChoice;\n}\n\nfn need(xs: &[RangeRecord], v: RangeRecord) -> result: unit pure contract {\n  requires forall same(k in 0_u64..xs^.len): xs^[k] == v;\n} {\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|f| f.name == "need")
+            .unwrap();
+        let clauses = &function.range_facts.requirements;
+        assert_eq!(clauses.len(), 1);
+        let expected = [
+            vec![P::Field(0), P::Tag(2)],
+            vec![P::Field(1), P::Tag(2)],
+            vec![
+                P::Field(1),
+                P::Payload {
+                    variant: 1,
+                    field: 0,
+                    variants: 2,
+                },
+            ],
+        ];
+        assert_eq!(clauses[0].conclusions.len(), expected.len());
+        for (relation, expected) in clauses[0].conclusions.iter().zip(expected) {
+            assert!(relation.projected);
+            let T::Read {
+                projection,
+                guarded_from,
+                ..
+            } = &relation.left
+            else {
+                panic!("{relation:?}")
+            };
+            let T::ValueProjection {
+                projection: right, ..
+            } = &relation.right
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(projection, &expected);
+            assert_eq!(right, &expected);
+            assert_eq!(*guarded_from, Some(0));
+        }
+    });
+}
+
+#[test]
+fn nongeneric_noninteger_relations_reject_at_the_relation() {
+    let float =
+        include_str!("../../../../tests/conformance/cases/range1-neg-equality-float-struct.wf");
+    super::assert_rule_at(float.as_bytes(), SemanticRule::Range1, "xs^[k] == v");
+    let integer = float.replace("fraction: f64;", "fraction: u64;");
+    for comparison in ["!=", "<", "<=", ">", ">="] {
+        let relation = format!("xs^[k] {comparison} v");
+        let source = integer.replace("xs^[k] == v", &relation);
+        super::assert_rule_at(source.as_bytes(), SemanticRule::Range1, &relation);
+    }
+}
+
+#[test]
+fn an_integer_projection_after_a_float_struct_is_still_a_range_term() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/range1-neg-equality-float-struct.wf")
+            .replace("v: RangeFloat", "v: u64")
+            .replace("xs^[k] == v", "xs^[k].index == v");
+    with_semantics(source.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn generic_float_struct_equality_exports_no_integer_field_fact() {
+    super::assert_rule_at(
+        include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-float-struct.wf"),
+        SemanticRule::Range3,
+        "need(xs: &xs[0_u64..1_u64], expected: value.index)",
+    );
 }

@@ -2046,7 +2046,7 @@ impl<'program> IrBuilder<'program> {
                     },
                 )
             }
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
@@ -2059,7 +2059,7 @@ impl<'program> IrBuilder<'program> {
                 let right = self.expression(right)?;
                 self.define(
                     IrType::Bool,
-                    IrOperation::EnumEquality {
+                    IrOperation::ValueEquality {
                         equal: *equal,
                         operand_type: lower_type(self.erasure, *operand_type)?,
                         arguments: [left, right],

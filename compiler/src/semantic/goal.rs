@@ -292,7 +292,7 @@ pub(crate) enum GoalOperation {
         destination: CheckedNumericType,
     },
     Boolean(CheckedBooleanOperation),
-    EnumEquality {
+    ValueEquality {
         equal: bool,
         operand_type: CheckedType,
     },

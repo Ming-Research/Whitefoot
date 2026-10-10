@@ -17,6 +17,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         constants: &[],
         constant_ids: &constant_ids,
         const_parameter_types: &const_parameter_types,
+        copy_type_parameters: &[],
         nominals: &[],
         elements: &[],
         contract_queries: &[],
@@ -752,7 +753,10 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
             let mut check = AffineCheckState::new();
             let first = index.entry(a.terms(), &closed, &mut check).unwrap();
             let repeated = index.entry(a.terms(), &closed, &mut check).unwrap();
-            assert!(std::ptr::eq(&*first, &*repeated), "lazy warm hits are borrowed");
+            assert!(
+                std::ptr::eq(&*first, &*repeated),
+                "lazy warm hits are borrowed"
+            );
             assert_eq!(check.used(), 0);
         }
         let absent = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
@@ -763,7 +767,10 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
                     .is_none()
             );
             assert_eq!(index.exact.borrow().len(), 2);
-            assert!(matches!(index.exact.borrow().get(absent.terms()), Some(None)));
+            assert!(matches!(
+                index.exact.borrow().get(absent.terms()),
+                Some(None)
+            ));
         }
         let (_, repeated) = analyzer.reasoning().affine_query_view(context);
         assert!(Rc::ptr_eq(&index, &repeated));

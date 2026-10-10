@@ -2430,7 +2430,7 @@ pub(crate) enum CheckedExpression {
         operation: CheckedBooleanOperation,
         arguments: Vec<CheckedExpression>,
     },
-    EnumEquality {
+    ValueEquality {
         carrier: NodePath,
         equal: bool,
         operand_type: CheckedType,
@@ -2629,7 +2629,7 @@ impl CheckedExpression {
             | Self::NumericConversion { carrier, .. }
             | Self::Reinterpret { carrier, .. }
             | Self::BooleanOperation { carrier, .. }
-            | Self::EnumEquality { carrier, .. }
+            | Self::ValueEquality { carrier, .. }
             | Self::ArrayIndex { carrier, .. }
             | Self::BufferIndex { carrier, .. }
             | Self::RangeOf { carrier, .. }
@@ -2663,7 +2663,7 @@ impl CheckedExpression {
                 operand_type,
                 ..
             } => operation.result_type(*operand_type),
-            Self::BooleanOperation { .. } | Self::EnumEquality { .. } => CheckedType::Bool,
+            Self::BooleanOperation { .. } | Self::ValueEquality { .. } => CheckedType::Bool,
             Self::ArrayMeasure { .. } => CheckedType::Integer(IntegerType::U64),
             Self::ArrayIndex { element_type, .. } => *element_type,
             Self::BufferMeasure { .. }
@@ -3387,7 +3387,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. } => arguments.iter().collect(),
+        | CheckedExpression::ValueEquality { arguments, .. } => arguments.iter().collect(),
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
