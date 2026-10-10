@@ -35,18 +35,18 @@ is an unsuccessful experiment, not evidence for a language rejection or a
 timing prediction.
 
 The (b) prediction is conditional: two drivers on one CPU are OS-time-sliced,
-but neither WAIT-3 nor the runtime design guarantees that the worker will be
-stolen away from the driver holding the timer. If that driver takes the worker
-itself, the other driver cannot steal its running context or service its
-parked timer. Record such observations rather than retrying until a preferred
-schedule appears. Also, `wf_drivers_begin` in the
+and neither WAIT-3 nor the runtime design guarantees a latency bound. This
+branch's completion service can borrow an outside driver's role to complete
+due sleeps and detach already-terminal records. It can also steal ready
+contexts. Per-driver attribution distinguishes those paths; a count of ready
+contexts stolen alone does not establish that a timer was serviced by a
+borrower. Record observations rather than retrying until a preferred schedule
+appears. Also, `wf_drivers_begin` in the
 [completion runtime](../../../compiler/src/backend/completion/bridge.c)
 can retain just one driver when a kernel ring or additional driver cannot be
-created. The table records the requested setting, not an observed thread
-count; the host record includes `io_uring_disabled`, but does not establish
-successful driver creation. A delayed (b) alone cannot distinguish failed
-driver creation from placement on the timer's driver. The one-driver
-prediction assumes the timer reaches its wait before its deadline.
+created. The table records both the requested setting and the actual number
+of drivers reported at exit. The one-driver prediction assumes the timer
+reaches its wait before its deadline.
 These are exploratory observations on a shared
 GitHub runner, not precise performance measurements or a latency guarantee.
 
@@ -76,18 +76,33 @@ does not require a loan of storage owned by the other context.
 `run.sh` compiles once with the built compiler, then timestamps each pipe's
 first byte using Python's monotonic clock and unbuffered multiplexed reads.
 The table records timer output, computation-end output and process exit,
-all measured from immediately before launching `taskset -c 0`. These are
-external receipt times: they include launch, output and observer scheduling
+all measured from immediately before launching `taskset` with the row's CPU
+affinity. These are external receipt times: they include launch, output and observer scheduling
 latency, and the compute marker includes checksum encoding and writing.
 They are not internal instruction timestamps; nearly coincident markers do
 not establish their internal order. The observer is not pinned to CPU 0.
-`WF_WORKERS=1` is fixed in every child; only the driver count changes.
+`WF_WORKERS=1` and `WF_SCHED_REPORT=2` are fixed in every child. The report
+setting prints compute, available ring, and per-driver counters at exit.
+Each row links a `reports/*.txt` side file; `reports/*.stderr.bin` preserves
+its full stderr, including the nine-byte compute packet. The parser separates
+that packet by length, so checksum bytes cannot be mistaken for report text,
+and requires a complete set of driver report lines. Reports also cover every
+calibration run.
+
+Each driver's counters attribute work to the executor doing it:
+`borrow_attempts` counts attempts against another driver's role, `borrows`
+counts successful claims even when they find no work, `borrowed_sleeps`
+counts due sleeps completed successfully, `borrowed_terminals` counts records
+already terminal when detached, and `stolen_contexts` counts individual
+contexts moved from another ready queue. Cancelled sleeps do not count as
+due sleeps completed. These are observations, never scheduling inputs.
 
 Calibration starts with zero work and three 100,000-iteration samples, prints
 their spread, and increases the count by four until median compute-marker
 latency reaches 200 ms (at most eight groups). It scales that count once to
-target about 2 s, then runs (a), (b), (c) in that order for each of three passes,
-printing every row, including calibration. The same nonzero count is used for
+target about 2 s, then runs (a), (b), (c), followed by the two-CPU arms (d: two
+drivers with computation; e: two drivers with zero work), in that order for
+each of three passes, printing every row, including calibration. The same nonzero count is used for
 both driver settings. A missed 1–4 s calibration range is annotated rather
 than hidden. Equal-input checksums must agree; zero work must produce 1.
 This consistency check keeps the work observable but is not an independent
@@ -96,25 +111,25 @@ fail the protocol; timing differences themselves do not select success.
 
 ## Run on CI
 
-The temporary [workflow](../../../.github/workflows/ctx-starvation.yml) runs
-only on pushes to `claude/ctx-starvation-witness`, on `ubuntu-24.04`. It installs
-Clang and LLD, fetches locked Rust dependencies, and builds the compiler using
-`make -C compiler build`, as the existing
-[I/O workflow](../../../.github/workflows/io-bench.yml) does. It then invokes:
+The manual [compute-bench workflow](../../../.github/workflows/compute-bench.yml)
+has a temporary `experiment: ctx-starvation` choice on `ubuntu-24.04`. It
+installs Clang and LLD, fetches locked Rust dependencies, builds the compiler
+using `make -C compiler build`, and invokes:
 
 ```sh
-OUT="$RUNNER_TEMP/context-starvation" sh research/experiments/context-starvation/run.sh
+WF_SCHED_REPORT=2 OUT="$RUNNER_TEMP/context-starvation" sh research/experiments/context-starvation/run.sh
 ```
 
 `WFC` can name an already-built compiler (default:
-`compiler/target/gate/whitefootc`); `OUT` holds the native witness and
-`results.tsv`. CPU 0 must be in the runner's allowed affinity; the script
-fails explicitly otherwise. The workflow prints the table and records the
-revision, host, tool versions and environment with its artifacts. Compiler
-construction is separate from program timing. This is an explicitly requested
-research run, separate from the canonical gate. Remove the temporary workflow
-before opening any pull request; retain this bundle while the scheduling
-question needs a reproducible witness, removing it when superseded.
+`compiler/target/gate/whitefootc`); `OUT` holds the native witness,
+`results.tsv`, and per-run reports. CPUs 0 and 1 must be in the runner's
+allowed affinity; the script fails explicitly otherwise. The workflow
+uploads the table, reports, revision, host, tool versions and environment.
+Compiler construction is separate from program timing. This explicitly
+requested research run is separate from the canonical gate. Remove the
+temporary workflow choice and job before the branch is ready; retain this
+bundle while the scheduling question needs a reproducible witness, removing
+it when superseded.
 
 ## Results
 

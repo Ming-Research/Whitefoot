@@ -37,9 +37,9 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, code placement, or the par-suite baseline
+        description: The compute scoreboard, code placement, par-suite baseline, or context starvation witness
         type: choice
-        options: [scoreboard, placement, par-suite]
+        options: [scoreboard, placement, par-suite, ctx-starvation]
         default: scoreboard
       placement_runner:
         description: Where placement or par-suite runs, GitHub or the owner's i9-14900K runner
@@ -246,6 +246,62 @@ jobs:
             ${{ runner.temp }}/results/raw.tsv
             ${{ runner.temp }}/results/table.txt
             ${{ runner.temp }}/results/logs/
+
+  # Temporary branch witness; remove this job and choice before the branch is ready.
+  ctx-starvation:
+    if: inputs.experiment == 'ctx-starvation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+
+      - name: Record the revision and host
+        run: |
+          mkdir -p "$RUNNER_TEMP/context-starvation"
+          {
+            git rev-parse HEAD
+            uname -srvmo
+            lscpu
+            taskset -pc $$
+            if [ -r /proc/sys/kernel/io_uring_disabled ]; then
+              echo "io_uring_disabled: $(cat /proc/sys/kernel/io_uring_disabled)"
+            fi
+            clang --version
+            ld.lld --version
+            rustc --version
+            cargo --version
+            python3 --version
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            echo "affinity: taskset -c 0 or 0,1; WF_WORKERS=1; WF_DRIVERS=1 or 2; WF_SCHED_REPORT=2; no --par"
+          } > "$RUNNER_TEMP/context-starvation/host.txt"
+          cat "$RUNNER_TEMP/context-starvation/host.txt"
+
+      - name: Fetch the recorded crate dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the compiler
+        run: make -C compiler build
+
+      - name: Compile and observe the witness
+        env:
+          OUT: ${{ runner.temp }}/context-starvation
+          WF_SCHED_REPORT: "2"
+        run: sh research/experiments/context-starvation/run.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: context-starvation-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/context-starvation/host.txt
+            ${{ runner.temp }}/context-starvation/results.tsv
+            ${{ runner.temp }}/context-starvation/reports/
 
   par-suite:
     name: par-suite (${{ inputs.placement_runner }})

@@ -12,6 +12,8 @@ mkdir -p "$OUT"
 # measures only process exit and cannot timestamp each independent output.
 python3 - "$OUT/witness" "$OUT/results.tsv" <<'PY'
 import os
+from pathlib import Path
+import re
 import selectors
 import statistics
 import subprocess
@@ -22,6 +24,8 @@ binary, table_path = sys.argv[1:]
 if not {0, 1}.issubset(os.sched_getaffinity(0)):
     raise SystemExit("CPUs 0 and 1 must be available for the two-CPU arms")
 
+report_dir = Path(table_path).parent / "reports"
+report_dir.mkdir(exist_ok=True)
 table = open(table_path, "w", encoding="utf-8", buffering=1)
 
 
@@ -30,12 +34,12 @@ def report(line):
     print(line, file=table)
 
 
-report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms")
+report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms\tactual_drivers\treport_file")
 
 
 def sample(phase, repetition, drivers, count, cpus="0"):
     env = os.environ.copy()
-    env.update(WF_DRIVERS=str(drivers), WF_WORKERS="1")
+    env.update(WF_DRIVERS=str(drivers), WF_WORKERS="1", WF_SCHED_REPORT="2")
     command = ["taskset", "-c", cpus, binary, str(count)]
     data = {"timer": bytearray(), "compute": bytearray()}
     observed = {}
@@ -75,12 +79,28 @@ def sample(phase, repetition, drivers, count, cpus="0"):
         process.wait()
         process.stdout.close()
         process.stderr.close()
-    if code != 0 or data["timer"] != b"T" or len(data["compute"]) != 9 or data["compute"][:1] != b"C":
+    # The witness writes a fixed nine-byte packet before exit reports. Keep
+    # those bytes separate: checksum bytes can include newlines or text.
+    stem = f"{phase}-{repetition}-d{drivers}-n{count}-cpu{cpus.replace(',', '_')}"
+    report_path = report_dir / f"{stem}.txt"
+    (report_dir / f"{stem}.stderr.bin").write_bytes(data["compute"])
+    report_path.write_bytes(data["compute"][9:])
+    if code != 0 or data["timer"] != b"T" or len(data["compute"]) < 9 or data["compute"][:1] != b"C":
         raise RuntimeError(f"invalid run: exit={code}, stdout={bytes(data['timer'])!r}, "
                            f"stderr={bytes(data['compute'])!r}")
-    checksum = int.from_bytes(data["compute"][1:], "little")
+    counters = bytes(data["compute"][9:]).decode("ascii")
+    driver_lines = [line for line in counters.splitlines() if line.startswith("driver:")]
+    driver_pattern = (r"driver: index=(\d+) borrow_attempts=\d+ borrows=\d+ "
+                      r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+")
+    matches = [re.fullmatch(driver_pattern, line) for line in driver_lines]
+    if (not matches or any(match is None for match in matches)
+            or [int(match[1]) for match in matches] != list(range(len(matches)))
+            or len(matches) > drivers):
+        raise RuntimeError(f"missing or malformed per-driver counters in {report_path}")
+    checksum = int.from_bytes(data["compute"][1:9], "little")
     report(f"{phase}\t{repetition}\t{drivers}\t{cpus}\t{count}\t{observed['timer']:.6f}\t"
-           f"{observed['compute']:.6f}\t{exited:.6f}\t{checksum}\t{threads}")
+           f"{observed['compute']:.6f}\t{exited:.6f}\t{checksum}\t{threads}\t{len(matches)}\t"
+           f"reports/{report_path.name}")
     return observed["compute"], checksum
 
 

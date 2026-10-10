@@ -62,6 +62,8 @@ static void fixture_begin(void) {
     memset(&wf_driver_root, 0, sizeof(wf_driver_root));
     memset(&wf_context_root, 0, sizeof(wf_context_root));
     memset(&assistant, 0, sizeof(assistant));
+    memset(wf_driver_stats, 0, sizeof(wf_driver_stats));
+    atomic_store(&wf_driver_stats_count, 2u);
     atomic_flag_clear(&wf_driver_root.run_lock);
     atomic_flag_clear(&assistant.run_lock);
     wf_driver_root.runtime = &wf_bridge_runtime;
@@ -94,6 +96,70 @@ static void fixture_end(void) {
     wf_context_current = NULL;
     atomic_store(&wf_driver_count, 0u);
     atomic_store(&wf_drivers[0], NULL);
+}
+
+typedef struct startup_park {
+    uint64_t epoch;
+    enum wf_completion_park_result result;
+} startup_park;
+
+static void *startup_park_thread(void *opaque) {
+    startup_park *park = opaque;
+    park->result = wf_completion_park_if_unchanged(
+        assistant.runtime, park->epoch, UINT32_MAX);
+    return NULL;
+}
+
+static void startup_publication(void) {
+    fixture_begin();
+    for (unsigned parked_first = 0; parked_first < 2; ++parked_first) {
+        atomic_store(&wf_driver_count, 1u);
+        startup_park park = {.epoch = wf_completion_wake_epoch(assistant.runtime)};
+        CHECK(wf_driver_wait_ms(&assistant) == UINT32_MAX);
+        pthread_t thread;
+        if (parked_first) {
+            CHECK(pthread_create(&thread, NULL, startup_park_thread, &park) == 0);
+            while (!wf_completion_parked_scheduler_count(assistant.runtime)) wf_prim_yield();
+        }
+        /* The production startup boundary must close both schedules, even
+         * when the new executor chose an infinite wait before publication. */
+        wf_driver_publish_started(&assistant);
+        CHECK(wf_completion_wake_epoch(assistant.runtime) != park.epoch);
+        CHECK(wf_driver_wait_ms(&assistant) == WF_DRIVER_ASSIST_WAIT_MS);
+        if (parked_first) {
+            CHECK(pthread_join(thread, NULL) == 0);
+            CHECK(park.result == WF_COMPLETION_PARK_WOKEN
+                  || park.result == WF_COMPLETION_PARK_EPOCH_CHANGED);
+        } else {
+            CHECK(wf_completion_park_if_unchanged(assistant.runtime, park.epoch, UINT32_MAX)
+                  == WF_COMPLETION_PARK_EPOCH_CHANGED);
+        }
+    }
+    fixture_end();
+}
+
+static void steal_attribution(void) {
+    fixture_begin();
+    wf_context contexts[3] = {0};
+    for (unsigned i = 0; i < 3; ++i) wf_run_push(&wf_driver_root, &contexts[i]);
+    CHECK(wf_driver_steal(&assistant));
+    CHECK(atomic_load(&wf_driver_stats[1].stolen_contexts) == 2u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrows) == 0u);
+    CHECK(wf_run_take(&assistant) == &contexts[0]);
+    CHECK(wf_run_take(&assistant) == &contexts[1]);
+    CHECK(wf_run_take(&wf_driver_root) == &contexts[2]);
+    CHECK(!wf_driver_steal(&assistant));
+    CHECK(atomic_load(&wf_driver_stats[1].stolen_contexts) == 2u);
+    /* Reporting must retain every started driver's counters after teardown
+     * reduces the active count, and count contexts rather than steal passes. */
+    atomic_store(&wf_driver_count, 1u);
+    char report[512];
+    CHECK(wf_driver_report(1u, report, sizeof(report)));
+    CHECK(strcmp(report, "driver: index=1 borrow_attempts=0 borrows=0 borrowed_sleeps=0 "
+          "borrowed_terminals=0 stolen_contexts=2") == 0);
+    CHECK(!wf_driver_report(2u, report, sizeof(report)));
+    CHECK(!wf_driver_report(1u, report, 1u));
+    fixture_end();
 }
 
 typedef struct borrow_race {
@@ -185,6 +251,8 @@ static void timer_migration(void) {
      * owner may depart just after its scan. No elapsed-time assertion. */
     CHECK(!wf_driver_assist(&assistant));
     CHECK(wf_driver_wait_ms(&assistant) == WF_DRIVER_ASSIST_WAIT_MS);
+    CHECK(atomic_load(&wf_driver_stats[1].borrow_attempts) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrows) == 0u);
     atomic_store(&computing, 0u);
     atomic_store(&release_compute, 0u);
     atomic_store(&ran_timer, 0u);
@@ -204,6 +272,10 @@ static void timer_migration(void) {
     CHECK(atomic_load(&wf_driver_root.host_waits) == 0u);
     CHECK(wf_run_take(&wf_driver_root) == NULL && wf_run_take(&assistant) == NULL);
     CHECK(wf_context_root.driver == &assistant);
+    CHECK(atomic_load(&wf_driver_stats[1].borrows) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_sleeps) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_terminals) == 0u);
+    CHECK(atomic_load(&wf_driver_stats[1].stolen_contexts) == 0u);
     compute.group[1] = 0;
     fixture_end();
 }
@@ -223,18 +295,20 @@ static void publication_during_borrow(void) {
     uint64_t outside = wf_driver_leave_service(&wf_driver_root), borrowed;
     CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
     CHECK(borrowed == outside);
-    CHECK(wf_driver_service_only(&wf_driver_root, 0) == NULL);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, 0) == NULL);
     pthread_t publisher;
     CHECK(pthread_create(&publisher, NULL, publish_thread, record) == 0);
     CHECK(pthread_join(publisher, NULL) == 0);
     /* Completion arrived after a borrowed scan, while the token was still
      * borrowed. A later bounded scan must find it without losing the cursor. */
-    wf_context *ready = wf_driver_service_only(&wf_driver_root, 0);
+    wf_context *ready = wf_driver_service_only(&assistant, &wf_driver_root, 0);
     CHECK(ready == &context && ready->next == NULL);
-    CHECK(wf_driver_service_only(&wf_driver_root, 0) == NULL);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, 0) == NULL);
     CHECK(atomic_load(&wf_driver_root.run_count) == 0u);
     CHECK(atomic_load(&assistant.run_count) == 0u);
     CHECK(context.record == NULL && record->result.value == 7);
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_terminals) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_sleeps) == 0u);
     wf_driver_release_borrow(&wf_driver_root, borrowed);
     ready->driver = &assistant;
     wf_run_push(&assistant, ready);
@@ -254,8 +328,8 @@ static void bounded_scan(void) {
         (void)park_record(&contexts[i], WF_COMPLETION_ROUTE_FILE_ADAPTER, 1u);
     uint64_t outside = wf_driver_leave_service(&wf_driver_root), borrowed;
     CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
-    CHECK(wf_driver_service_only(&wf_driver_root, 1u) == NULL);
-    CHECK(wf_driver_service_only(&wf_driver_root, 1u) == &contexts[0]);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, 1u) == NULL);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, 1u) == &contexts[0]);
     CHECK(wf_bridge_record_state(timer) == WF_COMPLETION_DONE);
     /* A borrower neither executes queued host work nor cancels through TLS. */
     for (unsigned i = 1; i <= WF_BRIDGE_REAP_BUDGET; ++i) {
@@ -284,7 +358,7 @@ static void adoption_and_early_wake(void) {
     CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
     CHECK(wf_driver_root.cancel_waits == NULL && wf_driver_root.parked == NULL);
     CHECK(wf_driver_root.timer_count == 0u);
-    CHECK(wf_driver_service_only(&wf_driver_root, UINT64_MAX - 1u) == NULL);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, UINT64_MAX - 1u) == NULL);
     wf_driver_release_borrow(&wf_driver_root, borrowed);
     /* Model a firing already consumed before the wait is adopted. */
     atomic_store(&source->fired, 1u);
@@ -295,8 +369,10 @@ static void adoption_and_early_wake(void) {
     CHECK(atomic_load(&wf_driver_root.cancel_pending) == 1u);
     outside = wf_driver_leave_service(&wf_driver_root);
     CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
-    CHECK(wf_driver_service_only(&wf_driver_root, 0u) == &context);
+    CHECK(wf_driver_service_only(&assistant, &wf_driver_root, 0u) == &context);
     CHECK(wf__completion_cancelled(record));
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_sleeps) == 0u);
+    CHECK(atomic_load(&wf_driver_stats[1].borrowed_terminals) == 0u);
     CHECK(wf_driver_root.cancel_waits == NULL && context.timer_slot == 0u);
     wf_driver_release_borrow(&wf_driver_root, borrowed);
     wf_driver_return_service(&wf_driver_root, outside);
@@ -317,6 +393,10 @@ int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
     CHECK(!wf_bridge_ring_ready()); /* deterministic service-only fixture */
+    wf_test_guard_phase("startup publication wakes an obsolete unbounded park");
+    startup_publication();
+    wf_test_guard_phase("ready-queue steals have separate attribution");
+    steal_attribution();
     wf_test_guard_phase("return versus borrow, excluded phases and stale epochs");
     ownership_races();
     wf_test_guard_phase("due timer runs on assisting driver while owner computes");

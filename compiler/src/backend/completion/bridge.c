@@ -244,6 +244,8 @@ static int wf_bridge_ensure_file(void) {
     return wf_bridge_file_ready != 0;
 }
 
+static void wf_bridge_print_report(void);
+
 static void wf_bridge_shutdown(void) {
     if (wf_bridge_ready == 0) {
         return;
@@ -252,6 +254,7 @@ static void wf_bridge_shutdown(void) {
         (void)wf_file_adapter_shutdown(&wf_bridge_adapter);
         wf_bridge_file_ready = 0;
     }
+    wf_bridge_print_report();
     wf_bridge_ring_shutdown();
     (void)wf_completion_runtime_destroy(&wf_bridge_runtime);
     wf_bridge_ready = 0;
@@ -1540,6 +1543,55 @@ static wf_driver wf_driver_root;
  * every slot while the entry publishes the next driver. */
 static _Atomic(wf_driver *) wf_drivers[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_count;
+/* Attribution belongs to the driver doing the borrowing or stealing. Static
+ * storage survives driver teardown for WF_SCHED_REPORT=2 at process exit.
+ * Only borrow/steal paths increment these relaxed, observational counters. */
+typedef struct wf_driver_statistics {
+    _Atomic uint64_t borrow_attempts;
+    _Atomic uint64_t borrows;
+    _Atomic uint64_t borrowed_sleeps;
+    _Atomic uint64_t borrowed_terminals;
+    _Atomic uint64_t stolen_contexts;
+} wf_driver_statistics;
+static wf_driver_statistics wf_driver_stats[WF_DRIVER_LIMIT];
+static _Atomic unsigned wf_driver_stats_count;
+
+static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
+    if (buffer == NULL || capacity == 0u
+        || index >= atomic_load_explicit(&wf_driver_stats_count, memory_order_acquire))
+        return 0;
+    const wf_driver_statistics *stats = &wf_driver_stats[index];
+    int written = snprintf(buffer, capacity,
+        "driver: index=%u borrow_attempts=%llu borrows=%llu borrowed_sleeps=%llu "
+        "borrowed_terminals=%llu stolen_contexts=%llu", index,
+        (unsigned long long)atomic_load_explicit(&stats->borrow_attempts, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrows, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrowed_sleeps, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrowed_terminals, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->stolen_contexts, memory_order_relaxed));
+    return written > 0 && (size_t)written < capacity;
+}
+
+/* Reuse the scheduler's automatic-report setting and the existing ring
+ * formatter. Print before ring shutdown; driver counters outlive their roles. */
+static void wf_bridge_print_report(void) {
+    unsigned long wanted = 0;
+    if (!wf__sched_setting("WF_SCHED_REPORT", 2ul, &wanted) || wanted != 2u) return;
+    char buffer[512];
+    if (wf__bridge_report(buffer, sizeof(buffer))) fprintf(stderr, "%s\n", buffer);
+    for (unsigned index = 0; wf_driver_report(index, buffer, sizeof(buffer)); ++index)
+        fprintf(stderr, "%s\n", buffer);
+}
+
+/* A new executor may already have captured a one-driver, unbounded wait.
+ * Publish first, then advance its wake epoch and signal its wait endpoint:
+ * either it sees the new count or its obsolete park is woken/rejected. */
+static inline void wf_driver_publish_started(wf_driver *driver) {
+    atomic_store_explicit(&wf_driver_stats_count, driver->index + 1u, memory_order_release);
+    atomic_store_explicit(&wf_driver_count, driver->index + 1u, memory_order_release);
+    wf_completion_notify_target(driver->runtime);
+}
+
 static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
 /* Physical driver identity stays bound while a context runs: submissions
@@ -1820,6 +1872,8 @@ static int wf_driver_steal(wf_driver *driver) {
             atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
             continue;
         }
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].stolen_contexts,
+            moved, memory_order_relaxed);
         while (taken != NULL) {
             wf_context *next = taken->next;
             taken->driver = driver;
@@ -3362,7 +3416,7 @@ static int wf_driver_expire(wf_driver *driver) {
  * hide terminal records forever. The heap and hash are touched only with
  * the token. Removing a record costs its hash-chain walk and heap repair;
  * the budget bounds records inspected, not wall time or list sizes. */
-static wf_context *wf_driver_service_only(wf_driver *victim, uint64_t now) {
+static wf_context *wf_driver_service_only(wf_driver *driver, wf_driver *victim, uint64_t now) {
     wf_context *ready = NULL;
     wf_context **tail = &ready;
     wf_context *context = victim->borrow_cursor != NULL
@@ -3381,6 +3435,10 @@ static wf_context *wf_driver_service_only(wf_driver *victim, uint64_t now) {
                 && context->timer_at <= now;
         }
         if (terminal || due || cancelled) {
+            if (terminal) atomic_fetch_add_explicit(
+                &wf_driver_stats[driver->index].borrowed_terminals, 1u, memory_order_relaxed);
+            else if (due && !cancelled) atomic_fetch_add_explicit(
+                &wf_driver_stats[driver->index].borrowed_sleeps, 1u, memory_order_relaxed);
             wf_context_unpark(victim, context);
             context->record = NULL;
             if (!terminal) {
@@ -3416,11 +3474,15 @@ static int wf_driver_assist(wf_driver *driver) {
         uint64_t outside;
         if (victim == NULL || victim == driver) continue;
         atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrow_attempts,
+            1u, memory_order_relaxed);
         if (!wf_driver_try_borrow(victim, &outside)) {
             atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
             continue;
         }
-        wf_context *ready = wf_driver_service_only(victim, wf_file_monotonic_ns());
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrows,
+            1u, memory_order_relaxed);
+        wf_context *ready = wf_driver_service_only(driver, victim, wf_file_monotonic_ns());
         wf_driver_release_borrow(victim, outside);
         int moved = ready != NULL;
         while (ready != NULL) {
@@ -3690,7 +3752,7 @@ static void wf_drivers_begin(void) {
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
             break;
         }
-        atomic_store_explicit(&wf_driver_count, index + 1u, memory_order_release);
+        wf_driver_publish_started(driver);
     }
 }
 
@@ -3741,6 +3803,7 @@ void wf__context_root_begin(void) {
     atomic_flag_clear(&wf_driver_root.run_lock);
     wf_driver_root.runtime = &wf_bridge_runtime;
     wf_drivers[0] = &wf_driver_root;
+    atomic_store_explicit(&wf_driver_stats_count, 1u, memory_order_release);
     atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
     wf_driver_self = &wf_driver_root;
     wf_driver_service = &wf_driver_root;
