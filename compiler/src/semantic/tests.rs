@@ -69,6 +69,7 @@ mod references;
 mod reinterpret;
 mod requires;
 mod source_proofs;
+mod struct_equality;
 mod value_equality;
 mod windows;
 

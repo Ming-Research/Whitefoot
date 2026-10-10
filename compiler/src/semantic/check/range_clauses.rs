@@ -46,7 +46,7 @@ enum RangeGeneric {
     /// parameter is taken as an integer.
     Symbolic,
     /// A concrete instance of a generic function: a value or element whose
-    /// type is not an integer is expanded for copy aggregate equality,
+    /// type is not an integer is expanded for value equality,
     /// and otherwise leaves the clause stating nothing here.
     Instance,
 }
@@ -121,10 +121,10 @@ impl Checker<'_, '_> {
             // A binder's endpoints see the binders before it and never itself.
             let start = self
                 .range_atom(context, *start, bindings, &names)?
-                .integer(&names);
+                .integer(self, *start, &names)?;
             let end = self
                 .range_atom(context, *end, bindings, &names)?
-                .integer(&names);
+                .integer(self, *end, &names)?;
             let bound = self
                 .types
                 .declarations
@@ -348,14 +348,10 @@ impl Checker<'_, '_> {
     /// term: a type parameter's is an integer at the symbolic instance, and
     /// a concrete noninteger operand keeps a placeholder until its comparison
     /// expands aggregate equality or leaves the clause stating nothing.
-    fn range_integer(ty: CheckedType, names: &RangeNames) -> Option<IntegerType> {
-        match (ty, names.generic) {
-            (CheckedType::Integer(integer), _) => Some(integer),
-            (CheckedType::Generic(_) | CheckedType::GenericInt(_), RangeGeneric::Symbolic) => {
-                Some(IntegerType::U64)
-            }
-            (_, RangeGeneric::Instance) => Some(IntegerType::U64),
-            _ => None,
+    fn range_integer(ty: CheckedType) -> IntegerType {
+        match ty {
+            CheckedType::Integer(integer) => integer,
+            _ => IntegerType::U64,
         }
     }
 
@@ -468,7 +464,7 @@ impl Checker<'_, '_> {
             for atom in atoms {
                 arguments.push(
                     self.range_atom(context, atom, bindings, &names)?
-                        .integer(&names),
+                        .integer(self, atom, &names)?,
                 );
             }
             uses.push(CheckedRangeUse {
@@ -564,7 +560,7 @@ impl Checker<'_, '_> {
         for atom in atoms {
             arguments.push(
                 self.range_atom(context, atom, bindings, &names)?
-                    .integer(&names),
+                    .integer(self, atom, &names)?,
             );
         }
         Ok(Some(CheckedRangeUse {
@@ -790,7 +786,7 @@ impl Checker<'_, '_> {
         if rest.is_empty() {
             return Ok(first);
         }
-        let mut terms = vec![(1_i128, first.integer(names))];
+        let mut terms = vec![(1_i128, first.integer(self, node, names)?)];
         for pair in rest.as_chunks::<2>().0 {
             let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -803,7 +799,7 @@ impl Checker<'_, '_> {
             terms.push((
                 sign,
                 self.range_product(context, pair[1], bindings, names)?
-                    .integer(names),
+                    .integer(self, node, names)?,
             ));
         }
         Ok(range_sum(terms).into())
@@ -826,10 +822,10 @@ impl Checker<'_, '_> {
             [left, right] => {
                 let left_term = self
                     .range_factor(context, *left, bindings, names)?
-                    .integer(names);
+                    .integer(self, node, names)?;
                 let right_term = self
                     .range_factor(context, *right, bindings, names)?
-                    .integer(names);
+                    .integer(self, node, names)?;
                 let (constant, value) = match (&left_term, &right_term) {
                     (CheckedRangeTerm::Constant(constant), _) => (*constant, right_term),
                     (_, CheckedRangeTerm::Constant(constant)) => (*constant, left_term),
@@ -1066,8 +1062,9 @@ impl Checker<'_, '_> {
                 "name a parameter or a value bound before this clause",
             );
         };
-        // [RANGE-1] a postcondition names an `own` parameter only as an
-        // integer value at entry: the call consumes its storage.
+        // [RANGE-1] a postcondition reads a by-value parameter at entry,
+        // including implicit value-equality projections. Explicit storage
+        // paths through a consumed own parameter remain outside the rule.
         if check_context.active_postcondition.is_some()
             && local.mode == CheckedMode::Own
             && !suffixes.is_empty()
@@ -1141,7 +1138,7 @@ impl Checker<'_, '_> {
                 PlaceSuffix::Index { offset } => {
                     let index_term = self
                         .range_atom(context, offset, bindings, names)?
-                        .integer(names);
+                        .integer(self, offset, names)?;
                     let base = CheckedRangePlace {
                         root,
                         path: path.clone(),
@@ -1174,7 +1171,7 @@ impl Checker<'_, '_> {
                                 PlaceSuffix::Index { offset } => {
                                     let element_index = self
                                         .range_atom(context, offset, bindings, names)?
-                                        .integer(names);
+                                        .integer(self, offset, names)?;
                                     self.range_element_suffixes(
                                         context,
                                         next,
@@ -1311,13 +1308,11 @@ impl Checker<'_, '_> {
             index += 1;
         }
         match selected {
-            Selected::Value(ty) if path.is_empty() && Self::range_integer(ty, names).is_some() => {
-                Ok(RangeOperand::typed(
-                    CheckedRangeTerm::Value(root),
-                    ty,
-                    names,
-                ))
-            }
+            Selected::Value(ty) if path.is_empty() => Ok(RangeOperand::typed(
+                CheckedRangeTerm::Value(root),
+                ty,
+                names,
+            )),
             _ => self.invalid_range(
                 SemanticRule::Range1,
                 place,
@@ -1403,7 +1398,7 @@ impl Checker<'_, '_> {
                 };
                 let index = self
                     .range_atom(context, offset, bindings, names)?
-                    .integer(names);
+                    .integer(self, node, names)?;
                 projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                 indices.push(index);
                 selected = if matches!(selected, CheckedType::Segments { .. }) {
@@ -1553,9 +1548,7 @@ impl Checker<'_, '_> {
             }
             position += 1;
         }
-        let Some(element) = Self::range_integer(selected, names) else {
-            return self.not_integer_element(suffixes.last().copied().unwrap_or(node));
-        };
+        let element = Self::range_integer(selected);
         Ok(RangeOperand::typed(
             CheckedRangeTerm::Read {
                 place,
@@ -1578,15 +1571,6 @@ impl Checker<'_, '_> {
             .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
             .spelling()
             .to_owned())
-    }
-
-    fn not_integer_element<Value>(&self, node: NodeId) -> Result<Value, CheckStop> {
-        self.invalid_range(
-            SemanticRule::Range1,
-            node,
-            "a range term reads an element that is not an integer",
-            "read elements of an integer type",
-        )
     }
 }
 

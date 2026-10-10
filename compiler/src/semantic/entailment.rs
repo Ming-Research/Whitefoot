@@ -214,6 +214,8 @@ pub(crate) struct EntailmentContext<'check> {
     /// and forwarded arguments carry the original declaration identity, even
     /// when their use has a different integer type.
     pub(crate) const_parameter_types: &'check HashMap<DeclarationId, super::model::IntegerType>,
+    /// Type parameters whose written bound grants copy at the symbolic instance.
+    pub(crate) copy_type_parameters: &'check [DeclarationId],
     pub(crate) nominals: &'check [CheckedNominal],
     pub(crate) elements: &'check [CheckedType],
     /// Accepted instantiated FN-4 implications. Bound-call evidence refers

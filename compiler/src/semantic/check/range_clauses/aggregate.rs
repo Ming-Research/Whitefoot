@@ -1,10 +1,11 @@
-//! Concrete aggregate equality in generic range clauses [RANGE-1].
+//! Value equality in generic and nongeneric range clauses [RANGE-1].
 
 use super::*;
 use crate::semantic::range_facts::MAX_RANGE_ATOMS;
 
-/// A noninteger operand survives only until its enclosing comparison decides
-/// whether to expand it. Arithmetic and all other uses leave the clause empty.
+/// A noninteger operand survives until its enclosing comparison decides
+/// whether to expand it. Other uses leave a concrete generic clause unformed
+/// and reject a nongeneric clause under RANGE-1.
 pub(super) struct RangeOperand {
     term: CheckedRangeTerm,
     aggregate: Option<CheckedType>,
@@ -23,17 +24,36 @@ impl RangeOperand {
     pub(super) fn typed(term: CheckedRangeTerm, ty: CheckedType, names: &RangeNames) -> Self {
         Self {
             term,
-            aggregate: (names.generic == RangeGeneric::Instance
-                && !matches!(ty, CheckedType::Integer(_)))
+            aggregate: (!matches!(ty, CheckedType::Integer(_))
+                && !(names.generic == RangeGeneric::Symbolic
+                    && matches!(
+                        ty,
+                        CheckedType::Generic(_)
+                            | CheckedType::GenericInt(_)
+                            | CheckedType::GenericFloat(_)
+                    )))
             .then_some(ty),
         }
     }
 
-    pub(super) fn integer(self, names: &RangeNames) -> CheckedRangeTerm {
+    pub(super) fn integer(
+        self,
+        checker: &Checker<'_, '_>,
+        node: NodeId,
+        names: &RangeNames,
+    ) -> Result<CheckedRangeTerm, CheckStop> {
         if self.aggregate.is_some() {
+            if names.generic != RangeGeneric::Instance {
+                return checker.invalid_range(
+                    SemanticRule::Range1,
+                    node,
+                    "a noninteger range operand occurs outside value equality",
+                    "use two sides of one equality type with `==`, or an integer range term",
+                );
+            }
             names.unformed.set(true);
         }
-        self.term
+        Ok(self.term)
     }
 }
 
@@ -48,42 +68,47 @@ impl Checker<'_, '_> {
         names: &RangeNames,
     ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
         let path = self.types.declarations.tree.path(node)?.clone();
-        if comparison == RangeComparison::Equal
-            && let (Some(ty), Some(other)) = (left.aggregate, right.aggregate)
-            && ty == other
-            && match ty {
-                CheckedType::Array { .. } | CheckedType::Bool => true,
-                CheckedType::Nominal(id) => matches!(
-                    self.types.nominal(id)?.kind,
-                    CheckedNominalKind::Struct { .. } | CheckedNominalKind::Enum { .. }
-                ),
-                _ => false,
+        if left.aggregate.is_some() || right.aggregate.is_some() {
+            if comparison == RangeComparison::Equal
+                && let (Some(ty), Some(other)) = (left.aggregate, right.aggregate)
+                && ty == other
+                && self
+                    .types
+                    .first_non_equality_part(context.check_context, ty)?
+                    .is_none()
+            {
+                // A symbolic Array length or descendant defers the whole
+                // expansion, including fields already concrete at this point.
+                if self.range_projection_count(ty)?.is_none() {
+                    names.unformed.set(true);
+                    return Ok(Vec::new());
+                }
+                let mut out = Vec::new();
+                self.expand_range_equality(ty, left.term, right.term, &path, &mut out)?;
+                return Ok(out);
             }
-            && self.types.is_copy_type(context.check_context, ty)?
-        {
-            // A call made while checking a generic body can substitute an
-            // Array whose length (or nested element type) is still symbolic.
-            // Defer the whole clause, including any already concrete fields,
-            // until the concrete instance can form every projection.
-            if self.range_projection_count(ty)?.is_none() {
+            if names.generic == RangeGeneric::Instance {
                 names.unformed.set(true);
                 return Ok(Vec::new());
             }
-            let mut out = Vec::new();
-            self.expand_range_equality(ty, left.term, right.term, &path, &mut out)?;
-            return Ok(out);
+            return self.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "a noninteger range relation is not `==` between two sides of one equality type",
+                "compare two sides of one equality type with `==`, or compare integer parts",
+            );
         }
         Ok(vec![CheckedRangeRelation {
             node: path,
-            left: left.integer(names),
+            left: left.term,
             comparison,
-            right: right.integer(names),
+            right: right.term,
             projected: false,
         }])
     }
 
     /// Count only up to the existing structural allowance. In particular an
-    /// Array of empty/noninteger-only structs has no integer projections,
+    /// Array of unit-only structs has no integer projections,
     /// regardless of its length, and need not enumerate its elements. A
     /// symbolic descendant returns None for the whole expansion, including
     /// beyond the cap; memoization keeps repeated field types shared.
@@ -247,8 +272,8 @@ impl Checker<'_, '_> {
                 }
                 _ => {}
             },
-            // Noninteger leaves have no integer projections. The caller has
-            // already checked OWN-1 for the complete aggregate.
+            // Unit and empty opaque structs have no integer projections. The
+            // caller has already checked OP-16 for the complete value.
             _ => {}
         }
         Ok(())

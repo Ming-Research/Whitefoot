@@ -1,0 +1,25 @@
+struct RangeCell {
+  index: u64;
+}
+
+fn need(index: u64, expected: u64) -> result: unit pure contract {
+  requires index == expected;
+} {
+  return unit;
+}
+
+fn relay(xs: &[RangeCell], v: RangeCell) -> result: unit reads(xs) contract {
+  requires forall same(k in 0_u64..xs^.len): xs^[k] == v;
+} {
+  if 0_u64 < xs^.len {
+    need(index: xs^[0_u64].index, expected: v.index);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = RangeCell(index: 7_u64);
+  let xs = array_filled::<RangeCell, 1>(value: v);
+  relay(xs: &xs[0_u64..1_u64], v: v);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -77,14 +77,14 @@ fn equality_reports_the_first_bad_part_in_declaration_order() {
 }
 
 #[test]
-fn symbolic_equality_requires_int_even_inside_a_nominal() {
+fn symbolic_equality_requires_int_or_eq_even_inside_a_nominal() {
     for ty in ["T", "EqualityWrap<T>", "EqualityChoice<T>", "Array<T, 4>"] {
-        for bound in ["Int", "copy"] {
+        for bound in ["Int", "Eq", "copy", "Float"] {
             let source = format!(
                 "{DECLARATIONS}fn same<T: {bound}>(left: {ty}, right: {ty}) -> result: Bool pure {{\n  return left == right;\n}}\n\n{MAIN}"
             );
             with_semantics(source.as_bytes(), |outcome| {
-                if bound == "Int" {
+                if matches!(bound, "Int" | "Eq") {
                     assert!(
                         matches!(outcome, SemanticOutcome::Complete(_)),
                         "{ty}: {outcome:?}"
@@ -169,4 +169,44 @@ fn equality_preflight_resolves_generic_numeric_literal_types() {
     assert_rule_kind(source.as_bytes(), SemanticRule::Op1, |kind| {
         matches!(kind, SemanticIssueKind::InvalidEqualityType { .. })
     });
+}
+
+#[test]
+fn eq_bound_argument_rejection_names_the_argument_and_first_bad_field() {
+    let source = include_bytes!("../../../../tests/conformance/cases/fn2-neg-eq-bound-float.wf");
+    assert_rule_at(source, SemanticRule::Fn2, "BoundFloat");
+    assert_rule_kind(source, SemanticRule::Fn2, |kind| {
+        matches!(kind, SemanticIssueKind::InvalidEqualityType { mechanical_fix }
+            if mechanical_fix.contains("field `fraction`") && mechanical_fix.contains("f64"))
+    });
+}
+
+#[test]
+fn eq_bound_is_copy_and_supplies_symbolic_contract_goal_origins() {
+    let source = format!(
+        "fn need<T: Eq>(left: T, right: T) -> result: unit pure contract {{\n  requires left == right;\n}} {{\n  return unit;\n}}\n\nfn forward<T: Eq>(left: T, right: T) -> result: Bool pure {{\n  let saved = left;\n  let equal = saved == right;\n  if equal {{\n    need::<T>(left: left, right: right);\n  }}\n  return equal;\n}}\n\n{MAIN}"
+    );
+    with_semantics(source.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn opaque_copy_structs_and_instant_are_equality_types() {
+    for source in [
+        include_str!("../../../../tests/conformance/cases/op16-pos-opaque-struct.wf").to_owned(),
+        format!(
+            "fn same(left: std::time::Instant, right: std::time::Instant) -> result: Bool pure {{\n  return left == right;\n}}\n\n{MAIN}"
+        ),
+    ] {
+        with_semantics(source.as_bytes(), |outcome| {
+            assert!(
+                matches!(outcome, SemanticOutcome::Complete(_)),
+                "{outcome:?}"
+            );
+        });
+    }
 }

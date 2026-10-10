@@ -33,10 +33,16 @@ fn need_arrays(targets: &[Array<u8, 2>]) -> result: unit pure contract {
 fn main() -> status: std::process::ExitStatus pure {
   let value = array_filled::<u8, 2>(value: 5_u8);
   let relayed_arrays = arrays::<2>(value: value);
+  if relayed_arrays.len != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
   let targets = fill::<Array<u8, 2>>(value: value);
   need_arrays(targets: &targets[0_u64..1_u64]);
   let row = Row<2>(marker: 7_u8, entries: value);
   let relayed_rows = rows::<2>(value: row);
+  if relayed_rows.len != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
   let row_targets = fill::<Row<2>>(value: row);
   need(targets: &row_targets[0_u64..1_u64]);
   return std::process::exit_status(code: 0_u8);

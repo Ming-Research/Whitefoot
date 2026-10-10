@@ -7,7 +7,9 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
+use super::{
+    assert_rule, assert_rule_kind, with_resolved_semantics, with_semantics, with_semantics_dark,
+};
 
 #[test]
 fn wrapping_conversion_goal_identity_retains_its_operand_support() {
@@ -1926,17 +1928,24 @@ fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
                     "only an established non-L0 ordering leaf supplies an affine image"
                 );
                 if !affine_image {
-                    assert!(function.entailment.derivations.nodes.iter().any(|node| matches!(
-                        node,
-                        super::super::entailment::DerivationNode::OriginProjection {
-                            sign: super::super::entailment::GoalSign::Positive,
-                            relation: super::super::entailment::Relation::Equal {
-                                difference: 0,
-                                ..
-                            },
-                            ..
-                        }
-                    )));
+                    assert!(
+                        function
+                            .entailment
+                            .derivations
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(
+                                node,
+                                super::super::entailment::DerivationNode::OriginProjection {
+                                    sign: super::super::entailment::GoalSign::Positive,
+                                    relation: super::super::entailment::Relation::Equal {
+                                        difference: 0,
+                                        ..
+                                    },
+                                    ..
+                                }
+                            ))
+                    );
                 }
             } else {
                 let SemanticOutcome::SourceIssue { issue, .. } = outcome else {

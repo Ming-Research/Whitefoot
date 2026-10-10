@@ -7,6 +7,65 @@ use super::*;
 use crate::NodePath;
 
 impl Input<'_, '_> {
+    /// [ENT-2, ENT-3] The only synthesized equality goals are the ordered
+    /// fields of this exact struct comparison. Enums and Arrays stay roots.
+    fn struct_equality_fields(
+        &self,
+        expression: &GoalExpression,
+    ) -> Option<(bool, Vec<GoalExpression>)> {
+        let GoalExpression::Operation {
+            row:
+                GoalOperation::ValueEquality {
+                    equal,
+                    operand_type: CheckedType::Nominal(id),
+                },
+            arguments,
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        let fields = match &self.context.nominals.get(id.0 as usize)?.kind {
+            CheckedNominalKind::Struct { fields } => fields.as_slice(),
+            CheckedNominalKind::Opaque => &[],
+            _ => return None,
+        };
+        let [left, right] = arguments.as_slice() else {
+            return None;
+        };
+        let members = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                let projection = GoalProjection::Field(u32::try_from(index).ok()?);
+                let left = left.clone().with_projection(projection, field.ty)?;
+                let right = right.clone().with_projection(projection, field.ty)?;
+                let row = if matches!(
+                    field.ty,
+                    CheckedType::Integer(_) | CheckedType::GenericInt(_)
+                ) {
+                    GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::Equal,
+                        operand_type: field.ty,
+                    }
+                } else {
+                    GoalOperation::ValueEquality {
+                        equal: true,
+                        operand_type: field.ty,
+                    }
+                };
+                Some(GoalExpression::Operation {
+                    row,
+                    type_arguments: Vec::new(),
+                    const_arguments: Vec::new(),
+                    result: CheckedType::Bool,
+                    arguments: vec![left, right],
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((*equal, members))
+    }
+
     /// Converts one source expression to ENT-3's exact direct pure/total
     /// origin. Any excluded child excludes the whole expression.
     pub(super) fn direct_goal_expression(
@@ -1130,18 +1189,39 @@ impl Reasoning<'_, '_, '_> {
                 }
             }
         }
+        let fields = self
+            .input
+            .struct_equality_fields(&expression)
+            .map(|(equal, fields)| {
+                (
+                    equal,
+                    fields
+                        .into_iter()
+                        .map(|field| self.intern_goal_expression(field))
+                        .collect(),
+                )
+            });
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
         collect_goal_support(&expression, None, &mut support);
-        self.vocabulary
+        let goal = self
+            .vocabulary
             .goals
-            .intern(expression, projection, normalization, support)
+            .intern(expression, projection, normalization, support);
+        if let Some((equal, fields)) = fields {
+            self.vocabulary
+                .goals
+                .set_struct_equality_fields(goal, equal, fields);
+        }
+        goal
     }
 
     /// [ENT-3] The signed Boolean decomposition set of one
     /// established goal: `+band` and `-bor` decompose into their signed
-    /// children recursively, `bnot` flips the sign, and every other root —
+    /// children recursively, `bnot` flips the sign, and a positive struct
+    /// equality (or negative inequality) contributes its field equalities.
+    /// Every other root —
     /// in particular `-band` and `+bor`, whose content is genuinely
     /// disjunctive, and `bxor` on either sign — contributes nothing.
     ///
@@ -1199,7 +1279,7 @@ impl Reasoning<'_, '_, '_> {
             if !matches!(
                 self.vocabulary.goals.expression(origin.goal),
                 GoalExpression::Operation {
-                    row: GoalOperation::Boolean(_),
+                    row: GoalOperation::Boolean(_) | GoalOperation::ValueEquality { .. },
                     ..
                 }
             ) {
@@ -1211,6 +1291,24 @@ impl Reasoning<'_, '_, '_> {
             let origin = self.vocabulary.goals.expression(origin.goal).clone();
             self.collect_decomposition_members(&origin, sign, state, members, following);
             following.remove(root);
+            return;
+        }
+        if let Some((equal, fields)) = self.input.struct_equality_fields(expression) {
+            if equal == (sign == GoalSign::Positive) {
+                for field in fields {
+                    let member = self.intern_goal_expression(field.clone());
+                    if !members.contains(&(member, GoalSign::Positive)) {
+                        members.push((member, GoalSign::Positive));
+                    }
+                    self.collect_decomposition_members(
+                        &field,
+                        GoalSign::Positive,
+                        state,
+                        members,
+                        following,
+                    );
+                }
+            }
             return;
         }
         let GoalExpression::Operation {

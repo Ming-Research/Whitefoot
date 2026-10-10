@@ -2883,7 +2883,7 @@ fn aggregate_range_large_array_reports_the_atom_ceiling() {
 }
 
 #[test]
-fn aggregate_range_large_array_without_integer_projections_is_empty() {
+fn aggregate_range_float_parts_make_the_whole_generic_clause_unformed() {
     let source = field_range_program(
         "struct Flag {\n  value: f32;\n}\n\nfn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<Flag, 1000000000>], value: Array<Flag, 1000000000>) -> result: unit pure {\n  same::<Array<Flag, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
     );
@@ -2896,11 +2896,28 @@ fn aggregate_range_large_array_without_integer_projections_is_empty() {
             .executable_functions()
             .find(|function| function.name == "same")
             .unwrap();
-        assert_eq!(
-            function.range_facts.requirements.len(),
-            1,
-            "the aggregate equality forms even when its projection conjunction is empty"
+        assert!(
+            function.range_facts.requirements.is_empty(),
+            "RANGE-1 admits value equality only at OP-16 equality types; a float part leaves the whole generic clause unformed"
         );
+    });
+}
+
+#[test]
+fn aggregate_range_unit_parts_form_an_empty_conjunction_without_enumerating_elements() {
+    let source = field_range_program(
+        "struct Flag {\n  value: unit;\n}\n\nfn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {\n  requires forall same(k in 0_u64..targets^.len): targets^[k] == value;\n} {\n  return unit;\n}\n\nfn forward(targets: &[Array<Flag, 1000000000>], value: Array<Flag, 1000000000>) -> result: unit pure {\n  same::<Array<Flag, 1000000000>>(targets: targets, value: value);\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "same")
+            .unwrap();
+        assert_eq!(function.range_facts.requirements.len(), 1);
         assert!(function.range_facts.requirements[0].conclusions.is_empty());
     });
 }
@@ -2977,4 +2994,93 @@ fn aggregate_range_symbolic_arrays_defer_the_whole_expansion() {
             "direct/nested, symbolic/concrete instances must all be inspected"
         );
     });
+}
+
+#[test]
+fn nongeneric_equality_forms_bool_tags_and_variant_conditioned_payloads() {
+    use super::super::range_facts::{CheckedRangeProjection as P, CheckedRangeTerm as T};
+    let source = field_range_program(
+        "enum RangeChoice {\n  Absent();\n  Present(index: u64);\n}\n\nstruct RangeRecord {\n  enabled: Bool;\n  choice: RangeChoice;\n}\n\nfn need(xs: &[RangeRecord], v: RangeRecord) -> result: unit pure contract {\n  requires forall same(k in 0_u64..xs^.len): xs^[k] == v;\n} {\n  return unit;\n}\n",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("{outcome:?}")
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|f| f.name == "need")
+            .unwrap();
+        let clauses = &function.range_facts.requirements;
+        assert_eq!(clauses.len(), 1);
+        let expected = [
+            vec![P::Field(0), P::Tag(2)],
+            vec![P::Field(1), P::Tag(2)],
+            vec![
+                P::Field(1),
+                P::Payload {
+                    variant: 1,
+                    field: 0,
+                    variants: 2,
+                },
+            ],
+        ];
+        assert_eq!(clauses[0].conclusions.len(), expected.len());
+        for (relation, expected) in clauses[0].conclusions.iter().zip(expected) {
+            assert!(relation.projected);
+            let T::Read {
+                projection,
+                guarded_from,
+                ..
+            } = &relation.left
+            else {
+                panic!("{relation:?}")
+            };
+            let T::ValueProjection {
+                projection: right, ..
+            } = &relation.right
+            else {
+                panic!("{relation:?}")
+            };
+            assert_eq!(projection, &expected);
+            assert_eq!(right, &expected);
+            assert_eq!(*guarded_from, Some(0));
+        }
+    });
+}
+
+#[test]
+fn nongeneric_noninteger_relations_reject_at_the_relation() {
+    let float =
+        include_str!("../../../../tests/conformance/cases/range1-neg-equality-float-struct.wf");
+    super::assert_rule_at(float.as_bytes(), SemanticRule::Range1, "xs^[k] == v");
+    let integer = float.replace("fraction: f64;", "fraction: u64;");
+    for comparison in ["!=", "<", "<=", ">", ">="] {
+        let relation = format!("xs^[k] {comparison} v");
+        let source = integer.replace("xs^[k] == v", &relation);
+        super::assert_rule_at(source.as_bytes(), SemanticRule::Range1, &relation);
+    }
+}
+
+#[test]
+fn an_integer_projection_after_a_float_struct_is_still_a_range_term() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/range1-neg-equality-float-struct.wf")
+            .replace("v: RangeFloat", "v: u64")
+            .replace("xs^[k] == v", "xs^[k].index == v");
+    with_semantics(source.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn generic_float_struct_equality_exports_no_integer_field_fact() {
+    super::assert_rule_at(
+        include_bytes!("../../../../tests/conformance/cases/range3-neg-aggregate-float-struct.wf"),
+        SemanticRule::Range3,
+        "need(xs: &xs[0_u64..1_u64], expected: value.index)",
+    );
 }

@@ -50,7 +50,7 @@ impl TypeContext<'_> {
             }
         }
         if let Some(ty) = selected {
-            self.require_equality_type(node, ty)?;
+            self.require_equality_type(context.check_context, node, ty, SemanticRule::Op1)?;
         }
         Ok(())
     }
@@ -149,6 +149,7 @@ impl TypeContext<'_> {
 
     pub(in crate::semantic::check) fn check_equality_operand_types(
         &self,
+        context: &CheckContext<'_>,
         node: NodeId,
         operands: &[(NodeId, TypedExpression)],
     ) -> Result<(), CheckStop> {
@@ -178,13 +179,19 @@ impl TypeContext<'_> {
                 },
             );
         }
-        self.require_equality_type(node, selected)
+        self.require_equality_type(context, node, selected, SemanticRule::Op1)
     }
 
-    fn require_equality_type(&self, node: NodeId, ty: CheckedType) -> Result<(), CheckStop> {
-        if let Some((part, rejected)) = self.first_non_equality_part(ty)? {
+    pub(in crate::semantic::check) fn require_equality_type(
+        &self,
+        context: &CheckContext<'_>,
+        node: NodeId,
+        ty: CheckedType,
+        rule: SemanticRule,
+    ) -> Result<(), CheckStop> {
+        if let Some((part, rejected)) = self.first_non_equality_part(context, ty)? {
             return self.declarations.issue_node(
-                SemanticRule::Op1,
+                rule,
                 node,
                 SemanticIssueKind::InvalidEqualityType {
                     mechanical_fix: super::super::repairs::value_equality_repair(
@@ -200,8 +207,9 @@ impl TypeContext<'_> {
     /// Instances in the inventory already have their arguments substituted.
     /// Reverse insertion makes this depth-first walk visit fields, variants
     /// and payload fields in declaration order, including private fields.
-    fn first_non_equality_part(
+    pub(in crate::semantic::check) fn first_non_equality_part(
         &self,
+        context: &CheckContext<'_>,
         ty: CheckedType,
     ) -> Result<Option<(String, CheckedType)>, CheckStop> {
         let mut pending = vec![(String::from("operand type"), ty)];
@@ -212,6 +220,9 @@ impl TypeContext<'_> {
                 | CheckedType::Bool
                 | CheckedType::Integer(_)
                 | CheckedType::GenericInt(_) => {}
+                CheckedType::Generic(declaration)
+                    if self.generic_parameter_bound(context, declaration)?
+                        == super::super::generics::GenericBound::Eq => {}
                 CheckedType::Array { element, .. } => {
                     pending.push((format!("{path}, element type"), self.element_type(element)?));
                 }
@@ -245,9 +256,10 @@ impl TypeContext<'_> {
                                 }
                             }
                         }
-                        CheckedNominalKind::Opaque
-                        | CheckedNominalKind::Box { .. }
-                        | CheckedNominalKind::Shared { .. } => return Ok(Some((path, ty))),
+                        CheckedNominalKind::Opaque => {}
+                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. } => {
+                            return Ok(Some((path, ty)));
+                        }
                     }
                 }
                 _ => return Ok(Some((path, ty))),

@@ -492,8 +492,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -568,8 +572,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             Production::AffineTerm => {
                 let factors = self
@@ -610,6 +618,7 @@ impl<'unit> Checker<'_, 'unit> {
                             )?,
                         );
                         self.types.check_integer_operation_operands(
+                            context.check_context,
                             node,
                             CheckedIntegerOperation::MultiplyExact,
                             vec![left, right],

@@ -211,8 +211,12 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
             operands.push((atom, checked));
         }
-        self.types
-            .check_integer_operation_operands(node, operation, operands)
+        self.types.check_integer_operation_operands(
+            context.check_context,
+            node,
+            operation,
+            operands,
+        )
     }
 
     /// The written type pair of the conversion and reinterpretation rows.
@@ -496,6 +500,7 @@ impl<'unit> TypeContext<'unit> {
     /// and reached from both the written-atom and the affine paths.
     pub(in crate::semantic::check) fn check_integer_operation_operands(
         &mut self,
+        context: &super::super::CheckContext<'_>,
         node: NodeId,
         operation: CheckedIntegerOperation,
         operands: Vec<(NodeId, TypedExpression)>,
@@ -512,7 +517,7 @@ impl<'unit> TypeContext<'unit> {
             operation,
             CheckedIntegerOperation::Equal | CheckedIntegerOperation::NotEqual
         ) {
-            self.check_equality_operand_types(node, &operands)?;
+            self.check_equality_operand_types(context, node, &operands)?;
             let operand_type = operands[0].1.expression.ty();
             if !matches!(
                 operand_type,

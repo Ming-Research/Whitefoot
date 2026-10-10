@@ -1858,7 +1858,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     // D7 removes this type-attached contract mechanism. A formal group in
-    // the numeric-bound position is separately refused by name resolution.
+    // the built-in-bound position is separately refused by name resolution.
     assert_parse_rule(source, crate::SyntaxRule::Gram2);
 }
 

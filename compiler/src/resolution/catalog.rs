@@ -3,7 +3,7 @@ use super::{
     ReservedNameClass,
 };
 
-pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 25] = [
+pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 26] = [
     prelude(
         BuiltinPreludeId::BOOL,
         "Bool",
@@ -93,12 +93,17 @@ pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 25] = [
     prelude(
         BuiltinPreludeId::INT,
         "Int",
-        Some(DeclarationClass::NumericBound),
+        Some(DeclarationClass::BuiltinBound),
     ),
     prelude(
         BuiltinPreludeId::FLOAT,
         "Float",
-        Some(DeclarationClass::NumericBound),
+        Some(DeclarationClass::BuiltinBound),
+    ),
+    prelude(
+        BuiltinPreludeId::EQ,
+        "Eq",
+        Some(DeclarationClass::BuiltinBound),
     ),
     prelude(
         BuiltinPreludeId::RUN,
@@ -261,7 +266,7 @@ mod tests {
 
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
-        assert_eq!(PRELUDE_DECLARATIONS.len(), 25);
+        assert_eq!(PRELUDE_DECLARATIONS.len(), 26);
         assert_eq!(OPERATION_FAMILIES.len(), 88);
         assert_eq!(
             OPERATION_FAMILIES
@@ -365,7 +370,7 @@ mod tests {
     /// storage shapes and the cell `Box` — which this catalog does not carry:
     /// those are parsed prelude records whose declarations are ordinary
     /// source text. The records read here are the enums of the enum fence
-    /// that follows, plus the two numeric bounds the sentence after it names.
+    /// that follows, plus the three built-in bounds the sentence after it names.
     fn extract_prelude_records(spec: &str) -> Vec<(String, Option<DeclarationClass>)> {
         let (block, after) = spec
             .split_once("[PRE-1] The prelude contributes")
@@ -427,8 +432,10 @@ mod tests {
             }
         }
         assert!(after.contains("The two built-in numeric bounds `Int` and `Float`"));
-        records.push(("Int".to_owned(), Some(DeclarationClass::NumericBound)));
-        records.push(("Float".to_owned(), Some(DeclarationClass::NumericBound)));
+        records.push(("Int".to_owned(), Some(DeclarationClass::BuiltinBound)));
+        records.push(("Float".to_owned(), Some(DeclarationClass::BuiltinBound)));
+        assert!(after.contains("the built-in equality bound `Eq`"));
+        records.push(("Eq".to_owned(), Some(DeclarationClass::BuiltinBound)));
         assert!(after.contains("the reference-kind name `Run`"));
         records.push(("Run".to_owned(), Some(DeclarationClass::NominalType)));
         records
