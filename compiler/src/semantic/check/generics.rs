@@ -1308,9 +1308,18 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         self.analysis.symbolic_const_types = const_types;
+        self.analysis.symbolic_type_bounds = self
+            .types
+            .generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type { declaration, bound } => Some((*declaration, *bound)),
+                _ => None,
+            })
+            .collect();
         let phase_a = self.check_function_view(check_context, Vec::new());
         self.analysis.symbolic_canonical.clear();
         self.analysis.symbolic_const_types.clear();
+        self.analysis.symbolic_type_bounds.clear();
         self.analysis.symbolic_admitted.clear();
         let mut phase_a = phase_a?;
         self.types.close_allocation_metadata(&mut phase_a)?;
@@ -2550,6 +2559,43 @@ pub(super) fn symbolic_renaming_class(
         kinds.push(kind);
     }
     (!kinds.is_empty()).then_some((signature.declaration, kinds))
+}
+
+/// Whether a renamed symbolic instance supplies, for each of its
+/// declaration's parameters, an argument the body treats as it treats that
+/// parameter at the canonical instance: a type parameter carrying the same
+/// bound, or the same interface member, whose contract and `waits` are
+/// shared. Kinds and const types are the renaming class's; a raw
+/// function-kind parameter supplied by another declaration's is not shared,
+/// so such an instance is checked and analyzed itself [FN-2, FN-3].
+pub(super) fn renames_canonical_parameters(
+    signature: &FunctionSignature,
+    bounds: &HashMap<DeclarationId, GenericBound>,
+) -> bool {
+    signature
+        .substitution
+        .bindings()
+        .iter()
+        .all(|(key, argument)| match (key, argument) {
+            (
+                GenericParameterKey::Source(own),
+                GenericArgument::Type(
+                    CheckedType::Generic(actual)
+                    | CheckedType::GenericInt(actual)
+                    | CheckedType::GenericFloat(actual),
+                ),
+            ) => bounds
+                .get(own)
+                .is_some_and(|bound| bounds.get(actual) == Some(bound)),
+            (_, GenericArgument::Const(CheckedConst::Parameter(_))) => true,
+            (
+                GenericParameterKey::Member { member, .. },
+                GenericArgument::Function(super::behavior::FunctionArgument::Parameter(
+                    GenericParameterKey::Member { member: actual, .. },
+                )),
+            ) => member == actual,
+            _ => false,
+        })
 }
 
 /// What a symbolic instance's callers read of another instance's analysis:

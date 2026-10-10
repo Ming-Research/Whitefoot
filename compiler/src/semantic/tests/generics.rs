@@ -836,8 +836,8 @@ fn main() -> status: std::process::ExitStatus pure {
 /// [FN-9] symbolic validation of a generic body analyzes the callees whose
 /// summaries it reads, transitively: `seven`'s postcondition is proved only
 /// through `base`'s, and the generic body's subtraction is proved only
-/// through `seven`'s. `noise` publishes no summary, so its analysis is
-/// skipped without changing the verdict.
+/// through `seven`'s. `noise` publishes no summary, which the verdict does
+/// not need.
 #[test]
 fn a_generic_body_reads_a_summary_proved_through_another_summary() {
     let source = br#"fn base() -> r: u64 pure contract {
@@ -902,6 +902,37 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(
             matches!(outcome, SemanticOutcome::Complete(_)),
             "the renamed instance's summary proves the caller's subtraction: {outcome:?}"
+        );
+    });
+}
+
+/// [WAIT-3, FN-2] `run::<U>` inside `outer` renames `run`'s own symbolic
+/// instance, so its body is not checked again; the spawn in that body was
+/// recorded as a waiting call when the canonical instance was checked.
+#[test]
+fn a_renamed_symbolic_instance_keeps_its_bodys_spawn_admitted() {
+    let source = br#"fn weigh(weight: u64) -> r: u64 pure waits {
+  return weight;
+}
+
+fn run<T: copy>(value: T) -> r: T pure waits {
+  spawn weigh(weight: 7_u64);
+  return value;
+}
+
+fn outer<U: copy>(value: U) -> r: U pure waits {
+  let v = run::<U>(value: value);
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "a renamed instance's spawn is admitted by its canonical body check: {outcome:?}"
         );
     });
 }

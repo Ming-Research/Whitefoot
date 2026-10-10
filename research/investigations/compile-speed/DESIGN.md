@@ -277,8 +277,9 @@ before these criteria were written; their results below are the same runs.
    may hide their cost.
 
 11. **Contract-only renamed instances.** A non-canonical symbolic instance
-   whose arguments are distinct symbolic parameters of the kinds and const
-   types of its declaration's canonical instance forms only its contract,
+   whose arguments are distinct symbolic parameters of the kinds, const
+   types, type bounds and interface members of its declaration's canonical
+   instance forms only its contract,
    admits the schema clauses the canonical instance admits, and takes the
    canonical instance's outcomes; an edge to the canonical instance in the
    postcondition schedule orders it after that instance or into its
@@ -426,8 +427,11 @@ byte-identical to main `fe5589ec5`'s, whose emission took 72.8 s against 44.8 s
 with both candidates (one GitHub-hosted run each). The function analyses fall to
 577 from main's 1227. A verification patch that also checked and analyzed every
 contract-only instance found its admitted clauses equal to the canonical
-instance's in all 8,364 comparisons and its body disposition, invariant
-outcomes and postcondition proofs equal to the copied ones in all 6,810. On the
+instance's in all 8,364 comparisons, and its body disposition kind and the
+discharge status of every invariant and postcondition proof equal to the
+copied ones in all 6,810 analyses of instances in the analysis scope. That
+patch predates the bound and interface-member conditions, which only narrow
+the instances it covered. On the
 i9-14900K, under candidate 10's conditions:
 
 | Compiler | median wall | range | peak RSS |

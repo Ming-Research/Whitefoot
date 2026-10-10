@@ -693,6 +693,7 @@ struct AnalysisState {
     /// written types the class reads [FN-2].
     symbolic_canonical: HashMap<DeclarationId, (FunctionId, generics::RenamingClass)>,
     symbolic_const_types: HashMap<DeclarationId, super::model::IntegerType>,
+    symbolic_type_bounds: HashMap<DeclarationId, generics::GenericBound>,
     /// During symbolic validation only: the positions, among its postcondition
     /// selectors, of the clauses each checked canonical instance admits as
     /// schema summaries. An instance taking that instance's outcomes admits
@@ -1769,6 +1770,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     )
                     .as_ref()
                         == Some(class)
+                    && generics::renames_canonical_parameters(
+                        signature,
+                        &self.analysis.symbolic_type_bounds,
+                    )
             })
             .map(|(canonical, _)| *canonical);
         self.check_musttail_callees(FunctionContext {
@@ -1926,7 +1931,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        self.check_spawned_callees_wait(signature)?;
+        // [WAIT-3] the canonical instance's body check recorded the waiting
+        // calls of these same source spawns.
+        if summary_source.is_none() {
+            self.check_spawned_callees_wait(signature)?;
+        }
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
@@ -1950,15 +1959,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 request: None,
             }));
         }
-        // A renamed instance's declared row stands in for a body it does not
-        // check; the template's written-body row stays the canonical
-        // instance's, which every concrete instance reads.
-        let exhibited = if summary_source.is_some() {
-            checked.effects.clone()
-        } else {
-            self.analysis
-                .written_body_effects(signature, checked.effects.clone())
-        };
+        let exhibited = self
+            .analysis
+            .written_body_effects(signature, checked.effects.clone());
         if !declaration_only {
             self.types
                 .exhibited_writes
@@ -3178,9 +3181,14 @@ impl<'unit> TypeContext<'unit> {
                 checked.function.body.as_deref().unwrap_or_default(),
                 &mut calls,
             );
-            for call in &calls {
-                let callee = call.callee.0 as usize;
-                let Some(callee_callers) = callers.get_mut(callee) else {
+            // [FN-2] a contract-only renamed instance allocates when the
+            // canonical body it stands for does.
+            for callee in calls
+                .iter()
+                .map(|call| call.callee)
+                .chain(checked.function.summary_source)
+            {
+                let Some(callee_callers) = callers.get_mut(callee.0 as usize) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 callee_callers.push(index);
