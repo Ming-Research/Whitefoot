@@ -360,7 +360,11 @@ impl CallStorageEffects {
                     let overlaps = match (&release.place, &borrow.place) {
                         // A loaded owner slot is not storage of any place
                         // below it: those lie in the block it points to, and a
-                        // release frees and writes only its own subtree.
+                        // release frees and writes only its own subtree. Path
+                        // length alone is not ancestry (a range step and an
+                        // index name one slot at different depths); the full
+                        // formation borrow recorded beside every slot still
+                        // meets such a release.
                         (Some(release), Some(slot)) if borrow.owner => {
                             release.path.len() <= slot.path.len()
                                 && places_overlap(oracle, release, slot)
