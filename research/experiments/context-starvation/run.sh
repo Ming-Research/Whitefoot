@@ -99,7 +99,8 @@ def sample(phase, repetition, drivers, count, cpus="0"):
     # observation, not an internal deadline-to-continuation measurement.
     if (any(match is None for match in matches)
             or [int(match[1]) for match in matches] != list(range(len(matches)))
-            or not 1 <= len(matches) <= drivers):
+            or len(matches) > drivers
+            or (drivers > 1 and not matches)):
         raise RuntimeError(f"missing or malformed per-driver counters in {report_path}")
     transfers, ingress, misses = (sum(int(match[i]) for match in matches) for i in (2, 3, 4))
     checksum = int.from_bytes(data["compute"][1:9], "little")

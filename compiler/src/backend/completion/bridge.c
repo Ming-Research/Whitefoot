@@ -1593,6 +1593,15 @@ static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
 static void wf_bridge_print_report(void) {
     unsigned long wanted = 0;
     if (!wf__sched_setting("WF_SCHED_REPORT", 2ul, &wanted) || wanted != 2u) return;
+    /* A program that never started a second driver and never handed a role
+     * over keeps its report to the compute line alone. */
+    if (atomic_load_explicit(&wf_driver_stats_count, memory_order_acquire) < 2u) {
+        const wf_driver_statistics *only = &wf_driver_stats[0];
+        if (atomic_load_explicit(&only->reassignments, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&only->ingress_commits, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&only->reserve_misses, memory_order_relaxed) == 0u)
+            return;
+    }
     char buffer[512];
     for (unsigned index = 0; wf_driver_report(index, buffer, sizeof(buffer)); ++index)
         fprintf(stderr, "%s\n", buffer);
