@@ -15,7 +15,10 @@ fn heap_digits(value: u64) -> result: Array<u8, 20> pure {
 
 fn heap_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, step: u8, before: u64, after: u64) -> result: Bool writes(factory), writes(output) waits {
   doc "Prints saved readings only; callers finish measuring before invoking this waiting I/O path. Step 009 on witness stderr names its unchanged failure code; diag stdout step meanings are in DIAGNOSTICS.md.";
-  let text = heap_report_pattern;
+  let text = array_filled::<u8, 97>(value: 0_u8);
+  for (index in 0_u64..97_u64) {
+    set text[index] = heap_report_pattern[index];
+  }
   let number = cvt::<u8, u64>(step);
   let step_digits = heap_digits(value: number);
   set text[5_u64] = step_digits[17_u64];
