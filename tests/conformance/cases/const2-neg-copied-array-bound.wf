@@ -1,6 +1,6 @@
-const PATTERN: Array<u8, 5> = "abcde";
+const pattern: Array<u8, 5> = "abcde";
 
 fn outside() -> result: u8 pure {
-  let text = PATTERN;
+  let text = pattern;
   return text[5_u64];
 }

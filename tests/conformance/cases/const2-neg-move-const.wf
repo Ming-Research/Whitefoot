@@ -1,6 +1,6 @@
-const PATTERN: Array<u8, 5> = "abcde";
+const pattern: Array<u8, 5> = "abcde";
 
 fn copied() -> result: Array<u8, 5> pure {
-  let t = move PATTERN;
+  let t = move pattern;
   return t;
 }
