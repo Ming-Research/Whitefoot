@@ -302,7 +302,7 @@ impl IrBuilder<'_> {
         storage: IrValueId,
     ) -> Result<Option<IrValueId>, LoweringFailure> {
         let address = match target {
-            CheckedSetTarget::Storage(root) => self.lower_place_address(root)?,
+            CheckedSetTarget::Storage(root) => self.lower_write_place_address(root)?,
             CheckedSetTarget::Place(place)
                 if matches!(self.value_type(storage)?, IrType::Address(_)) =>
             {
@@ -319,7 +319,8 @@ impl IrBuilder<'_> {
         Ok(Some(address))
     }
 
-    pub(super) fn lower_place_address(
+    /// Resolve a write target, locking or materializing held map entries on its path.
+    pub(super) fn lower_write_place_address(
         &mut self,
         root: &crate::semantic::CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {

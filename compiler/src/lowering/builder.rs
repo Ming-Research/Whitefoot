@@ -2178,7 +2178,7 @@ impl<'program> IrBuilder<'program> {
                 self.lower_range_element_measure(*measure, place)
             }
             CheckedExpression::ReadStorage { root, .. } => {
-                let address = self.lower_place_address(root)?;
+                let address = self.lower_place_address_access(root, false)?;
                 self.load_storage_value(address)
             }
             CheckedExpression::BufferIndex {
@@ -2362,7 +2362,7 @@ impl<'program> IrBuilder<'program> {
                         ty: *ty,
                         proof_base: None,
                     };
-                    let address = self.lower_place_address(&root)?;
+                    let address = self.lower_place_address_access(&root, false)?;
                     return self.load_storage_value(address);
                 }
                 let root = self.binding_value(*binding)?;

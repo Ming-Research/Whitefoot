@@ -2141,15 +2141,17 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 
 #[test]
-fn table_borrows_materialize_only_writable_roots() {
+fn table_reads_and_borrows_materialize_only_writable_roots() {
     let source = br#"const names: Array<u8, 2> =[97_u8, 98_u8];
 
 fn read(store: &Shared<ConcurrentHashMap<u8>>, keys: &KeySet) -> result: unit reads(store), reads(keys) waits {
+  doc "Reads entries by reference and value without materializing cells.";
   let first = &names[0_u64..1_u64];
   let second = &names[1_u64..2_u64];
   atomic t = &store^ {
     let a = &t^[first];
     let b = &t^[second];
+    let copied = t^[first];
     let es = &t^[keys^];
     let unused = es^.len;
   }
@@ -2157,6 +2159,7 @@ fn read(store: &Shared<ConcurrentHashMap<u8>>, keys: &KeySet) -> result: unit re
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
+  doc "A whole-entry write retains its materializing selector before the read-only helper.";
   let store = shared_map_new::<u8>(capacity: 2_u64);
   let keys = key_set_new(capacity: 2_u64);
   let first = &names[0_u64..1_u64];
@@ -2188,24 +2191,25 @@ fn main() -> status: std::process::ExitStatus pure waits {
             .collect::<Vec<_>>();
         assert_eq!(
             selections,
-            [false, false],
+            [false, false, false],
             "whole-map readers must never materialize cells"
         );
-        assert!(
-            reader
-                .blocks()
-                .iter()
-                .flat_map(|block| block.instructions())
-                .any(|instruction| matches!(
-                    instruction,
-                    IrInstruction::Define {
-                        operation: IrOperation::TableHeldEntries {
-                            read_record: Some(_),
-                            ..
-                        },
-                        ..
-                    }
-                ))
+        let entries = reader
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::TableHeldEntries { read_record, .. },
+                    ..
+                } => Some(read_record.is_some()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            [true],
+            "borrowed entries must use a read descriptor"
         );
         let writer = function(program, "main");
         assert!(

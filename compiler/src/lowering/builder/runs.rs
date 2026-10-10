@@ -65,7 +65,7 @@ impl IrBuilder<'_> {
             }
             MeasureCell::ExactExtent | MeasureCell::ExactRuntime | MeasureCell::Bounded => {
                 let container = if matches!(root.ty, CheckedType::Segments { .. }) {
-                    self.lower_place_address(root)?
+                    self.lower_place_address_access(root, false)?
                 } else {
                     self.container_root_value(root)?
                 };
@@ -151,7 +151,7 @@ impl IrBuilder<'_> {
         root: &CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
         let Some(binding) = root.binding() else {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         };
         if self
             .bindings
@@ -159,7 +159,7 @@ impl IrBuilder<'_> {
             .copied()
             .is_some_and(|storage| matches!(self.value_type(storage), Ok(IrType::Address(_))))
         {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         }
         let value = self.binding_value(binding)?;
         let value = self.project_place_path(value, &root.path)?;
