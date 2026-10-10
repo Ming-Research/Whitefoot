@@ -1579,10 +1579,14 @@ static void wf_bridge_print_report(void) {
     if (!wf__sched_setting("WF_SCHED_REPORT", 2ul, &wanted) || wanted != 2u) return;
     char buffer[512];
     if (wf__bridge_report(buffer, sizeof(buffer))) fprintf(stderr, "%s\n", buffer);
+    /* Borrowing and stealing need a second driver; a one-driver program's
+     * report stays the compute line alone. */
+    if (atomic_load_explicit(&wf_driver_stats_count, memory_order_acquire) < 2u) return;
     for (unsigned index = 0; wf_driver_report(index, buffer, sizeof(buffer)); ++index)
         fprintf(stderr, "%s\n", buffer);
 }
 
+#if defined(__linux__)
 /* A new executor may already have captured a one-driver, unbounded wait.
  * Publish first, then advance its wake epoch and signal its wait endpoint:
  * either it sees the new count or its obsolete park is woken/rejected. */
@@ -1591,6 +1595,7 @@ static inline void wf_driver_publish_started(wf_driver *driver) {
     atomic_store_explicit(&wf_driver_count, driver->index + 1u, memory_order_release);
     wf_completion_notify_target(driver->runtime);
 }
+#endif
 
 static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
