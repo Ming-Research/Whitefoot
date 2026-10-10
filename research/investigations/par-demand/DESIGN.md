@@ -946,3 +946,16 @@ and 1.043, whose spreads (17 to 20 percent) cover those medians. Most cells'
 spreads still exceed 2 percent, so under the current noise measure they
 decide nothing; that measure awaits the owner. The optimized-site inspection
 the rule requires is the remaining step before any cell can count as a pass.
+
+## Inspection of the seventh rerun's images
+
+`research/experiments/par-demand/inspection-38016588285.json` records, per
+workload, from the seventh rerun's optimized images, that the timed work
+survives optimization in all twelve workloads and what each decision point on
+its path compiled to; every surviving poll is a `GOTTPOFF` load and an
+`%fs`-relative load. The inspection was written by a read-only model from the
+images and checked by a second read. Two findings: `small_constant`'s site
+was denied parallel admission, so the workload never exercises literal
+pruning of an admitted site, and pruning is untested by this set; `prefix` and
+`histogram` run demand slice drivers in these images, not the legacy splitter
+an earlier note assumed for indexed reductions.
