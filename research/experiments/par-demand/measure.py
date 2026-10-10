@@ -12,7 +12,7 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, attempt_result,
+from summarize import (E5A_PADDING, experiment_matrix, parse_experiment, attempt_result,
                        attempt_result_e2, attempt_result_e4, e2_excluded, load, summarize)
 
 
@@ -54,11 +54,11 @@ def cpu_list(text):
 
 
 def performance_cores(root=Path("/sys/devices/system/cpu"),
-                      performance_file=Path("/sys/devices/cpu_core/cpus"), available=None):
+                      performance_file=Path("/sys/devices/cpu_core/cpus"), available=None, minimum_cores=8):
     """One first sibling per P-core; homogeneous hosts fall back to all cores.
 
     Keep source contents (not only a derived CPU count) in identity.json. A
-    restricted affinity must still include eight distinct selected P-cores;
+    restricted affinity must still include the requested number of P-cores;
     never silently substitute SMT siblings or efficiency cores.
     """
     files = {}
@@ -91,8 +91,8 @@ def performance_cores(root=Path("/sys/devices/system/cpu"),
     if cpuinfo.exists():
         record(cpuinfo)
     cores = sorted(firsts)
-    if len(cores) < 8:
-        raise ValueError(f"experiments 2, 3 and 4 need eight performance cores with their first siblings allowed; found {cores}")
+    if len(cores) < minimum_cores:
+        raise ValueError(f"need {minimum_cores} performance cores with their first siblings allowed; found {cores}")
     return cores, dict(files=files, available_cpus=sorted(available),
                        performance_cpus=sorted(performance) if performance is not None else None,
                        performance_source=str(performance_file) if performance is not None else "all cores (P-core file absent)")
@@ -100,26 +100,58 @@ def performance_cores(root=Path("/sys/devices/system/cpu"),
 
 def demand_setting(experiment, arm):
     return "on" if (experiment == 2 and arm in ("demand", "idle1", "twin")
-                    or experiment in (3, 4) and arm not in ("seq", "par")) else "off-never-request"
+                    or experiment in (3, 4) and arm not in ("seq", "par")
+                    or experiment == "5a" and arm in ("demand", "twin")) else "off-never-request"
+
+
+def layout_identity(build, manifest):
+    """Require real text shifts of the reused seq object; retain linked offsets.
+
+    These ELF images are built on Linux by the hosted job. A linker that
+    discards or reorders padding fails construction rather than measuring a
+    control that changed no placement.
+    """
+    def symbols(path):
+        result = {}
+        for line in run(["nm", "-n", "--defined-only", str(path)], capture_output=True).stdout.splitlines():
+            fields = line.split()
+            if len(fields) == 3 and fields[1] in ("t", "T"):
+                result[fields[2]] = int(fields[0], 16)
+        return result
+    result = {}
+    for name in manifest:
+        wf_object = build / "seq" / f"{name}.o"
+        owned = symbols(wf_object)
+        if not owned:
+            raise ValueError(f"{name}: seq object has no text symbols")
+        base = symbols(build / "seq" / name)
+        offsets = {"seq": {symbol: base[symbol] for symbol in owned}}
+        for arm, size in E5A_PADDING.items():
+            shifted = symbols(build / arm / name)
+            offsets[arm] = {symbol: shifted[symbol] for symbol in owned}
+            if any(shifted[symbol] - base[symbol] != size for symbol in owned):
+                raise ValueError(f"{name}/{arm}: linked WF text did not shift by {size} bytes")
+        result[name] = dict(wf_object_sha256=hashlib.sha256(wf_object.read_bytes()).hexdigest(),
+                            padding_bytes=E5A_PADDING, linked_text_offsets=offsets)
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--rounds", type=int)
-    parser.add_argument("--experiment", type=int, choices=(1, 2, 3, 4), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a"), default=1)
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    if args.experiment in (3, 4) and args.rounds is not None:
-        parser.error("experiments 3 and 4 select their rounds from six sizing rounds; omit --rounds")
+    if args.experiment in (3, 4, "5a") and args.rounds is not None:
+        parser.error("experiments 3, 4 and 5a select their rounds from six sizing rounds; omit --rounds")
     if args.instrumented and (args.experiment != 3 or args.sizing or args.verify_only):
         parser.error("--instrumented requires experiment 3 without sizing or verify-only")
     if args.rounds is None:
         args.rounds = 30 if args.experiment == 2 else 10
-    arms_for_run = E4_ARMS if args.experiment == 4 else E3_ARMS if args.experiment == 3 else E2_ARMS if args.experiment == 2 else ARMS
-    widths_for_run = E3_WIDTHS if args.experiment == 3 else WIDTHS
+    arms_for_run, widths_for_run, manifest = experiment_matrix(args.experiment)
     if args.rounds < 1:
         parser.error("rounds must be positive")
     build = args.build.resolve()
@@ -130,21 +162,26 @@ def main():
         env.pop(variable, None)
     env["WF_PAR_DEMAND"] = "off-never-request"
     hashes = {}
-    for name in MANIFEST:
+    for name in manifest:
         digest = lambda arm: hashlib.sha256((build / arm / name).read_bytes()).hexdigest()
         hashes[name] = {arm: digest(arm) for arm in arms_for_run}
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
     topology = None
-    if args.experiment in (2, 3, 4) and not args.verify_only:
+    if args.experiment in (2, 3, 4, "5a") and not args.verify_only:
         if platform.system() != "Linux" or shutil.which("taskset") is None:
-            raise ValueError("experiments 2, 3 and 4 require Linux topology and taskset pinning")
-        cores, topology = performance_cores()
+            raise ValueError("experiments 2, 3, 4 and 5a require Linux topology and taskset pinning")
+        cores, topology = performance_cores(minimum_cores=1) if args.experiment == "5a" else performance_cores()
     else:
         # Verification has no timing verdict and may run on the hosted sizing
         # machine. Every experiment-2 timing batch, sizing included, is strict.
         cores = one_cpu_per_core()
     pinned = {width: cores[:max(width, 1)] for width in widths_for_run} if len(cores) >= max(widths_for_run) else {}
+    if args.experiment == "5a" and not args.verify_only:
+        if 2 not in cores or topology["performance_cpus"] is None or 2 not in topology["performance_cpus"]:
+            raise ValueError("experiment 5a requires CPU 2 to be an allowed first P-core sibling")
+        pinned = {1: [2]}
+    layout = layout_identity(build, manifest) if args.experiment == "5a" else None
     def pin(width, command):
         cpus = pinned.get(width)
         return ["taskset", "-c", ",".join(map(str, cpus))] + command if cpus else command
@@ -153,13 +190,13 @@ def main():
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
-                    setting="on" if args.experiment in (2, 3, 4) else "off-never-request", manifest=MANIFEST,
-                    instrumented=args.instrumented)
+                    setting="on" if args.experiment in (2, 3, 4, "5a") else "off-never-request", manifest=manifest,
+                    instrumented=args.instrumented, layout=layout)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
-        for name in MANIFEST:
+        for name in manifest:
             for arm in arms_for_run:
-                for width in widths_for_run if args.experiment in (2, 3, 4) else (1, 4):
+                for width in widths_for_run if args.experiment in (2, 3, 4, "5a") else (1, 4):
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
                             env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND=setting))
@@ -167,7 +204,7 @@ def main():
     if args.instrumented:
         output_dir = build / "counters"
         output_dir.mkdir(exist_ok=True)
-        for name, meta in MANIFEST.items():
+        for name, meta in manifest.items():
             settings = dict(env)
             if "repetitions" in meta:
                 settings.update(WFD_REPETITIONS=str(meta["repetitions"]), WFD_EXTENT=str(meta["extent"]))
@@ -182,16 +219,16 @@ def main():
     def batch(attempt, selected):
         with path.open("w" if attempt == 1 else "a") as output:
             for round_id in range(args.rounds):
-                names = list(MANIFEST)
+                names = list(manifest)
                 names = names[round_id % len(names):] + names[:round_id % len(names)]
                 if round_id % 2:
                     names.reverse()
                 for name in names:
-                    meta = MANIFEST[name]
+                    meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
-                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4) else meta["repetitions"])
-                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4) else meta["extent"])
+                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a") else meta["repetitions"])
+                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a") else meta["extent"])
                     widths = list(widths_for_run)
                     widths = widths[round_id % len(widths):] + widths[:round_id % len(widths)]
                     for width in widths:
@@ -208,8 +245,8 @@ def main():
                                 env=dict(settings, WF_WORKERS=str(width),
                                          WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
-    selected = {(name, width) for name in MANIFEST for width in widths_for_run}
-    if args.experiment in (3, 4):
+    selected = {(name, width) for name in manifest for width in widths_for_run}
+    if args.experiment in (3, 4, "5a"):
         args.rounds = 6
         batch(1, selected)
         sample = summarize(path, sizing=True, experiment=args.experiment)
@@ -224,14 +261,14 @@ def main():
         (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         if args.sizing:
             return
-        if args.experiment == 3:
+        if args.experiment in (3, "5a"):
             batch(1, selected)
-            (build / "summary.json").write_text(json.dumps(summarize(path, experiment=3), indent=2) + "\n")
+            (build / "summary.json").write_text(json.dumps(summarize(path, experiment=args.experiment), indent=2) + "\n")
             return
     batch(1, selected)
     groups = load(path, args.experiment)
     def decisions(name):
-        meta = MANIFEST[name]
+        meta = manifest[name]
         repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if args.sizing else meta.get("repetitions", 0)
         return meta.get("decisions_per_repetition", 0) * repetitions
     inspection_path = build / "inspection.json"

@@ -281,3 +281,23 @@ tests compare explicit `none` with an omitted ablation; backend tests check
 each arm's structure and default emission after compiling the arms. The
 existing pre-prototype `--par` comparison remains wired. All these checks are
 CI obligations, not verified results of this uncommitted implementation.
+
+
+## Experiment 5a: layout-floor control
+
+Select `par_demand_experiment=5a`, `placement_runner=14900k`, with
+`placement_rounds` empty. The [preregistration](../../investigations/par-demand/DESIGN.md#experiment-5a-the-layout-floor-control-fixed-before-it-measures)
+owns construction, sizing and reading. All six kernels run at W=1 on CPU 2,
+with seq, par, demand, its identical twin and three shifted-seq images. The
+shifted arms reuse the exact seq objects and add 64, 4160 or 65664 bytes of
+uncalled text before the WF object; the driver checks and records their
+linked symbol offsets. No compiler change is made.
+
+The native job saves six full-work sizing rounds in `sizing-e5a/`, freezes
+6–30 decisive rounds by the E4 rule, and reports per-round ratio medians and
+95% bootstrap intervals beside demand/par W=1 losses. `summary.json` includes
+`layout_verdict`: `reject-image-layout`, `instrument-floor` or `inconclusive`.
+Sizing and a disagreeing twin cannot decide attribution. This reading leaves
+experiment 4's thresholds and verdicts intact. CI runs `build verify` and
+`measure` with `EXPERIMENT=5a`; `summarize` can reproduce the saved result with
+the same selection. Do not run these commands locally.

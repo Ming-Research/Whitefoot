@@ -21,14 +21,29 @@ ARMS = ("seq", "demand", "par", "twin")
 E2_ARMS = ("seq", "par", "demand", "idle1", "twin")
 E3_ARMS = ("seq", "par", "demand", "twin", "order", "seed", "extent", "dedup")
 E4_ARMS = ("seq", "par", "demand", "static", "twin")
+# Three nonzero shifts; ordinary seq is the zero-padding baseline.
+E5A_PADDING = {"seq-shift64": 64, "seq-shift4160": 4160, "seq-shift65664": 65664}
+E5A_ARMS = ("seq", "par", "demand", "twin", *E5A_PADDING)
+E5A_MANIFEST = {name: MANIFEST[name] for name in
+                ("mandelbrot", "records", "fir", "stencil", "prefix", "histogram")}
 E3_WIDTHS = (4, 8)
 WIDTHS = (1, 4, 8)
 FIELDS = ("workload", "arm", "width", "round", "attempt", "sample", "wall_ns", "cpu_ns", "count")
 
 
+def parse_experiment(value):
+    return "5a" if value == "5a" else int(value)
+
+
+def experiment_matrix(experiment):
+    if experiment == "5a":
+        return E5A_ARMS, (1,), E5A_MANIFEST
+    arms = E4_ARMS if experiment == 4 else E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
+    return arms, E3_WIDTHS if experiment == 3 else WIDTHS, MANIFEST
+
+
 def load(path, experiment=1, sample_index=1):
-    expected_arms = E4_ARMS if experiment == 4 else E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
-    expected_widths = E3_WIDTHS if experiment == 3 else WIDTHS
+    expected_arms, expected_widths, manifest = experiment_matrix(experiment)
     counts = {}
     groups = {}
     seen = set()
@@ -38,23 +53,23 @@ def load(path, experiment=1, sample_index=1):
                 raise ValueError(f"malformed measurement: {row}")
             name, arm = row[:2]
             width, round_id, attempt, sample, wall, cpu, count = map(int, row[2:])
-            if (name not in MANIFEST or arm not in expected_arms or width not in expected_widths
+            if (name not in manifest or arm not in expected_arms or width not in expected_widths
                     or round_id < 0 or attempt not in (1, 2) or sample not in (0, 1)
                     or min(wall, cpu, count) <= 0):
                 raise ValueError(f"invalid measurement: {row}")
-            if experiment == 3 and attempt != 1:
-                raise ValueError("experiment 3 has no rerun attempt")
+            if experiment in (3, "5a") and attempt != 1:
+                raise ValueError(f"experiment {experiment} has no rerun attempt")
             key = (name, width, attempt, arm, round_id, sample)
             if key in seen:
                 raise ValueError(f"duplicate measurement: {key}")
             seen.add(key)
-            if experiment in (2, 3, 4):
-                cell = (name, width) if experiment == 4 else (name, width, attempt)
+            if experiment in (2, 3, 4, "5a"):
+                cell = (name, width) if experiment in (4, "5a") else (name, width, attempt)
                 if counts.setdefault(cell, count) != count:
                     raise ValueError(f"comparison extent changed: {cell}")
             if sample == sample_index:  # second call judges; first reports startup
                 groups.setdefault((name, width, attempt), {}).setdefault(arm, {})[round_id] = (wall, cpu)
-    if experiment in (2, 3, 4):
+    if experiment in (2, 3, 4, "5a"):
         for key in seen:
             if key[:-1] + (1 - key[-1],) not in seen:
                 raise ValueError(f"missing first/second call: {key}")
@@ -116,6 +131,8 @@ def attempt_result(arms, width, decisions=0):
 
 
 def summarize(path, inspection=None, sizing=False, experiment=1):
+    if experiment == "5a":
+        return summarize_e5a(path, sizing)
     if experiment == 4:
         return summarize_e4(path, inspection, sizing)
     if experiment == 3:
@@ -346,7 +363,7 @@ def attempt_result_e4(arms, width, startup=None, excluded=False):
 
 def e4_round_count(cells):
     if any(cell["initial"]["rounds"] != 6 or "rerun" in cell for cell in cells):
-        raise ValueError("experiment 4 sizing requires exactly six rounds without reruns")
+        raise ValueError("E4 sizing rule requires exactly six rounds without reruns")
     quantities = [(rule["interval"][1] - rule["interval"][0],
                    max(0.02, abs(rule["median"] - rule["bound"])))
                   for cell in cells for rule in cell["initial"]["rules"].values()
@@ -371,6 +388,69 @@ def summarize_e4(path, inspection=None, sizing=False):
                for attempt in (cell["initial"], *([cell["rerun"]] if "rerun" in cell else []))):
             raise ValueError("decisive rounds differ from the count frozen by sizing")
     result = dict(experiment=4, sizing=sizing, cells=cells, decisive_rounds=count)
+    if not sizing:
+        result["sizing_evidence"] = str(sample_path)
+    return result
+
+
+def layout_floor(controls):
+    """Prospective E5a spread: displacement or bootstrap half-width."""
+    spreads = [max((q["interval"][1] - q["interval"][0]) / 2,
+                   abs(q["median"] - 1)) for q in controls]
+    if not spreads:
+        raise ValueError("missing layout controls")
+    return ("reject-image-layout" if all(s < 0.001 for s in spreads) else
+            "instrument-floor" if any(s >= 0.0015 for s in spreads) else "inconclusive")
+
+
+def summarize_e5a(path, sizing=False):
+    groups = load(path, experiment="5a")
+    startup = load(path, experiment="5a", sample_index=0)
+    cells = []
+    for name in E5A_MANIFEST:
+        key = (name, 1, 1)
+        if key not in groups:
+            raise ValueError(f"missing experiment 5a cell: {name}/1")
+        arms = groups[key]
+        if set(arms) != set(E5A_ARMS):
+            raise ValueError("missing experiment-5a arm")
+        rounds = set(arms["seq"])
+        if not rounds or rounds != set(range(len(rounds))) or any(set(rows) != rounds for rows in arms.values()):
+            raise ValueError("unpaired or missing experiment-5a rounds")
+        order = sorted(rounds)
+        def ratios(index, numerator, denominator="seq"):
+            return quantity([arms[numerator][r][index] / arms[denominator][r][index] for r in order])
+        twin = ratios(0, "twin", "demand")
+        walls = {arm: ratios(0, arm) for arm in E5A_ARMS}
+        controls = {arm: dict(walls[arm], padding_bytes=size,
+                             half_width=(walls[arm]["interval"][1] - walls[arm]["interval"][0]) / 2,
+                             displacement=abs(walls[arm]["median"] - 1))
+                    for arm, size in E5A_PADDING.items()}
+        status = "void" if not twin["interval"][0] <= 1 <= twin["interval"][1] else "intervals"
+        # Shape matches the E4 sizing rule; 1 is the comparison point and
+        # every wall ratio, including the twin, participates in selecting n.
+        initial = dict(rounds=len(rounds), rules={arm: dict(q, bound=1, status="intervals")
+                                                 for arm, q in walls.items()})
+        cells.append(dict(workload=name, width=1, status=status, initial=initial,
+                          wall_over_seq=walls, cpu_over_seq={arm: ratios(1, arm) for arm in E5A_ARMS},
+                          wall_ns={arm: quantity([arms[arm][r][0] for r in order]) for arm in E5A_ARMS},
+                          cpu_ns={arm: quantity([arms[arm][r][1] for r in order]) for arm in E5A_ARMS},
+                          first_call_cpu_above_wall_ns={arm: quantity([startup[key][arm][r][1] - startup[key][arm][r][0]
+                                                                      for r in order]) for arm in E5A_ARMS},
+                          twin_wall_ratio=twin, controls=controls))
+    if sizing:
+        count = e4_round_count(cells)
+    else:
+        sample_path = Path(path).parent / "sizing-e5a" / "measurements.tsv"
+        if not sample_path.exists():
+            raise ValueError("missing experiment 5a six-round sizing evidence")
+        count = summarize_e5a(sample_path, sizing=True)["decisive_rounds"]
+        if any(cell["initial"]["rounds"] != count for cell in cells):
+            raise ValueError("decisive rounds differ from the count frozen by sizing")
+    verdict = "inconclusive" if sizing or any(c["status"] == "void" for c in cells) else layout_floor(
+        [q for c in cells for q in c["controls"].values()])
+    result = dict(experiment="5a", sizing=sizing, cells=cells, decisive_rounds=count,
+                  layout_verdict=verdict)
     if not sizing:
         result["sizing_evidence"] = str(sample_path)
     return result
@@ -477,7 +557,7 @@ def main():
     parser.add_argument("measurements", type=Path)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--sizing", action="store_true")
-    parser.add_argument("--experiment", type=int, choices=(1, 2, 3, 4), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a"), default=1)
     args = parser.parse_args()
     inspection = json.loads(args.inspection.read_text()) if args.inspection and args.inspection.exists() else {}
     rows = summarize(args.measurements, inspection, args.sizing, args.experiment)

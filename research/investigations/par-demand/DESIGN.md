@@ -1893,3 +1893,136 @@ one-worker losses and CPU tails remain unverified; stencil W=4 and
 histogram W=4 require new machine-qualified evidence, not reinterpretation
 of these void cells. No specification, compiler, test or design-tree
 commitment changes in this results-only edit.
+
+
+## Attribution after experiment 4
+
+**Established observations.** Fable's independent normalized-disassembly
+review found that the W=1 sequential computation in the `--par` images is
+instruction-identical to seq: records has zero normalized difference;
+mandelbrot differs only in register naming. Inspection of the saved ELF
+objects with `xcrun llvm-objdump -dr --no-show-raw-insn` corroborates the
+matching sequential kernels. The timed entries contain one pool-active
+call/test/branch before selecting their sequential computation, outside the
+point/record loops; dispatch does not recur per point or record. Fable's
+tens-of-nanoseconds estimate for that short dispatch is an instruction-cost
+estimate, not a measured dispatch latency.
+
+Recalculated from this run's `measurements.tsv`, column 6 equal to 1 (steady
+call), the initial/rerun paired median demand/seq losses are **0.2544% /
+0.2913% for mandelbrot**, and **0.1498% / 0.1744% for records**. The same-round
+wall differences have medians **33.30 / 38.15 µs** and **15.86 / 18.51 µs**,
+respectively. These remain E4-seq failures. An image-layout effect between
+separate executables is the leading hypothesis, not an established cause:
+the byte-identical demand twin cannot detect a placement difference between
+seq and demand/par. Experiment 5a below tests that hypothesis without a
+compiler change.
+
+Recursion W=8 demand uses **80.00 ms CPU / 10.04 ms wall** initially and
+**79.85 / 9.91 ms** on rerun; par uses **72.21 / 9.21 ms** and
+**72.19 / 9.20 ms**. Descriptive medians across the two attempts are
+**79.95 / 10.01 ms** for demand and **72.21 / 9.21 ms** for par; attempts
+remain separate for every verdict. The demand object tests the request only
+at the victim's next budgeted node (`wf__par_budget_fib`, decrement then TLS
+load/test/branch). Its exhausted-budget edge enters `wf__par_seq_fib`, which
+has no request test. Waiting for work exposure while workers spin is thus a
+plausible explanation of the extra CPU and wall time; these totals and code
+shape do not measure spin time or isolate it from request traffic and
+scheduling cost.
+
+Small_split's runtime-extent decision is invariant across the repeated calls
+but still inside their loop; the small path bypasses the poll. The paired
+excess divided by the recorded 200,000,000 repetitions is **0.1105 / 0.1077
+ns per call** at W=4 (initial/rerun), **0.1072 / 0.1052 ns** at W=8. That is
+roughly **0.6 cycles per call** when converted using the host's recorded
+6 GHz maximum, not a hardware-cycle measurement or a claim that it ran at
+that frequency. It is consistent with paying the surviving invariant decision
+and its live state on every call, not request polling.
+
+Stencil W=8 has positive H3 margins for both arms: initial medians
+**+0.6169 demand / +0.6094 par**, rerun **+0.6512 / +0.7338**. Its initial
+wall medians are **34.36 ms demand / 34.28 ms par**, against **70.72 ms seq**;
+CPU medians are **147.76 / 148.34 ms**, against **70.71 ms seq**. The H3
+excess is therefore shared with ordinary par. Memory bandwidth limiting
+scaling is the working interpretation of this stencil; these wall/CPU totals
+alone do not establish bandwidth saturation.
+
+The owner has three open cards on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip): how
+never-slower is stated and checked; whether budgeted recursion keeps
+request-gated offers; whether H3 gates memory-bound programs. This attribution
+settles none of them.
+
+## Experiment 5a: the layout-floor control, fixed before it measures
+
+**Question and falsifier.** Can layout alone produce the size of the W=1
+losses when exactly the same sequential WF object runs in different linked
+images? Reject the image-layout explanation under the quiet-control reading
+below. No compiler or runtime change is part of this experiment.
+
+**Construction.** Use all six existing formal kernels: mandelbrot, records,
+fir, stencil, prefix and histogram. They already have harnesses and same-work
+oracles, without the long microbenchmark repetition loops. Arms are `seq`,
+`par`, `demand`, its byte-identical `twin`, and three `seq-shifted` controls:
+`seq-shift64`, `seq-shift4160`, `seq-shift65664`. The controls link an uncalled
+padding object with **64, 4096+64, or 65536+128 bytes of `.text`**, respectively,
+before seq's WF object; unshifted seq is the zero-padding baseline. Every
+control reuses seq's exact WF, oracle, runner and native-runtime objects and
+link flags; it performs no second LLVM optimization. Padding starts at
+64-byte alignment and has no timed execution. The hosted build records
+linked disassembly; before verification and before timing, the harness checks
+that every text symbol owned by the WF object moved by exactly the specified
+size. The shared object hash, image hashes, sizes and linked symbol offsets
+are retained in `identity.json`. A missing/discarded/reordered padding control
+fails construction, rather than producing a false quiet result.
+
+**Placement and settings.** Only W=1 is measured. Every arm is pinned with
+`taskset -c 2` to one allowed first logical sibling of a P-core, excluding
+CPU 0. Linux topology, the P-core CPU mask, allowed CPUs and `{1: [2]}` are
+recorded; missing P-core evidence or unavailable CPU 2 stops the run. The
+14900K is required. Existing W>1 placement remains unchanged for other
+experiments. Demand and twin use `WF_PAR_DEMAND=on`; seq, par and shifted seq
+use `off-never-request`. Verify every selected image against the independent
+oracle with requests both on and off before measurement.
+
+**Protocol and sizing.** Interleave all arms in rotating/reversed round
+order, rotate workload order, and retain both calls. Only column-6 call 1
+judges the control; report first-call CPU above wall separately. Each ratio is
+the median of same-round wall ratios, with **10,000 bootstrap draws, seed
+20261010 and a 95% interval**. Six full-work sizing rounds on the 14900K judge
+nothing and are saved under `sizing-e5a/`. Apply E4's sizing rule to each
+arm/seq wall ratio: project its interval width by `sqrt(6/n)` and select the
+smallest `n` from 6 through 30 with every projected width at most
+`max(0.02, |median-1|)`; otherwise use 30. Freeze that count before collecting
+`n` separate decisive rounds; never pool sizing observations. There is no
+exceeding-bound rerun in this attribution control. The reducer requires the
+saved sample and its exact frozen count. It reports wall and CPU ratios for
+par and demand beside the controls, so their W=1 losses are remeasured in the
+same job. A disagreeing twin voids its cell and leaves the overall reading
+inconclusive; sizing itself cannot select a reading.
+
+**Reading registered before measurement.** For each shifted-seq/seq control,
+let `h = (upper-lower)/2`, `d = |median-1|`, and define its spread as
+`max(h, d)` (either uncertainty or a layout displacement). Across all selected
+workloads and padding sizes:
+
+- If every control has both `h < 0.001` and `d < 0.001`, reject image layout
+  as the W=1 cause; the E4 W=1 failures stand as real defects.
+- If any control has spread **>= 0.0015**, read the W=1 cells as being at the
+  instrument floor. This does not prove layout caused either E4 loss.
+- Otherwise the attribution is inconclusive.
+
+These readings add a layout control; they change no E4 threshold or verdict
+and select no lowering fix. A global floor reading records which workloads
+and placements established it, without claiming every workload has the same
+layout sensitivity.
+
+**Dispatch.** On `claude/par-demand`, dispatch `compute-bench.yml` with
+`experiment=par-demand`, `par_demand_experiment=5a`,
+`placement_runner=14900k`, and `placement_rounds` empty; leave other inputs
+at their defaults. The hosted job builds, checks harness controls and verifies
+images, then the native job sizes and measures them. No local build, test,
+harness execution or timing is authorized. Construction, harness cases and
+measurements remain unverified until that CI run. Keep this harness with the
+investigation while its layout attribution needs reproduction; retire it
+when that question no longer needs measurement.

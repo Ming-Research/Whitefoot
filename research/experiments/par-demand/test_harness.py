@@ -8,7 +8,7 @@ import measure
 import contextlib
 import io
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, load, summarize,
+from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, E5A_ARMS, E5A_PADDING, E5A_MANIFEST, layout_floor, load, summarize,
                        attempt_result_e2, attempt_result_e3, attempt_result_e4, cause_verdict, e3_round_count, e4_round_count)
 from measure import cpu_list, performance_cores, demand_setting
 
@@ -526,6 +526,143 @@ class Experiment4Tests(unittest.TestCase):
             with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "4", *extra]), \
                  contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 measure.main()
+
+
+class Experiment5aTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "measurements.tsv"
+
+    def write(self, changes=None, rounds=6):
+        values = {arm: 1.0 for arm in E5A_ARMS}
+        values.update(changes or {})
+        lines = []
+        for name in E5A_MANIFEST:
+            for arm, factor in values.items():
+                for r in range(rounds):
+                    for sample in (0, 1):
+                        wall = int(1e9 * factor)
+                        lines.append(f"{name}\t{arm}\t1\t{r}\t1\t{sample}\t{wall}\t1000000000\t1\n")
+        self.path.write_text("".join(lines))
+        sample_dir = self.path.parent / "sizing-e5a"
+        sample_dir.mkdir(exist_ok=True)
+        (sample_dir / "measurements.tsv").write_text("".join(lines))
+
+    def test_layout_reading_separates_quiet_floor_and_inconclusive(self):
+        self.write()
+        result = summarize(self.path, experiment="5a")
+        self.assertEqual(result["layout_verdict"], "reject-image-layout")
+        self.assertEqual(result["decisive_rounds"], 6)
+        self.write({"seq-shift64": 1.0016})
+        self.assertEqual(summarize(self.path, experiment="5a")["layout_verdict"], "instrument-floor")
+        self.write({"seq-shift64": 1.0012})
+        self.assertEqual(summarize(self.path, experiment="5a")["layout_verdict"], "inconclusive")
+        self.assertEqual(layout_floor([dict(median=1, interval=[0.998, 1.002])]), "instrument-floor")
+        self.assertEqual(layout_floor([dict(median=1, interval=[0.9989, 1.0011])]), "inconclusive")
+        # A large W1 loss is reported beside controls, never counted as a
+        # layout control itself. A disagreeing twin prevents either ruling.
+        self.write({"demand": 1.1, "twin": 1.1, "par": 1.05})
+        self.assertEqual(summarize(self.path, experiment="5a")["layout_verdict"], "reject-image-layout")
+        self.write({"twin": 1.01, "seq-shift64": 1.002})
+        self.assertEqual(summarize(self.path, experiment="5a")["layout_verdict"], "inconclusive")
+        self.assertEqual(summarize(self.path, sizing=True, experiment="5a")["layout_verdict"], "inconclusive")
+
+    def test_missing_changed_wrong_width_and_rerun_evidence_raise(self):
+        self.write()
+        original = self.path.read_text().splitlines(keepends=True)
+        variants = [original[:-1], original + [original[0]],
+                    [line for line in original if "\tseq-shift4160\t" not in line],
+                    [line for line in original if line.split("\t")[5] != "0"],
+                    [original[0].replace("\t1\t0\t1\t", "\t4\t0\t1\t")] + original[1:],
+                    [original[0].replace("\t1\t0\t1\t", "\t1\t0\t2\t")] + original[1:],
+                    [original[0].rsplit("\t", 1)[0] + "\t2\n"] + original[1:]]
+        for lines in variants:
+            self.path.write_text("".join(lines))
+            with self.assertRaises(ValueError): summarize(self.path, experiment="5a")
+        self.write()
+        (self.path.parent / "sizing-e5a/measurements.tsv").unlink()
+        with self.assertRaisesRegex(ValueError, "sizing evidence"):
+            summarize(self.path, experiment="5a")
+        self.write(rounds=5)
+        with self.assertRaisesRegex(ValueError, "six rounds"):
+            summarize(self.path, sizing=True, experiment="5a")
+        self.write(rounds=7)
+        sample = self.path.parent / "sizing-e5a/measurements.tsv"
+        sample.write_text("".join(line for line in self.path.read_text().splitlines(keepends=True)
+                                 if int(line.split("\t")[3]) < 6))
+        with self.assertRaisesRegex(ValueError, "frozen"):
+            summarize(self.path, experiment="5a")
+
+    def test_round_ratios_are_not_a_ratio_of_arm_medians(self):
+        self.write()
+        rows = [line.split("\t") for line in self.path.read_text().splitlines()]
+        for row in rows:
+            if row[0] == "records" and row[1] in ("seq", "seq-shift64"):
+                values = (100, 1000, 10000) if row[1] == "seq" else (200, 5000, 1000)
+                row[6] = str(values[int(row[3]) % 3])
+        self.path.write_text("".join("\t".join(row) + "\n" for row in rows))
+        result = summarize(self.path, sizing=True, experiment="5a")
+        cell = next(cell for cell in result["cells"] if cell["workload"] == "records")
+        # Paired ratios repeat 2, 5, 0.1, median 2; arm medians are both
+        # 1000 and their ratio would incorrectly be 1.
+        self.assertEqual(cell["controls"]["seq-shift64"]["median"], 2)
+
+    def test_driver_pins_cpu_two_sizes_and_freezes_without_reruns(self):
+        build = self.path.parent
+        for arm in E5A_ARMS:
+            (build / arm).mkdir()
+            for name in E5A_MANIFEST:
+                (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        observed = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": "fixture\n"})()
+            self.assertEqual(command[:3], ["taskset", "-c", "2"])
+            image, mode, arm, width, r, attempt = command[3:]
+            self.assertEqual((mode, width, attempt), ("measure", "1", "1"))
+            self.assertEqual(kwargs["env"]["WF_PAR_DEMAND"], demand_setting("5a", arm))
+            observed.append((Path(image).name, arm, r))
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{Path(image).name}\t{arm}\t1\t{r}\t1\t{sample}\t100\t100\t1\n")
+        def invoke(cores=None, extra=()):
+            topology = dict(performance_cpus=list(range(16)))
+            with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "5a", *extra]), \
+                 patch.object(measure, "run", side_effect=fake_run), \
+                 patch.object(measure.platform, "system", return_value="Linux"), \
+                 patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+                 patch.object(measure, "performance_cores", return_value=(list(range(0, 16, 2)) if cores is None else cores, topology)), \
+                 patch.object(measure, "layout_identity", return_value={"fixture": "text shifted"}), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                measure.main()
+        invoke()
+        self.assertEqual(len(observed), len(E5A_MANIFEST) * len(E5A_ARMS) * 12)
+        self.assertNotEqual([r[1] for r in observed[:7]], [r[1] for r in observed[42:49]])
+        identity = json.loads((build / "identity.json").read_text())
+        self.assertEqual(identity["pinned"], {"1": [2]})
+        self.assertEqual((identity["rounds"], identity["sizing_rounds"]), (6, 6))
+        self.assertTrue((build / "sizing-e5a/measurements.tsv").exists())
+        self.assertEqual(json.loads((build / "summary.json").read_text())["layout_verdict"], "reject-image-layout")
+        with self.assertRaisesRegex(ValueError, "CPU 2"):
+            invoke(cores=[0, 4, 6, 8, 10, 12, 14, 16])
+        for extra in (("--rounds", "30"), ("--instrumented",)):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                invoke(extra=extra)
+
+    def test_linked_padding_must_shift_the_reused_object(self):
+        build = self.path.parent
+        (build / "seq").mkdir()
+        (build / "seq/records.o").write_bytes(b"same WF object")
+        def fake_nm(command, **kwargs):
+            path = Path(command[-1])
+            offset = 0 if path.suffix == ".o" else 0x4000 + E5A_PADDING.get(path.parent.name, 0)
+            return type("Result", (), {"stdout": f"{offset:x} T wf_bench_records\n"})()
+        with patch.object(measure, "run", side_effect=fake_nm):
+            identity = measure.layout_identity(build, {"records": {}})
+        self.assertEqual(identity["records"]["linked_text_offsets"]["seq-shift4160"]["wf_bench_records"], 0x4000 + 4160)
+        with patch.object(measure, "run", return_value=type("Result", (), {"stdout": "4000 T wf_bench_records\n"})()), \
+             self.assertRaisesRegex(ValueError, "did not shift"):
+            measure.layout_identity(build, {"records": {}})
 
 
 class PerformanceCoreTests(unittest.TestCase):

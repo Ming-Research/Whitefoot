@@ -17,8 +17,13 @@ else ifeq ($(EXPERIMENT),3)
 ARMS := seq par demand twin order seed extent dedup
 else ifeq ($(EXPERIMENT),4)
 ARMS := seq par demand static twin
+else ifeq ($(EXPERIMENT),5a)
+# Same seq WF/oracle/runner/runtime objects; only linked placement changes.
+WORKLOADS := $(KERNELS)
+PADDING_SIZES := 64 4160 65664
+ARMS := seq par demand twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifneq ($(EXPERIMENT),1)
-$(error EXPERIMENT must be 1, 2, 3 or 4)
+$(error EXPERIMENT must be 1, 2, 3, 4 or 5a)
 endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
@@ -110,6 +115,23 @@ $(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(
 $(addprefix $(BUILD)/dedup/,$(KERNELS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-dedup)
 	@mkdir -p $(@D)
 	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
+# E5a is Linux-only. Uncalled NOP text is linked before the exact seq WF
+# object. Its 64-byte alignment preserves existing function alignment while
+# the three extents vary line/page placement. No second LLVM compile occurs.
+$(BUILD)/layout/%.S: Makefile
+	@mkdir -p $(@D)
+	printf '%s\n' '.text' '.balign 64' '.globl wf_layout_padding' '.type wf_layout_padding,@function' 'wf_layout_padding:' '.fill $*,1,0x90' '.size wf_layout_padding,.-wf_layout_padding' '.section .note.GNU-stack,"",@progbits' > $@
+$(BUILD)/layout/%.o: $(BUILD)/layout/%.S $(NATIVE_CONFIG)
+	$(CLANG) -c $< -o $@
+define layout-rules
+$(addprefix $(BUILD)/seq-shift$(1)/,$(KERNELS)): $(BUILD)/seq-shift$(1)/%: $(BUILD)/layout/$(1).o $(BUILD)/seq/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-seq)
+	@mkdir -p $$(@D)
+	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
+endef
+ifeq ($(EXPERIMENT),5a)
+$(foreach size,$(PADDING_SIZES),$(eval $(call layout-rules,$(size))))
+endif
+
 $(BUILD)/twin/%: $(BUILD)/demand/%
 	@mkdir -p $(@D)
 	cp $< $@
