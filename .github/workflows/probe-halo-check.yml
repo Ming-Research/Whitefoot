@@ -34,8 +34,41 @@ jobs:
           for i in 1 2 3; do /usr/bin/time -f "wall %e s, rss %M KiB, exit %x" "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null; done
           PERF=$(ls /usr/lib/linux-tools/*/perf 2>/dev/null | head -1); [ -z "$PERF" ] && PERF=perf
           sudo sysctl -w kernel.perf_event_paranoid=-1
-          $PERF record --call-graph fp -F 499 -o $RUNNER_TEMP/perf.data "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null 2>&1
+          true || $PERF record --call-graph fp -F 499 -o $RUNNER_TEMP/perf.data "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null 2>&1
           echo "===== self"
           $PERF report -i $RUNNER_TEMP/perf.data --no-children --stdio --percent-limit 1.5 --sort symbol -g none 2>/dev/null | grep -v "^$" | grep -v "^#" | head -40
           echo "===== inclusive"
           $PERF report -i $RUNNER_TEMP/perf.data --children --stdio --percent-limit 2 --sort symbol -g none 2>/dev/null | grep -v "^$" | grep -v "^#" | grep "w::\|whitefoot::" | head -90
+      - name: Count checker work per function
+        run: |
+          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
+          cd halo/lib/halo
+          WHITEFOOT_CHECK_WORK=$RUNNER_TEMP/work.tsv "$bin" --check --graph modules.wfg --check-module pkg::vm > /dev/null
+          wc -l $RUNNER_TEMP/work.tsv
+          python3 - "$RUNNER_TEMP/work.tsv" <<'PY'
+          import sys, collections
+          per = collections.defaultdict(lambda: collections.Counter())
+          runs = collections.defaultdict(set)
+          for line in open(sys.argv[1]):
+              f = line.rstrip("\n").split("\t")
+              if len(f) != 7: continue
+              pid, run, func, kind, ordinal, metric, value = f
+              runs[func].add(run)
+              v = int(value)
+              if kind == "function":
+                  per[func][metric] += v
+              elif kind == "join":
+                  per[func]["join." + metric] += v
+              else:
+                  per[func][kind + "." + metric] += v
+          total = collections.Counter()
+          for c in per.values(): total.update(c)
+          keys = ["joins", "join.pairs_evaluated", "join.union_rows", "intern_calls", "affine_attempts", "closure.cells_sum", "snapshot.cells_sum", "probe.cells_sum"]
+          print("functions", len(per), "analysis runs", sum(len(r) for r in runs.values()))
+          print("TOTAL", {k: total[k] for k in keys})
+          for key in ["join.pairs_evaluated", "joins", "intern_calls", "affine_attempts", "snapshot.cells_sum"]:
+              print(f"== top by {key}")
+              for func, c in sorted(per.items(), key=lambda kv: -kv[1][key])[:12]:
+                  share = 100.0 * c[key] / max(total[key], 1)
+                  print(f"{share:5.1f}% runs={len(runs[func])} {func[:70]} " + " ".join(f"{k}={c[k]}" for k in keys))
+          PY
