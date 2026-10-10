@@ -368,10 +368,10 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        // [SHARE-1] the prelude's `shared_new` moves its argument into the
-        // object's state, where every atomic statement assumes the state's
+        // [SHARE-1] the prelude's `shared_new` and `frozen_new` move their
+        // argument into an object whose readers may assume the value's
         // invariants [TYPE-11].
-        if signature.name == "shared_new"
+        if matches!(signature.name.as_str(), "shared_new" | "frozen_new")
             && self.types.declarations.tree.is_body_less(signature.node)?
             && let Some(CheckedType::Nominal(nominal)) =
                 signature.parameters.first().map(|parameter| parameter.ty)

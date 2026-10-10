@@ -1,5 +1,5 @@
-fn fill(value: &Frozen<u8>, out: &Array<u8, 1>) -> result: unit writes(out) contract {
-  ensures forall filled(k in 0_u64..out^.len): out^[k] == value^.inner;
+fn fill(value: &Frozen<Array<u8, 1>>, out: &Array<u8, 1>) -> result: unit writes(out) contract {
+  ensures forall filled(k in 0_u64..out^.len): out^[k] == value^.inner[k];
 } {
   set out^[0_u64] = 0_u8;
   return unit;

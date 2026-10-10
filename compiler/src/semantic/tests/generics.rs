@@ -732,9 +732,8 @@ fn a_closed_type_on_a_recursive_call_monomorphizes() {
 
 #[test]
 fn closed_callbacks_nested_through_one_helper_monomorphize_once_per_instance() {
-    let source = include_str!(
-        "../../../../tests/conformance/cases/fn6-pos-closed-term-callback-cycle.wf"
-    );
+    let source =
+        include_str!("../../../../tests/conformance/cases/fn6-pos-closed-term-callback-cycle.wf");
     let specialized = source
         .replace("fn outer(value:", "fn outer<T: drop>(value:")
         .replace("fn outer>", "fn outer::<Box<u64>>>");

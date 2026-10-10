@@ -131,19 +131,17 @@ impl<'unit> Checker<'_, 'unit> {
         place: ElaboratedPlace,
     ) -> Result<TypedExpression, CheckStop> {
         for member in &place.resolved.members {
-            if options.explicit_move
+            if (options.explicit_move
                 || ((options.context == PlaceUseContext::Ordinary
                     || !self.types.declarations.tree.place_has_dereference(node)?)
                     && place.measure.is_none()
-                    && !self.types.is_copy_type(check_context, place.ty)?)
-            {
-                if self
+                    && !self.types.is_copy_type(check_context, place.ty)?))
+                && self
                     .types
                     .frozen_member_on_resolved_path(check_context, member, bindings)?
                     .is_some()
-                {
-                    return self.frozen_consume_issue(node);
-                }
+            {
+                return self.frozen_consume_issue(node);
             }
             if options.explicit_move {
                 self.types

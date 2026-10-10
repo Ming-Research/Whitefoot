@@ -105,7 +105,9 @@ fn frozen_and_owned_box_are_distinct_types() {
         let SemanticOutcome::SourceIssue { issue } = outcome else {
             panic!("{outcome:?}");
         };
-        assert_eq!(issue.rule_id(), "TYPE-5");
+        // A returned Frozen<u8> where the result is Box<u8> fails result
+        // agreement, which FN-1 owns.
+        assert_eq!(issue.rule_id(), "FN-1");
     });
 }
 
@@ -153,13 +155,14 @@ fn frozen_range_reads_use_the_same_version_and_refuse_an_unrelated_value() {
 }
 
 #[test]
-fn frozen_new_adds_no_type_invariant_requirement_to_its_type_parameter() {
+fn frozen_new_owes_its_argument_type_invariants() {
     let source = b"struct Positive {\n  byte: u8;\n  invariant positive(p): p.byte >= 1_u8;\n}\n\nfn freeze() -> result: Frozen<Positive> pure {\n  let value = Positive(byte: 1_u8);\n  set value.byte = 0_u8;\n  return frozen_new::<Positive>(value: value);\n}\n";
     with_semantics(source, |outcome| {
-        assert!(
-            matches!(outcome, SemanticOutcome::Complete(_)),
-            "{outcome:?}"
-        );
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("{outcome:?}");
+        };
+        // [TYPE-11]: a frozen_new argument owes its struct's invariants.
+        assert_eq!(issue.rule_id(), "FN-8");
     });
 }
 

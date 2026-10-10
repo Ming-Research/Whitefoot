@@ -2681,9 +2681,9 @@ fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
             target: CheckedSetTarget::Place(place),
             ..
         } => place.binding == binding && place.fields.is_empty(),
-        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => arms
-            .iter()
-            .any(|arm| body_rebinds(&arm.body, binding)),
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
+            arms.iter().any(|arm| body_rebinds(&arm.body, binding))
+        }
         CheckedStatement::Loop { body, .. }
         | CheckedStatement::CountedRange { body, .. }
         | CheckedStatement::Atomic { body, .. } => body_rebinds(body, binding),
