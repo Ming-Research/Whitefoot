@@ -255,6 +255,8 @@ required dependency for ordinary Whitefoot programs.
 
 ## Fork is an execution-model question
 
+[Restricted Linux fork investigation](fork-route.md) specifies the proposed child, cut, reserve and job contracts, qualification witnesses and open runtime questions.
+
 [POSIX fork](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html)
 keeps only the calling thread in a multithreaded child; the child must restrict
 itself to async-signal-safe operations until exec. Descriptor copies refer
