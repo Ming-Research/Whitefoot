@@ -6,7 +6,8 @@ current reading pointers follow the repository's live owners.
 This document preserves the useful conclusions of the archive audit outside
 `archive/`. It is not a work queue and it grants no implementation or language
 authority. Open questions and evidence links live in [ideas](../docs/ideas.md),
-and known compiler defects and implementation costs in [todo](../docs/todo.md).
+and known compiler defects and implementation costs on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip).
 The [active specification](../spec/kernel-spec.md) defines the language,
 the [constitution](../docs/constitution.md) defines project objectives and
 principles, and [AGENTS.md](../AGENTS.md) owns the workflow.
@@ -254,7 +255,7 @@ experiment index now distinguishes current self-contained bundles from
 historical result bundles whose runners still name the retired democ toolchain.
 
 The live entry points are [`research/README.md`](README.md),
-[ideas](../docs/ideas.md), [todo](../docs/todo.md), the
+[ideas](../docs/ideas.md), the [status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip), the
 [active specification](../spec/kernel-spec.md), the
 [constitution](../docs/constitution.md), and [AGENTS.md](../AGENTS.md).
 If a future audit finds another valuable archived conclusion, add the smallest

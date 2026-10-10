@@ -150,7 +150,8 @@ the work-branch and merge boundary.
   manual base/twin/head timing panel on the CI 14900K runner.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
-known compiler defects and implementation costs are in [todo](../docs/todo.md).
+known compiler defects and implementation costs are on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip).
 Dated results state what their recorded program, toolchain, and environment
 established; they are not descriptions of current compiler capabilities.
 Historical approval or phase language in evidence does not add current
