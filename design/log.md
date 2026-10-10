@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Owner slots ordered only against releases at or above them
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the request "approve the change to the parallel-lowering overlap-group boundary decision: an owner slot loaded during reference formation conflicts only with a release at or above that slot?" (translated).
+
+Summary: An overlap group ends at a release that overlaps a loaded owner slot only when the release is at or above the slot, because storage below a Box slot lies in the block it points to and a release frees and writes only its own subtree; the full formation borrow recorded beside each slot keeps every other overlapping release ordered. Snowghost's sibling-field swaps in one element had been serialized by the symmetric prefix rule.
+
 ## 2026-10-10 Header-only construction of constant-capacity windows
 
 Nodes: compiler/storage-representation
