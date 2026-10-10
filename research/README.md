@@ -83,6 +83,9 @@ the work-branch and merge boundary.
   permission for histogram-like loops whose iterations combine into shared
   indexed cells, the lowering choices and the criterion recorded before
   implementation.
+- [Window growth under parallel workers](investigations/grow-allocator-contention/DESIGN.md):
+  why `realloc` growth serialized Snowghost's four workers on glibc's arena
+  lock, the copy-below-a-size proposal and its rejection criteria.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.

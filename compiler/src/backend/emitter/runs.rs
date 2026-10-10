@@ -1132,12 +1132,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `grow`: the cell's content is reallocated at the new
     /// capacity.
     ///
-    /// One `realloc` keeps the header and the filled slots, possibly in
-    /// place, and the cell's pointer slot takes the
-    /// returned block, which then records the new capacity. [STOR-7] makes
-    /// an address change legal at every value, because no judgment depends
-    /// on the block's address; a failed `realloc` leaves the old block and
-    /// terminates [STOR-8].
+    /// One `wf__heap_retake` keeps the header and the filled slots: the
+    /// runtime copies a block below 1024 bytes into a fresh one and calls
+    /// `realloc`, possibly in place, for a larger block. The cell's pointer
+    /// slot takes the returned block, which then records the new capacity.
+    /// [STOR-7] makes an address change legal at every value, because no
+    /// judgment depends on the block's address; a failed retake leaves the
+    /// old block and terminates [STOR-8].
     pub(super) fn emit_window_grow(
         &mut self,
         result: IrValueId,
