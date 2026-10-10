@@ -179,6 +179,17 @@ percent and `d` measured once per host, both fixed before any direction is
 measured. One-worker runs already execute the sequential world, so the
 claim is about two or more workers.
 
+**The decision-point allowance (owner's ruling, 2026-10-10).** A site whose
+extent is known only at run time keeps a decision on whether to hand work out,
+and no decision costs less than a comparison and a branch; for a site whose
+whole work is a few cycles (the par-demand experiment's `small_split`, about
+5 cycles per call) no runtime policy fits within 2 percent. So the bound is
+`T_W <= T_seq + max(e * T_seq, a * D) + d`, where `D` is the number of
+decision-point executions on the measured path and `a` = 1 ns: each decision
+point may cost the wider of 1 ns or the proportional allowance. A statically
+bounded small site keeps no decision point and adds nothing. The par-demand
+investigation applies this from its rerun after 2026-10-10 onward.
+
 **Argument as well as measurement.** No suite covers every program, so a
 direction must come with a bound on what it adds: the cost at a fork or
 split point that hands nothing out, the cost of a hand-out, and the rule
