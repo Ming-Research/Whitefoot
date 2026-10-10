@@ -2796,6 +2796,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 count,
                 set,
             } => self.emit_keyed_table_scan(result, *table, *cursor, *count, *set),
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => self.emit_keyed_table_scan_within(result, [*table, *cursor, *count, *limit, *set]),
             IrOperation::ConcurrentHashMapClear { table } => {
                 self.emit_keyed_table_clear(result, *table)
             }

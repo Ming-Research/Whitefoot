@@ -1,4 +1,4 @@
-# Kernel Specification v0.123
+# Kernel Specification v0.122
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2276,12 +2276,6 @@ A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, whi
 `map_count` returns how many entries of the map its argument names are `Some`.
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
 `map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
-`map_scan_within` uses `map_scan`'s cursor, extent, count hint and insertion order [SHARE-1], with a byte limit and the result type `ScanStep` [PRE-1]. Its outcomes are:
-
-- With no `Some` key at or after the cursor, it inserts nothing and returns `Next(next: 0_u64)`.
-- With a first position at or after the cursor holding a `Some` key whose complete insertion alone needs peak heap growth `n > limit`, it inserts nothing and returns `Needs(bytes: n)`, leaving the cursor unchanged. Here `n` is the increase above the heap held on entry [PRE-2] needed to insert all that position's keys, including temporary storage, so retrying that call with `limit >= n` makes progress while the map is unchanged.
-- With that first position's complete insertion fitting the limit, it inserts all `Some` keys of a prefix of positions starting at the cursor and returns `Next(next: e modulo two to the 64th)`. The prefix includes that first position and every included position in full. At every point in the call, its increase above the heap held on entry [PRE-2], including temporary storage, is at most `limit`.
-
 `map_clear` makes every entry of the map its argument names `None`, releasing every value they held.
 `std::process::release_map_reserve` changes no entry of the map that is the state of the object its argument names. It may release storage the map holds beyond what holding its entries needs, and returns the number of bytes by which that release lowers the heap the program holds [PRE-2], which is an input of the execution [WAIT-2].
 A map's entries are the places its subscripts select [OP-4] and the places the targets on its handles name [SHARE-2].
@@ -2407,11 +2401,6 @@ enum DivError {
 enum NarrowError {
   NarrowError();
 }
-
-enum ScanStep {
-  Next(next: u64);
-  Needs(bytes: u64);
-}
 ```
 
 The two built-in numeric bounds `Int` and `Float` admit exactly OP-1's integer and floating-point domains and imply `copy` under PROV-6, and the built-in equality bound `Eq` admits exactly the equality types [OP-16] and implies `copy` likewise. They are not source declarations, interface groups, implicit behaviors or logical-law bundles; a source actual cannot bind or extend any of the three.
@@ -2530,9 +2519,6 @@ fn map_count<V: drop>(map: &ConcurrentHashMap<V>) -> count: u64 reads(map);
 fn map_scan<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, keys: &KeySet) -> next: u64 reads(map), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
 };
-fn map_scan_within<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, limit: u64, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) contract {
-  ensures keys^.len >= entry(keys)^.len;
-};
 fn map_clear<V: drop>(map: &ConcurrentHashMap<V>) -> result: unit writes(map);
 fn key_set_new(capacity: u64) -> result: KeySet pure contract {
   ensures result.len == 0_u64;
@@ -2552,7 +2538,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -3160,7 +3146,7 @@ The table in this version is:
 | &Run<T>         | range elements, exact    | absent             | absent                  |
 ```
 
-Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_insert` publishes it two-sidedly and `map_scan` and `map_scan_within` from below [SHARE-1], since a key the set already holds adds none.
+Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_insert` publishes it two-sidedly and `map_scan` from below [SHARE-1], since a key the set already holds adds none.
 
 A measure is a logical quantity, and a measured value's window origin is `P.head` where the table gives that cell and slot zero where it does not.
 For an `Array`, `Slots` or `Ring`, the initialized set is the `P.len` slots beginning at that origin taken modulo `P.cap`, and a **logical offset** `i` names the slot at physical offset `(origin + i) mod P.cap`.

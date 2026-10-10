@@ -2143,3 +2143,74 @@ fn main() -> status: std::process::ExitStatus pure {
         "{output:?}"
     );
 }
+
+#[test]
+fn bounded_scan_results_initialize_handler_words() {
+    // ScanStep may acquire a handler word just like a source payload enum.
+    // Constructing only an SSA { tag, next, bytes } leaves that word absent.
+    let source = br#"fn scan_step_run(value: &ScanStep, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Next(next: cursor) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return cursor^;
+      }
+      Needs(bytes: required) => {
+        return 99_u64;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 0_u64);
+  let key = array_filled::<u8, 1>(value: 255_u8);
+  let code = 1_u8;
+  atomic map = &store {
+    let name = &key[0_u64..1_u64];
+    set map^[name] = Some<u8>(value: 1_u8);
+    let needs = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: 0_u64, keys: &keys);
+    let refused = scan_step_run(value: &needs, count: 2_u64);
+    let required = 0_u64;
+    match needs {
+      Next(next: cursor) => {
+      }
+      Needs(bytes: bytes) => {
+        set required = bytes;
+      }
+    }
+    if refused == 99_u64 {
+      if required > 0_u64 {
+        let next = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: required, keys: &keys);
+        let cursor = scan_step_run(value: &next, count: 2_u64);
+        if cursor == 0_u64 {
+          if keys.len == 1_u64 {
+            set code = 0_u8;
+          }
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: code);
+}
+"#;
+    let module = emit(source);
+    assert_split(&module, "wf_scan_step_run", 2);
+    assert!(
+        module.contains("wf_scan_step_run: dispatches through the handler word"),
+        "{module}"
+    );
+    for arm in 0..2 {
+        assert!(
+            module.contains(&format!("store ptr @wf_scan_step_run.arm.{arm},")),
+            "{module}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}

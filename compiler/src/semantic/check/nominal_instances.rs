@@ -1082,7 +1082,10 @@ impl<'unit> Checker<'_, 'unit> {
                     self.substitute_type_regions(check_context, ok, regions)?,
                     self.substitute_type_regions(check_context, error, regions)?,
                 ),
-                PreludeType::Overflow | PreludeType::DivError | PreludeType::NarrowError => prelude,
+                PreludeType::Overflow
+                | PreludeType::DivError
+                | PreludeType::NarrowError
+                | PreludeType::ScanStep => prelude,
             };
             if substituted == prelude {
                 return Ok(CheckedType::Nominal(id));

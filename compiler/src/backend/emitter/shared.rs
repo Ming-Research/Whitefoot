@@ -100,6 +100,21 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         records.insert(record.index(), record);
     }
     let mut prelude = String::new();
+    for block in function.blocks() {
+        for instruction in block.instructions() {
+            if let IrInstruction::Define {
+                result,
+                operation: IrOperation::ConcurrentHashMapScanWithin { .. },
+                ..
+            } = instruction
+            {
+                prelude.push_str(&format!(
+                    "  %scan.needs.{} = alloca i32, align 4\n",
+                    result.index()
+                ));
+            }
+        }
+    }
     for record in records.values() {
         prelude.push_str(&format!(
             "  {} = alloca {}, align 8\n",
@@ -361,6 +376,63 @@ impl FunctionEmitter<'_, '_> {
             self.value_name(set),
         )
         .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Construct either ScanStep variant through the ordinary enum storage
+    /// path, including any handler words selected by match dispatch.
+    pub(super) fn emit_keyed_table_scan_within(
+        &mut self,
+        result: IrValueId,
+        operands: [IrValueId; 5],
+    ) -> Result<(), BackendFailure> {
+        let [table, cursor, count, limit, set] = operands;
+        let Some(IrType::Nominal(map_nominal)) = self.value_type(table) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        self.checked_entry(map_nominal)?;
+        let Some(IrType::Nominal(nominal)) = self.value_type(result) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let IrNominalKind::Enum { variants } = self.nominal(nominal)?.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if variants.len() != 2
+            || variants.iter().enumerate().any(|(tag, variant)| {
+                variant.tag() != tag as u32
+                    || variant.fields().len() != 1
+                    || variant.fields()[0].ty() != (IrType::Integer { width: 64, signed: false })
+            })
+            || self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet))
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let payload = self.next_temporary()?;
+        let tag = self.next_temporary()?;
+        let is_next = self.next_temporary()?;
+        self.names(&["wf__keyed_table_scan_within"]);
+        writeln!(
+            self.output,
+            "  %{payload} = call i64 @wf__keyed_table_scan_within(ptr {}, i64 {}, i64 {}, i64 {}, ptr {}, ptr %scan.needs.{}, i64 0, i32 4, i64 0)\n  %{tag} = load i32, ptr %scan.needs.{}\n  %{is_next} = icmp eq i32 %{tag}, 0",
+            self.value_name(table),
+            self.value_name(cursor),
+            self.value_name(count),
+            self.value_name(limit),
+            self.value_name(set),
+            result.index(),
+            result.index(),
+        )?;
+        let next = format!("scan.next.{}", result.index());
+        let needs = format!("scan.needs.block.{}", result.index());
+        let done = format!("scan.done.{}", result.index());
+        writeln!(self.output, "  br i1 %{is_next}, label %{next}, label %{needs}")?;
+        self.output.open_block(next);
+        self.construct_scalar_enum_at(result, 0, &format!("%{payload}"))?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(needs);
+        self.construct_scalar_enum_at(result, 1, &format!("%{payload}"))?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
+        Ok(())
     }
 
     /// Empties a table: the runtime settles the statement's own entries,

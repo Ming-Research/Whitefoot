@@ -220,6 +220,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "i64", "i64", "ptr", "i64", "i32", "i64"],
         ),
         (
+            "wf__keyed_table_scan_within",
+            "i64",
+            &["ptr", "i64", "i64", "i64", "ptr", "ptr", "i64", "i32", "i64"],
+        ),
+        (
             "wf__keyed_table_clear",
             "void",
             &["ptr", "i64", "i32", "i64", "ptr"],

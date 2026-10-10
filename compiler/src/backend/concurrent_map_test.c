@@ -59,12 +59,26 @@ static _Atomic int64_t blocks_out;
 static _Atomic uint64_t allocations;
 static _Atomic int64_t mapped_bytes_out;
 static void *test_take(size_t bytes);
-static void test_give(void *block);
+static void test_give(void *block, size_t bytes);
+static size_t test_granted(size_t bytes);
+static _Atomic int64_t pool_bytes_out;
+static _Thread_local int measure_heap;
+static _Thread_local int64_t measured_peak;
+static void observe_heap(void) {
+    int64_t held = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (measure_heap && held > measured_peak)
+        measured_peak = held;
+}
+static void test_heap_change(int64_t delta) {
+    atomic_fetch_add_explicit(&mapped_bytes_out, delta, memory_order_relaxed);
+    observe_heap();
+}
 #define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
-#define WF_CMAP_GIVE(block, bytes) test_give(block)
+#define WF_CMAP_GIVE(block, bytes) test_give((block), (size_t)(bytes))
+#define WF_CMAP_GRANTED(bytes) test_granted((size_t)(bytes))
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
-#define WF_CMAP_HEAP_CHANGE(delta) atomic_fetch_add_explicit(&mapped_bytes_out, (delta), memory_order_relaxed)
+#define WF_CMAP_HEAP_CHANGE(delta) test_heap_change(delta)
 struct wf_cmap;
 static void finishing(struct wf_cmap *map);
 #define WF_CMAP_FINISHING(map) finishing(map)
@@ -119,14 +133,30 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 
 #include "keyed_table.c"
 
+/* The completion pool grants powers of two from 512 through 2 MiB, then
+ * 64 KiB multiples (completion/bridge.c). Count grants on take/give, plus
+ * the direct-map/entry deltas, exactly the two counters heap_in_use sums. */
+static size_t test_granted(size_t bytes) {
+    if (bytes > 2u * 1024u * 1024u)
+        return (bytes + 65535u) / 65536u * 65536u;
+    size_t granted = 512;
+    while (granted < bytes)
+        granted *= 2;
+    return granted;
+}
+
 static void *test_take(size_t bytes) {
     atomic_fetch_add(&allocations, 1);
     atomic_fetch_add(&blocks_out, 1);
-    return aligned_alloc(16, (bytes + 15) / 16 * 16);
+    size_t granted = test_granted(bytes);
+    atomic_fetch_add(&pool_bytes_out, (int64_t)granted);
+    observe_heap();
+    return aligned_alloc(16, granted);
 }
 
-static void test_give(void *block) {
+static void test_give(void *block, size_t bytes) {
     atomic_fetch_sub(&blocks_out, 1);
+    atomic_fetch_sub(&pool_bytes_out, (int64_t)test_granted(bytes));
     free(block);
 }
 
@@ -3176,7 +3206,7 @@ static void shared_map_groups(void) {
         if (wf_cmap_count_held(map, 0, 4, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
             fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, 4, 0), present);
     }
-    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object);
+    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 }
 
 /* The k a counted key's bytes name. */
@@ -3274,6 +3304,194 @@ static void scans_resume(void) {
         wf_cmap_destroy(map);
     }
     wf_cmap_key_set_drop_spare();
+}
+
+/* Every allocation peak is sampled at the same take/give and external
+ * storage hooks that feed PRE-2; checking only the final reading would miss
+ * old/new byte-arena and item-index overlap. These tests are single-threaded. */
+static int64_t begin_heap_measure(void) {
+    measured_peak = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    measure_heap = 1;
+    return measured_peak;
+}
+
+static uint64_t end_heap_measure(int64_t before) {
+    measure_heap = 0;
+    return (uint64_t)(measured_peak - before);
+}
+
+static uint64_t bounded_step(wf_cmap *map, uint64_t cursor, uint64_t count, uint64_t limit,
+                             wf_key_set *set, uint32_t *needs) {
+    int64_t before = begin_heap_measure();
+    uint64_t value = wf__keyed_table_scan_within(map, cursor, count, limit, set, needs, VALUE_TAG);
+    uint64_t peak = end_heap_measure(before);
+    if (peak > limit)
+        fail("bounded scan exceeded the PRE-2 heap peak (peak, limit)", peak, limit);
+    return value;
+}
+
+static void scan_within_one_long_key(void) {
+    wf_cmap_key_set_drop_spare();
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_key_set empty;
+    wf__key_set_new(&empty, 0);
+    uint32_t empty_needs;
+    uint64_t empty_next = bounded_step(map, 0, 0, 0, &empty, &empty_needs);
+    if (empty_needs || empty_next != 0 || empty.len != 0)
+        fail("an empty bounded scan needed bytes or moved to a nonterminal cursor", empty_next, empty.len);
+    unsigned char *key = malloc(65536);
+    if (key == NULL) abort();
+    for (unsigned i = 0; i < 65536; i++) key[i] = (unsigned char)i;
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(u, key, 65536, 0, &entry);
+    *slot = 1;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 0);
+    uint32_t needs;
+    /* A fresh eight-item store grants 512 bytes; the binary key 65536.
+     * This is an independent constant expectation, not the preflight. */
+    const uint64_t exact = 512 + 65536;
+    uint64_t value = bounded_step(map, 0, 1, 65535, &set, &needs);
+    if (!needs || value != exact || set.len != 0 || set.store != NULL)
+        fail("one long key did not report its exact Needs without insertion", value, exact);
+    value = bounded_step(map, 0, 1, exact - 1, &set, &needs);
+    if (!needs || value != exact || set.len != 0)
+        fail("one byte below Needs was admitted", value, exact);
+    value = bounded_step(map, 0, 1, exact, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("retrying the exact Needs made no progress", value, set.len);
+    uint64_t length;
+    const unsigned char *copied = wf_cmap_key_set_key(&set, 0, &length);
+    if (length != 65536 || memcmp(copied, key, 65536) != 0)
+        fail("bounded scan changed a long binary key", length, 65536);
+    value = bounded_step(map, 0, 0, 0, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("a duplicate key needed heap growth", value, set.len);
+    /* first_store must account for the retained arena as already held. */
+    wf__key_set_free(set.store);
+    wf__key_set_new(&set, 0);
+    value = bounded_step(map, 0, 1, 0, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("reusing a sufficient spare incorrectly needed bytes", value, set.len);
+    wf__key_set_free(set.store);
+    wf_cmap_key_set_drop_spare();
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(key);
+}
+
+/* A plain array of every inserted byte string is the completeness oracle.
+ * Its insertion sort is independent of the runtime's scan sort. Narrowed
+ * hash builds deliberately put all forty keys at one position, crossing
+ * the inline-sort threshold and forbidding every partial group. */
+static void scans_within_resume(void) {
+    enum { KEYS = 40, BYTES = 65536 };
+    unsigned char (*oracle)[BYTES] = malloc((size_t)KEYS * BYTES);
+    if (oracle == NULL) abort();
+    unsigned order[KEYS];
+    wf_cmap_key_set_drop_spare();
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    for (unsigned k = 0; k < KEYS; k++) {
+        memset(oracle[k], 0, BYTES);
+        oracle[k][0] = (unsigned char)k;
+        oracle[k][1] = 255;
+        uint64_t nonce = 0;
+        do {
+            memcpy(oracle[k] + BYTES - sizeof nonce, &nonce, sizeof nonce);
+            nonce++;
+        } while (SHARED_HASHES && tag_of(oracle[k], BYTES) != tag_of(oracle[0], BYTES));
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(u, oracle[k], BYTES, 0, &entry);
+        *slot = k + 1;
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+        unsigned j = k;
+        while (j != 0 && scan_before(oracle[k], BYTES, oracle[order[j - 1]], BYTES)) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = k;
+    }
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    const unsigned prefixes[] = {1, 2, 8, 9, 32, 33, KEYS};
+    for (unsigned trial = 0; trial < sizeof prefixes / sizeof prefixes[0]; trial++) {
+        unsigned prefix = SHARED_HASHES ? KEYS : prefixes[trial];
+        /* Measure ordinary insertions of this oracle prefix, with exactly
+         * its sort workspace held. This oracle does not use scan_growth. */
+        wf_key_set reference;
+        wf__key_set_new(&reference, 0);
+        int64_t before = begin_heap_measure();
+        size_t workspace = prefix > 32 ? (size_t)prefix * sizeof(scanned) : 0;
+        void *scratch = workspace ? test_take(workspace) : NULL;
+        for (unsigned j = 0; j < prefix; j++)
+            wf_cmap_key_set_insert(&reference, oracle[order[j]], BYTES);
+        uint64_t limit = end_heap_measure(before);
+        if (scratch) test_give(scratch, workspace);
+        wf__key_set_free(reference.store);
+        wf_cmap_key_set_drop_spare();
+        wf_key_set set;
+        wf__key_set_new(&set, 0);
+        uint32_t needs;
+        if (SHARED_HASHES) {
+            uint64_t n = bounded_step(map, 0, UINT64_MAX, limit - 1, &set, &needs);
+            if (!needs || n != limit || set.len != 0)
+                fail("a colliding position was split or Needs was inexact", n, set.len);
+        }
+        uint64_t cursor = bounded_step(map, 0, UINT64_MAX, limit, &set, &needs);
+        if (needs || set.len < prefix)
+            fail("a fitting complete prefix was not inserted", set.len, prefix);
+        if (!SHARED_HASHES && prefix == 2 && set.len != 2)
+            fail("the two-key byte limit admitted a third key", set.len, 2);
+        unsigned char seen[KEYS] = {0};
+        uint64_t consumed = 0;
+        for (unsigned steps = 0;; steps++) {
+            for (; consumed < set.len; consumed++) {
+                uint64_t length;
+                const unsigned char *key = wf_cmap_key_set_key(&set, consumed, &length);
+                unsigned k = 0;
+                while (k < KEYS && (length != BYTES || memcmp(key, oracle[k], BYTES) != 0)) k++;
+                if (k == KEYS || seen[k] || k != order[consumed])
+                    fail("bounded scan lost order, duplicated or invented a key", k, consumed);
+                seen[k] = 1;
+            }
+            if (cursor == 0) break;
+            if (steps > KEYS) fail("bounded scan failed to terminate", steps, cursor);
+            uint64_t old_cursor = cursor;
+            uint64_t value = bounded_step(map, cursor, UINT64_MAX, limit, &set, &needs);
+            if (needs) {
+                uint64_t required = value;
+                value = bounded_step(map, cursor, UINT64_MAX, required, &set, &needs);
+                if (needs) fail("retrying Needs did not advance", value, required);
+            }
+            if (value != 0 && value <= old_cursor)
+                fail("bounded scan cursor failed to advance", value, old_cursor);
+            cursor = value;
+        }
+        for (unsigned k = 0; k < KEYS; k++)
+            if (!seen[k]) fail("bounded scan missed an oracle key", k, trial);
+        wf__key_set_free(set.store);
+        wf_cmap_key_set_drop_spare();
+        if (SHARED_HASHES) break;
+    }
+    /* A cursor after the final occupied position ends even with zero budget. */
+    wf_key_set empty;
+    wf__key_set_new(&empty, 0);
+    uint32_t needs;
+    uint64_t end = bounded_step(map, UINT64_MAX, 0, 0, &empty, &needs);
+    if (needs || end != 0 || empty.len != 0)
+        fail("a bounded empty tail did not end", end, empty.len);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(oracle);
 }
 
 /* A scan reads the map and writes none of it: under a hold whose own
@@ -3850,6 +4068,8 @@ int main(int argc, char **argv) {
         holds_wait_out_moves();
         maps_swap();
         maps_clear();
+        scan_within_one_long_key();
+        scans_within_resume();
         scans_resume();
         scans_sparse();
         scans_write_nothing();

@@ -1519,6 +1519,21 @@ static void index_item(key_store *s, uint64_t index) {
         }
 }
 
+/* Shared by insertion and its allocation-free scan preflight. */
+static uint64_t byte_room_for(uint64_t used, uint64_t room, uint64_t length) {
+    if (length > UINT64_MAX - used)
+        WF_CMAP_EXHAUSTED();
+    uint64_t need = used + length;
+    if (room > need / 2) {
+        if (room > UINT64_MAX / 2)
+            WF_CMAP_EXHAUSTED();
+        room *= 2;
+    } else {
+        room = need;
+    }
+    return room < KEY_SET_MIN_BYTES ? KEY_SET_MIN_BYTES : room;
+}
+
 /* Makes room for one more key and length more bytes. */
 static key_store *room_for(wf_key_set *set, uint64_t length) {
     key_store *s = set->store;
@@ -1539,12 +1554,7 @@ static key_store *room_for(wf_key_set *set, uint64_t length) {
         set->store = s;
     }
     if (length > s->bytes_room - s->bytes_used) {
-        if (length > UINT64_MAX - s->bytes_used)
-            WF_CMAP_EXHAUSTED();
-        uint64_t need = s->bytes_used + length;
-        uint64_t room = s->bytes_room > need / 2 ? s->bytes_room * 2 : need;
-        if (room < KEY_SET_MIN_BYTES)
-            room = KEY_SET_MIN_BYTES;
+        uint64_t room = byte_room_for(s->bytes_used, s->bytes_room, length);
         unsigned char *bytes = take((size_t)room);
         if (s->bytes_used != 0)
             memcpy(bytes, s->bytes, (size_t)s->bytes_used);
@@ -1562,9 +1572,10 @@ void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity) {
                                : first_store(store_room(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT));
 }
 
-uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
-    uint64_t tag = tag_of(key, length);
-    key_store *s = set->store;
+/* An existing index, or UINT64_MAX. A bounded scan uses the same lookup
+ * before it changes the set; map keys themselves are already distinct. */
+static uint64_t key_set_find(const wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t tag) {
+    const key_store *s = set->store;
     if (s != NULL) {
         const uint32_t *slots = store_index(s);
         uint64_t mask = s->room * 2 - 1;
@@ -1574,6 +1585,15 @@ uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint6
                 return slots[i] - 1u;
         }
     }
+    return UINT64_MAX;
+}
+
+uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
+    uint64_t tag = tag_of(key, length);
+    uint64_t found = key_set_find(set, key, length, tag);
+    if (found != UINT64_MAX)
+        return found;
+    key_store *s;
     s = room_for(set, length);
     uint64_t index = set->len;
     if (length != 0)
@@ -2671,6 +2691,195 @@ uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set 
         wf_cmap_key_set_insert(set, keys[i].n->bytes, keys[i].n->length);
     if (keys != inline_keys)
         WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned));
+    return bound;
+}
+
+/* A read-only walk in scan order, with no heap storage. Each home's probe
+ * run contains all its keys. Selection within that run orders positions
+ * and colliding byte strings before predicting arena growth. No map, hold,
+ * spare or destination state is changed by this walk. */
+typedef struct {
+    uint64_t home;
+    int has_previous;
+    scanned previous;
+} scan_walk;
+
+static int scan_walk_next(wf_cmap *map, table *t, uint64_t cursor, scan_walk *walk,
+                          uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag, scanned *out) {
+    while (walk->home < t->capacity) {
+        int found = 0;
+        scanned best = {0, NULL};
+        for (uint64_t step = 0; step < t->capacity; step++) {
+            cell *c = &t->cells[(walk->home + step) & t->mask];
+            uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed) & KEY_MASK;
+            if (k == EMPTY)
+                break;
+            if (k == REMOVED)
+                continue;
+            uint64_t position = position_of(k);
+            if ((position >> t->shift) != walk->home || position < cursor)
+                continue;
+            const node *n = node_at(c);
+            if (!slot_present(slot_of(map, (node *)n), tag_offset, tag_width, none_tag))
+                continue;
+            scanned candidate = {position, n};
+            if (walk->has_previous && !scanned_before(&walk->previous, &candidate))
+                continue;
+            if (!found || scanned_before(&candidate, &best)) {
+                best = candidate;
+                found = 1;
+            }
+        }
+        if (found) {
+            walk->previous = best;
+            walk->has_previous = 1;
+            *out = best;
+            return 1;
+        }
+        walk->home++;
+        walk->has_previous = 0;
+    }
+    return 0;
+}
+
+typedef struct {
+    uint64_t len, room, bytes_used, bytes_room;
+    uint64_t growth, peak;
+} scan_growth;
+
+static uint64_t scan_sum(uint64_t a, uint64_t b) {
+    if (b > UINT64_MAX - a)
+        WF_CMAP_EXHAUSTED();
+    return a + b;
+}
+
+static void scan_take(scan_growth *g, uint64_t bytes) {
+    g->growth = scan_sum(g->growth, (uint64_t)WF_CMAP_GRANTED(bytes));
+    if (g->growth > g->peak)
+        g->peak = g->growth;
+}
+
+/* Simulates exactly room_for's take-before-give sequence, including a
+ * first_store spare already counted in PRE-2's heap reading. */
+static void scan_insert_growth(scan_growth *g, const wf_key_set *set, const node *n) {
+    if (key_set_find(set, n->bytes, n->length, tag_of(n->bytes, n->length)) != UINT64_MAX)
+        return;
+    if (g->room == 0) {
+#ifdef WF_CMAP_SPARE_KEYS
+        const key_store *spare = WF_CMAP_SPARE_KEYS();
+        if (spare != NULL && spare->room >= KEY_SET_MIN_ROOM) {
+            g->room = spare->room;
+            g->bytes_room = spare->bytes_room;
+        } else
+#endif
+        {
+            g->room = KEY_SET_MIN_ROOM;
+            scan_take(g, store_bytes(g->room));
+        }
+    } else if (g->len == g->room) {
+        scan_take(g, store_bytes(g->room * 2));
+        g->growth -= (uint64_t)WF_CMAP_GRANTED(store_bytes(g->room));
+        g->room *= 2;
+    }
+    if (n->length > g->bytes_room - g->bytes_used) {
+        uint64_t room = byte_room_for(g->bytes_used, g->bytes_room, n->length);
+        scan_take(g, room);
+        if (g->bytes_room != 0)
+            g->growth -= (uint64_t)WF_CMAP_GRANTED(g->bytes_room);
+        g->bytes_room = room;
+    }
+    g->bytes_used += n->length;
+    g->len++;
+}
+
+static size_t scan_buffer_bytes(uint64_t keys) {
+    if (keys <= SCAN_INLINE)
+        return 0;
+    if (keys > SIZE_MAX / sizeof(scanned))
+        WF_CMAP_EXHAUSTED();
+    return (size_t)keys * sizeof(scanned);
+}
+
+/* Returns the payload and writes the ScanStep tag (Next = 0, Needs = 1).
+ * count selects a candidate prefix ending after a whole position; within
+ * it, take the largest prefix that fits. The first occupied position is
+ * always considered, even beyond empty homes. No refusal allocates. */
+uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint64_t limit,
+                             wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                             uint32_t tag_width, uint64_t none_tag) {
+    if (map->slot_size == 0)
+        abort();
+    table *t = atomic_load_explicit(&map->current, memory_order_acquire);
+    if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
+        abort();
+    *needs = 0;
+    if (wf_cmap_count_held(map, tag_offset, tag_width, none_tag) == 0)
+        return 0;
+    const key_store *store = set->store;
+    scan_growth growth = {set->len, store ? store->room : 0,
+                          store ? store->bytes_used : 0, store ? store->bytes_room : 0, 0, 0};
+    scan_walk walk = {cursor >> t->shift, 0, {0, NULL}};
+    scanned next;
+    int found = scan_walk_next(map, t, cursor, &walk, tag_offset, tag_width, none_tag, &next);
+    uint64_t kept = 0, bound = 0, want = count ? count : 10;
+    while (found) {
+        uint64_t position = next.position, candidate = kept;
+        scan_growth proposed = growth;
+        do {
+            scan_insert_growth(&proposed, set, next.n);
+            candidate++;
+            found = scan_walk_next(map, t, cursor, &walk, tag_offset, tag_width, none_tag, &next);
+        } while (found && next.position == position);
+        size_t buffer = scan_buffer_bytes(candidate);
+        uint64_t peak = scan_sum(proposed.peak, buffer ? (uint64_t)WF_CMAP_GRANTED(buffer) : 0);
+        if (peak > limit) {
+            if (kept == 0) {
+                *needs = 1;
+                return peak;
+            }
+            bound = position;
+            break;
+        }
+        growth = proposed;
+        kept = candidate;
+        bound = found ? next.position : 0;
+        if (kept >= want)
+            break;
+    }
+    /* Allocate once, after admission, avoiding old/new sort-buffer overlap.
+     * The same map hold keeps this second walk's keys and slots unchanged. */
+    scanned inline_keys[SCAN_INLINE];
+    size_t buffer = scan_buffer_bytes(kept);
+    scanned *keys = buffer ? take(buffer) : inline_keys;
+    uint64_t used = 0, first = cursor >> t->shift;
+    uint64_t end = bound ? (bound >> t->shift) + 1 : t->capacity;
+    for (uint64_t i = 0; i < t->capacity && kept != 0; i++) {
+        cell *c = &t->cells[(first + i) & t->mask];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed) & KEY_MASK;
+        if (k == EMPTY) {
+            if (first + i + 1 >= end)
+                break;
+            continue;
+        }
+        if (k == REMOVED)
+            continue;
+        uint64_t position = position_of(k);
+        if (position < cursor || (bound != 0 && position >= bound))
+            continue;
+        const node *n = node_at(c);
+        if (!slot_present(slot_of(map, (node *)n), tag_offset, tag_width, none_tag))
+            continue;
+        if (used == kept)
+            abort();
+        keys[used++] = (scanned){position, n};
+    }
+    if (used != kept)
+        abort();
+    sort_scanned(keys, kept);
+    for (uint64_t i = 0; i < kept; i++)
+        wf_cmap_key_set_insert(set, keys[i].n->bytes, keys[i].n->length);
+    if (buffer)
+        WF_CMAP_GIVE(keys, buffer);
     return bound;
 }
 

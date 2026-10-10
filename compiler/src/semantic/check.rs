@@ -523,6 +523,7 @@ enum PreludeType {
     Overflow,
     DivError,
     NarrowError,
+    ScanStep,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.

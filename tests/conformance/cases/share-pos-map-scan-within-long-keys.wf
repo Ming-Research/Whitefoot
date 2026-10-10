@@ -1,0 +1,110 @@
+fn step(map: &ConcurrentHashMap<u8>, cursor: u64, limit: u64, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+} {
+  return map_scan_within::<u8>(map: map, cursor: cursor, count: 3_u64, limit: limit, keys: keys);
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let code = 42_u8;
+  let needed = False();
+  atomic map = &store {
+    for @fill (k in 0_u64..40_u64) {
+      let key = array_filled::<u8, 65536>(value: 0_u8);
+      set key[0_u64] = cvt.wrap::<u64, u8>(k);
+      set key[1_u64] = 255_u8;
+      let name = &key[0_u64..65536_u64];
+      set map^[name] = Some<u8>(value: 1_u8);
+    }
+    let seen = array_filled::<u8, 40>(value: 0_u8);
+    let cursor = 0_u64;
+    loop {
+      let keys = key_set_new(capacity: 0_u64);
+      let before = std::process::heap_in_use(meter: &meter);
+      let outcome = step(map: map, cursor: cursor, limit: 0_u64, keys: &keys);
+      let after = std::process::heap_in_use(meter: &meter);
+      if after > before {
+        set code = 12_u8;
+      }
+      match outcome {
+        Next(next: end) => {
+        }
+        Needs(bytes: required) => {
+          set needed = True();
+          if keys.len != 0_u64 {
+            set code = 1_u8;
+          }
+          if required == 0_u64 {
+            set code = 2_u8;
+          }
+          let retry_before = std::process::heap_in_use(meter: &meter);
+          set outcome = step(map: map, cursor: cursor, limit: required, keys: &keys);
+          let retry_after = std::process::heap_in_use(meter: &meter);
+          if retry_after > retry_before {
+            let growth = retry_after - retry_before;
+            if growth > required {
+              set code = 13_u8;
+            }
+          }
+        }
+      }
+      let next = 0_u64;
+      match outcome {
+        Next(next: end) => {
+          set next = end;
+        }
+        Needs(bytes: required) => {
+          set code = 3_u8;
+        }
+      }
+      for @read (i in 0_u64..keys.len) {
+        let buffer = array_filled::<u8, 65536>(value: 7_u8);
+        let length = key_set_read_key(keys: &keys, index: i, out: &buffer[0_u64..65536_u64]);
+        if length != 65536_u64 {
+          set code = 4_u8;
+        }
+        let expected = array_filled::<u8, 65536>(value: 0_u8);
+        set expected[0_u64] = buffer[0_u64];
+        set expected[1_u64] = 255_u8;
+        if buffer != expected {
+          set code = 5_u8;
+        }
+        let k = cvt::<u8, u64>(buffer[0_u64]);
+        if k < 40_u64 {
+          if seen[k] != 0_u8 {
+            set code = 6_u8;
+          }
+          set seen[k] = 1_u8;
+        } else {
+          set code = 7_u8;
+        }
+      }
+      if next == 0_u64 {
+        break;
+      }
+      if next <= cursor {
+        set code = 8_u8;
+        break;
+      }
+      set cursor = next;
+    }
+    for @check (k in 0_u64..40_u64) {
+      if seen[k] != 1_u8 {
+        set code = 9_u8;
+      }
+    }
+  }
+  if bnot(needed) {
+    set code = 10_u8;
+  }
+  let finish = Next(next: 0_u64);
+  let need = Needs(bytes: 65536_u64);
+  if finish == need {
+    set code = 11_u8;
+  }
+  return std::process::exit_status(code: code);
+}

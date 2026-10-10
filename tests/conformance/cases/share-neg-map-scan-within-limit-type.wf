@@ -1,0 +1,3 @@
+fn scan(map: &ConcurrentHashMap<u8>, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) {
+  return map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: 1_u32, keys: keys);
+}
