@@ -51,6 +51,51 @@ struct RepairPair {
 }
 
 const REPAIRS: &[RepairPair] = &[
+    // [TYPE-9] an operand-supplied argument is refused at the complete call.
+    RepairPair {
+        name: "type9-neg-runtime-slots-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9, FN-2] a generic instance is refused at its complete written targ.
+    RepairPair {
+        name: "type9-neg-generic-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-generic-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: this type argument would place `Slots<u64>` as the exchange of a `swap`; swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-generic-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9] a function-kind actual is refused at its inner written targ.
+    RepairPair {
+        name: "type9-neg-function-actual-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-function-actual-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-function-actual-box-swap.wf"
+        )],
+    },
     RepairPair {
         name: "const2-neg-whole-nocopy-struct.wf",
         rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
@@ -3749,6 +3794,37 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
             "{}: {failure}",
             pair.name
         );
+        // [TYPE-9] semantic tests pin the complete call or written targ
+        // span. Pin its rendered start here with the existing repair run.
+        let citation = match pair.name {
+            "type9-neg-runtime-slots-content-swap.wf" => {
+                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+            }
+            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
+            "type9-neg-function-actual-runtime-content-swap.wf" => {
+                Some(("fn swap::<", "Slots<u64>"))
+            }
+            _ => None,
+        };
+        if let Some((prefix, cited)) = citation {
+            let source = std::str::from_utf8(pair.rejected).expect("source is text");
+            let start = source
+                .find(&format!("{prefix}{cited}"))
+                .expect("refused construct")
+                + prefix.len();
+            let before = &source[..start];
+            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+            let column = before
+                .rsplit('\n')
+                .next()
+                .expect("source line")
+                .chars()
+                .count() as u64
+                + 1;
+            let location = failure.location().expect("source location");
+            assert_eq!(location.path(), pair.name);
+            assert_eq!((location.line(), location.column()), (line, column));
+        }
         let rendered = format!("{failure}\n");
         for sentence in pair.sentences {
             assert!(

@@ -1,0 +1,13 @@
+fn apply<fn exchange(first: &Slots<u64>, second: &Slots<u64>) -> result: unit writes(first), writes(second)>(first: &Slots<u64>, second: &Slots<u64>) -> result: unit writes(first), writes(second) {
+  doc "FN-5: the bound call uses the formal signature but executes the selected actual.";
+  exchange(first: first, second: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: swap's written type argument takes the exchange place even as a raw function-kind actual.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  apply::<fn swap::<Slots<u64>>>(first: &small.inner, second: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}

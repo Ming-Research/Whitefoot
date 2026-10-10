@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.124: a swap's exchange is a placement
+
+Rules: changed TYPE-9, TYPE-10
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can the contents of runtime-capacity windows (`a.inner` of type `Slots<T>` and the like) be exchanged with `swap`?" (translated), whose option A read "refuse, expressed through the existing placement rules: list the exchange of a `swap` as a place in TYPE-9's placement table, taken by `swap`'s type parameter; runtime-capacity forms, `Segments<T>` and `Paged<T>` have only Box content as their home, so their contents cannot be exchanged and a program exchanges the owning Boxes; generic instances are refused at the type argument by FN-2's existing transitive rule; `ConcurrentHashMap` keeps its exchange" (translated).
+
+Summary: A `swap` of two runtime-capacity window contents was admitted and lowered as an exchange of the block headers alone, so a capacity-1 block could carry a capacity-64 header and later writes ran past it. TYPE-9's placement table now lists the exchange of a `swap` as a place, taken by `swap`'s type parameter; a placement-restricted type has homes rather than one home, a runtime-capacity form, `Segments<T>` and `Paged<T>` keep the content of a `Box` as their only home, and `ConcurrentHashMap<V>` gains the exchange, so its admitted swap stays admitted. A refusal cites the complete `call` when the operand supplies the type argument. TYPE-10 now lists a replacement or exchange of the whole holding value among the ways a measure changes, which constant-capacity window exchanges already did. Selection ground: an in-place exchange moves one fixed-size value and these contents differ in size with their capacity, while exchanging the owning Boxes was already admitted and correct.
+
 ## 2026-10-10 v0.123: frozen objects
 
 Rules: changed OP-9, OWN-1, PRE-1, PROV-6, SHARE-1, STOR-3, TYPE-11, TYPE-2
