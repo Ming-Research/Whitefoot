@@ -1276,6 +1276,15 @@ pub enum IrOperation {
         count: IrValueId,
         set: IrValueId,
     },
+    /// [SHARE-1] a scan whose peak heap growth is at most `limit`.
+    /// Defines the prelude `ScanStep` enum, Next(cursor) or Needs(bytes).
+    ConcurrentHashMapScanWithin {
+        table: IrValueId,
+        cursor: IrValueId,
+        count: IrValueId,
+        limit: IrValueId,
+        set: IrValueId,
+    },
     /// [SHARE-1] makes every entry of the table `table` `None`; the values
     /// they held are released once the statement holding the table gives
     /// its hold up. Defines `Unit`.

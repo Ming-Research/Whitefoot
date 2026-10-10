@@ -1739,6 +1739,10 @@ impl<'unit> Checker<'_, 'unit> {
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
+                crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => Constructor::Enum {
+                    nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
+                    variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),
+                },
                 crate::BuiltinPreludeId::NARROW_ERROR => Constructor::Enum {
                     nominal: self
                         .types

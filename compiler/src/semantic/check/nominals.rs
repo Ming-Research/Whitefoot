@@ -6,7 +6,7 @@ use crate::{BuiltinPreludeId, SemanticCompilerFailure, UnsupportedSemanticFeatur
 
 use super::super::model::{
     CheckedConst, CheckedConstructor, CheckedField, CheckedNominal, CheckedNominalKind,
-    CheckedType, CheckedVariant, NominalId,
+    CheckedType, CheckedVariant, IntegerType, NominalId,
 };
 use super::{CheckStop, Checker, PreludeType};
 
@@ -281,6 +281,7 @@ impl<'unit> TypeContext<'unit> {
         self.intern_prelude_nominal(PreludeType::Overflow)?;
         self.intern_prelude_nominal(PreludeType::DivError)?;
         self.intern_prelude_nominal(PreludeType::NarrowError)?;
+        self.intern_prelude_nominal(PreludeType::ScanStep)?;
         Ok(())
     }
     pub(super) fn intern_prelude_nominal(
@@ -369,6 +370,31 @@ impl<'unit> TypeContext<'unit> {
                         constructor: CheckedConstructor::Prelude(BuiltinPreludeId::DIV_OVERFLOW),
                         tag: 1,
                         fields: Vec::new(),
+                    },
+                ],
+            ),
+            PreludeType::ScanStep => (
+                "ScanStep".to_owned(),
+                vec![
+                    CheckedVariant {
+                        name: "Next".to_owned(),
+                        constructor: CheckedConstructor::Prelude(BuiltinPreludeId::NEXT),
+                        tag: 0,
+                        fields: vec![CheckedField {
+                            name: "next".to_owned(),
+                            ty: CheckedType::Integer(IntegerType::U64),
+                            readonly: false,
+                        }],
+                    },
+                    CheckedVariant {
+                        name: "Needs".to_owned(),
+                        constructor: CheckedConstructor::Prelude(BuiltinPreludeId::NEEDS),
+                        tag: 1,
+                        fields: vec![CheckedField {
+                            name: "bytes".to_owned(),
+                            ty: CheckedType::Integer(IntegerType::U64),
+                            readonly: false,
+                        }],
                     },
                 ],
             ),
