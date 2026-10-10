@@ -67,15 +67,19 @@ pub(super) struct Frame {
 }
 
 impl Frame {
-    /// [MSR-1] fixes an Array's descriptor length as well as its range terms.
-    /// Keep that equality when terms use the constant, so a copied descriptor
-    /// still connects the query to bounds on its source's element projections.
-    pub(super) fn type_facts(&self, world: &mut World) -> Vec<Literal> {
-        self.places
+    /// [MSR-1] fixes the descriptor length wherever a formed term substituted
+    /// its type's constant. A copied descriptor may read the source's length,
+    /// so this equality connects the copy's bounds to the source's facts.
+    fn type_facts(
+        &self,
+        world: &mut World,
+        fixed_lengths: &BTreeSet<CheckedRangePlace>,
+    ) -> BTreeSet<Literal> {
+        fixed_lengths
             .iter()
-            .filter_map(|(place, view)| {
-                let fixed = place.fixed_length?;
-                let length = match view {
+            .filter_map(|place| {
+                let fixed = Linear::constant(i128::from(place.fixed_length?));
+                let length = match self.places.get(place)? {
                     PlaceView::Run { length, .. } => length.clone(),
                     PlaceView::Element {
                         version,
@@ -93,11 +97,7 @@ impl Frame {
                     }
                     PlaceView::Segments { .. } | PlaceView::Unknown => return None,
                 };
-                Some(Literal::new(
-                    length,
-                    Relation::Equal,
-                    Linear::constant(i128::from(fixed)),
-                ))
+                (length != fixed).then(|| Literal::new(length, Relation::Equal, fixed))
             })
             .collect()
     }
@@ -112,6 +112,8 @@ pub(super) struct Fact {
 
 /// One clause formed at one tuple.
 pub(super) struct Formed {
+    /// Descriptor equalities needed by fixed-length substitutions in this instance.
+    pub(super) type_facts: BTreeSet<Literal>,
     /// Each bound variable's range, the clause's guards, and every read's
     /// selection of an existing element.
     pub(super) premises: Vec<Literal>,
@@ -127,9 +129,19 @@ struct Former<'world> {
     iterations: &'world [Linear],
     bounds: Vec<Literal>,
     guards: Vec<Literal>,
+    fixed_lengths: BTreeSet<CheckedRangePlace>,
 }
 
 impl Former<'_> {
+    /// Record only lengths actually substituted while forming terms. Delay
+    /// descriptor reads until formation succeeds; the vacuity check must not
+    /// introduce reads for a clause with no instances.
+    fn fixed_length(&mut self, place: &CheckedRangePlace) -> Option<Linear> {
+        let fixed = Linear::constant(i128::from(place.fixed_length?));
+        self.fixed_lengths.insert(place.clone());
+        Some(fixed)
+    }
+
     fn term(&mut self, term: &CheckedRangeTerm) -> Option<Linear> {
         match term {
             CheckedRangeTerm::Constant(value) => Some(Linear::constant(*value)),
@@ -157,9 +169,9 @@ impl Former<'_> {
             }
             CheckedRangeTerm::Measure { place, measure, .. } => {
                 if *measure == CheckedMeasure::Length
-                    && let Some(length) = place.fixed_length
+                    && let Some(length) = self.fixed_length(place)
                 {
-                    return Some(Linear::constant(i128::from(length)));
+                    return Some(length);
                 }
                 match (self.frame.places.get(place)?, measure) {
                     (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
@@ -251,9 +263,7 @@ impl Former<'_> {
                         CheckedRangeShape::Run,
                     ) => {
                         let index = values.first()?;
-                        let length = place
-                            .fixed_length
-                            .map_or(length, |length| Linear::constant(i128::from(length)));
+                        let length = self.fixed_length(place).unwrap_or(length);
                         self.within(index, &length);
                         let projection =
                             super::world::shift_projection(projection, 0, prefix.len());
@@ -320,8 +330,8 @@ impl Former<'_> {
                             .iter()
                             .map(|index| *index + base as u32)
                             .collect();
-                        if let Some(length) = place.fixed_length {
-                            self.within(values.first()?, &Linear::constant(i128::from(length)));
+                        if let Some(length) = self.fixed_length(place) {
+                            self.within(values.first()?, &length);
                             implicit.push(base as u32);
                         }
                         let mut indices = prefix;
@@ -445,6 +455,7 @@ pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Fr
         iterations: &[],
         bounds: Vec::new(),
         guards: Vec::new(),
+        fixed_lengths: BTreeSet::new(),
     };
     clause.binders.iter().any(|binder| {
         let Some(start) = former.term(&binder.start) else {
@@ -474,6 +485,7 @@ pub(super) fn form(
         iterations,
         bounds: Vec::new(),
         guards: Vec::new(),
+        fixed_lengths: BTreeSet::new(),
     };
     let mut premises = Vec::new();
     for (position, binder) in clause.binders.iter().enumerate() {
@@ -504,7 +516,13 @@ pub(super) fn form(
         });
     }
     premises.append(&mut former.bounds);
+    // An expanded equality repeats the outer read's bounds in every leaf.
+    // Each conclusion needs the conjunction once; repeated literals otherwise
+    // cause a full theory probe per leaf per conclusion during saturation.
+    let mut seen = BTreeSet::new();
+    premises.retain(|literal| seen.insert(literal.clone()));
     Some(Formed {
+        type_facts: frame.type_facts(former.world, &former.fixed_lengths),
         premises,
         conditions,
         conclusions,
@@ -592,6 +610,9 @@ pub(super) use super::super::range_facts::MAX_RANGE_INSTANCES as MAX_INSTANCES;
 /// One obligation's problem under construction, over world atoms.
 #[derive(Default)]
 pub(super) struct Query {
+    /// Each substituted descriptor equality belongs to the query once, across
+    /// its owed clause, automatic instances and written instances.
+    pub(super) type_facts: BTreeSet<Literal>,
     /// Terms of the whole owed conjunction count toward the problem and
     /// seed instantiation, without assuming its other conclusions.
     pub(super) support: Vec<Literal>,
@@ -612,9 +633,10 @@ impl Query {
         let Some(formed) = form(world, &fact.clause, &fact.frame, binders, iterations) else {
             return;
         };
-        for literal in fact.frame.type_facts(world) {
-            collect_literal(&literal, atoms);
-            self.units.push(literal);
+        for literal in formed.type_facts {
+            if self.type_facts.insert(literal.clone()) {
+                collect_literal(&literal, atoms);
+            }
         }
         for mut conclusion in formed.conclusions {
             conclusion.guards.extend(formed.premises.iter().cloned());
@@ -678,6 +700,7 @@ pub(super) fn judge(
     for literal in query
         .units
         .iter()
+        .chain(&query.type_facts)
         .chain(&query.support)
         .chain(query.choices.iter().flatten().flatten())
         .chain(
@@ -1216,7 +1239,7 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Problem {
         atoms: kinds,
         ..Problem::default()
     };
-    for literal in &query.units {
+    for literal in query.units.iter().chain(&query.type_facts) {
         problem.units.push(map_literal(literal));
     }
     for choice in &query.choices {
@@ -1263,6 +1286,7 @@ mod aggregate_tests {
             iterations: &[],
             bounds: Vec::new(),
             guards: Vec::new(),
+            fixed_lengths: BTreeSet::new(),
         };
         assert_eq!(
             former.term(&CheckedRangeTerm::ConstGeneric { declaration, ty }),
@@ -1321,6 +1345,222 @@ mod aggregate_tests {
         assert_eq!(
             judge(&mut world, &[fact], &[0], &[], Query::default()),
             Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn expanded_array_bounds_and_type_facts_are_not_repeated_per_projection() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, MAX_INSTANCES + 1);
+        let place = CheckedRangePlace {
+            root: CheckedRangeRoot::Result(1),
+            path: Vec::new(),
+            fixed_length: Some(1),
+        };
+        let length = world.opaque(Some(IntegerType::U64));
+        fact.frame.places.insert(
+            place.clone(),
+            PlaceView::Run {
+                container: 0,
+                version: world.new_version(VersionDef::Initial),
+                generation: 0,
+                prefix: Vec::new(),
+                offset: Linear::constant(0),
+                length: length.clone(),
+            },
+        );
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Measure {
+                place: place.clone(),
+                measure: CheckedMeasure::Length,
+                shape: CheckedRangeShape::Run,
+            },
+        });
+        for (index, relation) in fact.clause.conclusions.iter_mut().enumerate() {
+            let index = CheckedRangeTerm::Constant(index as i128);
+            relation.left = CheckedRangeTerm::Read {
+                place: place.clone(),
+                shape: CheckedRangeShape::Run,
+                indices: vec![CheckedRangeTerm::Bound(0), index.clone()],
+                projection: vec![CheckedRangeProjection::Index(1)],
+                element: IntegerType::U8,
+                implicit_indices: vec![1],
+                guarded_from: Some(0),
+            };
+            relation.right = CheckedRangeTerm::ValueProjection {
+                root: CheckedRangeRoot::Result(0),
+                indices: vec![index],
+                projection: vec![CheckedRangeProjection::Index(0)],
+                element: IntegerType::U8,
+            };
+        }
+        let k = world.opaque(None);
+        let formed = form(
+            &mut world,
+            &fact.clause,
+            &fact.frame,
+            std::slice::from_ref(&k),
+            &[],
+        )
+        .unwrap();
+        let expected = BTreeSet::from([Literal::new(
+            length,
+            Relation::Equal,
+            Linear::constant(1),
+        )]);
+        assert_eq!(formed.type_facts, expected);
+        assert_eq!(
+            formed.premises,
+            vec![
+                Literal::new(k.clone(), Relation::GreaterEqual, Linear::constant(0)),
+                Literal::new(k.clone(), Relation::Less, Linear::constant(1)),
+            ],
+            "every projection repeats the same two outer bounds"
+        );
+        let mut query = Query {
+            type_facts: formed.type_facts,
+            ..Query::default()
+        };
+        let mut atoms = BTreeSet::new();
+        for literal in &query.type_facts {
+            collect_literal(literal, &mut atoms);
+        }
+        // The owed clause and distinct instances share the descriptor fact.
+        // Every instance still contributes every projection and its atoms.
+        for binder in [k, world.opaque(None)] {
+            query.add_instance(&mut world, &fact, &[binder], &[], &mut atoms);
+        }
+        assert_eq!(query.type_facts, expected);
+        assert_eq!(query.rules.len(), 2 * fact.clause.conclusions.len());
+        assert!(query.rules.iter().all(|rule| rule.guards.len() == 2));
+        let problem = localize(&world, &atoms, query);
+        assert_eq!(problem.units.len(), 1);
+    }
+
+    #[test]
+    fn type_facts_follow_substituted_lengths_and_preserve_source_reads() {
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, 1);
+        let place = CheckedRangePlace {
+            root: CheckedRangeRoot::Result(1),
+            path: Vec::new(),
+            fixed_length: Some(1),
+        };
+        let version = world.new_version(VersionDef::Initial);
+        let indices = vec![Linear::constant(0)];
+        let projection = vec![CheckedRangeProjection::Field(0)];
+        fact.frame.places.insert(
+            place.clone(),
+            PlaceView::Element {
+                version,
+                indices: indices.clone(),
+                projection: projection.clone(),
+            },
+        );
+        let formed = form(&mut world, &fact.clause, &fact.frame, &[], &[]).unwrap();
+        assert!(
+            formed.type_facts.is_empty(),
+            "an unused place needs no length read"
+        );
+        assert!(!world.atoms.iter().any(|atom| {
+            matches!(&atom.def, AtomDef::Read { projection, .. }
+                if projection.last() == Some(&CheckedRangeProjection::Measure(CheckedMeasure::Length)))
+        }));
+
+        fact.clause.conclusions[0].left = CheckedRangeTerm::Measure {
+            place: place.clone(),
+            measure: CheckedMeasure::Length,
+            shape: CheckedRangeShape::Run,
+        };
+        let formed = form(&mut world, &fact.clause, &fact.frame, &[], &[]).unwrap();
+        let mut length_path = projection;
+        length_path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+        let source_length = world.read(version, indices, length_path, Some(IntegerType::U64));
+        let expected = BTreeSet::from([Literal::new(
+            source_length.clone(),
+            Relation::Equal,
+            Linear::constant(1),
+        )]);
+        assert_eq!(formed.type_facts, expected);
+        assert_eq!(formed.conclusions[0].conclusions[0].left, Linear::constant(1));
+
+        fact.clause.conclusions[0].left = CheckedRangeTerm::Read {
+            place: place.clone(),
+            shape: CheckedRangeShape::Run,
+            indices: vec![CheckedRangeTerm::Constant(0)],
+            projection: Vec::new(),
+            element: IntegerType::U64,
+            implicit_indices: Vec::new(),
+            guarded_from: None,
+        };
+        let formed = form(&mut world, &fact.clause, &fact.frame, &[], &[]).unwrap();
+        assert_eq!(
+            formed.type_facts, expected,
+            "an element view substitutes its bound"
+        );
+
+        // A copied collection's Run length is the same source descriptor read.
+        fact.frame.places.insert(
+            place.clone(),
+            PlaceView::Run {
+                container: 0,
+                version: world.new_version(VersionDef::Initial),
+                generation: 0,
+                prefix: Vec::new(),
+                offset: Linear::constant(0),
+                length: source_length,
+            },
+        );
+        let formed = form(&mut world, &fact.clause, &fact.frame, &[], &[]).unwrap();
+        assert_eq!(
+            formed.type_facts, expected,
+            "a copied run substitutes its bound without losing the source's length"
+        );
+        let PlaceView::Run { length, .. } = fact.frame.places.get_mut(&place).unwrap() else {
+            unreachable!()
+        };
+        *length = Linear::constant(1);
+        let formed = form(&mut world, &fact.clause, &fact.frame, &[], &[]).unwrap();
+        assert!(
+            formed.type_facts.is_empty(),
+            "a constant descriptor needs no bridge"
+        );
+    }
+
+    #[test]
+    fn a_vacuous_fixed_length_adds_no_descriptor_read() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, 1);
+        let place = CheckedRangePlace {
+            root: CheckedRangeRoot::Result(1),
+            path: Vec::new(),
+            fixed_length: Some(0),
+        };
+        fact.frame.places.insert(
+            place.clone(),
+            PlaceView::Element {
+                version: world.new_version(VersionDef::Initial),
+                indices: vec![Linear::constant(0)],
+                projection: Vec::new(),
+            },
+        );
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Measure {
+                place,
+                measure: CheckedMeasure::Length,
+                shape: CheckedRangeShape::Run,
+            },
+        });
+        assert!(vacuous(&mut world, &fact.clause, &fact.frame));
+        assert!(
+            world
+                .atoms
+                .iter()
+                .all(|atom| !matches!(atom.def, AtomDef::Read { .. }))
         );
     }
 
