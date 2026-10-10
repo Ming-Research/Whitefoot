@@ -1104,3 +1104,39 @@ demand build does the same.
 
 The temporary arm, driver and job are removed in the commit that records this
 section; 81330087b holds them.
+
+### Two causes read from the IR afterwards
+
+Both readings come from `whitefootc --par --emit-llvm` output of the
+wf-exp-b7054cbb15dc compiler and the runtime source; nothing was built or
+run for them. They are deductions that match the measurements, not yet
+separately tested.
+
+**`large_helper`'s 1.9x ceiling.** The workload's pair publishes the second
+`helper` call and then runs the first on the publishing lane
+(`par.offer` → `wf__par_publish`, then `call @wf_helper`). The first call's
+loop asks `wf__par_split_budget`, which returns 0 whenever the asking lane's
+own deque is not empty (`sched/core.c`, the `bottom - top > 0` test), and it
+is not: the sibling was just pushed. So the first helper always runs its
+whole million-iteration loop unsplit, while a thief takes the sibling and
+splits it across the remaining lanes. Each repetition then lasts about one
+helper's sequential time, half the sequential build's, at any width: wall
+0.525 at four and eight workers. The rule declines to split when the lane
+already has queued work, which assumes that work can occupy the other lanes;
+a single coarse sibling occupies one. Demand-driven hand-out offers the first
+helper's loop whenever a lane asks, whatever its deque holds, so experiment 2
+should show `large_helper` pass 0.5 under the candidate; a chunk trace
+(`WF_PAR_TRACE`) of ordinary `--par` would test the reading directly.
+
+**`small_constant` and `small_split` under ordinary `--par`.** Every call of
+`mark` calls `wf__par_split_budget`, defined in the separately compiled
+runtime and opaque to the optimizer, then the recursive splitter, which can
+publish a frame holding the cells pointer to the runtime. The recursive
+splitter cannot be inlined and the pointer escapes into it, so the three
+stores per call stay behind calls and the repetition loop cannot fold, even
+though the pool never starts. That is the 886 ms against 1.3 us, and the
+same per-call path is `small_split`'s 5.7x. The candidate's call site
+compares the span with a compile-time minimum (`emit_demand_split`) and calls
+the non-recursive chunk directly below it, so for the literal range `0..3`
+the comparison folds and the chunk can inline; the next experiment-1 run's
+`demand/small_constant.o.s` and its cell test that.
