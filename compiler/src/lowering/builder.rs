@@ -728,6 +728,10 @@ struct IrBuilder<'program> {
     /// identity every written call position has, so this is how a permitted
     /// group is found in the IR.
     call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
+    /// Permission sites preceded by an implicit context await in this body.
+    /// An await may suspend without changing the IR block, so these sites
+    /// must start a fresh compute window even when their calls do not wait.
+    awaited_sites: HashSet<NodePath>,
     /// The permission table of the source function this body belongs to: the
     /// [PAR-1] groups its statements may overlap and the [PAR-2] verdict of
     /// each of its counted loops.
@@ -824,6 +828,7 @@ impl<'program> IrBuilder<'program> {
             addressed_bindings,
             function_results,
             call_results: HashMap::new(),
+            awaited_sites: HashSet::new(),
             permissions,
             overlap,
             synthesis,
@@ -997,6 +1002,11 @@ impl<'program> IrBuilder<'program> {
     ///   for instance) ends the group;
     /// - every member's definition is in one block, so the handed-out call
     ///   and its join sit on one straight-line edge; and
+    /// - no site after the first call has an implicit context await before
+    ///   it. Such a site ends the group before the await and may start
+    ///   another afterward: an await can suspend in the same IR block, moving
+    ///   the context away from the compute offers' owning lane. Other waiting
+    ///   calls are already refused by permission; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
@@ -1043,6 +1053,10 @@ impl<'program> IrBuilder<'program> {
             let mut members = Vec::new();
             let mut home = None;
             for site in sites {
+                if self.awaited_sites.contains(&site.statement) {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                    home = None;
+                }
                 // [PAR-1] judges every adjacent statement pair, so a run's
                 // members include statements that are not calls. The hand-out
                 // lowering has no form for one, so a non-call member ends the
@@ -1258,7 +1272,11 @@ impl<'program> IrBuilder<'program> {
             if self.current.is_none() {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
+            let pending = self.pending_contexts.len();
             self.await_contexts_before(outer_pending, index)?;
+            if self.pending_contexts.len() < pending {
+                self.note_awaited_site(statement);
+            }
             // [SHARE-3] inside an atomic block, the units the statement
             // reaches are taken before it runs.
             if !self.atomics.is_empty() {
