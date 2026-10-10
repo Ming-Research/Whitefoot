@@ -21,7 +21,10 @@ impl FunctionEmitter<'_, '_> {
         {
             return Err(BackendFailure::InvalidIr);
         }
-        if operand_type == IrType::Unit {
+        if operand_type == IrType::Unit
+            || matches!(operand_type, IrType::Nominal(id)
+                if matches!(self.nominal(id)?.kind(), IrNominalKind::Opaque))
+        {
             writeln!(
                 self.output,
                 "  {} = icmp {} i1 false, false",
@@ -163,7 +166,12 @@ impl FunctionEmitter<'_, '_> {
                         }
                         self.output.open_block(done);
                     }
-                    _ => return Err(BackendFailure::InvalidIr),
+                    // Fieldless opaque structs have no parts to compare;
+                    // opaque structs with fields lower as Struct above.
+                    IrNominalKind::Opaque => {}
+                    IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
+                        return Err(BackendFailure::InvalidIr);
+                    }
                 }
             }
             IrType::Array { element, length } => {

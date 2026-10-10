@@ -2927,11 +2927,15 @@ fn aggregate_range_vacuity_does_not_form_projected_reads() {
     let source = include_str!(
         "../../../../tests/conformance/cases/range3-pos-vacuous-aggregate-expansion.wf"
     );
-    // The minimal witness crosses the former instance limit; the larger
-    // expansion also crosses the atom limit if any reads are formed.
-    for length in [257, 1000000000] {
-        field_range_verdict(source.replace("257", &length.to_string()).as_bytes(), None);
-    }
+    // The fixture crosses the atom limit if any reads are formed; the
+    // larger expansion also detects work proportional to the array length.
+    field_range_verdict(source.as_bytes(), None);
+    let larger = source.replace("Array<u8, 4097>", "Array<u8, 1000000000>");
+    assert_ne!(
+        larger, source,
+        "the larger case must change the array length"
+    );
+    field_range_verdict(larger.as_bytes(), None);
 }
 
 #[test]

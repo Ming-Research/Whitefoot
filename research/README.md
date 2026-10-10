@@ -79,6 +79,10 @@ the work-branch and merge boundary.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.
+- [Value equality](investigations/value-equality/DESIGN.md): `==` on
+  structs, enums and Arrays with one definition for code and proofs, the
+  equality types, floats, `eeq` retirement, the `Eq` bound and the proof
+  decomposition, against other languages' rules.
 - [Indexed reductions](investigations/indexed-reductions/DESIGN.md): PAR-2
   permission for histogram-like loops whose iterations combine into shared
   indexed cells, the lowering choices and the criterion recorded before

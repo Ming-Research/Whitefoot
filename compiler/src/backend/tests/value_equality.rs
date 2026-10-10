@@ -4,6 +4,56 @@ use super::system::with_ir;
 use super::{compile, compile_and_run, emitted_function, nominal_type};
 use crate::{IrType, target::is_union_enum};
 
+#[test]
+fn fieldless_opaque_equality_is_constant_and_compares_no_representation() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/op16-pos-fieldless-opaque-struct.wf");
+    let llvm = compile(source.as_bytes());
+    for (name, predicate) in [("same", "eq"), ("different", "ne")] {
+        let body = emitted_function(&llvm, name);
+        assert!(
+            body.contains(&format!("icmp {predicate} i1 false, false")),
+            "fieldless equality is constant: {body}"
+        );
+        assert!(
+            !body.contains("icmp eq i128") && !body.contains("icmp ne i128"),
+            "the opaque representation is not compared: {body}"
+        );
+    }
+
+    // An array reaches the recursive comparison of the same opaque leaf.
+    let nested = source.replace(
+        "left: EqEmpty, right: EqEmpty",
+        "left: Array<EqEmpty, 2>, right: Array<EqEmpty, 2>",
+    );
+    assert_ne!(nested, source);
+    let llvm = compile(nested.as_bytes());
+    for (name, equal) in [("same", true), ("different", false)] {
+        let body = emitted_function(&llvm, name);
+        assert!(body.contains("icmp ult i64"), "array traversal: {body}");
+        assert!(
+            body.contains(&format!("phi i1 [{equal},")),
+            "the complete comparison has the requested polarity: {body}"
+        );
+        assert!(
+            !body.contains("icmp eq") && !body.contains("icmp ne"),
+            "a fieldless element has no equality guard: {body}"
+        );
+    }
+}
+
+#[test]
+fn fielded_opaque_equality_compares_its_typed_fields() {
+    let source = include_bytes!("../../../../tests/conformance/cases/op16-pos-opaque-struct.wf");
+    let llvm = compile(source);
+    let body = emitted_function(&llvm, "compare");
+    assert!(body.contains("load i32,"), "read the u32 field: {body}");
+    assert!(
+        body.contains("icmp eq i32"),
+        "compare the u32 field: {body}"
+    );
+}
+
 const SOURCE: &[u8] = br#"enum EqualityPayload {
   EqualityEmpty();
   EqualityWide(first: u64, second: u64, flag: Bool);
