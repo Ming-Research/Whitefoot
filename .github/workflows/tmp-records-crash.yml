@@ -1,7 +1,10 @@
 # Temporary (claude/par-demand only): reproduce the SIGSEGV of `records verify`
 # at WF_WORKERS=8 seen in compute-bench run 38051814229. Removed before ready.
 name: tmp-records-crash
-on: workflow_dispatch
+on:
+  push:
+    branches: [claude/par-demand]
+    paths: [.github/workflows/tmp-records-crash.yml]
 jobs:
   repro:
     runs-on: ubuntu-24.04
