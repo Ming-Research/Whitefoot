@@ -430,12 +430,6 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 };
 "#,
     ),
-    (
-        "prelude/shared_map_release_reserve.wf",
-        PreludeSource::Function,
-        r#"fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map);
-"#,
-    ),
 ];
 
 #[cfg(test)]

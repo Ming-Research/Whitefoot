@@ -142,7 +142,6 @@ macro_rules! operation_operands {
             | IrOperation::AtomicGroupTarget { object: value, .. }
             | IrOperation::ConcurrentHashMapCount { table: value }
             | IrOperation::ConcurrentHashMapClear { table: value }
-            | IrOperation::ConcurrentHashMapReleaseReserve { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
             | IrOperation::TableHoldKey { key: value, .. }
             | IrOperation::TableHoldKeys { set: value, .. }

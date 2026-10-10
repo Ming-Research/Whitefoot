@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-09 v0.118: releasing a map's reserve through the memory meter
+
+Rules: changed PRE-1, PRE-2, SHARE-1
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller": the release takes the memory meter and writes it, `reads(map), writes(meter)` ("choose A", translated); and option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process": it moves to `std::process` as `release_map_reserve`, host functions may declare type parameters, and the prelude function `shared_map_release_reserve` is removed ("choose A", translated).
+
+Summary: PRE-1 removes `shared_map_release_reserve`, the last entry of the declaration preorder, so no other ordinal moves. PRE-2 adds `release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter)` to `std::process` and states that a host function may declare type parameters under the ordinary generic rules, every instantiation using the one definition the build supplies. SHARE-1 names the moved function; what it says of the release is unchanged. Selection ground: v0.111's `writes(map)` kept the call out of guards but made every caller up a server's command path write the store, while an atomic statement changes the same map under `reads`; the release's answer is a drop in the heap reading, so it writes the meter as `heap_in_use` does, which also keeps it out of guards, and the meter's type lives in `std::process`, which the prelude does not reference.
+
 ## 2026-10-09 v0.117: segment and page selectors as direct bases
 
 Rules: changed OP-4, REF-4, MSR-1, TYPE-9, GRAM-5, ENT-2, ENT-3
