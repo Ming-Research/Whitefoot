@@ -1952,9 +1952,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 request: None,
             }));
         }
-        let exhibited = self
-            .analysis
-            .written_body_effects(signature, checked.effects.clone());
+        // A renamed instance's declared row stands in for a body it does not
+        // check; the template's written-body row stays the canonical
+        // instance's, which every concrete instance reads.
+        let exhibited = if summary_source.is_some() {
+            checked.effects.clone()
+        } else {
+            self.analysis
+                .written_body_effects(signature, checked.effects.clone())
+        };
         if !declaration_only {
             self.types
                 .exhibited_writes
