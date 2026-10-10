@@ -1,0 +1,62 @@
+{
+  "small_constant": {
+    "hot_work_survives": false,
+    "evidence": "The timed repetition work is optimized away in both images. demand/small_constant.o.s:378-388, wf_bench_micro, replaces all repetitions with arithmetic computing the final salt and three stores; seq/small_constant.o.s:326-336 does the same. Neither timed entry retains a repetition backedge. Allocation, zeroing and the final checksum survive at demand/small_constant.o.s:366-377,394-422 and seq/small_constant.o.s:314-325,342-370; these are residual work, not the repeated hot work. The standalone wf_workload still contains empty counting loops at demand/small_constant.o.s:125-142, but they are absent from the timed entry.",
+    "check_compiles_to": "Pruned: demand/small_constant.ll.ledger:1,6-7 explicitly records the literal loop as permitted, split, then 'PAR demand mark v5 pruned'. wf_mark is three unrolled stores at demand/small_constant.o.s:66-75. The timed wf_bench_micro folds the repetition loop just like seq; it has no call-site span comparison, slice driver, TLS poll or recursion budget. Thus the timing does not measure 200000000 surviving mark repetitions."
+  },
+  "small_split": {
+    "hot_work_survives": true,
+    "evidence": "demand/small_split.o.s:1308-1321 selects wf_workload for the active parallel world. Its repetition advances and backedge remain at demand/small_split.o.s:391-398, and its extent-three scalar body retains indexed stores and an inner backedge at demand/small_split.o.s:463-470. seq/small_split.o.s:282-289 retains corresponding indexed stores and an inner backedge.",
+    "check_compiles_to": "Call-site span comparison: demand/small_split.o.s:418-423 computes the span and compares it with 21428; larger spans call wf__par_slice_mark.0 at :374-385. Extent 3 bypasses the driver, so the timed path measures the span comparison without a TLS poll. The emitted slice driver checks remaining span at :703-707, then polls with GOTTPOFF plus %fs load, testq and jne at :710-713. No recursion budget or static pruning applies to this runtime-sized site."
+  },
+  "recursion": {
+    "hot_work_survives": true,
+    "evidence": "demand/recursion.o.s:323-331 retains the timed budget acquisition, wf__par_budget_fib call and result accumulation. The budget clone recursively calls both children and adds their results at demand/recursion.o.s:203-212. Its sequential clone retains recursive computation and an accumulation loop at :243-250, matching seq/recursion.o.s:16-23. seq/recursion.o.s:82-87 computes fib once and multiplies by repetitions; the manifest uses repetitions=1.",
+    "check_compiles_to": "Recursion budget clone: demand/recursion.o.s:325-328 obtains the root budget. wf__par_budget_fib tests the budget and tailcalls wf__par_seq_fib when spent at :152-153. Above the cut it decrements the budget at :167 and performs a statement-group TLS poll using GOTTPOFF plus %fs load at :171-174. Nonzero demand reaches lane acquisition and its null test at :175-181. The zero-demand path still recursively calls both budgeted children. The sequential clone has no demand poll; no slice driver or span comparison applies."
+  },
+  "spine": {
+    "hot_work_survives": true,
+    "evidence": "demand/spine.o.s:529-539 retains repeated budget acquisition, wf__par_budget_spine calls and result accumulation. Above the budget cut, wf__par_budget_spine retains a recursive call at demand/spine.o.s:240-247, followed by multiply-by-three/add arithmetic: this path has not become a loop. Its spent-budget path is an inlined, four-way unrolled rotate/lea/add loop at :258-279. The separately emitted wf__par_seq_spine also turns recursion into a loop at :340-361, with a remainder loop at :366-374, matching seq/spine.o.s:40-61,66-74.",
+    "check_compiles_to": "Recursion budget clone: demand/spine.o.s:531-535 acquires the root budget. wf__par_budget_spine tests it at :191-192; a spent budget selects the sequential loop. Above the cut it decrements budget and depth at :197-198, then polls using GOTTPOFF plus %fs load at :200-203. Nonzero demand reaches lane acquisition/null test at :204-212. Zero demand or refused acquisition reaches the recursive call at :243. The budgeted region remains recursive; the sequential clone and its inlined spent-budget copy are loops without polls. No slice driver or call-site span comparison applies."
+  },
+  "hot_helper": {
+    "hot_work_survives": true,
+    "evidence": "demand/hot_helper.o.s:912-920 retains the timed helper call, accumulation and repetition backedge. The helper's rotate/add work survives in an unrolled loop at demand/hot_helper.o.s:328-359 and a remainder loop at :439-447, with result combination at :451-453. seq/hot_helper.o.s:120-147 retains corresponding rotate/add arithmetic.",
+    "check_compiles_to": "Statement-group TLS poll: demand/hot_helper.o.s:266-269 uses GOTTPOFF plus %fs load, testq and je before lane acquisition/null test at :270-276. Zero demand executes the surviving work inline. There is no call-site span comparison, slice driver or recursion budget; the work-loop guards are ordinary iteration guards."
+  },
+  "large_helper": {
+    "hot_work_survives": true,
+    "evidence": "demand/large_helper.o.s:1079-1092 selects wf_workload. Its repeated pair of slice-driver calls and result combination survive at demand/large_helper.o.s:291-315. The driver retains rotate-by-13, multiply, accumulator additions and backedges at :622-631,638-659, corresponding to seq/large_helper.o.s:24-44,49-56.",
+    "check_compiles_to": "Statement-group TLS poll at demand/large_helper.o.s:322-325, followed by acquisition/null test at :328-334. Helper call-site span comparisons remain at :342-343,355-356,368-369; extent 1000000 selects wf__par_slice_helper.0. The standalone helper compares against 18749 at :182. The slice driver hoists GOTTPOFF at :588, checks remaining span at :599-603, then performs the %fs load/test/branch at :606-608. Nonzero demand reaches acquisition/null test at :668-671. No recursion budget or pruning of the hot loop."
+  },
+  "mandelbrot": {
+    "hot_work_survives": true,
+    "evidence": "demand/mandelbrot.o.s:1562-1573 selects wf_render_points. Its slice driver retains floating-point escape iteration, comparison and backedge at demand/mandelbrot.o.s:838-860, and per-point output stores at :815-820. seq/mandelbrot.o.s:225-245 retains corresponding escape iteration and :204-209 retains output stores.",
+    "check_compiles_to": "Call-site span comparison at demand/mandelbrot.o.s:312-313: cmpq $678 followed by ja selects the slice-driver path, whose call is at :390. wf__par_slice_render_points.0 checks remaining span at :794-797 and polls using GOTTPOFF plus %fs load/test/branch at :800-803. Nonzero demand reaches acquisition/null test at :876-879. The timed large fixture uses this driver; the final small remainder skips polling. No statement-group poll or user recursion budget."
+  },
+  "records": {
+    "hot_work_survives": true,
+    "evidence": "demand/records.o.s:2111-2121 selects wf_summarize_records. Its driver retains offset loads/range checks at demand/records.o.s:1060-1072, UTF-8 byte loads/state comparisons at :1097-1120, byte advancement at :1092-1096 and record-result stores at :1048-1053. seq/records.o.s:498-515 retains corresponding byte/state work and :448-453 retains record-result stores.",
+    "check_compiles_to": "Call-site span comparison: demand/records.o.s:550-551 compares against 184; the large path calls wf__par_slice_summarize_records.0 at :726. The driver checks remaining span at :1026-1029 and polls using GOTTPOFF plus %fs load/test/branch at :1032-1035. The timed large fixture uses this slice driver; small remainders bypass its poll. No statement-group poll or user recursion budget. UTF-8 and offset checks are useful source work, not demand decisions."
+  },
+  "fir": {
+    "hot_work_survives": true,
+    "evidence": "demand/fir.o.s:1609-1621 selects wf_filter. Its driver retains tap/input loads, ordered multiply/add operations and backedges at demand/fir.o.s:786-806,820-831, plus output stores at :754-761. seq/fir.o.s:152-183 retains corresponding tap loops and output stores.",
+    "check_compiles_to": "Call-site span comparison: demand/fir.o.s:255-256 compares against 824; the large path calls wf__par_slice_filter.0 at :365. The driver checks remaining span at :726-729, then polls using GOTTPOFF plus %fs load/test/branch at :732-735. Nonzero demand reaches acquisition/null test at :842-845. The timed large fixture uses the driver; small remainders skip polling. No statement-group poll or user recursion budget; the tap recurrence survives sequentially within each output."
+  },
+  "stencil": {
+    "hot_work_survives": true,
+    "evidence": "demand/stencil.o.s:5263-5273 selects wf_stencil for the active world. Initialization retains squared-position arithmetic, stores to both grids and a backedge at demand/stencil.o.s:2095-2126. Both step drivers retain neighbor loads, ordered addpd/mulpd, output stores and backedges at :2715-2739,3399-3423. seq/stencil.o.s:270-298 retains corresponding initialization and :466-489,568-591 retains both stencil branches.",
+    "check_compiles_to": "Call-site span comparisons: initialization at demand/stencil.o.s:530-531 compares against 8823; even/odd row sites at :711-712,863-864 compare against 504; nested row-width sites at :787-788,939-940 compare against 8824. The nested comparisons also survive inside the row drivers at :2699-2700,3383-3384. Width 1024 bypasses the nested stencil_row driver at runtime while retaining its inlined FP work. Four emitted slice drivers check remaining span then poll using GOTTPOFF plus %fs load/test/branch at :1427-1437 (stencil_row), :2052-2062 (initialization), :2590-2600 and :3276-3285 (even/odd rows). The fixture exercises initialization and both outer row-driver polls, not the nested row poll. No statement-group poll or user recursion budget."
+  },
+  "prefix": {
+    "hot_work_survives": true,
+    "evidence": "demand/prefix.o.s:3285-3295 selects wf_prefix. Its block-sum driver retains vector loads/additions and a backedge at demand/prefix.o.s:1522-1531 and block-result stores at :1483-1490. The middle block-sums scan remains at :672-685; output scan work remains at :1994-2007 and tail scan work at :828-846. seq/prefix.o.s:331-340,449-465,135-147 retains corresponding summation and scans.",
+    "check_compiles_to": "Outer call-site span comparisons at demand/prefix.o.s:513-514 (cmpq $1596; jae) and :705-706 (cmpq $1351; ja) select the two prefix slice drivers for 16384 complete blocks. Nested sum_block comparisons at :572-573,1497-1498 compare against 29999; block size 64 bypasses that driver at runtime. Its emitted driver hoists GOTTPOFF at :1125, checks remaining span at :1136-1140 and performs the %fs poll at :1143-1145. Outer drivers check remaining span and use GOTTPOFF plus %fs load/test/branch at :1432-1441,1938-1947. The middle scan and dependent output/tail recurrences have no demand checks. main's constant initialization is pruned outside the timed entry (demand/prefix.ll.ledger:30). No statement-group poll or user recursion budget."
+  },
+  "histogram": {
+    "hot_work_survives": true,
+    "evidence": "demand/histogram.o.s:4312-4323 selects wf_histogram. Its block driver retains key loads, modulo division, indexed counter increments and iteration control at demand/histogram.o.s:1914-1954, matching seq/histogram.o.s:95-132. Strided counter merging survives at demand/histogram.o.s:1049-1056 and seq/histogram.o.s:621-628.",
+    "check_compiles_to": "Block call-site comparison at demand/histogram.o.s:641-645 (cmpq $943; ja) selects the outer block slice driver for 16384 blocks. Bucket comparison at :854-855 (cmpq $1034; ja) bypasses the bucket driver for 256 buckets. Nested merge_bucket comparison at :1006-1007 (cmpq $18749; ja) bypasses its driver for 16385 counter rows. The measured block driver checks remaining span and polls using GOTTPOFF plus %fs load/test/branch at :1841-1850. The emitted bucket driver has the same sequence at :2343-2352; merge_bucket hoists GOTTPOFF at :1369 and performs its remaining-span/%fs poll at :1381-1390. Inner indexed scatter remains sequential without a demand check (admission denied at demand/histogram.ll.ledger:2). main's constant initialization is pruned outside the timed entry (:31). These images contain demand slice drivers; no statement-group poll or user recursion budget."
+  }
+}

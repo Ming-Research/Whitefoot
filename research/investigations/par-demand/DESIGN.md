@@ -1206,3 +1206,39 @@ which the sixth change's interval removed.
 So no cell of the current code exceeds its bound, and the cells still
 undecided need narrower intervals: more rounds on the next run, which also
 measures the corrected `small_constant`.
+
+## Results of the eighth rerun (30 rounds)
+
+Run: [compute-bench 38034318254](https://github.com/Ming-Research/Whitefoot/actions/runs/38034318254),
+`claude/par-demand` at 665b64ff7, i9-14900K, 30 interleaved rounds, pinned,
+2026-10-10 07:34 to 07:47 UTC, judged by the paired rule with this run's own
+inspection `inspection-38034318254.json` (written by a read-only model from
+the run's images). At four and eight workers: **19 pass, 4 inconclusive, 1
+fail.**
+
+- Fail: `spine` W=8, 1.034 [1.029, 1.038], rerun [1.028, 1.038]; W=4 is
+  inconclusive at 1.028 with a rerun interval [1.019, 1.035]. Cause, from
+  `demand/spine.o.s` against `seq/spine.o.s`: the sequential clone turns the
+  accumulating recursion into a loop, while `wf__par_budget_spine`, which the
+  candidate enters at W>1 with the runtime budget (9 levels at eight workers,
+  `log2(8 × 64)`), keeps each budgeted level a real call that saves five
+  registers, reads the request word and decrements the budget. At about 0.9
+  us per `spine` call, 32 ns more is the 3.4 percent. One worker runs the
+  sequential clone and reads 0.997. The prototype kept the static recursion
+  budget by design ([The prototype](#the-prototype), item 2), so this
+  attributes the failure to that budget clone's shape, not to the request
+  check; recursion on demand is stage 4. The owner decides how to proceed
+  (status board card on the spine result).
+- `small_constant`, corrected: its literal loop is now admitted, and the
+  candidate's ledger records the site as pruned. Both the sequential build
+  and the candidate fold the whole repetition loop (about 1.2 us per call);
+  today's `--par` takes 738 ms. So the call-site pruning removes the lost
+  optimization found in the CPU breakdown. Its ratios are timer noise around
+  a microsecond, so the cell is inconclusive and, with its hot work
+  optimized away in both builds, would not count as a pass in any case.
+- Pass at both widths: `small_split` (1.110, within 2.07), `recursion`,
+  `hot_helper`, `large_helper`, `mandelbrot`, `records`, `fir`, `stencil`,
+  `histogram`; `prefix` passes at W=8 and is inconclusive at W=4.
+- One worker: seven pass; `fir` again runs its sequential clone 5 percent
+  faster than the sequential build (0.947), outside the band on the fast
+  side; four straddle.
