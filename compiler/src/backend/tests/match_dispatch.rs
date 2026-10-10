@@ -1618,8 +1618,16 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("call void @llvm.memmove.")
-        && copied.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)")), "{copied}");
+    assert!(copied.contains("; layout-bounded transfer "), "{copied}");
+    assert!(!copied.contains("@llvm.memmove."), "{copied}");
+    let (region, _, _) = super::layout_transfers::transfer_region(copied);
+    assert!(
+        region.contains("load ptr")
+            && region.contains("store ptr")
+            && region.contains(", i64 12")
+            && region.contains(", align 1"),
+        "{copied}"
+    );
     let main = emitted_body(&module, "main");
     assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
     let tag = emitted_body(&module, "tag");

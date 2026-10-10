@@ -303,10 +303,9 @@ fn snapshot(program: &IrProgram, name: &str) -> IrValueId {
 }
 
 fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     assert_eq!(
-        body.lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(&source)),
+        body.lines().any(|line| copy_from(line, &source)),
         copied,
         "{body}"
     );
@@ -314,7 +313,9 @@ fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
 
 fn assert_no_copy(body: &str) {
     assert!(
-        !body.contains("@llvm.memmove.") && !body.contains("@llvm.memcpy."),
+        !body.contains("@llvm.memmove.")
+            && !body.contains("@llvm.memcpy.")
+            && !body.contains("; layout-bounded transfer "),
         "{body}"
     );
 }
@@ -1048,7 +1049,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "only the true/cold successor copies: {lazy}"
     );
     assert_eq!(
-        lazy.matches("@llvm.memmove.").count(),
+        lazy.lines().filter(|line| is_copy_end(line)).count(),
         1,
         "no other path copies: {lazy}"
     );
@@ -1081,7 +1082,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let copy = snapshot_copy_line(returned, addresses[3]);
     let lines: Vec<_> = returned.lines().collect();
     assert!(
-        lines[copy].contains("(ptr %wf.result,"),
+        lines[copy].contains("(ptr %wf.result,") || lines[copy].ends_with(" to %wf.result"),
         "copy directly to the result: {returned}"
     );
     assert_eq!(
@@ -1119,9 +1120,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // Load nor the destination-result callee needs an entry capture.
     let callee = emitted_function(&module, "destination_result");
     assert!(
-        !callee
-            .lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(", ptr %wf.arg.v0,")),
+        !callee.lines().any(|line| copy_from(line, "%wf.arg.v0")),
         "{callee}"
     );
     let output = compile_and_run(&module);
@@ -1133,11 +1132,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn snapshot_copy_line(body: &str, address: IrValueId) -> usize {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     let copies: Vec<_> = body
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.contains("@llvm.memmove.") && line.contains(&source))
+        .filter(|(_, line)| copy_from(line, &source))
         .map(|(line, _)| line)
         .collect();
     assert_eq!(copies.len(), 1, "one snapshot copy: {body}");
@@ -1379,8 +1378,21 @@ fn main() -> status: std::process::ExitStatus pure {
 fn incoming_copy_lines(body: &str) -> Vec<usize> {
     body.lines()
         .enumerate()
-        .filter_map(|(at, line)| {
-            (line.contains("@llvm.memmove.") && line.contains(", ptr %wf.arg.v0,")).then_some(at)
-        })
+        .filter_map(|(at, line)| copy_from(line, "%wf.arg.v0").then_some(at))
         .collect()
+}
+
+// Placement tests count complete copies, regardless of their transfer form.
+// End markers keep the original immediately-before-consumer assertions; the
+// layout_transfers tests independently check every enclosed load and store.
+fn is_copy_end(line: &str) -> bool {
+    line.contains("@llvm.memmove.")
+        || line.contains("@llvm.memcpy.")
+        || line.contains("; end layout-bounded transfer ")
+}
+
+fn copy_from(line: &str, source: &str) -> bool {
+    (line.contains("@llvm.memmove.") || line.contains("@llvm.memcpy."))
+        && line.contains(&format!(", ptr {source}, i64 "))
+        || line.contains(&format!("; end layout-bounded transfer from {source} to "))
 }

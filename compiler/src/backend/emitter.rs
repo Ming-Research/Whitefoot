@@ -1123,6 +1123,8 @@ enum FunctionSlot {
     /// One immutable aggregate value's planned storage, shared only after
     /// complete control-flow interference checks.
     OwnedValue(usize),
+    /// Byte-only union intervals capture here before any destination write.
+    TransferScratch,
     ArrayFillIndex(IrValueId),
     Address(IrValueId),
     IndexedDirectory(IrValueId),
@@ -1349,6 +1351,33 @@ impl FunctionFramePlan {
                 &mut ordered,
                 FunctionSlot::Spill(*value),
                 TargetStorageType::source(*ty),
+                None,
+            )?;
+        }
+        // One bounded, target-qualified scratch object, reused only within a
+        // complete synchronous transfer. It is part of split frames as well.
+        let mut scratch_bytes = 0;
+        let mut transfer_types = HashSet::new();
+        for &ty in function.value_types().iter().chain(storage.slots()) {
+            if !matches!(ty, IrType::Nominal(_)) || !transfer_types.insert(ty) {
+                continue;
+            }
+            if let Some(granules) = crate::target::bounded_transfer(target, program, ty)
+                .map_err(BackendFailure::TargetLayout)?
+            {
+                for granule in granules {
+                    if granule.access == crate::target::TransferAccess::Bytes {
+                        scratch_bytes = scratch_bytes.max(granule.offset + granule.size);
+                    }
+                }
+            }
+        }
+        if scratch_bytes != 0 {
+            push_function_slot(
+                &mut specifications,
+                &mut ordered,
+                FunctionSlot::TransferScratch,
+                TargetStorageType::bytes(scratch_bytes),
                 None,
             )?;
         }

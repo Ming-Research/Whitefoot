@@ -70,8 +70,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let release = *release;
         if self.is_memory_only(ty)? {
-            // A memory-only referent moves out by memmove before the cell
-            // is released (compiler/payload-enum-layout).
+            // A memory-only referent moves out through copy_storage before
+            // the cell is released (compiler/payload-enum-layout).
             self.copy_into_result(result, ty, &self.value_name(value))?;
         } else {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;

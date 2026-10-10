@@ -862,3 +862,132 @@ only. Changed Rust files received `rustfmt --edition 2024`. No build, Rust
 test, native execution, gate or performance run was made locally; Rust checks,
 baseline failures, emitted placement, native correctness, analysis cost and
 rebuilt Halo IR remain pending CI.
+
+
+## Layout-bounded transfers
+
+**Proposed experiment; owner approval pending; timing pending.** Does emitting
+unavoidable aggregate transfers at layout boundaries preserve producer store
+widths through optimization and full LTO, and improve Halo beyond the same-source
+twin's spread? Compare base, twin and candidate with identical Halo source,
+target, LLVM version and settings, using interleaved runs through CI on the
+14900K. Inspect optimized IR and final source loads before attributing any gain.
+Widened loads crossing the selected boundaries reject the frontend-only remedy;
+forwarding improvements without a runtime gain beyond noise reject its cost.
+
+The supplied `sol-sf.txt` sections A and C.1 identify Frame's retained
+`place_back` transfer at `bench.ll:178655–178656`: an 80-byte memmove becomes
+an 80-byte memcpy at `bench.opt.ll:87373`, then five `movups` loads/stores in
+`disasm/push_frame.txt:79–88`. The first 16-byte read at source offset 64 spans
+the separately stored 8-byte `varcount` and `frame_top` fields. Frame's other
+fields include 4-byte handles and a 1-byte flag with intervening padding.
+
+The same supplied artifacts show Halo Value's overlapping views: a 4-byte tag,
+a 4-byte handle at offset 4, or an 8-byte numeric payload at offset 8. ForLoop's
+optimized construction stores two 8-byte pieces, while SetTableRR's surviving
+key entry capture reads 16 bytes (`bench.opt.ll:17728`,
+`disasm/arm.13.txt:26–34`); full/slow paths retain further wide reads at lines
+255 and 364–369. These are observations of supplied artifacts, not new timing
+or rebuilt candidate output. Destination-result parameter placement can remove
+some captures independently; this experiment addresses copies that remain.
+
+### Proposed emission rule
+
+Target layout owns transfer planning alongside variant and aggregate layout.
+Structs recursively transfer scalar leaves with their original LLVM types and
+widths at target offsets; padding is omitted. Product enums recurse through
+the tag and their physical fields. A union enum partitions its complete size
+at every variant leaf's start **and end**, including nested aggregate boundaries
+and each handler word. Plain-byte intervals use an integer of exactly that
+width (not a first-class union carrier); a full pointer word present in every
+view uses `ptr`. Any interval touching an overlaid/split pointer, a one-bit leaf,
+or a nested byte-only interval instead uses byte memmove through planned scratch
+storage. Common handler words remain pointer-typed, including four-aligned words.
+All scalar source loads and all byte-interval captures precede every destination
+store or restore, preserving partial-overlap and equal-pointer semantics.
+Textually identical source/destination places still need no transfer.
+
+Both bounds must hold: **128 allocated bytes and 16 granules**. They include
+Halo's 80-byte/11-field Frame and 16-byte/3-interval Value while capping scalar
+code growth and live captures. They are provisional experiment limits, not
+measured optima or language limits. Arrays/windows, including nested fields,
+and other unsupported shapes keep the whole memory intrinsic even below the
+bounds: window tails must not become initialized scalar reads, and array
+scalarization already has an established compilation-cost objection. An exceeded
+bound also keeps the intrinsic. The existing OP-11 equal-or-disjoint memcpy
+selection remains in that fallback; all other fallback copies use memmove.
+Conservative alignment 1 is emitted for transfers, including pointer accesses,
+because these copy entry points do not retain a stronger place-alignment fact.
+
+### Evidence to obtain
+
+The backend gate's `layout_transfers` module checks raw IR for the mixed-width
+56-byte Frame fixture: eight loads and stores at offsets 0/8/16/24/32/36/40/48,
+with widths 8/8/4/8/4/1/8/8, all loads before stores and no whole-size intrinsic.
+A Halo-like Value requires 4+4+8, rejecting a tag-only or wide 16-byte transfer.
+A scalar-only 136-byte record, a 17-byte/17-leaf record, and even small
+array-containing records must retain memmove; a 128-byte/16-leaf record still
+expands. Under current at-most-eight-byte leaves, the large scalar record
+exceeds both bounds, so it does not independently test the byte cap. Pointer/Bool
+union overlays require captured byte intervals; the target-plan case covers all
+five supported triples. A native C observer feeds the actual emitted Frame
+transfer equal pointers and partial overlap in both directions, comparing each
+field against a pre-transfer byte snapshot. Interleaving source loads and destination stores corrupts
+the forward-overlap case. Existing owning enum, handler, swap and snapshot cases
+remain wired; their native outcomes and cleanup checks are unchanged.
+
+Existing IR expectations intentionally updated: payload-enum record parameter
+entry/store copy counts and read-through Load/incoming capture presence, count,
+path and immediately-before-consumer checks now recognize bounded transfers as
+complete copies; the handler-cell copy checks common pointer-word transfer
+instead of whole memmove. Copy-elimination assertions also recognize bounded
+transfers, so absence of an intrinsic alone no longer passes them. Array-backed
+record, large swap and container transfer expectations remain whole intrinsics.
+
+The changed maintained expectations are listed individually below; fixture source,
+copy placement requirements and native expected results are unchanged.
+
+| Backend case or shared assertion | Intentional IR expectation change |
+| --- | --- |
+| `payload_enums::a_by_value_parameter_nothing_writes_is_read_in_place` | No-copy checks also exclude bounded transfers. |
+| `payload_enums::unchanged_by_value_parameters_are_read_in_place_across_branches` | `rec_set` still has one required store copy, now ten scalar leaves; other bodies still have zero copies. |
+| `payload_enums::a_different_value_on_one_branch_keeps_the_parameter_entry_copy` | The required `Rec` entry capture is now ten scalar leaves from the same incoming pointer. |
+| `payload_enums::assert_step_destination` (ordinary and split selection callers) | No-copy checks also exclude bounded transfers. |
+| `read_through::read_through_snapshot_placement_preserves_old_values_and_call_boundaries` | Required captures and copy-free stable paths recognize either transfer form. |
+| `read_through::read_through_distinguishes_readonly_ranges_from_overlapping_range_writes` | Writing-range captures remain required; read-only paths still forbid copies. |
+| `read_through::read_through_snapshot_stays_in_one_dispatch_part` | Cross-part captures still count as copies; local paths still forbid them. |
+| `read_through::read_through_distinguishes_previous_and_fresh_loop_snapshots` | Old-snapshot capture presence and fresh-snapshot absence apply to either transfer form. |
+| `read_through::snapshot_materialization_is_local_to_the_use_unless_the_source_changed` | Capture counts, cold-block placement and immediately-before-call/return checks use the bounded transfer's end; result materialization still targets the result pointer. |
+| `read_through::destination_parameters_capture_before_invalidation_only_on_paths_that_need_it` | Incoming capture checks recognize bounded transfers while preserving write/read/path order. |
+| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The 20-byte Cell copies bounded intervals with a pointer-typed handler word at offset 12, rather than whole memmove. Layout, stored-word alignment and native results stay unchanged. |
+
+Unchanged intrinsic expectations were inspected in `arrays` (array-backed Record
+assignment and place_back), `owned_places` (array-backed result transfer and large
+owning swap), and `containers` (array-backed take/swap transfer). Their collection
+fields or exceeded bounds intentionally retain the old fallback. Paged directory
+growth and dynamic array-range memmove are separate operations, unchanged here.
+
+SLP, MemCpyOpt and code-generation combines can re-merge ordinary nonvolatile
+accesses. This IR does not impose a machine access-width promise; no volatile,
+atomic, inline assembly, global vectorizer restriction or artificial dependency
+is added. If final loads widen, evaluate late target-aware lowering explicitly.
+Extra instructions, register pressure/spills, scratch storage and code size may
+outweigh forwarding benefits. AArch64 paired/vector transfers may benefit from
+wider accesses, so inspect its output rather than extrapolating x86 timing.
+Targets outside the current qualified set are untested. **Timing pending.**
+No specification, acceptance, verdict, diagnostic or ABI change is proposed.
+
+
+On 2026-10-10 the permitted prebuilt `whitefootc --check` accepted the exact
+new fixture source. Changed Rust files received `rustfmt --edition 2024` from
+`compiler/`; incidental formatting in unchanged child modules was removed.
+Read-only review against step 1 (`110412ad49ae988558ea7bc50779ee5a494c232c`),
+including the untracked test module, checked the repository/documentation,
+safety, case ownership/wiring and design correspondence groups. It found a
+rejection-list format issue, masked bound coverage and an insufficient byte-copy
+ordering oracle; all were repaired and the changed coverage/layout hunks received
+limited follow-up review with no new finding. This is inspection, not executed
+backend evidence. Rust compilation, baseline failures, emitted IR assertions,
+native overlap/cleanup behavior, gates, optimized/LTO widths and other-target
+code generation remain pending CI. No local build, Cargo, Make, native test or
+performance run was made; no approval or specification log was written.
