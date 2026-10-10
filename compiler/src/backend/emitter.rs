@@ -39,7 +39,7 @@ use std::fmt::Write;
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
 use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
 pub use super::runtime::*;
-use super::storage::{FunctionStoragePlan, is_stored_aggregate};
+use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
     LANE_FRAME_BYTES, TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout,
     TargetLayoutFailure, TargetStorageType, fits_parallel_lane_slot, parallel_lane_frame_extent,
@@ -1561,6 +1561,9 @@ struct FunctionEmitter<'program, 'state> {
     /// Slots of by-value parameters read in place through the pointer the
     /// caller passed, with no entry copy (compiler/storage-placement).
     incoming_places: HashMap<usize, String>,
+    incoming_snapshots: IncomingSnapshots,
+    /// Private incoming backing proved initialized at this IR operation.
+    incoming_backing: BTreeMap<usize, usize>,
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
@@ -1713,6 +1716,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             storage,
             result_slot,
             incoming_places: HashMap::new(),
+            incoming_snapshots: IncomingSnapshots::default(),
+            incoming_backing: BTreeMap::new(),
             materialized: HashMap::new(),
             snapshot_copies: BTreeSet::new(),
             pin_names: HashMap::new(),
@@ -2024,7 +2029,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
         if !declaration {
-            self.select_incoming_places(&public, &abi, waiting);
+            self.select_incoming_places(&public, &abi, waiting)?;
         }
         if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
@@ -2158,24 +2163,30 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(module)
     }
 
-    /// Selects the by-value parameters this definition reads in place
-    /// through the pointer its caller passed, with no entry copy
-    /// (compiler/storage-placement). A caller hands over the storage of the
-    /// value it consumes, which stays untouched for the whole synchronous
-    /// call when the definition has no result destination that the caller
-    /// could have placed in that storage, no frame that outlives the call,
-    /// no deferred hand-out, and no split part, and when the parameter's
-    /// slot is a complete, unexposed allocation holding only the parameter
-    /// and block parameters carrying it unchanged on every incoming edge.
-    /// Transfers into a selected slot are elided by `emit_place_edge`;
-    /// updates, reinitializations and other definitions keep the entry copy.
-    fn select_incoming_places(&mut self, public: &FunctionAbi, abi: &FunctionAbi, waiting: bool) {
-        if waiting
-            || public.result().uses_destination()
-            || !self.function.overlaps().is_empty()
-            || self.dispatch.is_some()
-        {
-            return;
+    /// Select immutable, complete incoming places. Destination-result bodies
+    /// additionally prove every use's source choice and capture before possible
+    /// invalidation; unprovable paths retain the ordinary entry copy.
+    fn select_incoming_places(
+        &mut self,
+        public: &FunctionAbi,
+        abi: &FunctionAbi,
+        waiting: bool,
+    ) -> Result<(), BackendFailure> {
+        if waiting || !self.function.overlaps().is_empty() || self.dispatch.is_some() {
+            return Ok(());
+        }
+        if public.result().uses_destination() {
+            self.incoming_snapshots = self.storage.incoming_snapshots(
+                self.program,
+                self.function,
+                self.result_slot,
+                self.sequential_clones.is_some(),
+            )?;
+            for (slot, value) in &self.incoming_snapshots.places {
+                self.incoming_places
+                    .insert(*slot, format!("%wf.arg.v{}", value.ordinal()));
+            }
+            return Ok(());
         }
         for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
             if !parameter.is_indirect() || !self.storage.holds_only(*value) {
@@ -2190,6 +2201,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.incoming_places
                 .insert(slot, format!("%wf.arg.v{}", value.ordinal()));
         }
+        Ok(())
     }
 
     /// Every parameter of this definition's signature, with the facts the

@@ -40,8 +40,9 @@ pub(in crate::backend) fn returned_storage_slot(
         return Some(returned);
     };
     // All other indirect inputs reach private storage before this group's
-    // entry transfer writes the result or a field within it. The result may alias any consumed
-    // argument, not necessarily this parameter. Keep that last transfer:
+    // entry transfer writes the result or a field within it. Incoming lazy
+    // placement excludes this prologue-write case. The result may alias any
+    // consumed argument, not necessarily this parameter. Keep that last transfer:
     // the same ABI also admits an independent result destination.
     // Source roles, complete CFG interference and exposed-storage exclusion
     // remain independent prerequisites; a matching representation grants none.
@@ -97,7 +98,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     | IrIntegerOperation::AbsoluteChecked
                     | IrIntegerOperation::DivideChecked
                     | IrIntegerOperation::RemainderChecked
-            ) => {
+            ) =>
+            {
                 self.materialize_operands(arguments.iter().copied())?;
                 self.emit_integer(result, ty, *operation, *operand_type, arguments)?;
             }
@@ -895,6 +897,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
+        } else if let Some(backing) = self.incoming_backing.get(&slot) {
+            self.entry_slot(FunctionSlot::OwnedValue(*backing))
         } else if let Some(incoming) = self.incoming_places.get(&slot) {
             Ok(incoming.clone())
         } else {
@@ -902,14 +906,35 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
     }
 
-    /// Consume the planner's per-use copy schedule before evaluating any
-    /// operand or effect. A later operation starts from the captured address
-    /// again, so no emitted-block order becomes a runtime initialization fact.
+    /// Consume both copy schedules before evaluating any operand or effect.
+    /// Load backing is per-use; incoming backing persists exactly where the
+    /// CFG proof says it was captured on every path, never by emission order.
     pub(super) fn prepare_snapshot_use(
         &mut self,
         block: IrBlockId,
         at: usize,
     ) -> Result<(), BackendFailure> {
+        self.incoming_backing = self
+            .incoming_snapshots
+            .backing
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        let captures = self
+            .incoming_snapshots
+            .copies
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        for slot in captures {
+            let source = self
+                .incoming_places
+                .get(&slot)
+                .ok_or(BackendFailure::InvalidIr)?
+                .clone();
+            let destination = self.entry_slot(FunctionSlot::OwnedValue(slot))?;
+            self.copy_storage(self.storage.slots()[slot], &source, &destination)?;
+        }
         self.snapshot_copies.clear();
         for slot in self.storage.snapshot_copies(block.index(), at) {
             let address = self

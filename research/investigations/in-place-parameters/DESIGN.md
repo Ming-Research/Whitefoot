@@ -702,14 +702,15 @@ The caller-side restriction was unnecessary and is removed. A read-through
 call still requires a checked own parameter, an acyclic synchronous body,
 no overlapping execution, and an unexposed complete slot holding only that
 parameter and not serving as its result. Acyclicity excludes split callees.
-A destination result does not invalidate that proof: such callees already
-capture their indirect inputs before a body or result write. Passing a stable element
-address removes the caller's redundant capture while preserving the callee's
-ABI-required capture.
+A destination result does not invalidate that proof: the callee must preserve
+its original inputs across possible aliased result writes. At the time of the
+Load-snapshot change, it did so with entry captures. Passing a stable element
+address removes the caller's redundant capture without relaxing that duty.
 
-The separate callee-entry restriction in `select_incoming_places` remains
-necessary for the current general ABI: a destination is not always distinct
-from inputs. `call_reuse_operand_for_type` may reuse a consumed input as the
+At the time of the Load-snapshot change, the separate callee-entry
+restriction in `select_incoming_places` retained all captures: a destination
+is not always distinct from inputs. The proposed extension below preserves
+this ABI obligation with proved capture placement. `call_reuse_operand_for_type` may reuse a consumed input as the
 result, and `returned_storage_slot` permits a different parameter's slot to
 be redirected into that destination. For example, this schematic fragment
 uses a `Big` record large enough to require a destination result:
@@ -728,9 +729,10 @@ If the result occupies `right`, the callee's entry transfer from `a` into
 `out` overwrites `b`'s incoming storage. Letting `b` read through that pointer
 would observe `a.last`, not the original `right.last`. The existing prologue
 captures `b` before initializing the result and prevents this error. That
-protection is unchanged; it is not grounds for copying the caller's separate
-snapshot too. Removing callee-entry captures would require a distinct ABI or
-a result/input disjointness proof, neither of which this change introduces.
+protection remains required; it is not grounds for copying the caller's
+separate snapshot too. The proposed extension retains these entry captures
+when the prologue initializes the result; other bodies may instead prove
+that each input use or private capture precedes a possible aliased write.
 
 #### Halo prepare trace
 
@@ -807,3 +809,56 @@ The effect whitelist, known-root subset, callee restrictions and exposure or
 mixed-origin exclusions can retain safe copies. Analysis cost, baseline
 failure, optimized shape, facts-off behavior, native correctness and the
 full compiler gate remain unverified. **Halo timing and rebuilt IR pending.**
+
+
+## Destination-result parameters
+
+**Proposed experiment; owner decision pending; timing pending.** Can lazy
+incoming capture remove Halo's hot key copy while preserving original-input
+semantics? Compare identical Halo source/toolchain inputs before and after;
+a surviving eligible hot-path entry copy rejects the placement claim, and
+any changed input observation under result/input aliasing rejects correctness.
+
+The supplied `sol-sf.txt` sections A ("The first SetTableRR wide read is a
+callee entry snapshot") and C.4 ("selective parameter capture") identify
+`table_get(table: Value, key: Value)`'s two callee entry copies at
+`bench.ll:26031–26032`, after PR #310 removed its caller snapshots. The key
+copy survives as 16 bytes at `bench.opt.ll:17728`; full LTO places its
+`movupd` in `arm.13.txt:26–34`, spanning the producer's two 8-byte stores.
+The supplied body reads the numeric key at optimized lines 17756–17775 and
+passes it to cold `node_find` at 17781, before the result writes on their
+paths at 17752, 17800 and 17814. These are supplied artifact observations,
+not newly generated IR or timing evidence.
+
+The prototype reuses `storage/snapshots.rs`'s consumer classification,
+materialization-site analysis and conservative effect barriers. An incoming
+pointer has no disjoint-root proof. Writes to the result, its placed fields,
+call destinations, edge transfers and Load materializations invalidate every
+indirect input. Before a first barrier with a reachable use, or an ineligible
+consumer, the path captures private backing; later uses and unchanged carriers
+read that preserved copy. Load snapshots keep their existing per-use behavior;
+incoming captures need a separate finite placement walk because recapturing
+after a result write would read the wrong value.
+
+Mixed clean/captured joins and reentered capture sites retain entry copies.
+A prologue that initializes the result from another parameter retains its
+existing two-pass capture order. Waiting definitions, overlap groups, split
+parts, incomplete or exposed storage, updates and mixed origins remain
+excluded. Calls, pointer writes, releases and unknown effects keep conservative
+barriers. ABI, result-slot reuse, layout, acceptance, verdicts and diagnostics
+remain unchanged; no runtime flag or pointer phi is introduced.
+
+The backend regression shares one native image: `read_first` rejects main's
+entry copy; `write_then_read` rejects omitted/late capture by observing 7
+after writing 99; `hot_cold` requires a copy only before the cold result call.
+Caller assertions require equal result/input pointers, and calls stay out of
+line. Small CFG cases cover mixed joins, all-captured joins and reentry. The
+existing Load case's callee-copy expectation follows the new rule; the
+prologue-alias regression remains unchanged.
+
+On 2026-10-10 the authorized prebuilt `whitefootc --check` accepted the exact
+new fixture and the existing lazy-Load fixture. This establishes admission
+only. Changed Rust files received `rustfmt --edition 2024`. No build, Rust
+test, native execution, gate or performance run was made locally; Rust checks,
+baseline failures, emitted placement, native correctness, analysis cost and
+rebuilt Halo IR remain pending CI.
