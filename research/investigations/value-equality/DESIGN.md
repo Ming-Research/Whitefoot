@@ -1,7 +1,7 @@
 # Value equality
 
 Status: the owner ruled on all six choices on 2026-10-10 (status board item
-"值类型的 == 完整支持"); the selected design is specified in v0.120 as [OP-16]
+`proof-eq`, full value-type `==` support); the selected design is specified in v0.120 as [OP-16]
 and its consumers, and implemented on the branch of pull request #323.
 Specification references below are to v0.119, the version this record
 investigated.
