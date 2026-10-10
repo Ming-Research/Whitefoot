@@ -384,27 +384,6 @@ impl FunctionEmitter<'_, '_> {
         self.emit_unit_call(result, "wf__keyed_table_clear", &arguments)
     }
 
-    /// Releases a table's reserve storage and answers its bytes; the runtime
-    /// takes only the table's own short lock, so no hold is needed.
-    pub(super) fn emit_keyed_table_release_reserve(
-        &mut self,
-        result: IrValueId,
-        table: IrValueId,
-    ) -> Result<(), BackendFailure> {
-        let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
-            return Err(BackendFailure::InvalidIr);
-        };
-        self.checked_entry(nominal)?;
-        self.names(&["wf__keyed_table_release_reserve"]);
-        writeln!(
-            self.output,
-            "  {} = call i64 @wf__keyed_table_release_reserve(ptr {})",
-            self.value_name(result),
-            self.value_name(table)
-        )
-        .map_err(|_| BackendFailure::TextEmission)
-    }
-
     pub(super) fn emit_table_held_entry(
         &mut self,
         result: IrValueId,

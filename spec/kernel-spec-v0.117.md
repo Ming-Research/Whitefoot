@@ -1,4 +1,4 @@
-# Kernel Specification v0.118
+# Kernel Specification v0.117
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2274,7 +2274,7 @@ A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, whi
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
 `map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
 `map_clear` makes every entry of the map its argument names `None`, releasing every value they held.
-`std::process::release_map_reserve` changes no entry of the map that is the state of the object its argument names. It may release storage the map holds beyond what holding its entries needs, and returns the number of bytes by which that release lowers the heap the program holds [PRE-2], which is an input of the execution [WAIT-2].
+`shared_map_release_reserve` changes no entry of the map that is the state of the object its argument names. It may release storage the map holds beyond what holding its entries needs, and returns the number of bytes by which that release lowers the heap the program holds [PRE-2], which is an input of the execution [WAIT-2].
 A map's entries are the places its subscripts select [OP-4] and the places the targets on its handles name [SHARE-2].
 A value of the prelude type `KeySet` is a key set: its `len` distinct keys, the key at each index from zero being the one whose first insertion was that many insertions of a new key after the set was made.
 `key_set_new` returns an empty set with room for its argument's number of keys.
@@ -2531,11 +2531,12 @@ fn key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> length: u64 reads(
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
+fn shared_map_release_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>) -> freed: u64 writes(map);
 ```
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key`, `free_empty` and `shared_map_release_reserve`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -2549,7 +2550,6 @@ pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
 ```
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
-A host function may declare type parameters under [FN-2]; all its instantiations use the one callable boundary whose definition the build supplies.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
 An opaque struct a host module declares with fields, `Instant` or `CancelState`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
@@ -2982,8 +2982,6 @@ public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) d
 public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
 
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
-
-public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
 ```
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)

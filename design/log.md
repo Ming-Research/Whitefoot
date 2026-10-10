@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-09 A map's reserve is released through the memory meter in std::process
+
+Nodes: language/system-interface, language/system-interface/memory-statistics, compiler/prelude-records
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller" (the release takes the memory meter and writes it), option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process" (it moves to `std::process` and host functions may declare type parameters), and approved the item request asking to approve #317's compiler decision that a generic host function's instances share the host declaration's link symbol and refuse a boundary whose machine representation could depend on a type argument, together with the rewording that drops a stale count from an existing decision of the same node ("choose A", "choose A", "approve", translated).
+
+Summary: v0.111's `shared_map_release_reserve` wrote the map's handle to stay out of atomic guards, which made every caller up a server's command path write the store although an atomic statement changes the same map under `reads`. The release now writes the memory meter, as `heap_in_use` does, since its answer is a drop in the heap reading, and lives beside it in `std::process` as `release_map_reserve`, the prelude not referencing host-module types. Host functions may be generic; each instance keeps its own checked signature and effect substitution and calls the one definition the build supplies, rather than a per-instance symbol the host would have to provide for every value type.
+
 ## 2026-10-09 Segment and page selectors as direct bases
 
 Nodes: language/ownership/range-reference, language/checks-and-proofs/proof-identity
