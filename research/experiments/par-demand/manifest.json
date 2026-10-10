@@ -1,6 +1,6 @@
 {
   "small_constant": {"kind": "pruning", "repetitions": 200000000, "extent": 3, "sizing_repetitions": 100000},
-  "small_split": {"kind": "pruning", "repetitions": 200000000, "extent": 3, "sizing_repetitions": 100000},
+  "small_split": {"kind": "pruning", "repetitions": 200000000, "extent": 3, "sizing_repetitions": 100000, "decisions_per_repetition": 1},
   "recursion": {"kind": "group-call check", "repetitions": 1, "extent": 38, "sizing_repetitions": 1, "sizing_extent": 20},
   "spine": {"kind": "group-call check", "repetitions": 10000, "extent": 4000, "sizing_repetitions": 10},
   "hot_helper": {"kind": "group-call check", "repetitions": 10000000, "extent": 0, "sizing_repetitions": 10000},

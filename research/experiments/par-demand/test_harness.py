@@ -51,6 +51,14 @@ class VerdictTests(unittest.TestCase):
         verdicts = {r["width"]: r["status"] for r in summarize(self.path, self.inspection) if r["workload"] == "small_split"}
         self.assertEqual(verdicts, {1: "inconclusive", 4: "fail", 8: "fail"})
 
+    def test_a_decision_point_may_cost_one_nanosecond_per_execution(self):
+        # Every arm takes 1 s here; small_split's 200,000,000 decisions allow
+        # 0.2 of it, while a workload without decision points keeps 1.02.
+        self.write(ratio=1.1, attempts=(1, 2))
+        verdicts = {(r["workload"], r["width"]): r["status"] for r in summarize(self.path, self.inspection)}
+        self.assertEqual(verdicts[("small_split", 4)], "pass")
+        self.assertEqual(verdicts[("large_helper", 4)], "fail")
+
     def test_missing_and_duplicate_rows_are_errors(self):
         self.write()
         lines = self.path.read_text().splitlines(keepends=True)

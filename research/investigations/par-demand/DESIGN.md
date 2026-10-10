@@ -785,3 +785,37 @@ runtime call per slice.
 
 Both escalations the owner named are spent; the next step goes back to the
 owner.
+
+## The fifth change, fixed before it measures
+
+The owner chose (status board, 2026-10-10) to return to the second change
+(122afdc1d), the best measured, and change only how a poll reads the request
+word, then rerun under the same rule.
+
+Change: the compiler-side files of the slice driver, the call-site
+comparison and their tests are 122afdc1d's; the runtime keeps the request
+word as the owner thread's `_Thread_local wf__par_demand_word` (from
+31b4a1588: registered at attach, written by a thief through that address,
+cleared by a publish), and every poll is `load atomic i64, ptr
+@wf__par_demand_word monotonic` instead of a call of
+`wf__par_demand_requested`. The slice loop's shape, its 5,000-unit interval
+and the call-site fast path are unchanged.
+
+Prediction at four and eight workers: `large_helper` 1.00 to 1.02, since
+the second rerun's 6.5 percent was one runtime call per 625 iterations around
+an unchanged four-way body; `fir` below its 1.08 to 1.09, likely inconclusive
+by spread; `spine` within 2 percent; the group-call workloads unchanged near
+1.00; `small_split` about 1.1, unaffected (its range never reaches a poll),
+which the owner's new allowance below decides.
+
+## The allowance for tiny decision points
+
+The owner ruled (status board, 2026-10-10) that the bound is the wider of
+two: each decision point may cost at most 1 ns or 2 percent more per
+execution. For a cell whose sequential time per decision-point execution is
+`t` nanoseconds, the bound at four and eight workers is `max(1.02, 1 + 1/t)`
+plus `noise`; at one worker it stays within `noise` of 1. `small_split`
+executes its decision point once per `mark` call, 200,000,000 times in
+`T_seq` of about 188 ms, so `t` is about 0.94 ns and its bound about 2.06;
+every other workload's decision points are far rarer, so their bound stays
+1.02. This rule is fixed before the fifth change is measured.

@@ -41,7 +41,12 @@ def load(path):
     return groups
 
 
-def attempt_result(arms, width):
+# The owner's allowance (DESIGN, "The allowance for tiny decision points"):
+# each decision point may cost the wider of 1 ns or 2 percent per execution.
+DECISION_NS = 1.0
+
+
+def attempt_result(arms, width, decisions=0):
     if set(arms) != set(ARMS):
         raise ValueError("missing arm")
     rounds = set(arms["seq"])
@@ -55,7 +60,8 @@ def attempt_result(arms, width):
     spread = (max(twins) - min(twins)) / median(twins)
     noise = max(spread, 0.01)
     ratio = wall["demand"] / wall["seq"]
-    bound = 1 + noise if width == 1 else 1.02 + noise
+    allowance = max(0.02, decisions * DECISION_NS / wall["seq"])
+    bound = 1 + noise if width == 1 else 1 + allowance + noise
     if spread > 0.02:
         status = "inconclusive"
     elif (abs(ratio - 1) <= noise if width == 1 else ratio <= bound):
@@ -75,7 +81,9 @@ def summarize(path, inspection=None, sizing=False):
             first = groups.get((name, width, 1))
             if first is None:
                 raise ValueError(f"missing initial cell: {name}/{width}")
-            initial = attempt_result(first, width)
+            repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if sizing else meta.get("repetitions", 0)
+            decisions = meta.get("decisions_per_repetition", 0) * repetitions
+            initial = attempt_result(first, width, decisions)
             result = dict(workload=name, width=width, attribution=meta["kind"], initial=initial)
             status = initial["status"]
             if status == "exceeds":
@@ -83,7 +91,7 @@ def summarize(path, inspection=None, sizing=False):
                 if second is None:
                     status = "needs-rerun"
                 else:
-                    result["rerun"] = attempt_result(second, width)
+                    result["rerun"] = attempt_result(second, width, decisions)
                     rerun_status = result["rerun"]["status"]
                     status = "fail" if rerun_status == "exceeds" else "inconclusive"
             checked = inspection.get(name, {})
