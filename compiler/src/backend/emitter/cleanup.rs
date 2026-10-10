@@ -66,7 +66,11 @@ pub(super) fn emit_resource_drop_helpers(
             IrNominalKind::Shared {
                 state,
                 shape: IrShared::Object,
-            } => emit_shared_drop_helper(program, &mut module, nominal, *state)?,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *state, false)?,
+            IrNominalKind::Box {
+                referent,
+                release: IrReleaseClass::Frozen,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *referent, true)?,
             IrNominalKind::Shared {
                 shape: IrShared::Map { entry },
                 ..
@@ -133,22 +137,36 @@ fn emit_shared_drop_helper(
     module: &mut Module,
     nominal: &crate::IrNominal,
     state: IrType,
+    frozen: bool,
 ) -> Result<(), BackendFailure> {
     let mut output = FunctionBody::default();
     let symbol = drop_helper_symbol(nominal);
     let mut signature = Signature::new(symbol, "void", vec![Parameter::named("ptr", "%value")]);
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    output.instructions(
-        "  %last = call i32 @wf__shared_release(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done\n",
-        &["wf__shared_release"],
-    );
+    let release = if frozen {
+        "wf__frozen_release"
+    } else {
+        "wf__shared_release"
+    };
+    let free = if frozen {
+        "wf__frozen_free"
+    } else {
+        "wf__shared_free"
+    };
+    output.symbol(release);
+    writeln!(output, "  %last = call i32 @{release}(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done")
+        .map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("state".to_owned());
     if type_requires_cleanup(program, state)? {
         writeln!(
             output,
             "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}",
-            crate::backend::SHARED_STATE_OFFSET
+            if frozen {
+                0
+            } else {
+                crate::backend::SHARED_STATE_OFFSET
+            }
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         // The state is released in place: a memory-only state is never
@@ -165,10 +183,9 @@ fn emit_shared_drop_helper(
             }],
         )?;
     }
-    output.instructions(
-        "  call void @wf__shared_free(ptr %value)\n  br label %done\n",
-        &["wf__shared_free"],
-    );
+    output.symbol(free);
+    writeln!(output, "  call void @{free}(ptr %value)\n  br label %done")
+        .map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();
@@ -177,14 +194,21 @@ fn emit_shared_drop_helper(
     Ok(())
 }
 
-/// Whether any type of this program is a shared-object handle, a keyed table
-/// or a key set [SHARE-1], and so names the runtime's entries for them.
+/// Whether any type of this program is a shared or frozen handle, a keyed
+/// table or a key set [SHARE-1], and so names the runtime's entries for them.
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
     Ok(program_types(program)?.into_iter().any(|ty| match ty {
         IrType::KeySet | IrType::Entries { .. } => true,
-        IrType::Nominal(id) => program
-            .nominal(id)
-            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })),
+        IrType::Nominal(id) => program.nominal(id).is_some_and(|nominal| {
+            matches!(
+                nominal.kind(),
+                IrNominalKind::Shared { .. }
+                    | IrNominalKind::Box {
+                        release: IrReleaseClass::Frozen,
+                        ..
+                    }
+            )
+        }),
         _ => false,
     }))
 }
@@ -192,7 +216,11 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 37] = [
+    let declarations: [(&str, &str, &[&str]); 41] = [
+        ("wf__frozen_new", "ptr", &["i64"]),
+        ("wf__frozen_share", "void", &["ptr"]),
+        ("wf__frozen_release", "i32", &["ptr"]),
+        ("wf__frozen_free", "void", &["ptr"]),
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
@@ -932,7 +960,11 @@ fn emit_cleanup_jobs(
                         IrNominalKind::Opaque => {}
                         // [SHARE-1] release one handle; its helper releases
                         // the state with the last one.
-                        IrNominalKind::Shared { .. } => {
+                        IrNominalKind::Shared { .. }
+                        | IrNominalKind::Box {
+                            release: IrReleaseClass::Frozen,
+                            ..
+                        } => {
                             let symbol = drop_helper_symbol(nominal);
                             output.symbol(symbol.clone());
                             writeln!(output, "  call void @{symbol}(ptr {operand})")

@@ -363,6 +363,14 @@ int wf__context_join_wait(uint64_t *group, void *frame);
  * `wf__shared_release` removes one, returning nonzero when it was the last,
  * after which the emitted code drops the state and calls `wf__shared_free`. */
 #define WF_SHARED_STATE_OFFSET 64u
+/* Frozen handles point directly at aligned, immutable value storage. The
+ * header contains only a count and the allocator extent, with no object lock.
+ * The last acq_rel release precedes the emitted value release and free. */
+void *wf__frozen_new(uint64_t value_bytes);
+void wf__frozen_share(void *value);
+int wf__frozen_release(void *value);
+void wf__frozen_free(void *value);
+
 void *wf__shared_new(uint64_t state_bytes);
 void wf__shared_share(void *object);
 int wf__shared_release(void *object);

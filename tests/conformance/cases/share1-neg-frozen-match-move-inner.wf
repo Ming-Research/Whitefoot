@@ -1,0 +1,14 @@
+fn denied() -> result: u8 pure {
+  let cell = box_new::<u8>(value: 7_u8);
+  let wrapped = Some<Box<u8>>(value: move cell);
+  let held = frozen_new::<Option<Box<u8>>>(value: move wrapped);
+  match move held.inner {
+    Some(value: taken) => {
+      let byte = taken.inner;
+      return byte;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
