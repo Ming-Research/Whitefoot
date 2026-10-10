@@ -1,6 +1,6 @@
 # Temporary (claude/guard-fairness only): time firn's guard probe with the
 # base and candidate compilers on the 14900K (research/investigations/
-# guard-fairness/DESIGN.md). Removed before the branch is ready.
+# guard-fairness/DESIGN.md). Removed before the branch is ready. Run 2: age-bounded turns.
 name: tmp-guard-fairness
 on:
   push:
