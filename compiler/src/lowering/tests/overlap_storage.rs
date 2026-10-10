@@ -5,6 +5,169 @@
 
 use super::*;
 
+/// Implicit awaits do not split an IR block and do not change PAR-1 source
+/// permission. They still end a compute window before the awaiting site,
+/// including when adjacent-pair recovery revisits a discarded singleton.
+#[test]
+fn implicit_context_awaits_cut_call_and_noncall_windows() {
+    for (label, body, call_count, calls_before_await, groups) in [
+        (
+            "non-call witness",
+            "let a = heavy(n: n);\n  let k = delayed +wrap 1_u64;\n  let b = heavy(n: n);\n  let sum = a +wrap b;\n  return sum +wrap k;",
+            2,
+            1,
+            vec![],
+        ),
+        (
+            "call witness",
+            "let a = heavy(n: n);\n  let b = heavy(n: delayed);\n  return a +wrap b;",
+            2,
+            1,
+            vec![],
+        ),
+        (
+            "groups around a non-call await",
+            "let a = heavy(n: n);\n  let b = heavy(n: n);\n  let k = delayed +wrap 1_u64;\n  let c = heavy(n: n);\n  let d = heavy(n: n);\n  let ab = a +wrap b;\n  let cd = c +wrap d;\n  let sum = ab +wrap cd;\n  return sum +wrap k;",
+            4,
+            2,
+            vec![(0, 2), (2, 4)],
+        ),
+        (
+            "groups around a call await",
+            "let a = heavy(n: n);\n  let b = heavy(n: n);\n  let c = heavy(n: delayed);\n  let d = heavy(n: n);\n  let ab = a +wrap b;\n  let cd = c +wrap d;\n  return ab +wrap cd;",
+            4,
+            2,
+            vec![(0, 2), (2, 4)],
+        ),
+        (
+            "await before the first call",
+            "let a = heavy(n: delayed);\n  let b = heavy(n: n);\n  return a +wrap b;",
+            2,
+            0,
+            vec![(0, 2)],
+        ),
+        (
+            "await after the last call",
+            "let a = heavy(n: n);\n  let b = heavy(n: n);\n  let k = delayed +wrap 1_u64;\n  let sum = a +wrap b;\n  return sum +wrap k;",
+            2,
+            2,
+            vec![(0, 2)],
+        ),
+    ] {
+        let source = format!(
+            r#"fn fetch(n: u64) -> result: u64 pure waits {{
+  doc "Returns a value through a bound context.";
+  return n;
+}}
+
+fn heavy(n: u64) -> result: u64 pure {{
+  doc "Provides a non-waiting call eligible for overlap.";
+  return n +wrap 1_u64;
+}}
+
+fn witness(n: u64) -> result: u64 pure waits {{
+  doc "Consumes a context result beside independent calls.";
+  let delayed = spawn fetch(n: n);
+  {body}
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  doc "Runs the waiting witness in a context that may migrate.";
+  let outcome = spawn witness(n: 4_u64);
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permission = checked.data.permission.named("witness").unwrap();
+            assert!(
+                permission.runs.iter().any(|run| {
+                    run.sites.iter().filter(|site| site.call.is_some()).count() == call_count
+                }),
+                "{label}: source permission must include all the compute calls"
+            );
+            let program =
+                lower_checked(checked, OverlapLowering::On).expect("await fixture lowers");
+            let witness = function(&program, "witness");
+            let calls = calls_to(&program, witness, &["heavy"]);
+            assert_eq!(calls.len(), call_count, "{label}");
+            let instructions = witness.blocks()[0].instructions();
+            let awaits = instructions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, instruction)| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::ContextAwait { .. },
+                        ..
+                    } => Some(index),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(awaits.len(), 1, "{label}: one implicit await");
+            let positions = calls
+                .iter()
+                .map(|call| {
+                    instructions
+                        .iter()
+                        .position(|instruction| {
+                            matches!(instruction, IrInstruction::Define { result, .. } if result == call)
+                        })
+                        .expect("all compute calls share the await's IR block")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                positions
+                    .iter()
+                    .filter(|position| **position < awaits[0])
+                    .count(),
+                calls_before_await,
+                "{label}: the fixture must place the await at the intended boundary"
+            );
+            let expected = groups
+                .iter()
+                .map(|(start, end)| &calls[*start..*end])
+                .collect::<Vec<_>>();
+            let actual = witness
+                .overlaps()
+                .iter()
+                .map(|group| group.members.as_slice())
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{label}");
+
+            let module = crate::emit_llvm(&program)
+                .expect("await fixture emits")
+                .into_string();
+            let emitted = module
+                .split("\ndefine ")
+                .find(|body| body.lines().next().unwrap_or("").contains("@wf_witness("))
+                .expect("waiting witness definition");
+            let boundary = emitted
+                .find("@wf__context_join_wait(")
+                .expect("bound-context await");
+            assert!(
+                emitted[boundary..].contains("@llvm.coro.suspend("),
+                "{label}"
+            );
+            let offers_before = groups
+                .iter()
+                .filter(|(_, end)| *end <= calls_before_await)
+                .count();
+            assert_eq!(
+                emitted[..boundary]
+                    .matches("call void @wf__par_release(")
+                    .count(),
+                offers_before,
+                "{label}: every earlier offer must be joined and released before the await"
+            );
+            assert_eq!(
+                emitted.matches("call ptr @wf__par_acquire_lane(").count(),
+                groups.len(),
+                "{label}: only the expected two-call groups emit offers"
+            );
+        });
+    }
+}
+
 // The recursive owning-element split that lost its offers when the storage
 // boundary discarded the permission judgment's retained range proofs.
 const OWNING_RANGE_VISIT: &str = r#"enum Frontier {

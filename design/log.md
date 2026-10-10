@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Statement groups end before an implicit context await
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item gran-p0-await-window to the request "approve #331's change to the design tree's parallel-lowering: a statement group also ends before a statement preceded by an implicit context await (reason: the await may suspend and resume on another driver, while the group's hand-outs and join belong to the original thread's task queue). Recommended: approve; it is required to fix a P0 defect on main, and waiting-contexts already assumes no suspension between hand-out and join" (translated).
+
+Summary: Lowering inserts the await of a bound context's result before the statement that reads it without a new IR block, so a compute group could hand out a call, suspend at that await, resume on another driver and then join and release on the first thread's compute lane, whose state only its owner may write. A site preceded by an implicit await now ends the current group before it, restoring the waiting-contexts premise that no suspension falls between a compute offer and its join.
+
 ## 2026-10-10 Value equality
 
 Nodes: language/data-model/tag-only-equality, language/data-model/value-equality, language/checks-and-proofs/range-facts, compiler/range-judgment
