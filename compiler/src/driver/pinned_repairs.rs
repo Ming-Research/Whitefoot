@@ -16,6 +16,7 @@ mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod floats;
+mod prelude_opaque;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -3752,6 +3753,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(prelude_opaque::PRELUDE_OPAQUE)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
         .chain(floats::FLOATS)

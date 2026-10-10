@@ -374,6 +374,7 @@ pub(crate) struct DescendantTarget {
     pub(crate) ty: CheckedType,
     pub(crate) range: bool,
     pub(crate) readonly: bool,
+    pub(crate) frozen_content: bool,
 }
 
 /// What one step pair establishes about the two places below it.
@@ -1721,6 +1722,7 @@ mod tests {
                 ty: CheckedType::Unit,
                 range: false,
                 readonly: false,
+                frozen_content: false,
             })],
         );
         assert!(!cover.is_exact_path());
