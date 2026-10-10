@@ -15,6 +15,8 @@ jobs:
     env:
       CPUS: "2-15"
       RUNS: "10"
+      # Candidate 10's head, the base for attributing candidate 11.
+      BASE_REF: e8471e1959bbb543d69d26f4a839e2776d8606ae
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +37,7 @@ jobs:
           fi
       - name: Build base and head as releases are built
         run: |
-          base=$(git merge-base HEAD origin/main)
+          base=${BASE_REF:-$(git merge-base HEAD origin/main)}
           echo "base $base head $(git rev-parse HEAD)"
           rm -rf $RUNNER_TEMP/base; git worktree prune
           git worktree add -q $RUNNER_TEMP/base $base
