@@ -766,10 +766,23 @@ an assertion that distinguishes them. Existing proof-family fixtures now also
 compare the old traversal, including DIRECT and the final L0 family. These
 failure conditions are established by inspection, not executed mutations.
 
-Validation and timing pending. No build, test, clippy, gate or performance run
-was executed locally; the added cases and formatting must be checked in CI on
-the work branch before this diff can claim validation. No specification or
-conformance verdict changes are proposed.
+Validation: the gate passed at `a71229fea` (run 37915524732); no
+specification or conformance verdict changes. Timing used the same protocol on
+the 14900K (Hyper-V guest, before its native reinstall), six rotating rounds of
+Halo's `pkg::vm` check on Halo-wf main 638acad (Halo-wf run 37990719861): base
+`wf-exp-df58869aecb0` (the first three reductions on main 21823ee86), head
+`wf-exp-a71229fea094` (these three on top), twin a byte copy of base.
+
+| Variant | Median | Range | Ratio to base |
+|---|---:|---:|---:|
+| base | 7.165 s | 1.67% | 1.000 |
+| head | 6.358 s | 1.16% | 0.887 |
+| twin | 7.168 s | 0.74% | 1.000 |
+
+Every head round (6.35-6.42 s) lies below every base and twin round
+(7.12-7.24 s): the three reductions cut Halo's check by 11.3%. The panel does
+not apportion the saving among them, and the wasm interpreter and arm series
+were not re-timed for this round.
 
 An independent read-only completion review (inherited model; exact identifier
 unavailable) covered the complete working diff against `df58869aec` and its
