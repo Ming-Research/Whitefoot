@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Cite status board items instead of docs/todo.md
+
+Nodes: compiler/code-alignment, compiler/downstream-releases, compiler/match-dispatch-lowering, language/checks-and-proofs/automatic-facts
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item coord-todo-wf to the request "approve wording edits to four design-tree nodes that change only their citations, not their decisions? ... Recommended: approve; only the place the citations point to moved" (translated).
+
+Summary: The four nodes cite status board item keys where they linked to docs/todo.md, which this branch deletes because the project's TODO list moved to the status board; no decision changed.
+
 ## 2026-10-10 Owner slots ordered only against releases at or above them
 
 Nodes: compiler/parallel-lowering
