@@ -1,3 +1,5 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
 fn exchange<T: drop>(target: &T, incoming: &T) -> result: unit writes(target), writes(incoming) {
   doc "FN-2: T takes the exchange place through swap.";
   swap(first: target, second: incoming);
@@ -10,7 +12,52 @@ fn exchange_maps(target: &ConcurrentHashMap<u8>, incoming: &ConcurrentHashMap<u8
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
-  doc "The concrete helper body is the conformance obligation.";
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "TYPE-9: the generic exchange runs, carries both maps' entries, and leaves both maps readable and writable.";
+  let first = shared_map_new::<u8>(capacity: 1_u64);
+  let second = shared_map_new::<u8>(capacity: 64_u64);
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  atomic t = &first, f = &second {
+    set t^[a] = Some<u8>(value: 11_u8);
+    set f^[a] = Some<u8>(value: 22_u8);
+    exchange_maps(target: t, incoming: f);
+  }
+  let first_value = 0_u8;
+  let second_value = 0_u8;
+  let first_count = 0_u64;
+  let second_count = 0_u64;
+  atomic t = &first, f = &second {
+    match t^[a] {
+      Some(value: held) => {
+        set first_value = held^;
+      }
+      None() => {
+      }
+    }
+    match f^[a] {
+      Some(value: held) => {
+        set second_value = held^;
+      }
+      None() => {
+      }
+    }
+    set t^[b] = Some<u8>(value: 33_u8);
+    set f^[b] = Some<u8>(value: 44_u8);
+    set first_count = map_count::<u8>(map: t);
+    set second_count = map_count::<u8>(map: f);
+  }
+  if first_value != 22_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_value != 11_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if first_count != 2_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if second_count != 2_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }

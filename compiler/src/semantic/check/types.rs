@@ -1655,14 +1655,14 @@ impl<'unit> TypeContext<'unit> {
             return Ok(());
         }
         let owner = self.declarations.tree.path(node)?.components();
-        let parameter_uses = if matches!(position, Placement::Exchange) {
-            self.behavior
-                .exchange_parameters
-                .get(&node)
-                .copied()
-                .into_iter()
-                .collect::<Vec<_>>()
+        let parameter_uses = if matches!(position, Placement::Exchange)
+            && let Some(parameter) = self.behavior.exchange_parameters.get(&node)
+        {
+            vec![*parameter]
         } else {
+            // A written `fn swap::<T>` can be resolved concretely before
+            // the canonical symbolic body records its exchange. Its targ
+            // still names the supplying parameter directly [TYPE-9, FN-2].
             self.declarations
                 .resolved
                 .lexical_uses()

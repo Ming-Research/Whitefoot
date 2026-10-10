@@ -250,6 +250,26 @@ impl<'unit> Checker<'_, 'unit> {
                     .templates_by_declaration
                     .get(&value.declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                // A forwarded actual retains its own prelude parameter
+                // identities and written targs, independently of the formal
+                // signature used to judge a later bound call [TYPE-9, FN-2].
+                for (key, argument) in value.substitution.entries() {
+                    if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                        (key, argument)
+                    {
+                        let source = self.types.behavior_binding_site(
+                            self.types.function_templates[template].node,
+                            *key,
+                            &value.substitution,
+                        )?;
+                        self.check_type_parameter_placement(
+                            source,
+                            *parameter,
+                            *ty,
+                            &GenericSubstitution::default(),
+                        )?;
+                    }
+                }
                 self.instantiate_function_signature(check_context, template, value.substitution)
             }
             FunctionArgument::Parameter(key) => {

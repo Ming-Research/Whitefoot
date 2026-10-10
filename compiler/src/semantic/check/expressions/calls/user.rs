@@ -21,7 +21,9 @@ use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
     SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
-use super::super::super::generics::HEAP_ALLOCATING_PRELUDE_FUNCTIONS;
+use super::super::super::generics::{
+    GenericArgument, GenericParameterKey, HEAP_ALLOCATING_PRELUDE_FUNCTIONS,
+};
 use super::super::super::references::InvalidationEvent;
 use super::super::super::{
     CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
@@ -465,32 +467,20 @@ impl<'unit> Checker<'_, 'unit> {
             effects = effects.union(argument.effects);
             arguments.push(argument.expression);
         }
-        // [TYPE-9, FN-2] `swap`'s operand-supplied type parameter takes
-        // the exchange place even though its value parameters are references.
-        // In a user generic body, retain the caller's substitution so a
-        // refused instance cites the written type argument that supplied it.
-        // Judge placement before OP-11's copy refusal at the same call.
-        if Checker::is_swap_row(signature)
-            && self
-                .types
-                .declarations
-                .tree
-                .is_prelude_node(signature.node)?
-        {
-            if function.substitution.is_symbolic()
-                && let CheckedType::Generic(parameter) = signature.parameters[0].ty
+        // [TYPE-9, FN-2] judge operand-supplied arguments at the complete
+        // call, before OP-11's copy refusal. Use the executable actual's
+        // type parameter identities, never the bound formal's node.
+        let actual_substitution = self.types.signatures[target.0 as usize]
+            .substitution
+            .clone();
+        for (key, argument) in actual_substitution.entries() {
+            if let (
+                GenericParameterKey::Source(parameter),
+                GenericArgument::Type(ty),
+            ) = (key, argument)
             {
-                self.types
-                    .behavior
-                    .exchange_parameters
-                    .insert(node, parameter);
+                self.check_type_parameter_placement(node, *parameter, *ty, &function.substitution)?;
             }
-            self.types.reject_placement(
-                node,
-                signature.parameters[0].ty,
-                super::super::super::types::Placement::Exchange,
-                &function.substitution,
-            )?;
         }
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
