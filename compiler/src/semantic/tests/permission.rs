@@ -33,6 +33,8 @@ use super::{assert_rule_kind, with_semantics};
 
 #[test]
 fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
+    // PAR-1 records pairs with at least one call, so each write is a helper
+    // whose row names the place it writes.
     let source = r#"struct Common {
   scale: u64;
   other: u64;
@@ -43,56 +45,69 @@ struct State {
   shared: Common;
 }
 
-fn touch(state: &State) -> result: unit writes(state) {
-  set state^.shared.scale = 1_u64;
+fn set_one(state: &State) -> result: unit writes(state.one) {
+  set state^.one = 0_u64;
   return unit;
 }
 
-fn inspect(state: &State) -> result: unit writes(state) {
-  let s = state^.shared.scale;
+fn set_other(state: &State) -> result: unit writes(state.shared.other) {
+  set state^.shared.other = 0_u64;
+  return unit;
+}
+
+fn set_scale(state: &State) -> result: unit writes(state.shared.scale) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_shared(state: &State) -> result: unit writes(state.shared) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_all(state: &State) -> result: unit writes(state) {
   set state^.one = 0_u64;
   return unit;
+}
+
+fn inspect(state: &State) -> result: u64 writes(state) {
+  let s = state^.shared.scale;
+  set_one(state: state);
+  return s;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    for (write, second, permitted) in [
-        ("set state^.one = 0_u64;", "a set statement", true),
-        ("set state^.shared.other = 0_u64;", "a set statement", true),
-        ("set state^.shared.scale = 0_u64;", "a set statement", false),
-        (
-            "set state^.shared = state^.shared;",
-            "a set statement",
-            false,
-        ),
-        ("set state^ = state^;", "a set statement", false),
-        ("touch(state: state);", "touch", false),
+    for (callee, permitted) in [
+        ("set_one", true),
+        ("set_other", true),
+        ("set_scale", false),
+        ("set_shared", false),
+        ("set_all", false),
     ] {
-        let variant = source.replace("set state^.one = 0_u64;", write);
+        let variant = source.replace(
+            "  set_one(state: state);\n  return s;",
+            &format!("  {callee}(state: state);\n  return s;"),
+        );
         let table = permission_of(variant.as_bytes());
-        let pair = pair_of(&table, "inspect", "a let statement", second);
+        let pair = pair_of(&table, "inspect", "a let statement", callee);
         if permitted {
-            assert!(pair.verdict.is_eligible(), "{write}: {pair:?}");
+            assert!(pair.verdict.is_eligible(), "{callee}: {pair:?}");
         } else {
             assert!(
                 matches!(denial(pair, 1), Denial::Footprint { .. }),
-                "{write}: {pair:?}"
+                "{callee}: {pair:?}"
             );
         }
     }
-    let whole_read = source.replace("let s = state^.shared.scale;", "let s = state^;");
-    let table = permission_of(whole_read.as_bytes());
-    let pair = pair_of(&table, "inspect", "a let statement", "a set statement");
-    assert!(matches!(denial(pair, 1), Denial::Footprint { .. }));
-
-    let holder_read = source.replace(
-        "  let s = state^.shared.scale;\n  set state^.one = 0_u64;",
-        "  let alias = state;\n  let s = alias^.shared.scale;",
+    let whole_read = source.replace(
+        "  let s = state^.shared.scale;\n  set_one(state: state);\n  return s;",
+        "  let s = state^;\n  set_one(state: state);\n  return s.one;",
     );
-    let table = permission_of(holder_read.as_bytes());
-    let pair = pair_of(&table, "inspect", "a let statement", "a let statement");
+    let table = permission_of(whole_read.as_bytes());
+    let pair = pair_of(&table, "inspect", "a let statement", "set_one");
     assert!(matches!(denial(pair, 1), Denial::Footprint { .. }));
 }
 
