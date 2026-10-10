@@ -164,7 +164,7 @@ fn complete_inventory_is_pinned() {
     // and type-invariant repeat. The range_clause conclusion repeat gains
     // two exit rows with the type_invariant semicolon's provenance:
     // `; invariant` and `; }`. Together these add seven rows to 7,917.
-    // v0.124 makes the struct-destructuring move marker optional: one
+    // v0.125 makes the struct-destructuring move marker optional: one
     // decision with two move-entry rows and six bare-place exit rows.
     assert_eq!(SELECT_ROWS.len(), 7_932);
     assert_eq!(diagnostic_terminal_order().len(), 115);

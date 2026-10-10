@@ -2902,7 +2902,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[223].1, "release");
     assert_eq!(first[224].1, "T");
     assert_eq!(first[225].1, "value");
-    // PRE-1 v0.124: 51 opaque records + 22 enum records + four built-in
+    // PRE-1 v0.125: 51 opaque records + 22 enum records + four built-in
     // records + 149 function/parameter/range records = 226. Frozen adds four
     // opaque records and frozen_new/frozen_share add three each; release adds
     // its function, T and value, three records. Count every
