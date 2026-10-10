@@ -1802,6 +1802,7 @@ impl<'unit> Checker<'_, 'unit> {
             };
             match (parameter, value) {
                 (GenericParameter::Type { declaration, bound }, GenericArgument::Type(ty)) => {
+                    self.check_type_parameter_placement(source, declaration, ty, caller)?;
                     if self.types.is_frozen_content_parameter(declaration)? {
                         self.types.reject_frozen_part(source, ty)?;
                     }
@@ -1875,6 +1876,43 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .record_behavior_binding_sites(&substitution, &binding_sites)?;
         Ok(substitution)
+    }
+
+    /// [TYPE-9, FN-2] places belong to the actual type parameter, including
+    /// when its function is supplied as a function-kind argument. A bound
+    /// call's effective signature keeps the formal's node and cannot identify
+    /// the prelude row that owns this obligation.
+    pub(super) fn check_type_parameter_placement(
+        &mut self,
+        source: NodeId,
+        parameter: DeclarationId,
+        ty: CheckedType,
+        caller: &GenericSubstitution,
+    ) -> Result<(), CheckStop> {
+        let Some(template) = self.types.function_templates.iter().find(|template| {
+            template.name == "swap"
+                && template
+                    .generic_parameters
+                    .iter()
+                    .any(|candidate| candidate.key() == GenericParameterKey::Source(parameter))
+        }) else {
+            return Ok(());
+        };
+        if !self.types.declarations.tree.is_prelude_node(template.node)? {
+            return Ok(());
+        }
+        // Retain the caller parameter's identity at the symbolic instance;
+        // equal concrete arguments must not blame a different written targ.
+        if caller.is_symbolic()
+            && let CheckedType::Generic(parameter) = ty
+        {
+            self.types
+                .behavior
+                .exchange_parameters
+                .insert(source, parameter);
+        }
+        self.types
+            .reject_placement(source, ty, super::types::Placement::Exchange, caller)
     }
 }
 
