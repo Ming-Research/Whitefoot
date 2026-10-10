@@ -1,0 +1,133 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias MemoryMeter = std::process::MemoryMeter;
+alias heap_in_use = std::process::heap_in_use;
+alias exit_status = std::process::exit_status;
+
+struct Controller {
+  root: Option<SharedRead<Box<Array<u8>>>>;
+}
+
+struct Ledger {
+  outstanding: u64;
+}
+
+struct Ticket {
+  root: SharedRead<Box<Array<u8>>>;
+  ledger: Shared<Ledger>;
+}
+
+fn discard<T: drop>(value: T) -> result: unit pure {
+  return unit;
+}
+
+fn detached(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  let baseline = heap_in_use(meter: meter);
+  let value = box_array_filled::<u8>(count: 1_u64, value: 7_u8);
+  let writer = shared_new::<Box<Array<u8>>>(value: move value);
+  let root = shared_read::<Box<Array<u8>>>(shared: &writer);
+  let retained = heap_in_use(meter: meter);
+  discard::<Shared<Box<Array<u8>>>>(value: move writer);
+  let after_writer = heap_in_use(meter: meter);
+  if after_writer != retained {
+    return 1_u8;
+  }
+  atomic bytes = &root {
+    if bytes^.inner.len != 1_u64 {
+      return 2_u8;
+    }
+    if bytes^.inner[0_u64] != 7_u8 {
+      return 3_u8;
+    }
+  }
+  discard::<SharedRead<Box<Array<u8>>>>(value: move root);
+  let released = heap_in_use(meter: meter);
+  if released != baseline {
+    return 4_u8;
+  }
+  return 0_u8;
+}
+
+fn registered(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  let baseline = heap_in_use(meter: meter);
+  let value = box_array_filled::<u8>(count: 1_u64, value: 7_u8);
+  let writer = shared_new::<Box<Array<u8>>>(value: move value);
+  let root = shared_read::<Box<Array<u8>>>(shared: &writer);
+  discard::<Shared<Box<Array<u8>>>>(value: move writer);
+  let present = Some<SharedRead<Box<Array<u8>>>>(value: move root);
+  let state = Controller(root: move present);
+  let registry = shared_new::<Controller>(value: move state);
+  let holder = shared_read::<Controller>(shared: &registry);
+  let retained = heap_in_use(meter: meter);
+  discard::<SharedRead<Controller>>(value: move holder);
+  let after_holder = heap_in_use(meter: meter);
+  if after_holder != retained {
+    return 5_u8;
+  }
+  atomic held = &registry {
+    match held^.root {
+      None() => {
+        return 6_u8;
+      }
+      Some(value: captured) => {
+      }
+    }
+    set held^.root = None<SharedRead<Box<Array<u8>>>>();
+  }
+  let cleared = heap_in_use(meter: meter);
+  if cleared >= after_holder {
+    return 7_u8;
+  }
+  discard::<Shared<Controller>>(value: move registry);
+  let released = heap_in_use(meter: meter);
+  if released != baseline {
+    return 8_u8;
+  }
+  return 0_u8;
+}
+
+fn notification(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
+  let baseline = heap_in_use(meter: meter);
+  let state = Ledger(outstanding: 1_u64);
+  let ledger = shared_new::<Ledger>(value: state);
+  let ledger_only = heap_in_use(meter: meter);
+  let value = box_array_filled::<u8>(count: 1_u64, value: 7_u8);
+  let writer = shared_new::<Box<Array<u8>>>(value: move value);
+  let root = shared_read::<Box<Array<u8>>>(shared: &writer);
+  discard::<Shared<Box<Array<u8>>>>(value: move writer);
+  let ticket_ledger = shared_share::<Ledger>(shared: &ledger);
+  let ticket = Ticket(root: move root, ledger: move ticket_ledger);
+  discard::<Ticket>(value: move ticket);
+  atomic held = &ledger {
+    if held^.outstanding != 1_u64 {
+      return 9_u8;
+    }
+  }
+  let after_ticket = heap_in_use(meter: meter);
+  if after_ticket != ledger_only {
+    return 10_u8;
+  }
+  discard::<Shared<Ledger>>(value: move ledger);
+  let released = heap_in_use(meter: meter);
+  if released != baseline {
+    return 11_u8;
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let first = detached(meter: &meter);
+  if first != 0_u8 {
+    return exit_status(code: first);
+  }
+  let second = registered(meter: &meter);
+  if second != 0_u8 {
+    return exit_status(code: second);
+  }
+  let third = notification(meter: &meter);
+  return exit_status(code: third);
+}

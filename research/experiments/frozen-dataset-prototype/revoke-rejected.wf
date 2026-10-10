@@ -1,0 +1,19 @@
+fn revoke(root: &SharedRead<Box<Array<u8>>>) -> result: unit reads(root) waits {
+  let empty = box_array_filled::<u8>(count: 0_u64, value: 0_u8);
+  atomic bytes = &root^ {
+    set bytes^ = move empty;
+  }
+  return unit;
+}
+
+fn freeze(value: Box<Array<u8>>) -> result: SharedRead<Box<Array<u8>>> pure {
+  let writer = shared_new::<Box<Array<u8>>>(value: move value);
+  return shared_read::<Box<Array<u8>>>(shared: &writer);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let value = box_array_filled::<u8>(count: 1_u64, value: 7_u8);
+  let root = freeze(value: move value);
+  revoke(root: &root);
+  return std::process::exit_status(code: 0_u8);
+}

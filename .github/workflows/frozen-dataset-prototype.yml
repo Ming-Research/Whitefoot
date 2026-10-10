@@ -1,0 +1,67 @@
+# Temporary research probe for this branch only; removed before any pull request.
+name: frozen-dataset-prototype
+
+on:
+  push:
+    branches: [claude/snap-lib-proto]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: frozen-dataset-prototype-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  prototype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+
+      - name: Record the revision and host
+        run: |
+          mkdir -p "$RUNNER_TEMP/frozen-dataset-prototype"
+          {
+            git rev-parse HEAD
+            sha256sum spec/kernel-spec.md
+            uname -srvmo
+            clang --version
+            ld.lld --version
+            rustc --version
+            cargo --version
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            echo "WF_DRIVERS=1; WF_WORKERS=1; no --par"
+          } > "$RUNNER_TEMP/frozen-dataset-prototype/host.txt"
+          cat "$RUNNER_TEMP/frozen-dataset-prototype/host.txt"
+
+      - name: Fetch the recorded crate dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the compiler
+        run: make -C compiler build
+
+      - name: Compile the boundary probes and run the positive control
+        env:
+          OUT: ${{ runner.temp }}/frozen-dataset-prototype
+        run: sh research/experiments/frozen-dataset-prototype/run.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frozen-dataset-prototype-${{ github.sha }}
+          path: ${{ runner.temp }}/frozen-dataset-prototype/
