@@ -204,3 +204,41 @@ local repairs. The author also corrected FORM-2 spacing between constants;
 the reviewer confirmed it. These repairs leave the trace and expectations
 unchanged. No unrelated defect or new language decision was identified.
 No local build, compilation, test, script execution or commit was performed.
+
+## Results
+
+**Run 1** ([CI 38036398318](https://github.com/Ming-Research/Whitefoot/actions/runs/38036398318),
+revision 3fa888734, GitHub-hosted ubuntu-24.04, WF_DRIVERS=2, WF_WORKERS=1,
+no `--par`): the witness compiled and exited **9**. No other failure code
+occurred, so every check inside the ownership phase passed: insertion,
+retained old roots unchanged after replacement, replacement and two-child
+deletion contents, absent-key deletion, capture without heap change, exact
+shared-path allocation on replacement, and release to the live and empty
+levels when readers drop. Under the pre-registered criterion the witness
+**fails**: after the ownership phase returned, `heap_in_use` exceeded the
+caller's baseline.
+
+**Run 2** ([CI 38040834762](https://github.com/Ming-Research/Whitefoot/actions/runs/38040834762),
+revision 9968bd763, same host type and settings) printed the readings and
+ran `diag.wf` (step meanings in [DIAGNOSTICS.md](DIAGNOSTICS.md)):
+
+- The witness's residue is **8,192 bytes** (1,536 before, 9,728 after).
+- A function performing every ownership operation of the witness (Shared
+  cells and nodes, SharedRead handles, Box payloads, the Progress object)
+  returns with **0** bytes above its caller's baseline, on the first and on
+  a repeated call (steps 020 and 022).
+- A depth-256 waiting recursion with **no** Box or Shared operation leaves
+  **8,192** bytes after its first return and **0** more after a repeated
+  identical call (steps 024 and 026).
+
+**Interpretation.** The residue is runtime frame storage retained for reuse
+(a frame-arena chunk kept as the context's spare), not storage of the
+persistent library: the ownership operations alone return to baseline, a
+frame-only control reproduces exactly the witness's 8,192 bytes, and the
+retention does not grow on repetition. Update, capture, enumeration and
+reclamation of the library are therefore **expressible under current rules
+and behaved as expected** in these runs; the witness's whole-process
+baseline check fails because `heap_in_use` counts a retained, empty frame
+chunk. Whether PRE-2 should count such a chunk is a runtime accounting
+question outside this witness; it is recorded for the runtime's owner. The
+pre-registered failure stands as recorded.
