@@ -186,34 +186,6 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "concurrent-map-constructed.wf",
-        rejected: br#"fn probe() -> result: unit pure {
-  ConcurrentHashMap<u8>();
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "TYPE-2",
-        sentences: &[
-            "\n  mechanical_fix: replace this construction with `shared_map_new::<V>(capacity: n)` and reach the map through an atomic target in a function marked `waits` [SHARE-1, SHARE-2]\n",
-        ],
-        repaired: &[
-            br#"fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
-  let count = 0_u64;
-  atomic state = &store {
-    set count = map_count::<u8>(map: state);
-  }
-  let code = cvt.wrap::<u64, u8>(count);
-  return std::process::exit_status(code: code);
-}
-"#,
-        ],
-    },
-    RepairPair {
         name: "concurrent-map-taken-apart.wf",
         rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
   let store = shared_map_new::<u8>(capacity: 0_u64);

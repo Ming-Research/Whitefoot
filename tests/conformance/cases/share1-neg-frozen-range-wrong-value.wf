@@ -1,7 +1,9 @@
 fn fill(value: &Frozen<Array<u8, 1>>, out: &Array<u8, 1>) -> result: unit reads(value), writes(out) contract {
   ensures forall filled(k in 0_u64..out^.len): out^[k] == value^.inner[k];
 } {
-  set out^[0_u64] = 0_u8;
+  let seen = value^.inner[0_u64];
+  let wrong = seen +wrap 1_u8;
+  set out^[0_u64] = wrong;
   return unit;
 }
 
