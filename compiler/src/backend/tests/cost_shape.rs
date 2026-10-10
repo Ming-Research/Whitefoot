@@ -175,8 +175,8 @@ fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'modu
 /// run-time index to the block, because the slots it preserves are a prefix of
 /// run-time length. This structural test does not prove that an arbitrary
 /// runtime index is past that prefix; the remaining provenance limitation is
-/// status board item lm-bl-grow-oracle. Unknown provenance or a control-flow join fails
-/// this narrow test oracle.
+/// recorded in status board item lm-bl-grow-oracle. Unknown provenance or a
+/// control-flow join fails this narrow test oracle.
 fn fresh_allocation_for_fill<'module>(
     function: &'module str,
     mut pointer: &'module str,

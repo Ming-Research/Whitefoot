@@ -168,16 +168,18 @@ guidance:
 	@$(PY) .github/check-guidance.py --self-test
 	@$(PY) .github/check-guidance.py
 
-# A compiler source over the limit is listed in SOURCE_SIZE_LIST with the
-# status board item that records its split, so its split is recorded work
-# instead of unnoticed growth (AGENTS.md, "Fix or record what you notice").
-# The item may defer the split; it may not be missing. Each list line is
-# `<repository path> <board key>`; blank lines and `#` lines are ignored. A
-# listed path must be a tracked compiler source still over the limit, so the
-# list stays current: a split file leaves it in the change that splits it. The
-# limit sits above every source except the two entailment files, each
-# thousands of lines past it, so it asks for no items the evidence does not
-# already call for; lower it once those are split.
+# A Rust source under compiler/src/ over the limit is listed in
+# SOURCE_SIZE_LIST with the status board item that records its split, so its
+# split is recorded work instead of unnoticed growth (AGENTS.md, "Fix or
+# record what you notice"). The item may defer the split; it may not be
+# missing. Each list line is `<repository path> <board key>`; blank lines and
+# `#` lines are ignored. A listed path must be such a tracked source still
+# over the limit, so the list stays current: a split file leaves it in the
+# change that splits it. Only `compiler/src/*.rs` is checked: the C runtime
+# units, such as the completion bridge, and Rust files elsewhere, such as
+# compiler/tests/, are not. The limit sits above every checked source except
+# the two entailment files, each thousands of lines past it, so it asks for no
+# items the evidence does not already call for; lower it once those are split.
 SOURCE_LINE_LIMIT ?= 4000
 SOURCE_SIZE_LIST ?= .github/oversized-sources.txt
 source-size:

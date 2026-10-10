@@ -365,7 +365,7 @@ and four lanes fit four CPUs that are only two cores. The runtime decision
 records an earlier "sparse-cadence loss on hosted SMT runners" whose
 comparisons did not reproduce across apparently identical machines. This is
 a property of the runtime's waiting policy on an SMT host, not of the call
-grain, and it is recorded as status board item `coord-wfbl-03-60`. The pair workload on the
+grain, and it is recorded as status board item `gran-par-s5`. The pair workload on the
 14900K, where four threads need not share a core, would separate it; it is
 requested with Snowghost-wf's full-layout check.
 

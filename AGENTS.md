@@ -60,14 +60,13 @@ describe evidence, not a workflow step.
 - Programs in this repository were written to exercise the compiler
   (`design/language.md`): a program that fails still witnesses a gap, and
   measuring a change's effect on them is still evidence.
-- **Fix or record what you notice** on the status board, in the area of the
-  session that owns the work, and in the PR's *Found along the way* section.
-  `make static` requires every compiler source file over 4,000 lines to be
-  listed in `.github/oversized-sources.txt` with the key of the board item
-  that records its split.
-- The design tree's maintained TODO is the status board, and `make
-  design-ready` also requires an approved `spec/log.md` entry for a changed
-  specification.
+- **Fix or record what you notice**, and list each item in the PR's *Found
+  along the way* section. `make static` requires every Rust source file under
+  `compiler/src/` over 4,000 lines to be listed in
+  `.github/oversized-sources.txt` with the key of the status board item that
+  records its split.
+- `make design-ready` also requires an approved `spec/log.md` entry for a
+  changed specification.
 
 ## Branch and main boundary
 
@@ -197,7 +196,7 @@ build time apart from test and program execution.
 - `make static`, before every push and in `gate.yml` on every push:
   repository invariants, the specification archives, the README and its
   translation changed together, prose integrity, guidance references,
-  compiler sources over 4,000 lines listed in
+  Rust sources under `compiler/src/` over 4,000 lines listed in
   `.github/oversized-sources.txt`, and the design tree's form. It needs the
   `design/skill` submodule (`git submodule update --init`).
 - `make check`, on the revision to merge: the static group plus the compiler

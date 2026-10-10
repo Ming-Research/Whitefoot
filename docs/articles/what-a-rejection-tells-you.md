@@ -178,8 +178,8 @@ Every repaired program must be accepted. It must also be accepted for the
 right reason: no check in it may pass only because the facts at that point
 contradict each other, which is how a guard around a refuted goal would pass.
 The 75 pairs cover mostly goals, effect rows and opaque struct types. Other
-rejections print fixed repair sentences that have no pair yet; the project's
-status board records this and names several of them (item `coord-wfbl-01-25`).
+rejections print fixed repair sentences that have no pair yet, which the
+project records as open work.
 
 ## 7. For tools: JSON
 
