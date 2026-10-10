@@ -268,7 +268,7 @@ static void guard_races(void) {
     CHECK(wf__context_wait(&call, &frame) == 0);
     wf__body_cancel_fire_finish(&result, &source, &call);
     CHECK(result == 0 && view->visible_fired == 1u && atomic_load(&view->fired) == 1u);
-    CHECK(view->shared.waiting_head == NULL && view->shared.waiting_tail == NULL);
+    CHECK(view->shared.waiting_tail == NULL);
     CHECK(atomic_load(&view->shared.holders) == 0u);
     CHECK(wf_run_take(&firing_driver) == NULL);
     wf_context_current = &wf_context_root;

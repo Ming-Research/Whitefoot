@@ -34,6 +34,13 @@
  * on its unit never enters the wake, a release that follows W's own false
  * guard wakes no one, and a wake takes W's watch off every unit it was on.
  *
+ * Finally, on the same driver, R writes an object watched by W and asks
+ * for it again before yielding: it must park until W's next acquisition,
+ * even though W's guard is still false. Repeat with two watchers and with
+ * R first taking an exempt statement holding another object or table entry.
+ * The final nonexempt acquire detects leaked hold counts as well as missing
+ * turns. No clock selects any of these interleavings.
+ *
  * Prints the first failure and exits 1, or exits 0.
  */
 #if defined(__linux__)
@@ -541,7 +548,150 @@ static void object_phase_end(void) {
         wf__shared_free(object);
 }
 
-/* The object phase's contexts and threads, then the guard phase's, each
+enum { TURN_PLAIN, TURN_OBJECT, TURN_TABLE, TURN_CASES };
+static unsigned turn_case, turn_waiters, turn_parks, turn_attempts, turn_finished;
+static unsigned turn_r_parked, turn_exempt;
+static void *turn_object, *turn_other, *turn_map, *turn_table;
+
+/* All guard targets and frames stay live until the group joins, as in an
+ * emitted atomic retry. State 0 and 1 both make W's guard false. */
+static void turn_w_step(test_frame *f) {
+    guard_frame *g = (guard_frame *)f;
+    struct wf_table_entry *entry = (struct wf_table_entry *)g->entry;
+    uint32_t present = 0;
+    if (turn_case == TURN_TABLE) {
+        uint64_t *slot = wf__table_lock_entry(turn_table, (const unsigned char *)"k", 1, 0, entry);
+        present = slot[0] != 0;
+        /* The object's wake must give this mixed watch a turn, consumed
+         * by take as well as acquire, even if the table was written next. */
+        wf__shared_take(turn_object, 1);
+    } else if (wf__shared_acquire(turn_object, 1, f)) {
+        return;
+    }
+    if (f->statements == 0) {
+        if (*state_of(turn_object) != 0)
+            fail("R wrote before W registered (state, expected)", *state_of(turn_object), 0);
+    } else {
+        if (!turn_r_parked)
+            fail("W retried without R yielding its driver (parked, expected)", turn_r_parked, 1);
+        if (f->statements == 1) {
+            if (*state_of(turn_object) != 1)
+                fail("R was admitted before W's attempt (state, expected)", *state_of(turn_object), 1);
+            turn_attempts += 1;
+        } else {
+            if (*state_of(turn_object) != 2)
+                fail("W missed R's second write (state, expected)", *state_of(turn_object), 2);
+            turn_finished += 1;
+            wf__shared_unlock(turn_object, 1);
+            if (turn_case == TURN_TABLE)
+                wf__table_unlock_entry(entry, present);
+            f->done = 1;
+            return;
+        }
+    }
+    f->statements += 1;
+    turn_parks += 1;
+    int parked;
+    if (turn_case == TURN_TABLE) {
+        wf__watch_begin(g->watch);
+        wf__watch_object(g->watch, turn_object);
+        wf__watch_table(g->watch, turn_table);
+        wf__shared_unlock(turn_object, 1);
+        wf__table_unlock_entry(entry, present);
+        parked = wf__watch_park(g->watch, f);
+    } else {
+        parked = wf__shared_watch(turn_object, 1, f);
+    }
+    if (!parked)
+        fail("a guard with no intervening writer did not park (parks, case)", turn_parks, turn_case);
+}
+
+static void turn_r_step(test_frame *f) {
+    if (!f->begun) {
+        if (turn_parks != turn_waiters)
+            fail("W had not parked before R ran (parks, watchers)", turn_parks, turn_waiters);
+        if (wf__shared_acquire(turn_object, 1, f))
+            return;
+        *state_of(turn_object) = 1;
+        wf__shared_unlock(turn_object, 1);
+
+        /* W is ready on this very driver and has not attempted the object.
+         * A statement already holding an earlier lock must still take O. */
+        if (turn_case == TURN_OBJECT) {
+            if (wf__shared_acquire(turn_other, 1, f))
+                fail("an uncontended earlier object suspended R (case)", turn_case, 0);
+            if (wf__shared_acquire(turn_object, 1, f))
+                fail("a holder of another object waited for guard turns (case)", turn_case, 0);
+            wf__shared_unlock(turn_object, 1);
+            /* Taking and releasing O must leave the earlier hold counted. */
+            if (wf__shared_acquire(turn_object, 1, f))
+                fail("releasing O lost R's earlier hold (case)", turn_case, 0);
+            wf__shared_unlock(turn_object, 1);
+            wf__shared_unlock(turn_other, 1);
+            turn_exempt += 1;
+        } else if (turn_case == TURN_TABLE) {
+            _Alignas(8) unsigned char entry[WF_TABLE_ENTRY_SIZE];
+            uint64_t *slot = wf__table_lock_entry(turn_table, (const unsigned char *)"k", 1, 0,
+                                                  (struct wf_table_entry *)entry);
+            wf__shared_take(turn_object, 1);
+            wf__shared_unlock(turn_object, 1);
+            slot[0] = 1;
+            slot[1] = 7;
+            wf__table_unlock_entry((struct wf_table_entry *)entry, 1);
+            turn_exempt += 1;
+        }
+
+        f->begun = 1;
+        /* Less than 64 immediate waits since resume: a return of 1 here
+         * is an object-queue park, not the periodic cooperative yield. */
+        if (!wf__shared_acquire(turn_object, 1, f))
+            fail("R overtook a woken guard instead of parking (attempts, watchers)", turn_attempts, turn_waiters);
+        turn_r_parked = 1;
+        return;
+    }
+    if (wf__shared_acquire(turn_object, 1, f))
+        return;
+    if (turn_attempts != turn_waiters || turn_parks != 2 * turn_waiters)
+        fail("R took O before every false-guard attempt ended its turn (attempts, watchers)",
+             turn_attempts, turn_waiters);
+    *state_of(turn_object) = 2;
+    wf__shared_unlock(turn_object, 1);
+    f->done = 1;
+}
+
+static void turn_phase_begin(test_frame *root) {
+    turn_waiters = turn_case == TURN_PLAIN ? 1 : 2;
+    turn_parks = turn_attempts = turn_finished = turn_r_parked = turn_exempt = 0;
+    turn_object = wf__shared_new(sizeof(uint64_t));
+    turn_other = wf__shared_new(sizeof(uint64_t));
+    *state_of(turn_object) = 0;
+    if (turn_case == TURN_TABLE) {
+        turn_map = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+        turn_table = *(void **)((char *)turn_map + WF_SHARED_STATE_OFFSET);
+    }
+    for (unsigned i = 0; i < turn_waiters; i++)
+        launch_guard(root, turn_w_step);
+    launch(root, turn_r_step);
+}
+
+static void turn_phase_end(void) {
+    if (turn_finished != turn_waiters || turn_exempt != (turn_case != TURN_PLAIN))
+        fail("the turn case did not complete its watchers and exemption (finished, exempt)",
+             turn_finished, turn_exempt);
+    if (turn_case == TURN_TABLE) {
+        while (wf__keyed_table_drain(turn_table) != NULL) {
+        }
+        wf__keyed_table_free(turn_table);
+        if (wf__shared_release(turn_map))
+            wf__shared_free(turn_map);
+    }
+    if (wf__shared_release(turn_object))
+        wf__shared_free(turn_object);
+    if (wf__shared_release(turn_other))
+        wf__shared_free(turn_other);
+}
+
+/* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
     if (root_phase == 0) {
@@ -565,7 +715,21 @@ static void root_step(test_frame *f) {
             return;
         }
     }
-    guard_phase_end();
+    if (root_phase == 2) {
+        guard_phase_end();
+        root_phase = 3;
+        turn_phase_begin(f);
+        if (wf__context_join_wait(f->group, f))
+            return;
+    }
+    for (;;) {
+        turn_phase_end();
+        if (++turn_case == TURN_CASES)
+            break;
+        turn_phase_begin(f);
+        if (wf__context_join_wait(f->group, f))
+            return;
+    }
     f->done = 1;
 }
 

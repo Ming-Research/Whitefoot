@@ -1227,7 +1227,11 @@ typedef struct wf_shared {
     _Atomic uint8_t claimed;
     uint32_t watched;
     _Atomic uint64_t holders;
-    wf_context *waiting_head;
+    /* Outstanding attempts of guards woken through this object's list.
+     * Mutated under lock; read relaxed as an acquisition hint. */
+    _Atomic uint64_t turns;
+    /* Circular queue: tail->next is the head. One pointer leaves room for
+     * turns within WF_SHARED_STATE_OFFSET, with constant-time operations. */
     wf_context *waiting_tail;
     wf_watch_link *watching;
     /* The parked context an unlock handed the object to, until it resumes
@@ -1298,6 +1302,13 @@ struct wf_context {
     uint32_t shared_woken;
     uint32_t shared_write;
     _Atomic uint32_t shared_granted;
+    /* Actual holds, including borrowed holds, but not a reservation that
+     * an unlock handed us before we resume. Owned by the running context. */
+    uint64_t shared_holds;
+    /* At most one: a wake removes the watch from every unit. Published by
+     * the watch lock for an early wake, or the run queue for a parked one;
+     * consumed under this object's lock on the retry's acquisition. */
+    wf_shared *shared_turn;
     /* The watch its running statement registered after a false guard and
      * has not parked yet, while that statement's releases write nothing;
      * and the watch `wf__shared_watch` registers for a guard that read only
@@ -2613,12 +2624,22 @@ static void wf_watch_link_off(wf_watch_link *link) {
  * watch's links off every list, its chunks onto `dead`, to give back once
  * the lock is released, and answers the contexts of parked watches, chained
  * through `next`, to make ready then. */
-static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead) {
+static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead, wf_shared *turn) {
     wf_context *ready = NULL;
     while (*head != NULL) {
         wf_watch *watch = (*head)->watch;
         uint32_t index;
         wf_watch_chunk *chunk;
+        /* Only the list whose write won grants a turn. Table writes pass
+         * NULL even when the watch also named a shared object. A writer
+         * never watches: false-guard releases are quiet. */
+        if (turn != NULL) {
+            if (watch->context->shared_turn != NULL) {
+                wf_bridge_fail("a guard was woken before using its previous turn");
+            }
+            watch->context->shared_turn = turn;
+            atomic_fetch_add_explicit(&turn->turns, 1u, memory_order_relaxed);
+        }
         for (index = 0u; index < wf_watch_inline_used(watch); index++) {
             wf_watch_link_off(&watch->links[index]);
         }
@@ -2665,7 +2686,7 @@ void wf__watch_written(wf_watch_list *list) {
         return;
     }
     wf_spin_lock(&wf_watch_lock);
-    ready = wf_watch_wake_locked(&list->links, &dead);
+    ready = wf_watch_wake_locked(&list->links, &dead, NULL);
     wf_spin_unlock(&wf_watch_lock);
     wf_watch_give_back(dead);
     wf_ready_all(ready);
@@ -2823,6 +2844,38 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
     return write != 0u ? holders == 0u : holders != WF_SHARED_WRITER;
 }
 
+/* A new statement waits for the guards this object woke to attempt it.
+ * Statements already holding objects are exempt, as is shared_take for
+ * table entries: a retry may need their earlier locks first. The common
+ * case adds only this relaxed load to the ordinary admission test. */
+static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self) {
+    return wf_shared_admits(shared, write)
+        && (atomic_load_explicit(&shared->turns, memory_order_relaxed) == 0u
+            || self->shared_turn == shared || self->shared_holds != 0u);
+}
+
+/* Record an actual acquisition, including taking a handed or borrowed
+ * hold. A turn ends before evaluating the guard, even when it is false.
+ * The object is held now; its ordinary last unlock wakes the parked queue
+ * after the final turn, including the false-guard release path.
+ *
+ * No timeout or abandonment is needed: lowering's lower_guard retries the
+ * same saved targets, taking every guard-read group before evaluation. A
+ * wake unlinks all units, so a mixed table/object watch gets exactly one
+ * turn from the winning object write, or none from a table write. Guards
+ * cannot wait or exit the statement; host cancellation/stop returns host
+ * outcomes, never discards an atomic retry. Thus a context cannot finish
+ * with a turn, and the statement keeps the object alive until it is used. */
+static void wf_shared_took_locked(wf_shared *shared, wf_context *self) {
+    if (self != NULL) {
+        self->shared_holds += 1u;
+        if (self->shared_turn == shared) {
+            self->shared_turn = NULL;
+            atomic_fetch_sub_explicit(&shared->turns, 1u, memory_order_relaxed);
+        }
+    }
+}
+
 /* Takes a hold for a statement asking to write, or to read, under the
  * object's lock once wf_shared_admits has admitted it. */
 static void wf_shared_hold_locked(wf_shared *shared, uint32_t write) {
@@ -2838,16 +2891,15 @@ static void wf_shared_hold_locked(wf_shared *shared, uint32_t write) {
  * unlock woke it and it missed again, at its tail otherwise.  Called under
  * the object's lock. */
 static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t write) {
-    self->next = NULL;
     self->shared_write = write;
-    if (self->shared_woken != 0u && shared->waiting_head != NULL) {
-        self->next = shared->waiting_head;
-        shared->waiting_head = self;
-    } else if (shared->waiting_tail != NULL) {
+    if (shared->waiting_tail != NULL) {
+        self->next = shared->waiting_tail->next;
         shared->waiting_tail->next = self;
-        shared->waiting_tail = self;
+        if (self->shared_woken == 0u) {
+            shared->waiting_tail = self;
+        }
     } else {
-        shared->waiting_head = self;
+        self->next = self;
         shared->waiting_tail = self;
     }
 }
@@ -2855,15 +2907,20 @@ static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t 
 /* Wakes the first parked statement once the object is free: to try again,
  * or, once WF_SHARED_HANDOFF unlocks have woken it in vain, holding the
  * object.  Called under the object's lock; returns the context to make ready
- * once the lock is released. */
+ * once the lock is released. Turns do not suppress these wakes or the
+ * bounded handoff: repeated writes can renew watches without end, but a
+ * parked newcomer with a persistently true guard must still proceed. A
+ * handed hold retains the existing claimed/borrowed protocol. */
 static wf_context *wf_shared_wake_locked(wf_shared *shared) {
-    wf_context *first = shared->waiting_head;
-    if (first == NULL) {
+    wf_context *first;
+    if (shared->waiting_tail == NULL) {
         return NULL;
     }
-    shared->waiting_head = first->next;
-    if (shared->waiting_head == NULL) {
+    first = shared->waiting_tail->next;
+    if (first == shared->waiting_tail) {
         shared->waiting_tail = NULL;
+    } else {
+        shared->waiting_tail->next = first->next;
     }
     first->next = NULL;
     if (first->shared_woken >= WF_SHARED_HANDOFF) {
@@ -2918,6 +2975,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         atomic_store_explicit(&shared->claimed, 0u, memory_order_relaxed);
         atomic_store_explicit(&self->shared_granted, 0u, memory_order_relaxed);
         atomic_store_explicit(&shared->granted, NULL, memory_order_relaxed);
+        wf_shared_took_locked(shared, self);
         wf_spin_unlock(&shared->lock);
         self->shared_woken = 0u;
         return 0;
@@ -2928,10 +2986,11 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         return 1;
     }
     for (;;) {
-        if (wf_shared_admits(shared, write)) {
+        if (wf_shared_admits_context(shared, write, self)) {
             wf_spin_lock(&shared->lock);
-            if (wf_shared_admits(shared, write)) {
+            if (wf_shared_admits_context(shared, write, self)) {
                 wf_shared_hold_locked(shared, write);
+                wf_shared_took_locked(shared, self);
                 self->shared_woken = 0u;
                 wf_spin_unlock(&shared->lock);
                 return 0;
@@ -2945,8 +3004,9 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         wf_prim_spin_hint();
     }
     wf_spin_lock(&shared->lock);
-    if (wf_shared_admits(shared, write)) {
+    if (wf_shared_admits_context(shared, write, self)) {
         wf_shared_hold_locked(shared, write);
+        wf_shared_took_locked(shared, self);
         self->shared_woken = 0u;
         wf_spin_unlock(&shared->lock);
         return 0;
@@ -2995,6 +3055,9 @@ void wf__shared_take(void *object, uint32_t write) {
             } else {
                 held = 0;
             }
+            if (held) {
+                wf_shared_took_locked(shared, wf_context_current);
+            }
             wf_spin_unlock(&shared->lock);
             if (held) {
                 return;
@@ -3017,7 +3080,7 @@ static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **
     wf__watch_seen(WF_WATCH_WRITTEN);
     if (!wf_watch_quiet()) {
         wf_spin_lock(&wf_watch_lock);
-        ready = wf_watch_wake_locked(&shared->watching, dead);
+        ready = wf_watch_wake_locked(&shared->watching, dead, shared);
         wf_spin_unlock(&wf_watch_lock);
     }
     return ready;
@@ -3071,6 +3134,9 @@ void wf__shared_unlock(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *ready;
     wf_watch_chunk *dead = NULL;
+    if (wf_context_current != NULL) {
+        wf_context_current->shared_holds -= 1u;
+    }
     wf_spin_lock(&shared->lock);
     if (atomic_load_explicit(&shared->borrowed, memory_order_relaxed) != 0u) {
         ready = wf_shared_give_back_locked(shared, write, &dead);
@@ -3108,6 +3174,7 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
     }
     wf_watch_on(watch, &shared->watched, &shared->watching);
     self->shared_woken = 0u;
+    self->shared_holds -= 1u;
     wf_spin_lock(&shared->lock);
     /* The guard wrote nothing, so no watcher has a change to see. */
     ready = wf_shared_end_hold_locked(shared, write, 0, &dead);
@@ -3278,6 +3345,9 @@ static void wf_context_drive(wf_driver *driver) {
                 continue;
             }
             if (wf__coro_done(next->root)) {
+                if (next->shared_turn != NULL || next->shared_holds != 0u) {
+                    wf_bridge_fail("a context finished with a shared hold or a guard turn");
+                }
                 if (next == &wf_context_root) {
                     return;
                 }
