@@ -92,3 +92,41 @@ revision this branch starts from) and the candidate.
 A failing fairness criterion rejects this mechanism in favour of an ordered
 hand-off (the oldest watcher first, a turn passed on when its guard is
 false); a failing cost criterion goes to the board with both numbers.
+
+## Result: turns are fairer and much slower; both criteria fail
+
+[Run 38062025238](https://github.com/Ming-Research/Whitefoot/actions/runs/38062025238)
+(temporary workflow; native i9-14900K, 15:10 UTC; two drivers on CPUs 2 and
+4, each its own physical performance core; compilers built from base
+fe5589ec5 and the candidate at ebcdb5a1d; K = 1,000 acquisitions per
+context, two passes, order reversed on the second). Times in ns; hold is the
+mean hold.
+
+| N | Arm | p50 | p99 | longest wait | mean hold | run time |
+|---:|---|---:|---:|---:|---:|---:|
+| 2 | base | 20 / 20 | 24 / 22 | 7,368,149 / 7,302,648 | 6,649 / 6,617 | 14,108,220 / 14,025,145 |
+| 2 | candidate | 9,837 / 9,857 | 11,070 / 10,660 | 20,909 / 18,941 | 6,626 / 6,658 | 17,174,776 / 17,214,194 |
+| 8 | base | 20 / 20 | 27,065 / 36,061 | 57,329,258 / 57,149,924 | 6,627 / 6,625 | 64,059,613 / 63,887,741 |
+| 8 | candidate | 133,465 / 132,373 | 315,254 / 322,130 | 529,431 / 482,948 | 6,658 / 6,626 | 156,708,018 / 156,995,699 |
+| 50 | base | 9,298 / 9,500 | 13,877 / 12,306 | 509,763,217 / 512,568,002 | 6,608 / 6,616 | 516,570,415 / 519,382,432 |
+| 50 | candidate | 938,469 / 1,155,881 | 4,254,573 / 5,845,534 | 8,935,088 / 17,058,937 | 6,616 / 6,622 | 1,309,439,194 / 1,501,823,278 |
+
+- Fairness criterion (longest wait at N = 50 at most 4 × N × hold + 1 ms,
+  about 2.3 ms): **fails**. The longest wait falls from about 510 ms to 8.9
+  and 17.1 ms, 30 to 57 times shorter, but stays four to seven times over
+  the bound.
+- Cost criterion (run time at most 1.10 times base): **fails**: 1.22 at
+  N = 2, 2.45 at N = 8, 2.54 and 2.89 at N = 50. The base ran 50,000
+  acquisitions in about 516 ms, close to 50,000 × 6.6 µs of holds, because
+  one context kept the object on its driver without switching; with turns
+  each acquisition hands the object to a context that must be scheduled,
+  about 26 to 30 µs per acquisition at N = 50.
+
+This probe takes the object again at once after releasing it, with no work
+between, so it is the case where fairness costs most; firn's engine has
+network I/O between checkouts. By the pre-registered reading the fairness
+failure points to an ordered hand-off, but an ordered hand-off switches at
+least as often as turns do, so the cost criterion would fail at least as
+badly on this probe. The choice between fairness and throughput under this
+contention is the owner's (status board card "guard fairness").
+
