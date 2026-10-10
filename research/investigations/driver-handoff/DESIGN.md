@@ -653,3 +653,17 @@ image's four (both names) 0.247 to 0.343 ms, so two passes cannot separate
 a p99 increase from that cell's spread; it is rerun with more passes before
 the 5 percent p99 criterion is judged.
 
+The undecided cell was rerun alone ([run 38061064855](https://github.com/Ming-Research/Whitefoot/actions/runs/38061064855),
+14:48–14:51 UTC, mset at depth 16, servers on CPUs 2 and 4, six interleaved
+passes of five seconds). p99 (ms) per pass: base 0.263, 0.303, 0.255,
+0.335, 0.215, 0.327; handoff 0.287, 0.279, 0.295, 0.255, 0.311, 0.287;
+twin 0.223, 0.327, 0.311, 0.295, 0.287, 0.343. The paired per-pass ratio
+handoff ÷ base has median 1.006 (95 percent bootstrap interval 0.82 to
+1.30, the experiment's seed), and the noise control, twin ÷ handoff (one
+image under two names), 1.106 (0.85 to 1.18). So this cell shows no p99
+increase, but at five seconds a pass its p99 moves by about 20 percent
+between identical images, and the instrument cannot resolve the 5 percent
+criterion here; the other eleven cells agree within one reporting step.
+Throughput in the rerun: medians 2,442,338 (base), 2,435,532 (handoff),
+2,439,867 (twin) requests per second.
+
