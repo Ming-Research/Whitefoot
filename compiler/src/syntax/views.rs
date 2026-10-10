@@ -1,6 +1,8 @@
 //! Borrowed grammar views over canonical owned syntax. Node and terminal
 //! identities are the parser's; these views make no resolution or type judgment.
 
+use std::sync::OnceLock;
+
 use crate::syntax::terminal::TerminalPredicate;
 use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 use crate::{ByteOffset, CanonicalSyntaxUnit, NodePath, Production, SyntaxCoordinate};
@@ -24,20 +26,60 @@ pub(crate) enum ConditionalAlternative {
 
 pub(crate) struct SyntaxView<'unit> {
     syntax: &'unit CanonicalSyntaxUnit,
-    paths: Vec<NodePath>,
+    paths: OnceLock<Result<Vec<NodePath>, SyntaxViewFailure>>,
     /// Every node ordered by its path, so a path finds its node by binary
     /// search.
-    by_path: Vec<NodeId>,
+    by_path: OnceLock<Vec<NodeId>>,
+    descendants: OnceLock<Result<DescendantIndex, SyntaxViewFailure>>,
     direct_terminals: Vec<Vec<usize>>,
+}
+
+/// Strict subtree intervals and production lists use preorder positions,
+/// independently of the canonical topology's postorder node identities.
+struct DescendantIndex {
+    intervals: Vec<std::ops::Range<usize>>,
+    by_production: Vec<Vec<(usize, NodeId)>>,
 }
 
 impl<'unit> SyntaxView<'unit> {
     pub(crate) fn new(syntax: &'unit CanonicalSyntaxUnit) -> Result<Self, SyntaxViewFailure> {
         let topology = Self::topology_of(syntax);
+        let mut direct_terminals = vec![Vec::new(); topology.nodes.len()];
+        for (terminal_index, terminal) in topology.terminals.iter().enumerate() {
+            let owner = terminal
+                .owner
+                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?;
+            direct_terminals
+                .get_mut(owner.index())
+                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?
+                .push(terminal_index);
+        }
+        Ok(Self {
+            syntax,
+            paths: OnceLock::new(),
+            by_path: OnceLock::new(),
+            descendants: OnceLock::new(),
+            direct_terminals,
+        })
+    }
+
+    /// Paths are unused by token/extent consumers; retain them only when a
+    /// path consumer first asks. The canonical topology fixes their contents.
+    fn paths(&self) -> Result<&[NodePath], SyntaxViewFailure> {
+        self.paths
+            .get_or_init(|| self.build_paths())
+            .as_deref()
+            .map_err(|failure| *failure)
+    }
+
+    fn build_paths(&self) -> Result<Vec<NodePath>, SyntaxViewFailure> {
+        let topology = self.topology();
         let mut paths = Vec::with_capacity(topology.nodes.len());
-        for index in 0..topology.nodes.len() {
+        for (index, record) in topology.nodes.iter().enumerate() {
             let mut node = NodeId::from_index(index).ok_or(SyntaxViewFailure::CounterOverflow)?;
-            let mut components = Vec::new();
+            let depth = usize::try_from(record.tree_depth)
+                .map_err(|_| SyntaxViewFailure::CounterOverflow)?;
+            let mut components = Vec::with_capacity(depth);
             while node != topology.root {
                 let record = topology
                     .node(node)
@@ -51,31 +93,7 @@ impl<'unit> SyntaxView<'unit> {
             paths.push(NodePath { components });
         }
 
-        let mut by_path = (0..paths.len())
-            .map(|index| NodeId::from_index(index).ok_or(SyntaxViewFailure::CounterOverflow))
-            .collect::<Result<Vec<_>, _>>()?;
-        by_path.sort_by(|left, right| {
-            paths[left.index()]
-                .components()
-                .cmp(paths[right.index()].components())
-        });
-
-        let mut direct_terminals = vec![Vec::new(); topology.nodes.len()];
-        for (terminal_index, terminal) in topology.terminals.iter().enumerate() {
-            let owner = terminal
-                .owner
-                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?;
-            direct_terminals
-                .get_mut(owner.index())
-                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?
-                .push(terminal_index);
-        }
-        Ok(Self {
-            syntax,
-            paths,
-            by_path,
-            direct_terminals,
-        })
+        Ok(paths)
     }
 
     fn topology(&self) -> &FinalizedTopology {
@@ -310,20 +328,47 @@ impl<'unit> SyntaxView<'unit> {
         node: NodeId,
         production: Production,
     ) -> Result<Vec<NodeId>, SyntaxViewFailure> {
-        let mut matches = Vec::new();
-        let mut pending = self
-            .children(node)?
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
-        while let Some(candidate) = pending.pop() {
-            if self.production(candidate)? == production {
-                matches.push(candidate);
+        // Validate the requested identity before initializing the whole-view
+        // index, retaining the ordinary missing-node failure.
+        self.children(node)?;
+        let index = self
+            .descendants
+            .get_or_init(|| self.build_descendants())
+            .as_ref()
+            .map_err(|failure| *failure)?;
+        let interval = &index.intervals[node.index()];
+        let entries = &index.by_production[production.index()];
+        let start = entries.partition_point(|(position, _)| *position < interval.start);
+        let end = entries.partition_point(|(position, _)| *position < interval.end);
+        Ok(entries[start..end].iter().map(|(_, node)| *node).collect())
+    }
+
+    fn build_descendants(&self) -> Result<DescendantIndex, SyntaxViewFailure> {
+        let mut index = DescendantIndex {
+            intervals: vec![0..0; self.topology().nodes.len()],
+            by_production: vec![Vec::new(); crate::syntax::grammar::productions().len()],
+        };
+        let mut position = 0;
+        let mut pending = vec![(self.root(), false)];
+        while let Some((node, exiting)) = pending.pop() {
+            if exiting {
+                index.intervals[node.index()].end = position;
+                continue;
             }
-            pending.extend(self.children(candidate)?.iter().rev().copied());
+            index.by_production[self.production(node)?.index()].push((position, node));
+            position += 1;
+            // Starting after this node excludes the root even when its
+            // production is the requested one. Leaves have an empty range.
+            index.intervals[node.index()].start = position;
+            pending.push((node, true));
+            pending.extend(
+                self.children(node)?
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, false)),
+            );
         }
-        Ok(matches)
+        Ok(index)
     }
 
     pub(crate) fn conditional_blocks(
@@ -334,16 +379,28 @@ impl<'unit> SyntaxView<'unit> {
     }
 
     pub(crate) fn path(&self, node: NodeId) -> Result<&NodePath, SyntaxViewFailure> {
-        self.paths
+        self.paths()?
             .get(node.index())
             .ok_or(SyntaxViewFailure::InvalidCanonicalTree)
     }
 
     pub(crate) fn node_with_path(&self, path: &NodePath) -> Option<NodeId> {
-        self.by_path
-            .binary_search_by(|node| self.paths[node.index()].components().cmp(path.components()))
+        let paths = self.paths().ok()?;
+        let by_path = self.by_path.get_or_init(|| {
+            let mut nodes = (0..paths.len())
+                .map(|index| NodeId::from_index(index).expect("path construction checked node IDs"))
+                .collect::<Vec<_>>();
+            nodes.sort_by(|left, right| {
+                paths[left.index()]
+                    .components()
+                    .cmp(paths[right.index()].components())
+            });
+            nodes
+        });
+        by_path
+            .binary_search_by(|node| paths[node.index()].components().cmp(path.components()))
             .ok()
-            .map(|position| self.by_path[position])
+            .map(|position| by_path[position])
     }
 
     pub(crate) fn parent(&self, node: NodeId) -> Result<Option<NodeId>, SyntaxViewFailure> {
@@ -959,5 +1016,191 @@ impl SyntaxView<'_> {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn canonical(source: &[u8]) -> CanonicalSyntaxUnit {
+        let limits = crate::CompilerLimits::default();
+        let bundle = crate::SourceBundle::with_limits(
+            &[crate::SourceInput::new("view.wf", source)],
+            limits.source,
+        )
+        .expect("the source bundle forms");
+        let crate::LexOutcome::Complete(lexed) = crate::lex(&bundle, limits.lexer) else {
+            panic!("the view fixture lexes");
+        };
+        let crate::TerminalOutcome::Complete(classified) =
+            crate::classify_terminals(&lexed, crate::ACTIVE_KERNEL_SPEC_HASH, limits.terminals)
+        else {
+            panic!("the view fixture classifies");
+        };
+        let crate::ParseOutcome::Complete(parsed) = crate::parse(classified, limits.parser) else {
+            panic!("the view fixture parses");
+        };
+        let crate::FinalizeOutcome::Complete(finalized) = crate::finalize(parsed, limits.finalizer)
+        else {
+            panic!("the view fixture finalizes");
+        };
+        let crate::CanonicalOutcome::Complete(syntax) =
+            crate::audit_canonical(*finalized, limits.canonical)
+        else {
+            panic!("the view fixture is canonical");
+        };
+        syntax
+    }
+
+    /// Eager reference built by walking children from the root, independently
+    /// of the view's upward parent walk and reverse-index binary search.
+    fn eager_paths(syntax: &CanonicalSyntaxUnit) -> std::collections::BTreeMap<Vec<u32>, NodeId> {
+        let topology = &syntax.finalized.topology;
+        let mut paths = std::collections::BTreeMap::new();
+        let mut pending = vec![(topology.root, Vec::new())];
+        while let Some((node, path)) = pending.pop() {
+            for (ordinal, &child) in topology.node_children(node).unwrap().iter().enumerate() {
+                let mut child_path = path.clone();
+                child_path.push(u32::try_from(ordinal).unwrap());
+                pending.push((child, child_path));
+            }
+            paths.insert(path, node);
+        }
+        paths
+    }
+
+    /// Independent recursive child walk: neither intervals, paths nor numeric
+    /// node ordering participate in the expected strict preorder.
+    fn walked_descendants(
+        topology: &FinalizedTopology,
+        root: NodeId,
+        production: Production,
+        result: &mut Vec<NodeId>,
+    ) {
+        for &child in topology.node_children(root).unwrap() {
+            if topology.node(child).unwrap().production == production {
+                result.push(child);
+            }
+            walked_descendants(topology, child, production, result);
+        }
+    }
+
+    #[test]
+    fn lazy_descendants_match_child_walk_before_and_after_indexing() {
+        let mut distinguishes_node_id_sort = false;
+        let mut saw_empty = false;
+        for source in [
+            b"fn probe() -> result: unit pure {\n}\n".as_slice(),
+            b"const first: i32 = 1_i32;\n\nconst second: i32 = 2_i32;\n",
+            include_bytes!(
+                "../../../tests/conformance/cases/x-gram-combo-flat-call-construct-match.wf"
+            ),
+        ] {
+            let syntax = canonical(source);
+            let topology = &syntax.finalized.topology;
+            for index in 0..topology.nodes.len() {
+                let node = NodeId::from_index(index).unwrap();
+                let view = SyntaxView::new(&syntax).unwrap();
+                view.children(node).unwrap();
+                assert!(view.descendants.get().is_none());
+                let invalid = NodeId::from_index(topology.nodes.len()).unwrap();
+                assert_eq!(
+                    view.descendants_with(invalid, Production::Expr),
+                    Err(SyntaxViewFailure::InvalidCanonicalTree)
+                );
+                assert!(view.descendants.get().is_none());
+                // Every node is a cold first query, including leaves and
+                // interior nodes whose own production must be excluded.
+                let production = topology.node(node).unwrap().production;
+                let mut expected = Vec::new();
+                walked_descendants(topology, node, production, &mut expected);
+                assert_eq!(view.descendants_with(node, production).unwrap(), expected);
+                assert!(view.descendants.get().is_some());
+                assert!(view.paths.get().is_none());
+                assert!(view.by_path.get().is_none());
+                for &production in crate::syntax::grammar::productions() {
+                    let mut expected = Vec::new();
+                    walked_descendants(topology, node, production, &mut expected);
+                    saw_empty |= expected.is_empty();
+                    assert!(!expected.contains(&node));
+                    let mut sorted = expected.clone();
+                    sorted.sort_unstable_by_key(|node| node.index());
+                    distinguishes_node_id_sort |= sorted != expected;
+                    for _ in 0..2 {
+                        assert_eq!(view.descendants_with(node, production).unwrap(), expected);
+                    }
+                }
+            }
+        }
+        assert!(
+            saw_empty,
+            "empty and absent-production results are exercised"
+        );
+        assert!(
+            distinguishes_node_id_sort,
+            "postorder IDs cannot pass as preorder"
+        );
+    }
+
+    #[test]
+    fn lazy_paths_and_reverse_lookup_match_eager_paths() {
+        // Complete programs, with the nested match/if, empty block and calls
+        // taken verbatim from the runnable grammar-combination corpus case.
+        for source in [
+            b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+            b"const first: i32 = 1_i32;\n\nconst second: i32 = 2_i32;\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            include_bytes!(
+                "../../../tests/conformance/cases/x-gram-combo-flat-call-construct-match.wf"
+            ),
+        ] {
+            let syntax = canonical(source);
+            let expected = eager_paths(&syntax);
+            assert_eq!(expected.len(), syntax.finalized.topology.nodes.len());
+            // Exercise both first-request orders, and repeated reads of each
+            // immutable cache. Non-path syntax queries must leave both cold.
+            for reverse_first in [false, true] {
+                let view = SyntaxView::new(&syntax).unwrap();
+                view.items().unwrap();
+                view.direct_token_indices(view.root()).unwrap();
+                assert!(view.paths.get().is_none());
+                assert!(view.by_path.get().is_none());
+                let root_path = NodePath {
+                    components: Vec::new(),
+                };
+                if reverse_first {
+                    assert_eq!(view.node_with_path(&root_path), Some(view.root()));
+                } else {
+                    assert_eq!(view.path(view.root()).unwrap(), &root_path);
+                    assert!(view.paths.get().is_some());
+                    assert!(view.by_path.get().is_none());
+                }
+                for _ in 0..2 {
+                    for (components, &node) in &expected {
+                        let path = NodePath {
+                            components: components.clone(),
+                        };
+                        assert_eq!(view.path(node).unwrap(), &path);
+                        assert_eq!(view.node_with_path(&path), Some(node));
+                    }
+                }
+                assert_eq!(
+                    view.by_path.get().unwrap(),
+                    &expected.values().copied().collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    view.node_with_path(&NodePath {
+                        components: vec![u32::MAX],
+                    }),
+                    None
+                );
+                assert_eq!(
+                    view.path(
+                        NodeId::from_index(syntax.finalized.topology.nodes.len()).unwrap()
+                    ),
+                    Err(SyntaxViewFailure::InvalidCanonicalTree)
+                );
+            }
+        }
     }
 }

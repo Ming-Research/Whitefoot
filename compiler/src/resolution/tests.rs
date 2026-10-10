@@ -107,6 +107,55 @@ fn with_one_resolution<ResultValue>(
     with_resolution(&[SourceInput::new("test.wf", source)], run)
 }
 
+/// Dense role fixture for the effect checker's lookup regression. Only the
+/// declaration accessor consumes the synthesized records, not by-node metadata.
+pub(crate) fn with_each_declaration_role(mut run: impl FnMut(&super::ResolvedSyntaxUnit)) {
+    with_one_resolution(b"fn probe() -> result: unit pure {\n}\n", |outcome| {
+        let ResolutionOutcome::Complete(mut resolved) = outcome else {
+            panic!("classification fixture resolves");
+        };
+        let roles = [
+            DeclarationRole::Function,
+            DeclarationRole::Struct,
+            DeclarationRole::Enum,
+            DeclarationRole::Variant,
+            DeclarationRole::Interface,
+            DeclarationRole::Binding,
+            DeclarationRole::FunctionParameter,
+            DeclarationRole::NamedConst,
+            DeclarationRole::GenericType,
+            DeclarationRole::ConstGeneric,
+            DeclarationRole::Parameter,
+            DeclarationRole::Let,
+            DeclarationRole::LoopLabel,
+            DeclarationRole::MatchBinder,
+            DeclarationRole::CountedBinder,
+            DeclarationRole::AtomicBinder,
+            DeclarationRole::Invariant,
+            DeclarationRole::TypeInvariantName,
+            DeclarationRole::InvariantBinder,
+            DeclarationRole::RangeFact,
+            DeclarationRole::RangeBinder,
+            DeclarationRole::ApartBinder,
+            DeclarationRole::Alias,
+        ];
+        let template = resolved.declarations[0].clone();
+        resolved.declarations = roles
+            .into_iter()
+            .enumerate()
+            .map(|(index, role)| {
+                let mut record = template.clone();
+                record.id = super::DeclarationId::from_index(index).unwrap();
+                record.role = role;
+                record
+            })
+            .collect();
+        run(&resolved);
+        resolved.declarations.clear();
+        run(&resolved);
+    });
+}
+
 #[test]
 fn minimal_function_publishes_the_closed_prelude_and_source_declaration() {
     with_one_resolution(b"fn probe() -> result: unit pure {\n}\n", |outcome| {
