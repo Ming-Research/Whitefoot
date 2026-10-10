@@ -1,4 +1,4 @@
-# Kernel Specification v0.123
+# Kernel Specification v0.122
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -784,7 +784,7 @@ An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
 The release graph of a type `T` has as its nodes the types reachable from `T` through fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
 A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], or a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle [SHARE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
+A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], or a `Shared<T>` or `SharedRead<T>` handle [SHARE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
 The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
 One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
 A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
@@ -855,7 +855,7 @@ A component of the closure's call graph introduces the requirement when its func
 [STOR-3] Deallocation and resource release are compiler-derived and explicit in the checked program [DIAG-2]: every release is represented before lowering.
 Release actions run exactly once on every source control-flow edge that leaves their owner scope, including `continue`, innermost scope first and in reverse declaration order within each scope; [FN-10] places a guaranteed self-tail transfer's releases before that transfer.
 Host termination caused solely by unavailable external resources under [SCOPE-3] is not a Whitefoot control-flow edge, and this specification makes no source-level cleanup promise for that case.
-A binding's value is released at points the checked program fixes; the state of a shared object and the value of a frozen object belong to no binding, and [SHARE-1] fixes their release.
+A binding's value is released at points the checked program fixes; the state of a shared object belongs to no binding, and [SHARE-1] fixes its release.
 
 Every edge that leaves one entered `for_stmt` body normally — its fallthrough, a `continue`, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge — carries exactly once every compiler-derived release for the body scopes that edge leaves, innermost scope first and in reverse declaration order within each scope.
 On body fallthrough and on a `continue` to that counted loop those actions complete before the hidden counted update [FN-1].
@@ -869,7 +869,7 @@ A `Box<T>` release is its content's compiler-derived release followed by one com
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
-A `Shared<T>`, `SharedRead<T>` or `Frozen<T>` release is [SHARE-1]'s handle release.
+A `Shared<T>` or `SharedRead<T>` release is [SHARE-1]'s handle release.
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action of its own.
 
@@ -1164,7 +1164,7 @@ No count or length carries a static obligation, and every value of its `u64` typ
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
-The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; a `Paged<T>` `(32,8)`, its length, capacity and directory-capacity words and the first page pointer, the rest of the page-pointer directory following at a runtime count in the same cell; a `Shared<T>` or `SharedRead<T>` `(8,8)`, one pointer to its shared object [SHARE-1]; a `Frozen<T>` `(8,8)`, one pointer to its frozen object, its `inner` field living in that object and entering no sequence [SHARE-1]; a `KeySet` `(16,8)`, its count and a pointer to its store; an `Entries<V>` `(24,8)`, a pointer to the statement's hold, the position of the set's first key in it and the count [SHARE-2]; and every other fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
+The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; a `Paged<T>` `(32,8)`, its length, capacity and directory-capacity words and the first page pointer, the rest of the page-pointer directory following at a runtime count in the same cell; a `Shared<T>` or `SharedRead<T>` `(8,8)`, one pointer to its shared object [SHARE-1]; a `KeySet` `(16,8)`, its count and a pointer to its store; an `Entries<V>` `(24,8)`, a pointer to the statement's hold, the position of the set's first key in it and the count [SHARE-2]; and every other fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
 Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
@@ -2266,16 +2266,12 @@ The starting context joins the started one, waiting there until it has completed
 1. for an `expr_stmt`, when the activation that executed the spawn leaves by any edge [FN-1, ERR-3], the started context having released the call's result;
 2. for a `let_stmt`, at the beginning of the first later statement of the `let_stmt`'s block that names the binding or contains an edge leaving that block [ERR-3, GIVE-1], and otherwise at that block's end; the binding holds the call's result from the join on.
 
-[SHARE-1] Shared objects, frozen objects, concurrent hash maps and key sets.
+[SHARE-1] Shared objects, concurrent hash maps and key sets.
 A value of either prelude type `Shared<T>` or `SharedRead<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, `shared_map_new` returns a handle to a new shared object whose state is a concurrent hash map whose every entry is `None`, sized for its argument's number of `Some` entries, and `shared_share` returns a further handle to the object its argument names.
 `shared_read` returns a `SharedRead<T>` retaining the same object as its `Shared<T>` argument, and `shared_read_share` returns a further `SharedRead<T>` retaining the object its argument names. There is no conversion from a `SharedRead<T>` handle to a `Shared<T>` handle.
 Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is released when its last handle has been released and no atomic statement on it is executing.
 The state of a shared object is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at it [REF-1], and the targets of an atomic statement [SHARE-2] are the only forms that form one.
-A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, which holds one value of type `T`, read as the handle's readonly field `inner`. `frozen_new` moves its argument into a new frozen object and returns a handle to it, and `frozen_share` returns a further handle to the object its argument names; no operation writes a frozen object's value, so it is the value `frozen_new` moved in for as long as the object lives.
-A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>` or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part in declaration order [DIAG-1].
-A path that ends at or passes through `inner` is a readonly path [TYPE-2] and is never moved or consumed [OWN-1]; reading it reads the frozen object's value, which is storage of no binding and belongs to no context [WAIT-2], needs no atomic statement, and is admitted wherever a read of the handle is, an atomic statement's guard and block included.
-Releasing a handle releases that handle, and the object's value is released when its last handle has been released [STOR-3].
 A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Releasing a map releases every value its entries hold.
 `map_count` returns how many entries of the map its argument names are `Some`.
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
@@ -2326,7 +2322,7 @@ An implementation may hold less than a statement's states, or hold them together
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, built-in-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], and the `Entries` a target over a key set names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], and the `Entries` a target over a key set names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2361,10 +2357,6 @@ opaque nocopy struct Shared<T: drop> {
 }
 
 opaque nocopy struct SharedRead<T: drop> {
-}
-
-opaque nocopy struct Frozen<T: drop> {
-  readonly inner: T;
 }
 
 opaque nocopy struct ConcurrentHashMap<V: drop> {
@@ -2523,8 +2515,6 @@ fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>
 fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
 fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
-fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
-fn frozen_share<T: drop>(frozen: &Frozen<T>) -> result: Frozen<T> reads(frozen);
 fn map_count<V: drop>(map: &ConcurrentHashMap<V>) -> count: u64 reads(map);
 fn map_scan<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, keys: &KeySet) -> next: u64 reads(map), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
@@ -2548,7 +2538,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 

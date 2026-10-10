@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.123: frozen objects
+
+Rules: changed OP-9, PRE-1, PROV-6, SHARE-1, STOR-3
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "Should Whitefoot add a born-frozen shared type Frozen<T> with lock-free reads?" (firn-q-frozen-type): add Frozen<T>, created from a uniquely owned value, frozen from birth, transitively immutable, reclaimed by reference counting, read without an atomic statement anywhere; taking a snapshot back stays a managed-cursor protocol of the library (translated).
+
+Summary: SHARE-1 adds frozen objects: a `Frozen<T>` handle names an object whose value `frozen_new` moved in and no operation writes, read through the readonly field `inner` without an atomic statement, in any statement including another atomic statement's block; `frozen_share` makes another handle, the value is released with the last handle, and a type argument with a `Shared`, `SharedRead` or host-handle part at any depth is refused, so nothing a frozen object holds changes. PRE-1 declares `Frozen<T: drop>` with its readonly `inner`, `frozen_new` and `frozen_share`, in the declaration preorder after `shared_read_share`; OP-9 gives the handle one pointer; PROV-6 counts its release as non-empty and STOR-3 makes it [SHARE-1]'s handle release, the frozen value belonging to no binding. Selection ground: Firn-wf's persistent-dataset prototype could not read a node it reached inside an atomic statement on its registry, because nested atomic statements are refused, and whether a `SharedRead` object has a writer left is not decidable from types, since `shared_share` duplicates writable handles at run time.
+
 ## 2026-10-10 v0.122: whole-value reads of a const item
 
 Rules: changed CONST-2
