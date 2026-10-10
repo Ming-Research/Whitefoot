@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-10, written in Chinese, th
 
 Summary: An exchange is a place its type parameter takes, so a runtime-capacity window, a run of segments or a paged window, whose only home is a heap cell's content, is exchanged by exchanging the owning cells, because an in-place exchange moves one fixed-size value and these contents vary with their capacity; exchanging the cells' pointers or whole blocks was rejected because a content reached through a reference has no cell slot to rewrite.
 
+## 2026-10-10 Rings stay out of fork children; the restricted fork capsule
+
+Nodes: compiler/completion-runtime
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item firn-gap-fork-runtime to the request "approve PR #337's two new decisions in design-tree compiler/completion-runtime: (1) every io_uring mapping gets MADV_DONTFORK at ring creation, and a refused advice refuses the ring and falls back to the existing helper adapter; (2) a snapshot child forked inside a hold runs only a restricted capsule: signals reset by raw system calls, descriptors outside an allowlist closed, one fixed native encoder, exit by exit_group, the parent reaping it through a pidfd; and record the rejected alternative 'running ordinary runtime or Whitefoot code in the child', because the child inherits locks and allocator state of threads that no longer exist" (translated).
+
+Summary: A forked child no longer inherits the parent's live io_uring mappings, so it cannot read or advance a queue the parent's ring still owns; a refused advice refuses the ring before any request uses it. A child forked for a snapshot inside a hold runs only a capsule whose every step is a raw system call or a fixed encoder over prepared memory, because it copies a multithreaded process whose locks and allocator may be held by threads absent from it; the process registers no pthread_atfork handler, and the parent keeps reaping ownership through a pidfd, or waitpid when the pidfd fails after the child exists.
 ## 2026-10-10 Frozen objects
 
 Nodes: language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects, compiler/frozen-representation
