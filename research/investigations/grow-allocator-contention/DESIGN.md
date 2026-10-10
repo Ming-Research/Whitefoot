@@ -101,7 +101,9 @@ the single-thread time also fell by about 8% against main.
 
 ## Conclusion
 
-Both limits pass both criteria and are indistinguishable within the twins on
-these hosts, so the rule fixed before measuring selects 1 KiB. The limit is
-tuned to glibc's per-thread cache; blocks above it still take an arena lock in
-both `realloc` and `malloc`, which these workloads did not exercise.
+Both limits pass both criteria: neither reaches the Snowghost rejection line,
+and neither makes Halo's integer-table or sort slower beyond the twin's
+spread. Their Snowghost twins overlap (0.518 / 0.519 against 0.530 / 0.512),
+so the rule fixed before measuring selects 1 KiB. Contention on blocks of
+1 KiB or more, which still take an arena lock through `realloc`, was not
+measured: no allocation-size distribution was recorded for either workload.
