@@ -1380,3 +1380,33 @@ Reading: if B is as slow as A, the exit fix is not the cause; if C is near
 iteration; E near `seq` would tie the slowdown to idle lanes that spin. If A
 is slow and B is not, the exit fix's counting is the cause and is replaced.
 
+**Attribution result** (temporary workflow, run 38055303611, 14900K,
+13:22–13:24 UTC; second-call wall and process CPU, steals over the process):
+
+| Arm | Wall, ms (5 processes) | CPU, ms | Steals |
+|---|---|---|---|
+| A `demand`, 4 P-cores | 1,707 / 2,579 / 2,468 / 2,736 / 2,418 | 6,699–10,940 | 9.1–12.5 million |
+| B experiment 1's scheduler | 149 (one process); four died with SIGSEGV at exit | 149 | 4.7 million |
+| C requests off | 149.3–149.5 | equal to wall | 0 |
+| D `par` | 151.8–151.9 | equal to wall | 0 |
+| E `demand`, 2 P- and 2 E-cores (no idle window) | 149 / 149 / 2,509 / 295 / 2,622 | 149–10,491 | 4.2–11.6 million |
+| F `idle1`, 4 P-cores (three shown) | 2,497 / 2,339 / 2,751 | 9,355–11,004 | 10.2–12.1 million |
+
+Reading, by the rule above: C equals `seq`, so the requests cause the
+slowdown; A's steals are about one per iteration of the ten-million-iteration
+loop, so a request is honoured by handing out a call of about 15 ns at
+every poll; E is bimodal, so the slow state is self-sustaining once entered
+and does not need the idle window, only idle lanes that ask again as soon as
+a steal finishes. B's four crashes are the exit fault above on native
+hardware (it reproduced here in four of five processes), so B leaves the
+exit fix's share unmeasured; A against E's fast processes, the same image,
+shows the fix does not force the slow state.
+
+**What this rejects.** As built, demand-driven hand-out honours every
+request whatever the call's cost, so a group of calls cheaper than one
+hand-out turns into one hand-out per iteration whenever lanes are idle:
+E2-H1 fails by eleven to fifteen times, where today's `par` never splits.
+This is the failure the plan's rejection paragraph sends back to the
+direction card; the hand-out needs a grain floor, a cost below which a
+request is not honoured.
+
