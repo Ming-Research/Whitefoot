@@ -50,6 +50,14 @@ held.
   still ends its turn: the turn is counted only for watches woken through
   this object's list, and a context's retry of the same statement always
   reacquires the object its guard read.
+- While turns remain, an unlock wakes a parked context that holds a turn
+  (or is exempt) before the head of the object's queue: a woken watcher that
+  found the object held parks there, and a refused newcomer woken first
+  would park again with the object free, leaving no unlock to wake the turn
+  holder (the first candidate deadlocked `tests/programs/shared_objects.wf`
+  on one driver this way, gate run 38058067347).
+- The waiting cancellation-state update [PRE-2] is exempt: it is no guarded
+  statement, and its firing must not wait for the guards it woke.
 - Waking all watchers in registration order and the 64-pass yield rule stay
   as they are.
 

@@ -2239,6 +2239,8 @@ int wf__shared_start(void *object, void *operation) {
     return 3;
 }
 
+static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int exempt);
+
 int wf__context_wait(void *operation, void *frame) {
     wf_context *self = wf_context_current;
     wf_driver *driver = wf_driver_self;
@@ -2247,7 +2249,7 @@ int wf__context_wait(void *operation, void *frame) {
         wf_bridge_fail("a host operation waited outside every context");
     }
     if (record->route == WF_COMPLETION_ROUTE_SHARED) {
-        return wf__shared_acquire(record->request.operation.shared, 1u, frame);
+        return wf_shared_acquire_as(record->request.operation.shared, 1u, frame, 1);
     }
     if (record->route == WF_COMPLETION_ROUTE_READINESS) {
         const wf_file_request *request = &record->request;
@@ -2848,9 +2850,9 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
  * Statements already holding objects are exempt, as is shared_take for
  * table entries: a retry may need their earlier locks first. The common
  * case adds only this relaxed load to the ordinary admission test. */
-static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self) {
+static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
     return wf_shared_admits(shared, write)
-        && (atomic_load_explicit(&shared->turns, memory_order_relaxed) == 0u
+        && (exempt || atomic_load_explicit(&shared->turns, memory_order_relaxed) == 0u
             || self->shared_turn == shared || self->shared_holds != 0u);
 }
 
@@ -2913,14 +2915,36 @@ static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t 
  * handed hold retains the existing claimed/borrowed protocol. */
 static wf_context *wf_shared_wake_locked(wf_shared *shared) {
     wf_context *first;
+    wf_context *before;
     if (shared->waiting_tail == NULL) {
         return NULL;
     }
-    first = shared->waiting_tail->next;
-    if (first == shared->waiting_tail) {
+    /* While turns remain, a newcomer at the head would only park again with
+     * the object free, and the turn holder parked behind it would wait for an
+     * unlock no one makes: wake the first parked context the turns admit. */
+    before = shared->waiting_tail;
+    if (atomic_load_explicit(&shared->turns, memory_order_relaxed) != 0u) {
+        wf_context *candidate = before->next;
+        for (;;) {
+            if (candidate->shared_turn == shared || candidate->shared_holds != 0u) {
+                break;
+            }
+            if (candidate == shared->waiting_tail) {
+                before = shared->waiting_tail;
+                break;
+            }
+            before = candidate;
+            candidate = candidate->next;
+        }
+    }
+    first = before->next;
+    if (first == before) {
         shared->waiting_tail = NULL;
     } else {
-        shared->waiting_tail->next = first->next;
+        before->next = first->next;
+        if (first == shared->waiting_tail) {
+            shared->waiting_tail = before;
+        }
     }
     first->next = NULL;
     if (first->shared_woken >= WF_SHARED_HANDOFF) {
@@ -2951,7 +2975,9 @@ static void wf_shared_spin(unsigned *spins) {
  * has parked the frame, which then suspends; the emitted code calls this
  * again when the frame resumes, and that call answers 0 once the context
  * holds the object when an unlock handed it the object. */
-int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+/* `exempt`: the waiting cancellation-state update [PRE-2], which is no
+ * guarded statement and whose firing must not wait for guards it woke. */
+static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int exempt) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *self = wf_context_current;
     unsigned spins = 0u;
@@ -2986,9 +3012,9 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         return 1;
     }
     for (;;) {
-        if (wf_shared_admits_context(shared, write, self)) {
+        if (wf_shared_admits_context(shared, write, self, exempt)) {
             wf_spin_lock(&shared->lock);
-            if (wf_shared_admits_context(shared, write, self)) {
+            if (wf_shared_admits_context(shared, write, self, exempt)) {
                 wf_shared_hold_locked(shared, write);
                 wf_shared_took_locked(shared, self);
                 self->shared_woken = 0u;
@@ -3004,7 +3030,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         wf_prim_spin_hint();
     }
     wf_spin_lock(&shared->lock);
-    if (wf_shared_admits_context(shared, write, self)) {
+    if (wf_shared_admits_context(shared, write, self, exempt)) {
         wf_shared_hold_locked(shared, write);
         wf_shared_took_locked(shared, self);
         self->shared_woken = 0u;
@@ -3016,6 +3042,10 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     wf_shared_park_locked(shared, self, write);
     wf_spin_unlock(&shared->lock);
     return 1;
+}
+
+int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+    return wf_shared_acquire_as(object, write, frame, 0);
 }
 
 /* Whether a statement that cannot park may borrow the hold an unlock handed
