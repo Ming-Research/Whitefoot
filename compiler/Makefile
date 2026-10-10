@@ -476,13 +476,15 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 # The ownership probe includes the bridge for deterministic scope boundaries;
 # separate handwritten coroutine entries exercise the production resume loop.
 # Reuse compatible runtime objects from each default-route image, including
-# its sanitizer flags. No native-ring availability or timing selects a result.
+# its sanitizer flags. The keyed-table unit exercises distinct physical map
+# users across a transfer. No native-ring availability or timing selects a result.
 DRIVER_SERVICE_TEST_SOURCES := $(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES)) \
-	$(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
+	src/backend/keyed_table.c $(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
 define driver-service-image
 $(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/$(2)/%.o,$(DRIVER_SERVICE_TEST_SOURCES))
 	$$(CC) $(3) $$^ -o "$$@"
 $(COMPLETION_TMP)/objects/$(2)/completion/driver_service_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/objects/$(2)/keyed_table.o: src/backend/concurrent_map.c
 endef
 $(eval $(call driver-service-image,driver-service-test,bridge-default-probe,$(COMPLETION_BASE_CFLAGS)))
 $(eval $(call driver-service-image,driver-service-sanitize,bridge-default-probe-sanitize,$(COMPLETION_SANITIZE_FLAGS)))

@@ -532,7 +532,7 @@ uint64_t wf__heap_in_use(void);
 int wf__resident_bytes(uint64_t *bytes);
 
 /* What the runtime's concurrent maps take from this runtime: the number of
- * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a
+ * the physical executor running the caller, below WF_CMAP_MAX_USERS, which numbers a
  * map's users; blocks from the context pool, never from the program's
  * allocator [STOR-8]; a yield of the processor; and the end a frame no
  * memory can hold brings. */

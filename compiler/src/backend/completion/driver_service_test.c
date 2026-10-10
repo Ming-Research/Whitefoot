@@ -1,4 +1,4 @@
-/* Deterministic D ownership schedules. The private bridge exposes the same
+/* Deterministic borrow and whole-role handoff schedules. The private bridge exposes the same
  * scope boundaries its driver loop uses; no production test branch exists.
  * driver_service_frames.c supplies handwritten coroutine entries, as the
  * shared-object probe does. The watchdog only diagnoses a hang: no elapsed
@@ -14,19 +14,98 @@
 
 static wf_driver assistant;
 static _Atomic unsigned computing, release_compute, ran_timer;
-enum { FRAME_COMPUTE, FRAME_TIMER, FRAME_EARLY_WAKE };
+enum { FRAME_COMPUTE, FRAME_TIMER, FRAME_EARLY_WAKE, FRAME_HANDOFF_COMPUTE,
+    FRAME_HANDOFF_TIMER, FRAME_LAUNCHER, FRAME_LAUNCHER_CHILD };
+static _Atomic unsigned destroyed_child, destroyed_root;
+static pthread_t launcher_thread;
+static wf_cmap *handoff_map;
 typedef struct service_frame {
     unsigned kind;
     int done;
+    unsigned stage, handback;
     uint64_t group[2];
 } service_frame;
+
+static void *start_frame(void *arguments) { return arguments; }
+
+void wf_driver_service_test_destroy(void *opaque) {
+    service_frame *frame = opaque;
+    if (frame->kind == FRAME_LAUNCHER) {
+        CHECK(pthread_equal(pthread_self(), launcher_thread));
+        CHECK(atomic_load(&wf_monitor_exited));
+        CHECK(atomic_load(&wf_executors[1].exited));
+        CHECK(!atomic_load(&wf_active_invocations));
+        atomic_fetch_add(&destroyed_root, 1u);
+    } else if (frame->kind == FRAME_LAUNCHER_CHILD || frame->kind == FRAME_HANDOFF_COMPUTE) {
+        atomic_fetch_add(&destroyed_child, 1u);
+    }
+}
 
 void wf_driver_service_test_resume(void *opaque) {
     service_frame *frame = opaque;
     CHECK(wf_driver_service == NULL);
-    CHECK((atomic_load(&wf_driver_self->service_token) & WF_DRIVER_PHASE_MASK)
-          == WF_DRIVER_OUTSIDE);
-    if (frame->kind == FRAME_COMPUTE) {
+    CHECK((wf_context_outside & WF_DRIVER_PHASE_MASK) == WF_DRIVER_OUTSIDE);
+    /* Reassignment may win even between OUTSIDE and this function's entry. */
+    if (frame->kind == FRAME_HANDOFF_COMPUTE) {
+        CHECK(wf__driver_index() == 0u);
+        wf_cmap_user *user = wf_cmap_user_at(handoff_map, wf__driver_index());
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, (const unsigned char *)"old", 3u, 0, &entry);
+        *slot = 19u;
+        atomic_store(&computing, 1u);
+        while (!atomic_load(&release_compute)) wf_prim_yield();
+        CHECK(wf__driver_index() == 0u && *slot == 19u);
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+        CHECK(wf_driver_service == NULL);
+        if (frame->handback == WF_HAND_BACK_COMPLETE) frame->done = 1;
+        else if (frame->handback == WF_HAND_BACK_WAIT) {
+            wf_completion_record *record = wf_bridge_begin(wf_context_current->operation.bytes);
+            record->route = WF_COMPLETION_ROUTE_FILE_ADAPTER;
+            CHECK(wf__context_wait(record, frame));
+        } else CHECK(wf__context_pass(frame));
+    } else if (frame->kind == FRAME_HANDOFF_TIMER) {
+        CHECK(wf__driver_index() == 1u);
+        CHECK(wf_driver_self == &wf_driver_root);
+        wf_cmap_user *user = wf_cmap_user_at(handoff_map, wf__driver_index());
+        CHECK(user != wf_cmap_user_at(handoff_map, 0u));
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, (const unsigned char *)"new", 3u, 0, &entry);
+        *slot = 23u;
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+        CHECK(!atomic_load(&release_compute));
+        atomic_fetch_add(&ran_timer, 1u);
+        frame->done = 1;
+    } else if (frame->kind == FRAME_LAUNCHER) {
+        if (frame->stage == 0u) {
+            CHECK(wf__driver_index() == 0u);
+            service_frame *child = wf__context_prepare(sizeof(*child));
+            *child = (service_frame){.kind = FRAME_LAUNCHER_CHILD};
+            wf__context_launch(frame->group, child, start_frame);
+            CHECK(wf_executor_count == 2u && atomic_load(&wf_executors[1].ready));
+            /* Controlled instant: the loop takes the queued child before
+             * its next idle reap, so the timer remains pending in compute. */
+            wf_completion_record *record = wf_bridge_begin(wf_context_current->operation.bytes);
+            record->request.kind = WF_FILE_SLEEP;
+            record->route = WF_COMPLETION_ROUTE_TIMER;
+            atomic_store(&record->deadline, 1u);
+            frame->stage = 1u;
+            CHECK(wf__context_wait(record, frame));
+        } else if (frame->stage == 1u) {
+            CHECK(wf__driver_index() == 1u);
+            atomic_fetch_add(&ran_timer, 1u);
+            frame->stage = 2u;
+            CHECK(wf__context_join_wait(frame->group, frame));
+        } else {
+            CHECK(wf__driver_index() == 1u);
+            CHECK(frame->group[0] == 0u);
+            frame->done = 1;
+        }
+    } else if (frame->kind == FRAME_LAUNCHER_CHILD) {
+        CHECK(wf__driver_index() == 0u);
+        atomic_store(&computing, 1u);
+        while (!atomic_load(&release_compute)) wf_prim_yield();
+        frame->done = 1;
+    } else if (frame->kind == FRAME_COMPUTE) {
         CHECK(wf__driver_index() == 0u);
         atomic_store(&computing, 1u);
         while (!atomic_load(&release_compute)) wf_prim_yield();
@@ -63,9 +142,19 @@ static void fixture_begin(void) {
     memset(&wf_context_root, 0, sizeof(wf_context_root));
     memset(&assistant, 0, sizeof(assistant));
     memset(wf_driver_stats, 0, sizeof(wf_driver_stats));
+    memset(wf_executors, 0, sizeof(wf_executors));
+    wf_executor_count = 0u;
+    wf_monitor_started = 0u;
+    wf_executor_index = 0u;
+    atomic_flag_clear(&wf_executor_lock);
+    atomic_store(&wf_active_invocations, 0u);
+    atomic_store(&destroyed_child, 0u);
+    atomic_store(&destroyed_root, 0u);
     atomic_store(&wf_driver_stats_count, 2u);
     atomic_flag_clear(&wf_driver_root.run_lock);
+    atomic_flag_clear(&wf_driver_root.ingress_lock);
     atomic_flag_clear(&assistant.run_lock);
+    atomic_flag_clear(&assistant.ingress_lock);
     wf_driver_root.runtime = &wf_bridge_runtime;
     assistant.runtime = &assistant.own_runtime;
     assistant.index = 1u;
@@ -156,7 +245,7 @@ static void steal_attribution(void) {
     char report[512];
     CHECK(wf_driver_report(1u, report, sizeof(report)));
     CHECK(strcmp(report, "driver: index=1 borrow_attempts=0 borrows=0 borrowed_sleeps=0 "
-          "borrowed_terminals=0 stolen_contexts=2") == 0);
+          "borrowed_terminals=0 stolen_contexts=2 reassignments=0 ingress_commits=0 reserve_misses=0") == 0);
     CHECK(!wf_driver_report(2u, report, sizeof(report)));
     CHECK(!wf_driver_report(1u, report, 1u));
     fixture_end();
@@ -261,6 +350,7 @@ static void timer_migration(void) {
     while (!atomic_load(&computing)) wf_prim_yield();
     wf_driver_self = &assistant;
     wf_driver_service = &assistant;
+    wf_executor_index = 1u;
     /* The production idle loop must discover, detach and run the root.
      * The computing invocation does not return until that continuation runs. */
     wf_context_drive(&assistant);
@@ -389,6 +479,249 @@ static void adoption_and_early_wake(void) {
     fixture_end();
 }
 
+/* This fixture grants a spare without starting a worker, letting the test
+ * choose exactly when RESERVED is acquired. Its clock is explicit data. */
+static void handoff_fixture(void) {
+    fixture_begin();
+    atomic_store(&wf_driver_count, 1u);
+    atomic_store(&wf_drivers[1], NULL);
+    wf_executor_init(0u, NULL);
+    wf_executor_init(1u, NULL);
+    wf_executor_count = 2u;
+    wf_executors[1].available = 1u;
+}
+
+static void handoff_fixture_end(void) {
+    CHECK(!atomic_load(&wf_driver_root.ingress_count));
+    CHECK(!atomic_load(&wf_active_invocations));
+    CHECK(wf_completion_runtime_destroy(&wf_executors[0].wake) == 0);
+    CHECK(wf_completion_runtime_destroy(&wf_executors[1].wake) == 0);
+    fixture_end();
+}
+
+static void take_reservation(unsigned index) {
+    wf_spin_lock(&wf_executor_lock);
+    CHECK(wf_executors[index].assignment == &wf_driver_root);
+    wf_executors[index].assignment = NULL;
+    wf_spin_unlock(&wf_executor_lock);
+    wf_executor_index = index;
+    wf_driver_acquire_reserved(&wf_driver_root);
+}
+
+typedef struct monitor_race {
+    _Atomic unsigned start, finished;
+    int won;
+} monitor_race;
+
+static void *monitor_racer(void *opaque) {
+    monitor_race *race = opaque;
+    while (!atomic_load(&race->start)) wf_prim_yield();
+    race->won = wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u);
+    atomic_store(&race->finished, 1u);
+    return NULL;
+}
+
+static void reassignment_races(void) {
+    handoff_fixture();
+    wf_context timer = {0};
+    (void)park_record(&timer, WF_COMPLETION_ROUTE_TIMER, 1u);
+    uint64_t prior = 0u;
+    for (unsigned monitor_first = 0; monitor_first < 2u; ++monitor_first) {
+        for (unsigned repeat = 0; repeat < 3u; ++repeat) {
+            unsigned spare = 1u - wf_executor_index;
+            wf_executors[wf_executor_index].available = 0u;
+            wf_executors[spare].available = 1u;
+            uint64_t outside = wf_driver_leave_service(&wf_driver_root);
+            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 1u));
+            atomic_store(&wf_drivers_idle, 1u);
+            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+            atomic_store(&wf_drivers_idle, 0u);
+            uint64_t borrowed;
+            CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
+            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+            wf_driver_release_borrow(&wf_driver_root, borrowed);
+            monitor_race race = {0};
+            pthread_t thread;
+            CHECK(pthread_create(&thread, NULL, monitor_racer, &race) == 0);
+            if (!monitor_first) CHECK(wf_driver_return_service(&wf_driver_root, outside));
+            atomic_store(&race.start, 1u);
+            while (!atomic_load(&race.finished)) wf_prim_yield();
+            CHECK(race.won == (int)monitor_first);
+            if (monitor_first) {
+                CHECK(!wf_driver_return_service(&wf_driver_root, outside));
+                CHECK(atomic_load(&wf_drivers_moving) == 1u);
+                CHECK(!wf_driver_try_borrow(&wf_driver_root, &borrowed));
+                take_reservation(spare);
+                CHECK(!wf_driver_try_return(&wf_driver_root, outside));
+            }
+            if (prior) CHECK(!wf_driver_try_return(&wf_driver_root, prior));
+            prior = outside;
+            CHECK(pthread_join(thread, NULL) == 0);
+        }
+    }
+    /* A stale hint from a completed borrow cannot authorize transfer. */
+    uint64_t outside = wf_driver_leave_service(&wf_driver_root), borrowed;
+    CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
+    wf_context_unpark(&wf_driver_root, &timer);
+    wf_context_host_wait_ended(&wf_driver_root);
+    wf_driver_release_borrow(&wf_driver_root, borrowed);
+    wf_executors[wf_executor_index].available = 0u;
+    wf_executors[1u - wf_executor_index].available = 1u;
+    CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+    CHECK(wf_driver_return_service(&wf_driver_root, outside));
+    handoff_fixture_end();
+}
+
+static void displaced_dispositions(void) {
+    for (unsigned disposition = WF_HAND_BACK_WAIT; disposition <= WF_HAND_BACK_COMPLETE; ++disposition) {
+        handoff_fixture();
+        handoff_map = wf_cmap_create_entries(8u, 8u, 64u);
+        service_frame timer = {.kind = FRAME_HANDOFF_TIMER};
+        service_frame compute = {.kind = FRAME_HANDOFF_COMPUTE, .handback = disposition};
+        uint64_t group[2] = {1u, 0u};
+        size_t granted;
+        wf_context *child = wf_pool_take(sizeof(*child), &granted);
+        memset(child, 0, sizeof(*child));
+        child->pool_bytes = granted;
+        child->root = child->resume = &compute;
+        child->driver = &wf_driver_root;
+        child->group = group;
+        atomic_store(&wf_context_live, 1u);
+        wf_context_root.root = wf_context_root.resume = &timer;
+        wf_completion_record *record = park_record(&wf_context_root, WF_COMPLETION_ROUTE_TIMER, 1u);
+        atomic_store(&computing, 0u);
+        atomic_store(&release_compute, 0u);
+        atomic_store(&ran_timer, 0u);
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, compute_thread, child) == 0);
+        while (!atomic_load(&computing)) wf_prim_yield();
+        wf_executors[1].available = 0u;
+        CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+        CHECK(atomic_load(&wf_driver_stats[0].reserve_misses) == 1u);
+        wf_executors[1].available = 1u;
+        CHECK(wf_monitor_scan(WF_HANDOFF_TAU_NS + 2u) == WF_MONITOR_PERIOD_MS);
+        CHECK(atomic_load(&wf_driver_stats[0].reassignments) == 1u);
+        take_reservation(1u);
+        CHECK(wf_driver_expire_wait(&wf_driver_root, &wf_context_root,
+            WF_HANDOFF_TAU_NS + 2u, 0));
+        CHECK(wf_bridge_record_state(record) == WF_COMPLETION_DONE);
+        CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+        CHECK(wf_context_run(&wf_driver_root, &wf_context_root));
+        CHECK(atomic_load(&ran_timer) == 1u);
+        /* Every logical role looks idle, but the old executor holds a map
+         * entry and can still make progress. It must not be declared stuck. */
+        atomic_store(&wf_driver_root.idle, 1u);
+        CHECK(!wf_contexts_stuck(&wf_driver_root));
+        atomic_store(&release_compute, 1u);
+        CHECK(pthread_join(thread, NULL) == 0);
+        CHECK(atomic_load(&wf_driver_root.ingress_count) == 1u);
+        CHECK(atomic_load(&wf_driver_stats[0].ingress_commits) == 1u);
+        CHECK(!wf_contexts_stuck(&wf_driver_root));
+        CHECK(wf_driver_adopt_ingress(&wf_driver_root));
+        CHECK(!wf_driver_adopt_ingress(&wf_driver_root));
+        if (disposition == WF_HAND_BACK_COMPLETE) {
+            CHECK(group[0] == 0u && atomic_load(&wf_context_live) == 0u);
+            CHECK(atomic_load(&destroyed_child) == 1u);
+        } else {
+            if (disposition == WF_HAND_BACK_WAIT) {
+                CHECK(wf_driver_root.parked == child);
+                CHECK(atomic_load(&wf_driver_root.host_waits) == 1u);
+                wf_completion_record_complete(child->record);
+            }
+            CHECK(wf_run_take(&wf_driver_root) == child);
+            wf_pool_give(child, granted);
+            atomic_store(&wf_context_live, 0u);
+        }
+        CHECK(wf_run_take(&wf_driver_root) == NULL);
+        CHECK(wf_contexts_stuck(&wf_driver_root));
+        wf_cmap_destroy(handoff_map);
+        handoff_map = NULL;
+        handoff_fixture_end();
+    }
+}
+
+static void root_ingress_quiescence(void) {
+    handoff_fixture();
+    wf_context_root.disposition = WF_HAND_BACK_COMPLETE;
+    wf_context_ingress(&wf_driver_root, &wf_context_root);
+    CHECK(!wf_drivers_quiescent());
+    /* Pause an owner between the two production adoption steps: publishing
+     * root_done is not permission to tear down the ingress it came through. */
+    wf_spin_lock(&wf_driver_root.ingress_lock);
+    CHECK(wf_driver_root.ingress_head == &wf_context_root);
+    wf_driver_root.ingress_head = wf_driver_root.ingress_tail = NULL;
+    wf_spin_unlock(&wf_driver_root.ingress_lock);
+    wf_context_adopt(&wf_driver_root, &wf_context_root);
+    CHECK(atomic_load(&wf_context_root_done));
+    CHECK(!wf_drivers_quiescent());
+    atomic_fetch_add(&wf_drivers_changes, 1u);
+    atomic_fetch_sub(&wf_driver_root.ingress_count, 1u);
+    CHECK(wf_drivers_quiescent());
+    handoff_fixture_end();
+}
+
+static void readiness_ingress_bound(void) {
+    handoff_fixture();
+    CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == -1);
+    atomic_store(&wf_active_invocations, 1u);
+    CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == 1);
+#if !defined(_WIN32)
+    int descriptors[2];
+    CHECK(pipe(descriptors) == 0);
+    wf_context polling = {.poll_descriptor = descriptors[0], .poll_events = WF_FILE_READABLE};
+    wf_driver_root.polling = &polling;
+    wf_driver_root.polling_count = 1u;
+    /* No descriptor ever becomes ready. The production-selected finite
+     * wait must return so that a later ingress can be adopted. */
+    CHECK(!wf_context_poll(&wf_driver_root, wf_driver_poll_wait_ms(&wf_driver_root)));
+    wf_driver_root.polling = NULL;
+    wf_driver_root.polling_count = 0u;
+    CHECK(close(descriptors[0]) == 0 && close(descriptors[1]) == 0);
+#endif
+    wf_context ready = {.driver = &wf_driver_root, .disposition = WF_HAND_BACK_READY};
+    wf_context_ingress(&wf_driver_root, &ready);
+    atomic_store(&wf_active_invocations, 0u);
+    CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == 0);
+    CHECK(wf_driver_adopt_ingress(&wf_driver_root));
+    CHECK(wf_run_take(&wf_driver_root) == &ready);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    handoff_fixture_end();
+}
+
+static void *launcher_main(void *opaque) {
+    launcher_thread = pthread_self();
+    wf__context_root_begin();
+    wf__context_root_run(opaque);
+    return NULL;
+}
+
+static void root_takeover_cleanup(void) {
+    /* Actual warm-spare, monitor and launcher lifecycle, with barriers in
+     * the handwritten frames. No elapsed time selects success. */
+    fixture_begin();
+    fixture_end();
+    atomic_store(&wf_monitor_stopping, 0u);
+    atomic_store(&wf_monitor_exited, 0u);
+    atomic_store(&computing, 0u);
+    atomic_store(&release_compute, 0u);
+    atomic_store(&ran_timer, 0u);
+    service_frame root = {.kind = FRAME_LAUNCHER};
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, launcher_main, &root) == 0);
+    while (!atomic_load(&computing) || !atomic_load(&ran_timer)
+        || !atomic_load(&wf_driver_root.idle)) wf_prim_yield();
+    CHECK(!wf_contexts_stuck(&wf_driver_root));
+    CHECK(!atomic_load(&destroyed_child) && !atomic_load(&destroyed_root));
+    atomic_store(&release_compute, 1u);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(atomic_load(&destroyed_child) == 1u && atomic_load(&destroyed_root) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[0].reassignments) == 1u);
+    CHECK(atomic_load(&wf_driver_stats[0].ingress_commits) == 1u);
+    CHECK(!atomic_load(&wf_drivers_moving) && !atomic_load(&wf_active_invocations));
+    CHECK(!wf_driver_root.ingress_head && !wf_driver_root.parked);
+    wf_pool_give(wf_driver_root.timers, wf_driver_root.timer_bytes);
+}
+
 int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
@@ -407,6 +740,16 @@ int main(void) {
     bounded_scan();
     wf_test_guard_phase("post-unwind registration and early external wake");
     adoption_and_early_wake();
+    wf_test_guard_phase("return versus monitor, borrow exclusion and repeated stale epochs");
+    reassignment_races();
+    wf_test_guard_phase("timer takeover, physical map users and exactly-once ingress dispositions");
+    displaced_dispositions();
+    wf_test_guard_phase("root COMPLETE ingress stays live until adoption retires");
+    root_ingress_quiescence();
+    wf_test_guard_phase("descriptor polling observes displaced ingress without a ready descriptor");
+    readiness_ingress_bound();
+    wf_test_guard_phase("root takeover, displaced false-stuck prevention and launcher cleanup once");
+    root_takeover_cleanup();
     wf_test_guard_finish();
     return 0;
 }

@@ -6,7 +6,8 @@
 
 extern void wf_driver_service_test_resume(void *frame);
 extern int wf_driver_service_test_done(void *frame);
+extern void wf_driver_service_test_destroy(void *frame);
 
 void wf__coro_resume(void *frame) { wf_driver_service_test_resume(frame); }
 int wf__coro_done(void *frame) { return wf_driver_service_test_done(frame); }
-void wf__coro_destroy(void *frame) { (void)frame; }
+void wf__coro_destroy(void *frame) { wf_driver_service_test_destroy(frame); }

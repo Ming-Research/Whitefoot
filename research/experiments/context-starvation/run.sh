@@ -34,7 +34,7 @@ def report(line):
     print(line, file=table)
 
 
-report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms\tactual_drivers\treport_file")
+report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms\tactual_drivers\treassignments\tingress_commits\treserve_misses\treport_file")
 
 
 def sample(phase, repetition, drivers, count, cpus="0"):
@@ -91,20 +91,21 @@ def sample(phase, repetition, drivers, count, cpus="0"):
     counters = bytes(data["compute"][9:]).decode("ascii")
     driver_lines = [line for line in counters.splitlines() if line.startswith("driver:")]
     driver_pattern = (r"driver: index=(\d+) borrow_attempts=\d+ borrows=\d+ "
-                      r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+")
+                      r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+ "
+                      r"reassignments=(\d+) ingress_commits=(\d+) reserve_misses=(\d+)")
     matches = [re.fullmatch(driver_pattern, line) for line in driver_lines]
-    # The runtime prints per-driver counters only once a second driver has
-    # started; a one-driver run reports none, and a multi-driver run reports
-    # one well-formed line per started driver.
+    # Every started role reports, including the one-driver reassignment arm.
+    # These counters attribute service; timer_s remains an external first-byte
+    # observation, not an internal deadline-to-continuation measurement.
     if (any(match is None for match in matches)
             or [int(match[1]) for match in matches] != list(range(len(matches)))
-            or len(matches) > drivers
-            or (drivers == 1 and matches)):
+            or not 1 <= len(matches) <= drivers):
         raise RuntimeError(f"missing or malformed per-driver counters in {report_path}")
+    transfers, ingress, misses = (sum(int(match[i]) for match in matches) for i in (2, 3, 4))
     checksum = int.from_bytes(data["compute"][1:9], "little")
     report(f"{phase}\t{repetition}\t{drivers}\t{cpus}\t{count}\t{observed['timer']:.6f}\t"
            f"{observed['compute']:.6f}\t{exited:.6f}\t{checksum}\t{threads}\t{len(matches)}\t"
-           f"reports/{report_path.name}")
+           f"{transfers}\t{ingress}\t{misses}\treports/{report_path.name}")
     return observed["compute"], checksum
 
 
