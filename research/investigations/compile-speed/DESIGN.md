@@ -379,6 +379,28 @@ branch's gives the algorithmic gain alone: 3.4x for both entries and 2.0x for
 `pkg::style`; concurrency then adds 1.5x and 2.2x to the entries and little
 to a module check whose critical path is one module.
 
+Candidate 10 was measured against its base, main `fe5589ec5`, on Halo-wf
+`9915000`'s `pkg::vm` check. Both compilers accept, and the LLVM of Halo's
+`test` entry is byte-identical (GitHub-hosted runner). The work counters fall
+from 1227 function analyses to 912, from 3895 joins to 2771, from 2.21 to
+1.78 million evaluated L0 pairs and from 8.89 to 7.01 million interning calls,
+less than the 36% of pairs predicted, because the estimate took each generic
+declaration's first symbolic run as its canonical instance. On the i9-14900K
+(native Ubuntu, performance cores at 5.0 GHz, `taskset -c 2-15`, the `gate`
+profile, ten interleaved runs each after one warm-up):
+
+| Compiler | median wall | range | peak RSS |
+|---|---:|---:|---:|
+| base `fe5589ec5` | 8.84 s | 8.78–8.90 s | 1.54–1.56 GB |
+| twin of the base | 8.86 s | 8.79–8.91 s | 1.54–1.57 GB |
+| candidate 10 | 8.61 s | 8.53–8.75 s | 1.46–1.49 GB |
+
+The head's median lies below both the base's and the twin's minimum, so the
+candidate is kept by its prior criterion; the gain, 2.6%, is much smaller
+than the share of proof work removed, because the analyses run concurrently
+beside the serial symbolic type check that dominates the module-verdict
+thread.
+
 ## Remaining costs
 
 - **Symbolic validation on Halo's critical path.** In `pkg::vm` the
@@ -386,7 +408,11 @@ to a module check whose critical path is one module.
   validation (28% type-checking the symbolic view, 14% discovering and
   instantiating its signatures), against 25% for the concrete type check and
   10% reading declarations; the symbolic view checks every function body,
-  nongeneric ones included. About 30% of that thread's samples are in the C
+  nongeneric ones included. A per-thread sample split on a GitHub-hosted runner
+  (Halo-wf `9915000`, main `fe5589ec5`) puts 57% of that thread's samples in
+  the symbolic view's body checks and 1% in the concrete view's, so the
+  nongeneric bodies are a small part; the generic bodies and their
+  non-canonical symbolic instances are the rest. About 30% of that thread's samples are in the C
   library's allocator and copying.
 
 - **Edge insertion of constant terms.** In `pkg::style`, now the slowest
