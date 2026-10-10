@@ -205,14 +205,20 @@ int wf_linux_io_uring_init(
      * completions can be posted before the overflow path. */
     /* IORING_SETUP_COOP_TASKRUN: a completion the kernel finishes on the
      * submitting thread's behalf (a receive whose poll fired) is posted when
-     * that thread next enters the kernel, which every scheduler thread does
-     * within a bounded spin, instead of by an inter-processor interrupt that
-     * stops whatever the thread was running.  Measured on the TCP echo
+     * that thread next enters the kernel, instead of by an inter-processor
+     * interrupt that stops whatever the thread was running. Measured on the TCP echo
      * control test at 64 connections it is the difference between 200 to
      * 225 thousand and 240 to 250 thousand round trips a second, with the
      * same parks and the same enters (`research/investigations/io-model/RESULTS.md`,
      * the batch 0108 section).  A kernel before 5.19 refuses the flag with EINVAL, and
-     * the ring is then made without it. */
+     * the ring is then made without it. A computing coroutine can postpone
+     * its thread's next transition indefinitely. A foreign thread can read
+     * already-posted CQEs under completion_lock, but entering the ring there
+     * does not run the original submitter's per-task work. D's borrowed
+     * service in bridge.c consequently handles timers and published records
+     * only; it neither calls this adapter's generic progress nor changes this
+     * flag. See io_uring_setup(2), IORING_SETUP_COOP_TASKRUN, and Linux v6.12
+     * io_uring/io_uring.c, io_req_normal_work_add (req->task). */
     parameters.flags = IORING_SETUP_CQSIZE | IORING_SETUP_COOP_TASKRUN;
     parameters.cq_entries = (unsigned)completions;
     adapter->ring_descriptor = (int)syscall(

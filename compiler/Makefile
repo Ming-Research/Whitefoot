@@ -233,7 +233,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -473,6 +473,28 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/cancel-test"
 	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/cancel-test"
 
+# The ownership probe includes the bridge for deterministic scope boundaries;
+# separate handwritten coroutine entries exercise the production resume loop.
+# Reuse compatible runtime objects from each default-route image, including
+# its sanitizer flags. No native-ring availability or timing selects a result.
+DRIVER_SERVICE_TEST_SOURCES := $(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
+define driver-service-image
+$(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/$(2)/%.o,$(DRIVER_SERVICE_TEST_SOURCES))
+	$$(CC) $(3) $$^ -o "$$@"
+$(COMPLETION_TMP)/objects/$(2)/completion/driver_service_test.o: $(COMPLETION_DIR)/bridge.c
+endef
+$(eval $(call driver-service-image,driver-service-test,bridge-default-probe,$(COMPLETION_BASE_CFLAGS)))
+$(eval $(call driver-service-image,driver-service-sanitize,bridge-default-probe-sanitize,$(COMPLETION_SANITIZE_FLAGS)))
+$(eval $(call driver-service-image,driver-service-tsan,bridge-default-probe-tsan,$(COMPLETION_TSAN_FLAGS)))
+.PHONY: driver-service-test driver-service-sanitize driver-service-tsan
+driver-service-test: $(COMPLETION_TMP)/driver-service-test
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/driver-service-test"
+driver-service-sanitize: $(COMPLETION_TMP)/driver-service-sanitize
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/driver-service-sanitize"
+driver-service-tsan: $(COMPLETION_TMP)/driver-service-tsan
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/driver-service-tsan"
+
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
 # one after another was about two thirds of the group's time, while several
@@ -484,7 +506,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
-	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test \
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
 completion-test-images: $(COMPLETION_TEST_IMAGES)
 
@@ -525,7 +547,7 @@ completion-core-read-test: $(COMPLETION_TMP)/core-read-probe
 	"$(COMPLETION_TMP)/core-read-probe" "$(COMPLETION_TMP)"
 
 completion-sanitize: $(COMPLETION_TMP)/harness-sanitize completion-core-read-sanitize \
-		completion-default-route-sanitize
+		completion-default-route-sanitize driver-service-sanitize
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/harness-sanitize" "$(COMPLETION_TMP)"
 	@if [ "$$(uname -s)" = Linux ]; then \
@@ -540,7 +562,7 @@ completion-core-read-sanitize: $(COMPLETION_TMP)/core-read-probe-sanitize
 
 # The main image includes the deliberate ordinary-value shutdown race. Core/
 # read is single-threaded and has no TSan or repeated-stress variant.
-completion-tsan: $(COMPLETION_TMP)/harness-tsan
+completion-tsan: $(COMPLETION_TMP)/harness-tsan driver-service-tsan
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 TSAN_OPTIONS=halt_on_error=1 WF_IO_HELPERS=0 \
 		"$(COMPLETION_TMP)/harness-tsan" "$(COMPLETION_TMP)" bridge
