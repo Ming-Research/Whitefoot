@@ -261,6 +261,7 @@ fn demand_takes_the_par_call_grain_so_a_cheap_group_never_polls() {
     let helper = function_body(&grained, "@wf_helper");
     assert!(!helper.contains("@wf__par_demand_word"), "{helper}");
     assert!(!helper.contains("@wf__par_acquire_lane"), "{helper}");
-    let every = function_body(&emit_lowered(source, DEMAND), "@wf_helper");
+    let every_offer = emit_lowered(source, DEMAND);
+    let every = function_body(&every_offer, "@wf_helper");
     assert!(every.contains(POLL), "{every}");
 }
