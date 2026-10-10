@@ -368,10 +368,12 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        // [SHARE-1] the prelude's `shared_new` moves its argument into the
-        // object's state, where every atomic statement assumes the state's
-        // invariants [TYPE-11].
-        if signature.name == "shared_new"
+        // [SHARE-1] the prelude's `shared_new` and `frozen_new` move their
+        // argument into an object that holds it from then on, so the
+        // argument owes its invariants [TYPE-11]; atomic targets establish
+        // a shared state's, and no read of a frozen value establishes them
+        // yet (board item `proof-bl-frozen-invariant-reads`).
+        if matches!(signature.name.as_str(), "shared_new" | "frozen_new")
             && self.types.declarations.tree.is_body_less(signature.node)?
             && let Some(CheckedType::Nominal(nominal)) =
                 signature.parameters.first().map(|parameter| parameter.ty)
