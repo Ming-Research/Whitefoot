@@ -82,11 +82,13 @@ latency, and the compute marker includes checksum encoding and writing.
 They are not internal instruction timestamps; nearly coincident markers do
 not establish their internal order. The observer is not pinned to CPU 0.
 `WF_WORKERS=1` and `WF_SCHED_REPORT=2` are fixed in every child. The report
-setting prints compute, available ring, and per-driver counters at exit.
+setting prints the compute counters at exit and, once a second driver has
+started, one line of per-driver counters for each started driver.
 Each row links a `reports/*.txt` side file; `reports/*.stderr.bin` preserves
 its full stderr, including the nine-byte compute packet. The parser separates
 that packet by length, so checksum bytes cannot be mistaken for report text,
-and requires a complete set of driver report lines. Reports also cover every
+accepts no driver lines from a one-driver run, and otherwise requires one
+well-formed line per started driver. Reports also cover every
 calibration run.
 
 Each driver's counters attribute work to the executor doing it:
@@ -204,4 +206,3 @@ the spawned computation starts on the entry's driver before the entry parks
 its timer, are questions for the runtime's owner; the observation that a
 finite computation delays another context's timer by its full length, with
 one or two requested drivers on one CPU, stands on both runs.
-

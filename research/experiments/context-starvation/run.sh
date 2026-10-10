@@ -93,9 +93,13 @@ def sample(phase, repetition, drivers, count, cpus="0"):
     driver_pattern = (r"driver: index=(\d+) borrow_attempts=\d+ borrows=\d+ "
                       r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+")
     matches = [re.fullmatch(driver_pattern, line) for line in driver_lines]
-    if (not matches or any(match is None for match in matches)
+    # The runtime prints per-driver counters only once a second driver has
+    # started; a one-driver run reports none, and a multi-driver run reports
+    # one well-formed line per started driver.
+    if (any(match is None for match in matches)
             or [int(match[1]) for match in matches] != list(range(len(matches)))
-            or len(matches) > drivers):
+            or len(matches) > drivers
+            or (drivers == 1 and matches)):
         raise RuntimeError(f"missing or malformed per-driver counters in {report_path}")
     checksum = int.from_bytes(data["compute"][1:9], "little")
     report(f"{phase}\t{repetition}\t{drivers}\t{cpus}\t{count}\t{observed['timer']:.6f}\t"
