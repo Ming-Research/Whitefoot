@@ -1,0 +1,71 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeView = std::process::ScopeView;
+alias ScopeBody = std::process::ScopeBody;
+
+fn build(argument: Option<u64>) -> result: Box<u64> pure waits {
+  return box_new::<u64>(value: 47_u64);
+}
+
+fn release(value: Box<u64>, view: &ScopeView) -> result: unit writes(view) {
+  return unit;
+}
+
+fn inherited(argument: ScopeView) -> result: Bool pure waits {
+  let before = std::process::scope_bytes(view: &argument);
+  let block = spawn build(argument: before);
+  let payload = block.inner == 47_u64;
+  let held = std::process::scope_bytes(view: &argument);
+  release(value: move block, view: &argument);
+  let after = std::process::scope_bytes(view: &argument);
+  match before {
+    None() => { return False(); }
+    Some(value: baseline) => {
+      match held {
+        None() => { return False(); }
+        Some(value: live) => {
+          match after {
+            None() => { return False(); }
+            Some(value: empty) => {
+              return band(payload, band(live == baseline +wrap 8_u64, empty == baseline));
+            }
+          }
+        }
+      }
+    }
+  }
+}
+binding Inherited : ScopeBody<ScopeView, Bool> { run = inherited; }
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    match std::process::scope_close(meter: meter, scope: move scope) {
+      Ok(value: done) => { return done; }
+      Err(error: owner) => { set scope = move owner; }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let correct = False();
+  match std::process::scope_open(meter: &meter) {
+    Err(error: full) => {}
+    Ok(value: scope) => {
+      let view = std::process::scope_view(scope: &scope);
+      let outcome = spawn std::process::scope_run::<Inherited>(scope: move scope, argument: move view);
+      match move outcome {
+        Refused(scope: owner, argument: original) => { close(meter: &meter, scope: move owner); }
+        Ran(scope: owner, result: checked) => {
+          set correct = checked;
+          close(meter: &meter, scope: move owner);
+        }
+      }
+    }
+  }
+  if correct { return std::process::exit_status(code: 0_u8); }
+  return std::process::exit_status(code: 1_u8);
+}

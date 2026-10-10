@@ -33,14 +33,17 @@
  * Built with WF_CMAP_LOCKED_READ, a read of a word locks its cell like a
  * writer; it is kept for measurement beside the lock-free read.
  *
- * The file that includes this one supplies the host: WF_CMAP_TAKE(bytes) and
- * WF_CMAP_GIVE(block, bytes) for small blocks aligned to 16 bytes, which the
+ * The file that includes this one supplies the host: WF_CMAP_TAKE(bytes, origin) and
+ * WF_CMAP_GIVE(block, bytes, origin) for small blocks aligned to 16 bytes, which the
  * runtime takes from its own pool and never from the program's allocator
  * [STOR-8]; WF_CMAP_YIELD() to give up the processor;
- * WF_CMAP_EXHAUSTED() when memory is short; and WF_CMAP_HEAP_CHANGE(delta)
+ * WF_CMAP_EXHAUSTED() when memory is short; and WF_CMAP_HEAP_CHANGE(origin, delta)
  * for the live requested bytes outside that pool [PRE-2]. Cell arrays of
  * 2 MiB or more and the chunks entries are carved from are mapped from the
- * host here. It may also supply WF_CMAP_HOST_FIELDS, members of its own
+ * host here. WF_CMAP_ORIGIN selects a new structure's account, and
+ * WF_CMAP_RETAIN/RELEASE pin directly mapped structures until unmapped;
+ * the pool take/give pair owns its own pin and charge. It may also supply
+ * WF_CMAP_HOST_FIELDS, members of its own
  * placed in every map,
  * WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
  * spare memory a hold's keys then reuse, and WF_CMAP_SPARE_KEYS(), a
@@ -52,6 +55,9 @@
 #endif
 #ifndef WF_CMAP_HEAP_CHANGE
 #error "the includer supplies WF_CMAP_HEAP_CHANGE for storage outside its pool"
+#endif
+#if !defined(WF_CMAP_ORIGIN) || !defined(WF_CMAP_RETAIN) || !defined(WF_CMAP_RELEASE)
+#error "the includer supplies origin selection and retention"
 #endif
 #ifndef WF_CMAP_CURRENT_USER
 #define WF_CMAP_CURRENT_USER(map) ((wf_cmap_user *)NULL)
@@ -142,6 +148,8 @@ _Static_assert(sizeof(cell) == 16, "four cells share a cache line");
 
 typedef struct table {
     cell *cells;
+    unsigned origin;          /* descriptor's pool block */
+    unsigned cells_origin;    /* also follows detached reserve cells */
     uint64_t capacity;
     uint64_t mask;
     unsigned shift; /* 64 minus the index bits */
@@ -167,7 +175,10 @@ typedef struct free_entry {
 
 typedef struct chunk {
     struct chunk *older;
+    void *mapping;
+    unsigned origin;
 } chunk;
+#define CHUNK_HEADER ((sizeof(chunk) + ENTRY_GRAIN - 1) / ENTRY_GRAIN * ENTRY_GRAIN)
 
 /* One thread's use of the map: the table it is in; the cells it claimed and
  * the keys it added less those it removed, summed only when a claim may cross
@@ -194,6 +205,7 @@ struct wf_cmap_user {
     const struct wf_cmap_holding *own;
     wf_cmap_held *spare_keys;
     uint64_t spare_room;
+    unsigned spare_keys_origin;
 };
 
 struct wf_cmap {
@@ -205,6 +217,7 @@ struct wf_cmap {
     _Atomic(table *) retired;      /* moved tables, newest first */
     cell *spare;                   /* cells of the last table freed, or NULL */
     uint64_t spare_capacity;
+    unsigned spare_origin;
     /* A map of entries: the size and alignment of an entry's slot, zero for
      * a map of words. */
     uint64_t slot_size;
@@ -212,6 +225,7 @@ struct wf_cmap {
     /* A slot of zeros, `None`, that a statement reading an absent key reads
      * and none writes. */
     void *none;
+    unsigned none_origin;
 #ifdef WF_CMAP_HOST_FIELDS
     WF_CMAP_HOST_FIELDS
 #endif
@@ -243,6 +257,7 @@ struct wf_cmap {
     struct wf_cmap *cleared_next;
     void (*cleared_release)(void *);
     void *raw;
+    unsigned origin; /* Only the pool grant counts control storage. */
     wf_cmap_user users[WF_CMAP_MAX_USERS];
 };
 
@@ -331,8 +346,8 @@ static void host_unmap(void *p, size_t bytes) {
 #endif
 }
 
-static void *take(size_t bytes) {
-    void *p = WF_CMAP_TAKE(bytes);
+static void *take(size_t bytes, unsigned origin) {
+    void *p = WF_CMAP_TAKE(bytes, origin);
     if (p == NULL)
         WF_CMAP_EXHAUSTED();
     return p;
@@ -341,28 +356,29 @@ static void *take(size_t bytes) {
 /* Cell arrays of 2 MiB or more come from the host, so that their pages
  * arrive zeroed when first touched, by whichever mover touches them, instead
  * of being cleared up front by one thread; smaller ones from the pool. */
-static cell *new_cells(uint64_t count) {
+static cell *new_cells(uint64_t count, unsigned origin) {
     size_t bytes = count * sizeof(cell);
     if (bytes < HUGE_BYTES) {
-        cell *c = take(bytes);
+        cell *c = take(bytes, origin);
         memset(c, 0, bytes);
         return c;
     }
     cell *c = host_map(bytes);
     if (c == NULL)
         WF_CMAP_EXHAUSTED();
-    WF_CMAP_HEAP_CHANGE((int64_t)bytes);
+    WF_CMAP_RETAIN(origin);
+    WF_CMAP_HEAP_CHANGE(origin, (int64_t)bytes);
     return c;
 }
 
-static void free_cells(cell *c, uint64_t count) {
+static void free_cells(cell *c, uint64_t count, unsigned origin) {
     size_t bytes = count * sizeof(cell);
     if (bytes < HUGE_BYTES)
-        WF_CMAP_GIVE(c, bytes);
+        WF_CMAP_GIVE(c, bytes, origin);
     else {
-        /* Origin-tag pass: debit the cell array's retained origin here. */
-        WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
         host_unmap(c, bytes);
+        WF_CMAP_HEAP_CHANGE(origin, -(int64_t)bytes);
+        WF_CMAP_RELEASE(origin);
     }
 }
 
@@ -377,8 +393,11 @@ static void unlock_map(wf_cmap *map) { atomic_store_explicit(&map->lock, 0, memo
 /* A table of at least capacity cells, a power of two, on the map's spare
  * cells when they are that size. */
 static table *new_table(wf_cmap *map, uint64_t capacity) {
-    table *t = take(sizeof *t);
+    unsigned origin = WF_CMAP_ORIGIN();
+    table *t = take(sizeof *t, origin);
     memset(t, 0, sizeof *t);
+    t->origin = origin;
+    t->cells_origin = origin;
     unsigned bits = 0;
     while ((1ull << bits) < capacity)
         bits++;
@@ -390,6 +409,7 @@ static table *new_table(wf_cmap *map, uint64_t capacity) {
         lock_map(map);
         if (map->spare != NULL && map->spare_capacity == t->capacity) {
             spare = map->spare;
+            t->cells_origin = map->spare_origin;
             map->spare = NULL;
         }
         unlock_map(map);
@@ -398,14 +418,14 @@ static table *new_table(wf_cmap *map, uint64_t capacity) {
         memset(spare, 0, t->capacity * sizeof(cell));
         t->cells = spare;
     } else {
-        t->cells = new_cells(t->capacity);
+        t->cells = new_cells(t->capacity, t->cells_origin);
     }
     return t;
 }
 
 static void free_table(table *t) {
-    free_cells(t->cells, t->capacity);
-    WF_CMAP_GIVE(t, sizeof *t);
+    free_cells(t->cells, t->capacity, t->cells_origin);
+    WF_CMAP_GIVE(t, sizeof *t, t->origin);
 }
 
 static void count(wf_cmap_user *u, int64_t used, int64_t live) {
@@ -445,7 +465,7 @@ static void reclaim(wf_cmap *map) {
     int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
     uint64_t size = atomic_load_explicit(&map->current, memory_order_acquire)->capacity;
     if (map->spare != NULL && map->spare_capacity != size) {
-        free_cells(map->spare, map->spare_capacity);
+        free_cells(map->spare, map->spare_capacity, map->spare_origin);
         map->spare = NULL;
     }
     table *kept = NULL, **tail = &kept;
@@ -462,13 +482,14 @@ static void reclaim(wf_cmap *map) {
             free_table(r);
         } else {
             if (map->spare != NULL)
-                free_cells(map->spare, map->spare_capacity);
+                free_cells(map->spare, map->spare_capacity, map->spare_origin);
             /* Still a live allocation owned by this map, just as a small
              * spare remains a granted pool block: count until free_cells.
              * Reusing it neither allocates nor releases storage [PRE-2]. */
             map->spare = r->cells;
             map->spare_capacity = r->capacity;
-            WF_CMAP_GIVE(r, sizeof *r);
+            map->spare_origin = r->cells_origin;
+            WF_CMAP_GIVE(r, sizeof *r, r->origin);
             spared = 1;
         }
     }
@@ -737,24 +758,82 @@ static void wait_for_readers(cell *c) {
         back_off(&round);
 }
 
+/* Chunk alignment makes every small node's origin recoverable without a
+ * per-entry tag, even on a different user's free list after a transfer.
+ * Windows keeps the reservation address for MEM_RELEASE; only the aligned
+ * chunk is committed. Unix returns the unused prefix/suffix immediately. */
+static chunk *new_chunk(void) {
+#if defined(_WIN32)
+    void *raw = VirtualAlloc(NULL, 2 * ENTRY_CHUNK, MEM_RESERVE, PAGE_NOACCESS);
+    if (raw == NULL) WF_CMAP_EXHAUSTED();
+    chunk *c = (chunk *)(((uintptr_t)raw + ENTRY_CHUNK - 1) & ~(uintptr_t)(ENTRY_CHUNK - 1));
+    if (VirtualAlloc(c, ENTRY_CHUNK, MEM_COMMIT, PAGE_READWRITE) == NULL) {
+        VirtualFree(raw, 0, MEM_RELEASE);
+        WF_CMAP_EXHAUSTED();
+    }
+#else
+    char *raw = mmap(NULL, 2 * ENTRY_CHUNK, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw == MAP_FAILED) WF_CMAP_EXHAUSTED();
+    chunk *c = (chunk *)(((uintptr_t)raw + ENTRY_CHUNK - 1) & ~(uintptr_t)(ENTRY_CHUNK - 1));
+    size_t prefix = (size_t)((char *)c - raw);
+    if (prefix != 0) munmap(raw, prefix);
+    munmap((char *)c + ENTRY_CHUNK, ENTRY_CHUNK - prefix);
+#endif
+    c->mapping = raw;
+    c->origin = WF_CMAP_ORIGIN();
+    WF_CMAP_RETAIN(c->origin);
+    return c;
+}
+
+static chunk *node_chunk(const void *n) {
+    return (chunk *)((uintptr_t)n & ~(uintptr_t)(ENTRY_CHUNK - 1));
+}
+
+static void free_chunk(chunk *c) {
+    unsigned origin = c->origin;
+#if defined(_WIN32)
+    VirtualFree(c->mapping, 0, MEM_RELEASE);
+#else
+    host_unmap(c, ENTRY_CHUNK);
+#endif
+    WF_CMAP_RELEASE(origin);
+}
+
+/* Large nodes are individually pool-backed, so their allocation header
+ * owns an origin rather than referring to a small-node chunk. */
+typedef struct { _Alignas(16) unsigned origin; } large_node;
+
+static void release_node_storage(node *n, uint64_t bytes) {
+    if (bytes > ENTRY_LARGEST) {
+        large_node *header = (large_node *)n - 1;
+        WF_CMAP_GIVE(header, bytes + sizeof(*header), header->origin);
+    } else {
+        WF_CMAP_HEAP_CHANGE(node_chunk(n)->origin, -(int64_t)bytes);
+    }
+}
+
 static node *new_node(wf_cmap_user *u, uint64_t bytes) {
-    if (bytes > ENTRY_LARGEST)
-        return take(bytes);
+    if (bytes > ENTRY_LARGEST) {
+        if (bytes > SIZE_MAX - sizeof(large_node)) WF_CMAP_EXHAUSTED();
+        unsigned origin = WF_CMAP_ORIGIN();
+        large_node *header = take((size_t)bytes + sizeof(*header), origin);
+        header->origin = origin;
+        return (node *)(header + 1);
+    }
     unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
     free_entry *f = u->free[k];
     if (f != NULL) {
         u->free[k] = f->next;
-        WF_CMAP_HEAP_CHANGE((int64_t)bytes);
+        WF_CMAP_HEAP_CHANGE(node_chunk(f)->origin, (int64_t)bytes);
         return (node *)(void *)f;
     }
     if (u->room < bytes) {
-        chunk *c = host_map(ENTRY_CHUNK);
-        if (c == NULL)
-            WF_CMAP_EXHAUSTED();
+        chunk *c = new_chunk();
         c->older = u->chunks;
         u->chunks = c;
-        u->cursor = (char *)c + ENTRY_GRAIN;
-        u->room = ENTRY_CHUNK - ENTRY_GRAIN;
+        u->cursor = (char *)c + CHUNK_HEADER;
+        u->room = ENTRY_CHUNK - CHUNK_HEADER;
     }
     node *n = (node *)(void *)u->cursor;
     u->cursor += bytes;
@@ -763,17 +842,15 @@ static node *new_node(wf_cmap_user *u, uint64_t bytes) {
         abort();
     /* The node request is live; the rest of the chunk is an allocator
      * reserve. Larger nodes are already counted by the host pool [PRE-2]. */
-    WF_CMAP_HEAP_CHANGE((int64_t)bytes);
+    WF_CMAP_HEAP_CHANGE(node_chunk(n)->origin, (int64_t)bytes);
     return n;
 }
 
 static void free_node(wf_cmap_user *u, node *n, uint64_t bytes) {
+    release_node_storage(n, bytes);
     if (bytes > ENTRY_LARGEST) {
-        WF_CMAP_GIVE(n, bytes);
         return;
     }
-    /* Origin-tag pass: debit the node chunk's retained origin here. */
-    WF_CMAP_HEAP_CHANGE(-(int64_t)bytes);
     unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
     free_entry *f = (free_entry *)(void *)n;
     f->next = u->free[k];
@@ -1109,7 +1186,8 @@ wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_
     wf_cmap *map = wf_cmap_create(capacity);
     map->slot_size = slot_size;
     map->slot_align = slot_align;
-    map->none = take(none_bytes(slot_size));
+    map->none_origin = WF_CMAP_ORIGIN();
+    map->none = take(none_bytes(slot_size), map->none_origin);
     memset(map->none, 0, (size_t)none_bytes(slot_size));
     return map;
 }
@@ -1414,6 +1492,8 @@ typedef struct {
 
 typedef struct {
     uint64_t room;
+    unsigned origin;
+    unsigned bytes_origin;
     /* The items in use, so that a spare's index is cleared slot by slot. */
     uint64_t count;
     uint64_t bytes_used;
@@ -1463,8 +1543,10 @@ static uint64_t store_room(uint64_t keys) {
     return room;
 }
 
-static key_store *new_store(uint64_t room) {
-    key_store *s = take(store_bytes(room));
+static key_store *new_store(uint64_t room, unsigned origin) {
+    key_store *s = take(store_bytes(room), origin);
+    s->origin = origin;
+    s->bytes_origin = origin;
     s->room = room;
     s->count = 0;
     s->bytes_used = 0;
@@ -1501,7 +1583,7 @@ static key_store *first_store(uint64_t room) {
         return spare;
     }
 #endif
-    return new_store(room);
+    return new_store(room, WF_CMAP_ORIGIN());
 }
 
 /* An item's bytes; a key of no bytes has those of no arena. */
@@ -1528,15 +1610,16 @@ static key_store *room_for(wf_key_set *set, uint64_t length) {
         s = first_store(KEY_SET_MIN_ROOM);
         set->store = s;
     } else if (set->len == s->room) {
-        key_store *grown = new_store(s->room * 2);
+        key_store *grown = new_store(s->room * 2, s->origin);
         grown->bytes_used = s->bytes_used;
         grown->bytes_room = s->bytes_room;
         grown->bytes = s->bytes;
+        grown->bytes_origin = s->bytes_origin;
         memcpy(grown->items, s->items, (size_t)set->len * sizeof(key_item));
         grown->count = set->len;
         for (uint64_t i = 0; i < set->len; i++)
             index_item(grown, i);
-        WF_CMAP_GIVE(s, store_bytes(s->room));
+        WF_CMAP_GIVE(s, store_bytes(s->room), s->origin);
         s = grown;
         set->store = s;
     }
@@ -1547,13 +1630,15 @@ static key_store *room_for(wf_key_set *set, uint64_t length) {
         uint64_t room = s->bytes_room > need / 2 ? s->bytes_room * 2 : need;
         if (room < KEY_SET_MIN_BYTES)
             room = KEY_SET_MIN_BYTES;
-        unsigned char *bytes = take((size_t)room);
+        unsigned origin = s->bytes != NULL ? s->bytes_origin : WF_CMAP_ORIGIN();
+        unsigned char *bytes = take((size_t)room, origin);
         if (s->bytes_used != 0)
             memcpy(bytes, s->bytes, (size_t)s->bytes_used);
         if (s->bytes != NULL)
-            WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room);
+            WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room, s->bytes_origin);
         s->bytes = bytes;
         s->bytes_room = room;
+        s->bytes_origin = origin;
     }
     return s;
 }
@@ -1607,19 +1692,21 @@ const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, 
 
 static void give_store(key_store *s) {
     if (s->bytes != NULL)
-        WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room);
-    WF_CMAP_GIVE(s, store_bytes(s->room));
+        WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room, s->bytes_origin);
+    WF_CMAP_GIVE(s, store_bytes(s->room), s->origin);
 }
 
-/* A freed store no larger than a spare may be becomes the calling thread's
- * spare when it has none or the one it has room for fewer keys, which is
- * given back instead (first_store). */
+/* Only permanent-default storage can become the thread's spare: unlike a
+ * map-owned reserve, this TLS cache has no program-visible owner whose
+ * release could unpin an explicit scope. Keep scoped stores live until this
+ * value release, then return them to the pool rather than pinning forever. */
 void wf_cmap_key_set_free_store(void *store) {
     key_store *s = store;
     if (s == NULL)
         return;
 #ifdef WF_CMAP_SPARE_KEYS
-    if (s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
+    if (s->origin == 0u && (s->bytes == NULL || s->bytes_origin == 0u)
+        && s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
         key_store *spare = WF_CMAP_SPARE_KEYS();
         if (spare == NULL || spare->room < s->room) {
             WF_CMAP_SPARE_KEYS() = s;
@@ -1689,30 +1776,32 @@ static int held_order(const wf_cmap_held *a, const wf_cmap_held *b) {
 /* Memory for at least *room keys, *room set to what it holds: u's spare
  * when it is large enough, else the pool. Only the thread holding u touches
  * u's spare. */
-static wf_cmap_held *take_keys(wf_cmap_user *u, uint64_t *room) {
+static wf_cmap_held *take_keys(wf_cmap_user *u, uint64_t *room, unsigned *origin) {
     if (u != NULL && u->spare_keys != NULL && u->spare_room >= *room) {
         wf_cmap_held *keys = u->spare_keys;
         *room = u->spare_room;
+        *origin = u->spare_keys_origin;
         u->spare_keys = NULL;
         u->spare_room = 0;
         return keys;
     }
     if (*room > SIZE_MAX / sizeof(wf_cmap_held))
         WF_CMAP_EXHAUSTED();
-    return take((size_t)*room * sizeof(wf_cmap_held));
+    return take((size_t)*room * sizeof(wf_cmap_held), *origin);
 }
 
 /* Gives memory of room keys back: as u's spare when it is larger than u's
  * spare and within the limit, else to the pool. */
-static void give_keys(wf_cmap_user *u, wf_cmap_held *keys, uint64_t room) {
+static void give_keys(wf_cmap_user *u, wf_cmap_held *keys, uint64_t room, unsigned origin) {
     if (u != NULL && room > u->spare_room && room <= SPARE_KEYS_LIMIT) {
         if (u->spare_keys != NULL)
-            WF_CMAP_GIVE(u->spare_keys, (size_t)u->spare_room * sizeof(wf_cmap_held));
+            WF_CMAP_GIVE(u->spare_keys, (size_t)u->spare_room * sizeof(wf_cmap_held), u->spare_keys_origin);
         u->spare_keys = keys;
         u->spare_room = room;
+        u->spare_keys_origin = origin;
         return;
     }
-    WF_CMAP_GIVE(keys, (size_t)room * sizeof(wf_cmap_held));
+    WF_CMAP_GIVE(keys, (size_t)room * sizeof(wf_cmap_held), origin);
 }
 
 /* Room for more keys after those added, in the host's memory once the
@@ -1726,12 +1815,14 @@ static wf_cmap_held *reserve_keys(wf_cmap_holding *hold, uint64_t more) {
         return keys;
     uint64_t room = hold->room > need / 2 ? hold->room * 2 : need;
     wf_cmap_user *u = WF_CMAP_CURRENT_USER(hold->map);
-    wf_cmap_held *grown = take_keys(u, &room);
+    unsigned origin = hold->keys != NULL ? hold->keys_origin : WF_CMAP_ORIGIN();
+    wf_cmap_held *grown = take_keys(u, &room, &origin);
     if (hold->count != 0)
         memcpy(grown, keys, (size_t)hold->count * sizeof *keys);
     if (hold->keys != NULL)
-        give_keys(u, hold->keys, hold->room);
+        give_keys(u, hold->keys, hold->room, hold->keys_origin);
     hold->keys = grown;
+    hold->keys_origin = origin;
     hold->room = room;
     return grown;
 }
@@ -1751,6 +1842,7 @@ void wf_cmap_hold_begin(wf_cmap_holding *hold, wf_cmap *map) {
     hold->primary = NULL;
     hold->first = 0;
     hold->read = 0;
+    hold->keys_origin = 0;
 }
 
 void wf_cmap_hold_whole(wf_cmap_holding *hold) { hold->wants = 1; }
@@ -2378,7 +2470,7 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
         } else if (!hold->held && hold->count != 0) {
             atomic_store_explicit(&u->active, 0, memory_order_release);
         }
-        if (hold->keys != NULL) give_keys(u, hold->keys, hold->room);
+        if (hold->keys != NULL) give_keys(u, hold->keys, hold->room, hold->keys_origin);
         wf_cmap_hold_begin(hold, hold->map);
         return 0;
     }
@@ -2416,7 +2508,7 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
             atomic_store_explicit(&u->active, 0, memory_order_release);
     }
     if (hold->keys != NULL)
-        give_keys(u != NULL ? u : WF_CMAP_CURRENT_USER(hold->map), hold->keys, hold->room);
+        give_keys(u != NULL ? u : WF_CMAP_CURRENT_USER(hold->map), hold->keys, hold->room, hold->keys_origin);
     wf_cmap_hold_begin(hold, hold->map);
     return wrote;
 }
@@ -2513,6 +2605,7 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
     atomic_store_explicit(&b->folded_live, folded, memory_order_relaxed);
     SWAP_FIELD(cell *, spare);
     SWAP_FIELD(uint64_t, spare_capacity);
+    SWAP_FIELD(unsigned, spare_origin);
     SWAP_FIELD(chunk *, chunks);
     SWAP_FIELD(uint64_t, drained);
     SWAP_FIELD(void *, pending);
@@ -2634,6 +2727,7 @@ uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set 
     uint64_t bound = last ? 0 : end << t->shift;
     scanned inline_keys[SCAN_INLINE];
     scanned *keys = inline_keys;
+    unsigned origin = WF_CMAP_ORIGIN();
     uint64_t kept = 0, room = SCAN_INLINE;
     /* A key lies at its home or after it, before the first empty cell
      * after it, wrapping at the table's end; removed cells end no run. So
@@ -2657,10 +2751,10 @@ uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set 
         if (!slot_present(slot_of(map, (node *)n), tag_offset, tag_width, none_tag))
             continue;
         if (kept == room) {
-            scanned *grown = take((size_t)(2 * room) * sizeof(scanned));
+            scanned *grown = take((size_t)(2 * room) * sizeof(scanned), origin);
             memcpy(grown, keys, (size_t)kept * sizeof(scanned));
             if (keys != inline_keys)
-                WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned));
+                WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned), origin);
             keys = grown;
             room *= 2;
         }
@@ -2672,7 +2766,7 @@ uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set 
     for (uint64_t i = 0; i < kept; i++)
         wf_cmap_key_set_insert(set, keys[i].n->bytes, keys[i].n->length);
     if (keys != inline_keys)
-        WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned));
+        WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned), origin);
     return bound;
 }
 
@@ -2719,12 +2813,13 @@ uint64_t wf_cmap_release_reserve(wf_cmap *map) {
         return 0;
     cell *cells = map->spare;
     uint64_t capacity = map->spare_capacity;
+    unsigned origin = map->spare_origin;
     map->spare = NULL;
     unlock_map(map);
     if (cells == NULL)
         return 0;
     uint64_t counted = cells_counted(capacity);
-    free_cells(cells, capacity);
+    free_cells(cells, capacity, origin);
     return counted;
 }
 
@@ -2736,11 +2831,7 @@ uint64_t wf_cmap_count(wf_cmap *map) {
 
 void *wf_cmap_drain(wf_cmap *map) {
     if (map->pending != NULL) {
-        if (map->pending_bytes > ENTRY_LARGEST)
-            WF_CMAP_GIVE(map->pending, map->pending_bytes);
-        else
-            /* Origin-tag pass: debit the pending node's chunk origin here. */
-            WF_CMAP_HEAP_CHANGE(-(int64_t)map->pending_bytes);
+        release_node_storage(map->pending, map->pending_bytes);
         map->pending = NULL;
     }
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
@@ -2762,10 +2853,12 @@ void *wf_cmap_drain(wf_cmap *map) {
 }
 
 wf_cmap *wf_cmap_create(uint64_t capacity) {
-    char *raw = take(sizeof(wf_cmap) + 64);
+    unsigned origin = WF_CMAP_ORIGIN();
+    char *raw = take(sizeof(wf_cmap) + 64, origin);
     wf_cmap *map = (wf_cmap *)(((uintptr_t)raw + 63) & ~(uintptr_t)63);
     memset(map, 0, sizeof *map);
     map->raw = raw;
+    map->origin = origin;
     for (int i = 0; i < WF_CMAP_MAX_USERS; i++)
         map->users[i].map = map;
     /* Half full when it holds capacity keys, as dense as a table gets
@@ -2797,25 +2890,25 @@ void wf_cmap_destroy(wf_cmap *map) {
         r = older;
     }
     if (map->spare)
-        free_cells(map->spare, map->spare_capacity);
+        free_cells(map->spare, map->spare_capacity, map->spare_origin);
     for (chunk *c = map->chunks; c;) {
         chunk *older = c->older;
-        host_unmap(c, ENTRY_CHUNK);
+        free_chunk(c);
         c = older;
     }
     for (int i = 0; i < WF_CMAP_MAX_USERS; i++) {
         wf_cmap_user *u = &map->users[i];
         for (chunk *c = u->chunks; c;) {
             chunk *older = c->older;
-            host_unmap(c, ENTRY_CHUNK);
+            free_chunk(c);
             c = older;
         }
         if (u->spare_keys != NULL)
-            WF_CMAP_GIVE(u->spare_keys, (size_t)u->spare_room * sizeof(wf_cmap_held));
+            WF_CMAP_GIVE(u->spare_keys, (size_t)u->spare_room * sizeof(wf_cmap_held), u->spare_keys_origin);
     }
     if (map->none)
-        WF_CMAP_GIVE(map->none, none_bytes(map->slot_size));
-    WF_CMAP_GIVE(map->raw, sizeof(wf_cmap) + 64);
+        WF_CMAP_GIVE(map->none, none_bytes(map->slot_size), map->none_origin);
+    WF_CMAP_GIVE(map->raw, sizeof(wf_cmap) + 64, map->origin);
 }
 
 wf_cmap_user *wf_cmap_enter(wf_cmap *map) {

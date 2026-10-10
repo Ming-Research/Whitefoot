@@ -1,0 +1,57 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeView = std::process::ScopeView;
+
+fn empty(view: &ScopeView) -> result: Bool writes(view) {
+  match std::process::scope_bytes(view: view) {
+    Some(value: bytes) => { return bytes == 0_u64; }
+    None() => { return False(); }
+  }
+}
+
+fn stale(view: &ScopeView) -> result: Bool writes(view) {
+  match std::process::scope_bytes(view: view) {
+    Some(value: bytes) => { return False(); }
+    None() => { return True(); }
+  }
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    match std::process::scope_close(meter: meter, scope: move scope) {
+      Ok(value: done) => { return done; }
+      Err(error: owner) => { set scope = move owner; }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let correct = False();
+  match std::process::scope_open(meter: &meter) {
+    Err(error: full) => {}
+    Ok(value: owner) => {
+      let old = std::process::scope_view(scope: &owner);
+      let second = std::process::scope_view(scope: &owner);
+      let live = empty(view: &old);
+      close(meter: &meter, scope: move owner);
+      let closed = stale(view: &old);
+      match std::process::scope_open(meter: &meter) {
+        Err(error: full) => {}
+        Ok(value: reused) => {
+          let current = std::process::scope_view(scope: &reused);
+          let fresh = empty(view: &current);
+          let old_stale = stale(view: &old);
+          let second_stale = stale(view: &second);
+          set correct = band(live, band(closed, band(fresh, band(old_stale, second_stale))));
+          close(meter: &meter, scope: move reused);
+        }
+      }
+    }
+  }
+  if correct { return std::process::exit_status(code: 0_u8); }
+  return std::process::exit_status(code: 1_u8);
+}

@@ -74,6 +74,11 @@ void wf__coro_resume(void *opaque) {
         if (frame->step == 0u) {
             CHECK(wf__scope_current() == parent.words[0]);
             CHECK(wf__body_scope_enter(&child));
+            /* Forces a separate 16 KiB frame chunk in the child account.
+             * Releasing it keeps an empty spare until driver cleanup, after
+             * this context has restored the parent's logical scope. */
+            void *nested = wf__context_frame_allocate(8192u);
+            wf__context_frame_release(nested);
             frame->block = wf__heap_take(19u);
             CHECK(frame->block != NULL);
             child_entered = 1u;
@@ -83,17 +88,21 @@ void wf__coro_resume(void *opaque) {
         while (!sibling_ran) {
             if (wf__context_pass(frame)) return;
         }
-        read_bytes(&child_view, 19u);
+        read_bytes(&child_view, 16384u + 19u);
         wf__heap_give(frame->block, 19u);
         wf__body_scope_leave(&child);
         CHECK(wf__scope_current() == parent.words[0]);
+        read_bytes(&child_view, 16384u);
+        wf_scope_close_result busy;
+        wf__body_scope_close(&busy, &meter, &child);
+        CHECK(busy.tag == 1u);
         frame->done = 1u;
     } else {
         CHECK(wf__scope_current() == parent.words[0]);
         while (!child_entered) {
             if (wf__context_pass(frame)) return;
         }
-        read_bytes(&child_view, 19u);
+        read_bytes(&child_view, 16384u + 19u);
         void *block = wf__heap_take(5u);
         CHECK(block != NULL);
         wf__heap_give(block, 5u);

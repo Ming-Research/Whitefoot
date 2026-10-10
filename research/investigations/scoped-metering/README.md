@@ -309,12 +309,12 @@ and dropping the private maps inside the scope alone does not prove closure.
 
 ## Runtime candidate and open questions
 
-Current emitted wrappers pass sizes on allocation, resize and free
-(`compiler/src/backend/heap.c:7–29`). After first registration,
+Emitted wrappers pass sizes on allocation, resize and free
+(`compiler/src/backend/heap.c`). After first registration,
 `wf__heap_change` performs a thread-local add and relaxed publication to a
 cache-line-private slot; readings sum slots and the separately locked pool
-counter (`compiler/src/backend/completion/bridge.c:1341–1388`). Pool grants
-and returns update under its existing lock (`:1088–1093`, `:1145–1152`).
+counter (`compiler/src/backend/completion/bridge.c`). Pool grants
+and returns update under its existing lock.
 Direct map accounting calls the same change function; pool-backed map storage
 uses runtime take/give (`compiler/src/backend/keyed_table.c:26–34`).
 
@@ -333,7 +333,8 @@ the expectation that its private keyspaces are mostly map storage is not an
 inventory result. Per-scope arenas avoid the prefix but replace malloc and
 need address-to-origin lookup, the largest implementation alternative.
 
-Resolve these details before implementing:
+The runtime choices below are implemented as described in the implementation
+boundary; the comparisons and cost measurements remain acceptance work:
 
 - **IDs and lifecycle:** compare 16 and 64 slots including the default.
   Recommend target-declared finite capacity and recoverable open refusal,
@@ -352,20 +353,21 @@ Resolve these details before implementing:
   sparse/dense scope occupancy, and after thread exit. Never sum clamped
   per-thread balances; use the existing modulo argument on the aggregate.
 - **Origin metadata:** a table owns its cell array/reserve and per-user chunks
-  hold nodes (`compiler/src/backend/concurrent_map.c:143–196`). Tag each
+  hold nodes (`compiler/src/backend/concurrent_map.c`). Tag each
   structure, retaining the origin with detached spare cells and through
-  swap/clear/drain (`:2422`, `:2677`, `:2735`), rather than each entry or just
+  swap/clear/drain, rather than each entry or just
   the map handle. This resolves the representation principle for exchanged
-  storage; metadata, large pool-backed nodes (`:158`) and all resize/release
+  storage; metadata, large pool-backed nodes and all resize/release
   paths still need an inventory. Map control state keeps its creating origin;
   separately allocated payloads retain theirs, without recursive relabeling.
   Runtime-owned context/frame storage similarly has a place for an origin
-  field (`compiler/src/backend/completion/bridge.c:1168`, `:1263`). Emitted
-  Box/byte-string storage is the class using headerless malloc/realloc/free
-  (`compiler/src/backend/heap.c:7–29`), requiring the prefix/arena choice.
-- **Pool split and shared infrastructure:** add per-scope granted-byte
-  counters under the existing pool lock, without also charging the direct
-  path for those blocks. Returns debit the owning structure's tag, never the
+  field (`compiler/src/backend/completion/bridge.c`). Emitted Box/byte-string
+  storage now uses the prefix in `compiler/src/backend/heap.c`; its cost
+  remains to be compared with arenas before acceptance.
+- **Pool split and shared infrastructure:** record nondefault granted bytes
+  in per-thread scope rows and default granted bytes under the existing pool
+  lock, without also charging the direct path for those blocks. Returns debit
+  the owning structure's tag, never the
   freeing context's current scope, including driver cleanup. Keep process-wide
   driver, timer-capacity and descriptor-registry storage in the default account;
   audit this classification against PRE-2 rather than charging whichever
@@ -375,8 +377,8 @@ Resolve these details before implementing:
 ## Runtime core implementation boundary
 
 The edit-only continuation of scoped memory metering's phase 2
-implements the table, native callable boundaries and logical-work propagation
-before origin tags. Its requested choices are 64 slots including default,
+implements the table, native callable boundaries, logical-work propagation
+and allocation origins. Its requested choices are 64 slots including default,
 the existing process total unchanged, per-thread scope rows and explicit
 typed capacity refusal. The existing host-value representation carries the
 slot in word 0 and generation in word 1 for both the linear owner and the
@@ -394,15 +396,10 @@ scope before suspension publishes them. Compute frames capture it at
 publication, and both owner-reclaim paths and the steal/help path restore
 the prior thread scope before returning or announcing completion.
 
-**Deliberate incomplete behavior.** Free and resize still select the current
-scope, with origin-tag-pass comments at the accounting boundaries. Busy
-close checks activity, descendants, ownership and raw slot sums only.
-Zero-byte retained structures and cross-scope transfer are not implemented;
-this is not PRE-2's completed origin-accounting behavior and cannot yet
-justify subtracting a rewrite scope from admission memory. The next pass
-must retain origins through map/runtime/emitted storage, free and resize,
-and use retained-storage lifecycle for retirement. It must cover an
-inactive origin resized elsewhere and a zero-byte origin-bearing block.
+The origin pass replaces every temporary current-scope release/resize charge
+with a stored origin and adds retained-storage lifecycle. These edits have
+not been built or executed and do not yet justify subtracting a rewrite
+scope from admission memory.
 
 **Review finding fixed.** Pool accounting originally registered every
 allocating thread. Windows console-handler threads are host-created and
@@ -410,10 +407,9 @@ may be transient, so queued stop requests could exhaust the permanent
 driver/compute row inventory. Default-account pool charges instead use the
 existing pool lock without registering a row; stop-request queue allocation
 and release explicitly select default, as do driver and timer-capacity
-storage. This leaves the process-total algorithm unchanged. The broader
-origin-tag inventory remains deferred to its already requested pass.
+storage. This leaves the process-total algorithm unchanged.
 
-A separate read-only Codex review covered the working-tree diff from
+A separate read-only Codex review of the preceding runtime-core pass covered the working-tree diff from
 `7dc39ad56`, including the new probes and design node, the C/LLVM boundaries,
 lifecycle and ancestry, context and compute propagation, and CI wiring.
 It re-reviewed the host-thread repair and reported no unresolved concrete
@@ -430,11 +426,112 @@ compute helping, stealing and both owner reclaims.
 resumptions and structured joins. Both are wired into the existing
 `compiler/Makefile` completion images and `completion-test`, used by CI.
 No build, test, probe, lint, formatter, conformance run or performance
-measurement was executed in this pass, as requested; the code and probes
-remain unvalidated. No specification, conformance expectation or approval
-record changes are part of this pass. Run conformance and the applicable
-project gates after the edit-only restriction is lifted; full acceptance
-still needs the origin, lifecycle and performance evidence below.
+measurement has been executed in either edit-only runtime pass, as requested;
+the code and probes remain unvalidated. The origin pass adds runnable
+conformance expectations for PRE-2 without changing that rule or an existing
+verdict. Run conformance and the applicable project gates after the edit-only
+restriction is lifted; full acceptance still needs the execution and
+performance evidence below.
+
+### Exact origin implementation
+
+The owner selected the prefix for this implementation pass, behind the
+existing emitted heap interface, without selecting it over arenas for final
+cost acceptance. `heap.c` stores the origin in a 16-byte aligned prefix,
+checks the prefixed extent before allocation, and counts only requested
+payload bytes. Zero-byte requests still allocate a prefix and pin the
+origin; resize to zero never delegates zero-size realloc semantics to libc.
+Successful resize changes the original account's extent, preserving its
+pin and payload alignment; refusal leaves the old block unchanged.
+
+Review found that Paged directory growth used fresh allocation, copy and
+free, which would relabel a directory when another scope grew it. Growth now
+uses the origin-preserving resize interface; independently added pages still
+take the growing scope. The existing allocation-identity observer now forces
+relocation through that interface and retains its page-identity and release
+order assertions. A runnable conformance case checks that the old directory
+and new pages remain in different accounts until their common owner drops.
+The storage-representation decision now records this required attribution;
+the header-first layout, directory doubling and stable pages remain chosen.
+
+Pool allocation and release now require an explicit origin. Context records,
+frame chunks and spares, guard-watch chunks, shared/cancellation objects and
+the second path component of a rename retain their own origins. Logical
+current scope and storage origin are separate: a driver finishing a context
+can release a chunk from a nested invocation after that invocation restored
+the parent. Compute scheduler slots are static lane storage, so they inherit
+the execution scope without inventing a pool charge. Driver records,
+timer-capacity blocks and stop-request queues keep their existing default
+classification. No pool block receives a second direct-allocation charge.
+
+Map descriptors and cell arrays keep independent origins, including a cell
+array detached as the reserve. Table swaps move those tags with the arrays;
+clear detaches them to the map that drains and releases the removed entries.
+Control state is counted only by its pool grant. Key stores, their byte
+arenas, hold arrays and spare hold arrays also retain origins; growth debits
+the old allocation and retains its origin for the replacement.
+
+Inspection found that the per-thread KeySet spare had no production eviction
+path. Retaining scoped stores there could keep a scope busy indefinitely
+after all its values were dropped. This is fixed by caching only stores whose
+store and byte-arena origins are both default, returning explicit-origin
+storage to the pool at value release. A native probe grows a key store and
+its byte arena in another scope and checks origin charging and successful
+close after release. It also reuses a cached default store with a newly
+scoped byte arena, checking that the arena alone prevents TLS caching.
+Map-owned and context-owned spares still have owning
+structures that can release them.
+
+Small-node chunks carry one origin and remain pinned even when they contain
+only unused reserve space. Only live node requests contribute bytes, as
+before. Aligning a chunk to its 1 MiB extent recovers the chunk from any
+small-node address without per-entry metadata or a search through users.
+Unix trims a doubled mapping to that aligned extent. Windows reserves twice
+the extent, commits only the aligned chunk and records the reservation base
+for release. Large nodes have individual pool grants and a 16-byte origin
+header. The extra virtual reservation on Windows, mapping work and header
+costs require measurement; no performance claim follows from these edits.
+
+Each independently retained structure pins its origin until its final
+counter update finishes. Pins use the lifecycle lock; open descendants pin
+their ancestors. Close and reuse require no activity, no descendants, no
+pins and a raw zero balance. Retaining zero-byte blocks or empty chunk/spare
+storage may therefore keep an inactive owner busy until that storage is
+actually released. Scope rows are never reset by another writer.
+
+The extended native scope probe inventories small and mapped map tables,
+detached/reused reserves, chunks, large nodes, swap, clear and drain; it also
+checks cross-thread/cross-scope free, successful and refused resize,
+zero-byte growth, pool cleanup and last-storage close. The context probe
+retains a child-attributed frame spare through leave and checks that actual
+driver cleanup removes it before publishing the join. Existing process-sum
+probes retain their expectations with an explicit default origin.
+
+Eight `scoped-meter-run-*` cases in the conformance manifest cover fixed-parent
+entry/refusal/restoration, inclusive nesting, inherited spawned allocation,
+cross-scope free, returned live storage, stale views and unchanged process
+accounting, plus cross-scope Paged growth. Each manifest doc names its failure
+observation; all expect run with exit 0. The scalar payload-size oracles use
+one 8-byte Box, structured joins and observation dependencies; the Paged case
+checks positive origin balances without fixing a directory size. Runtime
+representation/grant inventories stay in the C probes. No expected result
+has been obtained from running the
+implementation. Native ABI/linkage, source acceptance, sanitizers, Windows
+mapping behavior and all cost/weak-target evidence remain unverified.
+
+A separate read-only Codex agent, using the inherited model without an
+override, reviewed the complete uncommitted diff from
+`3114b1f6cc0de6d93f0458543365dd834e1b8bf6`, including the eight new cases and
+directly affected consumers. It applied the relevant repository, citation,
+safety, test-integrity and specification-delivery checklist items, plus
+G1–G3 and DC1–DC4 against the scoped-metering and storage decisions and their
+ancestors. It re-reviewed the KeySet and Paged repairs described above and
+the correction distinguishing pool scope rows from the locked default
+counter, reporting no unresolved concrete findings within that inspection
+scope. It ran no validation; ABI execution, source acceptance, sanitizers,
+design-lint statistics and performance remain unverified. Work stops at the
+requested edit-only boundary: no commit, build, execution or publication was
+made, and this pass changes no specification rule or existing verdict.
 
 ## Firn worked example and evidence owed
 

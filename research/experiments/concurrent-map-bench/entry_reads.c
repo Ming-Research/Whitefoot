@@ -11,12 +11,15 @@
 #define _GNU_SOURCE
 #include <sched.h>
 #include <stdlib.h>
-#define WF_CMAP_TAKE(bytes) aligned_alloc(16, ((size_t)(bytes) + 15) / 16 * 16)
-#define WF_CMAP_GIVE(block, bytes) free(block)
+#define WF_CMAP_TAKE(bytes, origin) ((void)(origin), aligned_alloc(16, ((size_t)(bytes) + 15) / 16 * 16))
+#define WF_CMAP_GIVE(block, bytes, origin) ((void)(origin), free(block))
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
 /* This standalone throughput harness has no MemoryMeter. */
-#define WF_CMAP_HEAP_CHANGE(delta) ((void)(delta))
+#define WF_CMAP_HEAP_CHANGE(origin, delta) ((void)(origin), (void)(delta))
+#define WF_CMAP_ORIGIN() 0u
+#define WF_CMAP_RETAIN(origin) ((void)(origin))
+#define WF_CMAP_RELEASE(origin) ((void)(origin))
 #include "concurrent_map.c"
 #include <pthread.h>
 #include <stdio.h>

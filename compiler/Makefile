@@ -476,7 +476,7 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 SCOPE_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c $(SCHED_DIR)/core.c,$(COMPLETION_RUNTIME_SOURCES))) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_test.o
-$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c $(SCHED_DIR)/core.c
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_test.o: $(COMPLETION_DIR)/bridge.c src/backend/ordinary_values.c $(SCHED_DIR)/core.c src/backend/keyed_table.c src/backend/concurrent_map.c
 $(COMPLETION_TMP)/scope-test: $(SCOPE_TEST_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 SCOPE_CONTEXT_OBJECTS := \

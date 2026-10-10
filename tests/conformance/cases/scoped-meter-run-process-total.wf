@@ -1,0 +1,66 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeBody = std::process::ScopeBody;
+
+struct Measured {
+  meter: MemoryMeter;
+  correct: Bool;
+}
+
+fn allocate(meter: &MemoryMeter) -> result: Box<u64> writes(meter) {
+  return box_new::<u64>(value: 43_u64);
+}
+
+fn release(value: Box<u64>, meter: &MemoryMeter) -> result: unit writes(meter) {
+  return unit;
+}
+
+fn measure(argument: MemoryMeter) -> result: Measured pure {
+  let before = std::process::heap_in_use(meter: &argument);
+  let block = allocate(meter: &argument);
+  let held = std::process::heap_in_use(meter: &argument);
+  let payload = block.inner == 43_u64;
+  release(value: move block, meter: &argument);
+  let after = std::process::heap_in_use(meter: &argument);
+  return Measured(meter: move argument, correct: band(payload, band(held == before +wrap 8_u64, after == before)));
+}
+binding Measure : ScopeBody<MemoryMeter, Measured> { run = measure; }
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    match std::process::scope_close(meter: meter, scope: move scope) {
+      Ok(value: done) => { return done; }
+      Err(error: owner) => { set scope = move owner; }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: initial_meter) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let Measured(meter: meter, correct: default_correct) = measure(argument: move initial_meter);
+  let correct = False();
+  let before_open = std::process::heap_in_use(meter: &meter);
+  match std::process::scope_open(meter: &meter) {
+    Err(error: full) => {}
+    Ok(value: scope) => {
+      let after_open = std::process::heap_in_use(meter: &meter);
+      let peer = std::process::meter_share(meter: &meter);
+      let outcome = std::process::scope_run::<Measure>(scope: move scope, argument: move peer);
+      match move outcome {
+        Refused(scope: owner, argument: original) => { close(meter: &meter, scope: move owner); }
+        Ran(scope: owner, result: measured) => {
+          let Measured(meter: returned, correct: scoped_correct) = move measured;
+          let before_close = std::process::heap_in_use(meter: &meter);
+          close(meter: &meter, scope: move owner);
+          let after_close = std::process::heap_in_use(meter: &meter);
+          set correct = band(default_correct, band(scoped_correct, band(before_open == after_open, before_close == after_close)));
+        }
+      }
+    }
+  }
+  if correct { return std::process::exit_status(code: 0_u8); }
+  return std::process::exit_status(code: 1_u8);
+}

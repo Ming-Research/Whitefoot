@@ -38,8 +38,8 @@ static void *publish_near_wrap_on_peer(void *unused) {
     (void)unused;
     /* Script lifetime deltas, not actual allocations: this slot ends at
      * 2^64 - 2 without overflowing any signed arithmetic. */
-    wf__heap_change(INT64_MAX);
-    wf__heap_change(INT64_MAX);
+    wf__heap_change(0u, INT64_MAX);
+    wf__heap_change(0u, INT64_MAX);
     return NULL;
 }
 int memory_probe(void) {
@@ -60,22 +60,22 @@ int memory_probe(void) {
     /* With no context or pool allocation the pool is empty. The peer's +8
      * and this thread's -8 must cancel, including after the peer exits. */
     if (before != 0) return 5;
-    wf__heap_change(-8);
+    wf__heap_change(0u, -8);
     if (wf__heap_in_use() != 0) return 6;
-    wf__heap_change(16);
+    wf__heap_change(0u, 16);
     if (wf__heap_in_use() != 8) return 7;
-    wf__heap_change(-8);
+    wf__heap_change(0u, -8);
     if (wf__heap_in_use() != 0) return 8;
     if (pthread_create(&peer, NULL, publish_near_wrap_on_peer, NULL) != 0) return 9;
     if (pthread_join(peer, NULL) != 0) return 10;
     if (wf__heap_in_use() != 0) return 11;
     /* The slots are now +8, 2^64 - 8 and 2^64 - 2. Move this thread's
      * slot to 2^64 - 1, then through zero: the modular totals are 5 and 6. */
-    wf__heap_change(7);
+    wf__heap_change(0u, 7);
     if (wf__heap_in_use() != 5) return 12;
-    wf__heap_change(1);
+    wf__heap_change(0u, 1);
     if (wf__heap_in_use() != 6) return 13;
-    wf__heap_change(-6);
+    wf__heap_change(0u, -6);
     return wf__heap_in_use() == 0 ? 0 : 14;
 }
 "#;

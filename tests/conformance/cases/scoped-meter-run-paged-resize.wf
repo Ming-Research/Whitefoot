@@ -1,0 +1,93 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeView = std::process::ScopeView;
+alias ScopeBody = std::process::ScopeBody;
+
+fn build(argument: unit) -> result: Box<Paged<u64>> pure {
+  return box_paged_new::<u64>(capacity: 0_u64);
+}
+binding Build : ScopeBody<unit, Box<Paged<u64>>> { run = build; }
+
+fn enlarge(argument: Box<Paged<u64>>) -> result: Box<Paged<u64>> pure {
+  if argument.inner.cap <= 513_u64 {
+    grow_paged(cell: &argument, capacity: 513_u64);
+  }
+  return move argument;
+}
+binding Enlarge : ScopeBody<Box<Paged<u64>>, Box<Paged<u64>>> { run = enlarge; }
+
+fn release(value: Box<Paged<u64>>, first: &ScopeView, second: &ScopeView) -> result: unit writes(first), writes(second) {
+  return unit;
+}
+
+fn positive(view: &ScopeView) -> result: Bool writes(view) {
+  match std::process::scope_bytes(view: view) {
+    Some(value: bytes) => { return bytes > 0_u64; }
+    None() => { return False(); }
+  }
+}
+
+fn empty(view: &ScopeView) -> result: Bool writes(view) {
+  match std::process::scope_bytes(view: view) {
+    Some(value: bytes) => { return bytes == 0_u64; }
+    None() => { return False(); }
+  }
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    match std::process::scope_close(meter: meter, scope: move scope) {
+      Ok(value: done) => { return done; }
+      Err(error: owner) => { set scope = move owner; }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let correct = False();
+  match std::process::scope_open(meter: &meter) {
+    Err(error: full) => {}
+    Ok(value: a) => {
+      let av = std::process::scope_view(scope: &a);
+      let built = spawn std::process::scope_run::<Build>(scope: move a, argument: unit);
+      match move built {
+        Refused(scope: refused_a, argument: original) => { close(meter: &meter, scope: move refused_a); }
+        Ran(scope: returned_a, result: block) => {
+          let before = positive(view: &av);
+          match std::process::scope_open(meter: &meter) {
+            Err(error: full) => {
+              let unused = move block;
+            }
+            Ok(value: b) => {
+              let bv = std::process::scope_view(scope: &b);
+              let grown = spawn std::process::scope_run::<Enlarge>(scope: move b, argument: move block);
+              match move grown {
+                Refused(scope: refused_b, argument: refused_block) => {
+                  release(value: move refused_block, first: &av, second: &bv);
+                  close(meter: &meter, scope: move refused_b);
+                }
+                Ran(scope: returned_b, result: larger) => {
+                  let capacity = larger.inner.cap == 513_u64;
+                  let directory_retained = positive(view: &av);
+                  let pages_added = positive(view: &bv);
+                  release(value: move larger, first: &av, second: &bv);
+                  let a_empty = empty(view: &av);
+                  let b_empty = empty(view: &bv);
+                  set correct = band(before, band(capacity, band(directory_retained, band(pages_added, band(a_empty, b_empty)))));
+                  close(meter: &meter, scope: move returned_b);
+                }
+              }
+            }
+          }
+          close(meter: &meter, scope: move returned_a);
+        }
+      }
+    }
+  }
+  if correct { return std::process::exit_status(code: 0_u8); }
+  return std::process::exit_status(code: 1_u8);
+}

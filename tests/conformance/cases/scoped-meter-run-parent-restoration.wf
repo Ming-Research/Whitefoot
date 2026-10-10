@@ -1,0 +1,108 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeBody = std::process::ScopeBody;
+alias ScopeRun = std::process::ScopeRun;
+
+struct OwnedCheck {
+  owner: MeterScope;
+  correct: Bool;
+}
+
+struct Family {
+  child: MeterScope;
+  other: MeterScope;
+  meter: MemoryMeter;
+}
+
+fn increment(argument: u64) -> result: u64 pure {
+  return argument +wrap 1_u64;
+}
+
+binding Increment : ScopeBody<u64, u64> {
+  run = increment;
+}
+
+fn refuse(scope: MeterScope) -> result: OwnedCheck pure waits {
+  let outcome = std::process::scope_run::<Increment>(scope: move scope, argument: 29_u64);
+  match move outcome {
+    Ran(scope: owner, result: value) => {
+      return OwnedCheck(owner: move owner, correct: False());
+    }
+    Refused(scope: owner, argument: original) => {
+      return OwnedCheck(owner: move owner, correct: original == 29_u64);
+    }
+  }
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+  loop {
+    match std::process::scope_close(meter: meter, scope: move scope) {
+      Ok(value: done) => { return done; }
+      Err(error: owner) => { set scope = move owner; }
+    }
+  }
+}
+
+fn family(argument: Family) -> result: Bool pure waits {
+  let Family(child: child, other: other, meter: meter) = move argument;
+  let OwnedCheck(owner: other_first, correct: first) = refuse(scope: move other);
+  let matched = False();
+  match std::process::scope_run::<Increment>(scope: move child, argument: 10_u64) {
+    Ran(scope: owner, result: value) => {
+      set matched = value == 11_u64;
+      close(meter: &meter, scope: move owner);
+    }
+    Refused(scope: owner, argument: original) => {
+      close(meter: &meter, scope: move owner);
+    }
+  }
+  let OwnedCheck(owner: other_last, correct: last) = refuse(scope: move other_first);
+  close(meter: &meter, scope: move other_last);
+  return band(first, band(matched, last));
+}
+
+binding FamilyBody : ScopeBody<Family, Bool> {
+  run = family;
+}
+
+fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let correct = False();
+  match std::process::scope_open(meter: &meter) {
+    Err(error: full) => {}
+    Ok(value: parent) => {
+      match std::process::scope_open_child(meter: &meter, parent: &parent) {
+        Err(error: full) => { close(meter: &meter, scope: move parent); }
+        Ok(value: child) => {
+          match std::process::scope_open(meter: &meter) {
+            Err(error: full) => {
+              close(meter: &meter, scope: move child);
+              close(meter: &meter, scope: move parent);
+            }
+            Ok(value: other) => {
+              let peer = std::process::meter_share(meter: &meter);
+              let outcome = spawn std::process::scope_run::<FamilyBody>(scope: move parent, argument: Family(child: move child, other: move other, meter: move peer));
+              match move outcome {
+                Ran(scope: owner, result: checked) => {
+                  set correct = checked;
+                  close(meter: &meter, scope: move owner);
+                }
+                Refused(scope: owner, argument: original) => {
+                  let Family(child: refused_child, other: refused_other, meter: unused) = move original;
+                  close(meter: &meter, scope: move refused_child);
+                  close(meter: &meter, scope: move refused_other);
+                  close(meter: &meter, scope: move owner);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if correct { return std::process::exit_status(code: 0_u8); }
+  return std::process::exit_status(code: 1_u8);
+}

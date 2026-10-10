@@ -381,6 +381,7 @@ typedef struct wf_host_operation {
     alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
     /* Only rename needs a second name, borrowed from the runtime pool. */
     unsigned char *destination;
+    unsigned destination_origin;
 } wf_host_operation;
 _Static_assert(offsetof(wf_host_operation, record) == 0,
                "a context's operation block begins with its record");
@@ -1014,9 +1015,10 @@ static int wf_rename_prepare(wf_close_result *result,
                              wf_host_operation *operation) {
     if (!wf_component(operation->component, from, from_start, from_end))
         return wf_namespace_invalid(result);
-    operation->destination = wf__runtime_take(WF_COMPONENT_BYTES + 2);
+    operation->destination_origin = wf__scope_current();
+    operation->destination = wf__runtime_take(WF_COMPONENT_BYTES + 2, operation->destination_origin);
     if (!wf_component(operation->destination, to, to_start, to_end)) {
-        wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+        wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2, operation->destination_origin);
         operation->destination = NULL;
         return wf_namespace_invalid(result);
     }
@@ -1027,7 +1029,7 @@ static void wf_rename_finish(wf_close_result *result, wf_host_operation *operati
     wf_namespace_finish(result, operation);
     /* Join has ended host access on success, refusal or cancellation. A
      * submitted operation completed in start still comes through finish. */
-    wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+    wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2, operation->destination_origin);
     operation->destination = NULL;
 }
 

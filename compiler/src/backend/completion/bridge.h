@@ -526,7 +526,14 @@ void wf__watch_seen(unsigned moment);
 void *wf__heap_take(uint64_t bytes);
 void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes);
 void wf__heap_give(void *block, uint64_t bytes);
-void wf__heap_change(int64_t change);
+/* Direct allocations publish requested bytes to both ledgers. Pool grants
+ * publish only to the pool ledger. Every independently retained structure
+ * holds one origin reference, even at zero bytes; drop it after its final
+ * accounting update. A live reference pins the slot's generation. */
+unsigned wf__scope_current(void);
+void wf__scope_retain(unsigned origin);
+void wf__scope_release(unsigned origin);
+void wf__heap_change(unsigned origin, int64_t change);
 uint64_t wf__heap_in_use(void);
 int wf__resident_bytes(uint64_t *bytes);
 
@@ -547,8 +554,8 @@ void wf__scope_leave(uint64_t slot, uint64_t generation);
  * allocator [STOR-8]; a yield of the processor; and the end a frame no
  * memory can hold brings. */
 unsigned wf__driver_index(void);
-void *wf__runtime_take(uint64_t bytes);
-void wf__runtime_give(void *block, uint64_t bytes);
+void *wf__runtime_take(uint64_t bytes, unsigned origin);
+void wf__runtime_give(void *block, uint64_t bytes, unsigned origin);
 /* Process-wide support storage, including the stop-request queue, is always
  * in the default account, even when consumed by an explicitly scoped call. */
 void *wf__runtime_take_default(uint64_t bytes);
