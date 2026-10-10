@@ -163,7 +163,7 @@ fn execute_container_program(
         assert_eq!(
             output.stdout,
             format!(
-                "container allocation observer: {expected_allocations} allocations, each released exactly once\n"
+                "container allocation observer: {expected_allocations} allocations or shared empty headers, each released exactly once\n"
             )
             .as_bytes(),
             "{context}: {output:?}"
