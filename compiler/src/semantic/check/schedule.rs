@@ -67,8 +67,13 @@ impl Checker<'_, '_> {
             // Without postconditions no analysis reads another's, so every
             // function is analyzed concurrently.
             let mut fresh = Vec::new();
+            let mut copies = Vec::new();
             for index in 0..functions.len() {
                 if !selected(index) {
+                    continue;
+                }
+                if let Some(source) = functions[index].function.summary_source {
+                    copies.push((index, source.0 as usize));
                     continue;
                 }
                 if let (Some(store), Some(items)) = (receipts, &items)
@@ -115,6 +120,11 @@ impl Checker<'_, '_> {
             };
             for (index, entailment) in fresh.into_iter().zip(analyses) {
                 functions[index].function.entailment = entailment;
+            }
+            for (index, source) in copies {
+                functions[index].function.entailment =
+                    summary_entailment(&functions[source].function.entailment);
+                self.analysis.renamed_summaries[index] = true;
             }
         } else {
             // A component reads only its callees' summaries, and its callees
@@ -192,6 +202,23 @@ impl Checker<'_, '_> {
                             .get(function_index)
                             .filter(|checked| checked.function.id == *function)
                             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        // [FN-2] the schedule's edge puts the canonical
+                        // instance in an earlier level or in this component.
+                        if let Some(source) = functions[function_index].function.summary_source {
+                            let source = source.0 as usize;
+                            if schedule.function_components.get(source)
+                                == schedule.function_components.get(function_index)
+                            {
+                                copies.push((function_index, source));
+                            } else {
+                                settled.push((
+                                    function_index,
+                                    summary_entailment(&functions[source].function.entailment),
+                                    true,
+                                ));
+                            }
+                            continue;
+                        }
                         let recorded = match (receipts, &items) {
                             (Some(store), Some(items)) => self.recorded_analysis(
                                 store,

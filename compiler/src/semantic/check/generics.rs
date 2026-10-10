@@ -1292,7 +1292,24 @@ impl<'unit> Checker<'_, 'unit> {
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         self.admit_postcondition_selectors_including(check_context, &canonical_seeds)?;
-        let mut phase_a = self.check_function_view(check_context, Vec::new())?;
+        // [FN-2] every canonical instance precedes the instances discovered
+        // from it in the view, so its body is checked, and its admitted
+        // schema clauses recorded, before any instance that renames it.
+        let const_types = self.types.const_generic_types().collect::<HashMap<_, _>>();
+        for (index, declaration) in &canonical_generic_signatures {
+            let signature = &self.types.signatures[*index];
+            if let Some(class) = symbolic_renaming_class(signature, &const_types) {
+                self.analysis
+                    .symbolic_canonical
+                    .insert(*declaration, (signature.id, class));
+            }
+        }
+        self.analysis.symbolic_const_types = const_types;
+        let phase_a = self.check_function_view(check_context, Vec::new());
+        self.analysis.symbolic_canonical.clear();
+        self.analysis.symbolic_const_types.clear();
+        self.analysis.symbolic_admitted.clear();
+        let mut phase_a = phase_a?;
         self.types.close_allocation_metadata(&mut phase_a)?;
         for (canonical, declaration) in &canonical_generic_signatures {
             let checked = phase_a

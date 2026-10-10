@@ -690,6 +690,16 @@ struct AnalysisState {
     /// instance's analysis rather than analyzing its body [FN-2]. Such a
     /// summary is already settled and is not finalized again.
     renamed_summaries: Vec<bool>,
+    /// During symbolic validation only: each generic declaration's canonical
+    /// symbolic instance with its renaming class, and the const parameters'
+    /// written types the class reads [FN-2].
+    symbolic_canonical: HashMap<DeclarationId, (FunctionId, generics::RenamingClass)>,
+    symbolic_const_types: HashMap<DeclarationId, super::model::IntegerType>,
+    /// During symbolic validation only: the positions, among its postcondition
+    /// selectors, of the clauses each checked canonical instance admits as
+    /// schema summaries. An instance taking that instance's outcomes admits
+    /// the same positions, so the two postcondition lists align.
+    symbolic_admitted: HashMap<FunctionId, Vec<usize>>,
     /// The receipt key of each function analyzed afresh, recorded once its
     /// analysis is accepted.
     receipt_keys: Vec<(usize, Vec<u8>)>,
@@ -1744,6 +1754,25 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .and_then(crate::DeclarationRecord::module),
             ..*check_context
         };
+        // [FN-2] a generic body is checked once, at its own symbolic
+        // instance. Another symbolic instance that only renames that
+        // instance's parameters forms its contract, which its callers read,
+        // and takes the checked canonical instance's outcomes for its body.
+        let summary_source = self
+            .analysis
+            .symbolic_canonical
+            .get(&signature.declaration)
+            .filter(|(canonical, class)| {
+                *canonical != signature.id
+                    && self.analysis.symbolic_admitted.contains_key(canonical)
+                    && generics::symbolic_renaming_class(
+                        signature,
+                        &self.analysis.symbolic_const_types,
+                    )
+                    .as_ref()
+                        == Some(class)
+            })
+            .map(|(canonical, _)| *canonical);
         self.check_musttail_callees(FunctionContext {
             check_context,
             function: signature,
@@ -1875,11 +1904,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             )?;
 
         bindings = parameter_bindings;
-        let statements = self
-            .types
-            .declarations
-            .tree
-            .children_with(signature.node, Production::Stmt)?;
+        let statements = if summary_source.is_some() {
+            Vec::new()
+        } else {
+            self.types
+                .declarations
+                .tree
+                .children_with(signature.node, Production::Stmt)?
+        };
         let mut checked = self.check_block(
             FunctionContext {
                 check_context,
@@ -1900,7 +1932,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
-        let declaration_only = self.types.declarations.tree.is_body_less(signature.node)?;
+        let declaration_only = summary_source.is_some()
+            || self.types.declarations.tree.is_body_less(signature.node)?;
         if declaration_only {
             checked.can_continue = false;
             checked.effects = signature.declared_effects.clone();
@@ -1930,6 +1963,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .types
                 .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
             self.types.exhibited_rows.insert(signature.id, row);
+        } else if let Some(source) = summary_source {
+            // The renamed body writes what the canonical body writes: both
+            // root their paths at the declaration's own parameters.
+            if let Some(writes) = self.types.exhibited_writes.get(&source).cloned() {
+                self.types.exhibited_writes.insert(signature.id, writes);
+            }
+            if let Some(row) = self.types.exhibited_rows.get(&source).cloned() {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
         }
         self.types.validate_release_graphs(&checked.statements)?;
         // [EFF-1] the row has exactly two categories, and [STOR-8] gives
@@ -1993,25 +2035,47 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             )?);
             postconditions
         } else {
-            postcondition_selectors
+            let source_admitted = summary_source
+                .and_then(|source| self.analysis.symbolic_admitted.get(&source))
+                .cloned();
+            let mut admitted = Vec::new();
+            let mut postconditions = Vec::new();
+            for (position, (selector, relation)) in postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_schema_postcondition(
-                        FunctionContext {
-                            check_context,
-                            function: signature,
-                        },
-                        &parameters,
-                        selector,
-                        relation,
-                        &checked.statements,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect()
+                .enumerate()
+            {
+                if source_admitted
+                    .as_ref()
+                    .is_some_and(|positions| !positions.contains(&position))
+                {
+                    continue;
+                }
+                if let Some(postcondition) = self.types.build_checked_schema_postcondition(
+                    FunctionContext {
+                        check_context,
+                        function: signature,
+                    },
+                    &parameters,
+                    selector,
+                    relation,
+                    &checked.statements,
+                )? {
+                    admitted.push(position);
+                    postconditions.push(postcondition);
+                }
+            }
+            if self
+                .analysis
+                .symbolic_canonical
+                .get(&signature.declaration)
+                .is_some_and(|(canonical, _)| *canonical == signature.id)
+            {
+                self.analysis
+                    .symbolic_admitted
+                    .insert(signature.id, admitted);
+            }
+            postconditions
         };
         let prelude_element = if signature.name == "paged_page_len"
             && self
@@ -2036,6 +2100,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let function = CheckedFunction {
             prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
+            summary_source,
             id: signature.id,
             declaration: signature.declaration,
             module: self

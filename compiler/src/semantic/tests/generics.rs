@@ -876,6 +876,36 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [FN-2, FN-9] `seven_of::<T>` inside `pick` renames `seven_of`'s own
+/// symbolic instance, so its body is not checked again: it takes that
+/// instance's outcomes, and its published summary is what proves the generic
+/// caller's subtraction.
+#[test]
+fn a_renamed_symbolic_instance_publishes_its_canonical_instances_summary() {
+    let source = br#"fn seven_of<T: copy>(value: T) -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  return 7_u64;
+}
+
+fn pick<U: copy>(value: U) -> r: U pure {
+  let n = seven_of::<U>(value: value);
+  let q = n - 7_u64;
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the renamed instance's summary proves the caller's subtraction: {outcome:?}"
+        );
+    });
+}
+
 #[test]
 fn unused_int_generic_body_is_checked_for_the_complete_bound_domain() {
     let source = br#"fn invalid<T: Int>(value: T) -> result: T pure {

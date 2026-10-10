@@ -53,10 +53,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: The new case passes on the head
-        run: cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib a_generic_body_reads_a_summary
-      - name: The new case fails when the scope stops at the canonical components' direct callees
+      - name: The new cases pass on the head
+        run: cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib -- a_generic_body_reads_a_summary a_renamed_symbolic_instance_publishes
+      - name: The scope case fails when the scope stops at the canonical components' direct callees
         run: |
+          cp compiler/src/semantic/check.rs $RUNNER_TEMP/check.rs
           python3 - <<'PY'
           p = "compiler/src/semantic/check.rs"; s = open(p).read()
           old = "            pending.extend(\n                schedule.components[component]"
@@ -65,3 +66,14 @@ jobs:
           open(p, "w").write(s)
           PY
           if cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib a_generic_body_reads_a_summary; then echo "MUTANT SURVIVED"; exit 1; else echo "mutant killed"; fi
+          cp $RUNNER_TEMP/check.rs compiler/src/semantic/check.rs
+      - name: The renamed-instance case fails without the edge to the canonical instance
+        run: |
+          python3 - <<'PY'
+          p = "compiler/src/semantic/entailment.rs"; s = open(p).read()
+          old = "        graph[index].extend(function.summary_source);\n"
+          assert old in s
+          s = s.replace(old, "", 1)
+          open(p, "w").write(s)
+          PY
+          if cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --lib a_renamed_symbolic_instance_publishes; then echo "MUTANT SURVIVED"; exit 1; else echo "mutant killed"; fi

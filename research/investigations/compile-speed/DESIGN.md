@@ -276,6 +276,25 @@ before these criteria were written; their results below are the same runs.
    concurrently with one another beside a serial symbolic type check that
    may hide their cost.
 
+11. **Contract-only renamed instances.** A non-canonical symbolic instance
+   whose arguments are distinct symbolic parameters of the kinds and const
+   types of its declaration's canonical instance forms only its contract,
+   admits the schema clauses the canonical instance admits, and takes the
+   canonical instance's outcomes; an edge to the canonical instance in the
+   postcondition schedule orders it after that instance or into its
+   component. A per-function timer on a GitHub-hosted run (Halo-wf `9915000`,
+   `pkg::vm`, candidate 10's head) found 8,537 such body checks taking
+   10.4 s of the 10.9 s spent checking bodies, against 0.1 s for the 137
+   canonical instances: each interpreter helper is instantiated at the
+   symbolic parameters of about 85 generic callers. Written before the
+   timing: the candidate is kept if the gate passes, Halo's `pkg::vm` check
+   keeps its verdict, the LLVM of Halo's `test` entry is byte-identical, a
+   verification run that also checks and analyzes every such instance finds
+   its admitted clauses and outcomes identical to the copied ones, and on the
+   i9-14900K (interleaved runs of candidate 10's head as the base, a twin of
+   it and this head, ten each after a warm-up, `taskset -c 2-15`) the head's
+   median wall time is below both the base's and the twin's minimum.
+
 Rejected alternatives:
 
 - Per-function concurrency first: the critical path is one function, not
