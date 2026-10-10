@@ -688,6 +688,17 @@ struct AnalysisState {
     /// instance's analysis rather than analyzing its body [FN-2]. Such a
     /// summary is already settled and is not finalized again.
     renamed_summaries: Vec<bool>,
+    /// During symbolic validation only: each generic declaration's canonical
+    /// symbolic instance with its renaming class, and the const parameters'
+    /// written types the class reads [FN-2].
+    symbolic_canonical: HashMap<DeclarationId, (FunctionId, generics::RenamingClass)>,
+    symbolic_const_types: HashMap<DeclarationId, super::model::IntegerType>,
+    symbolic_type_bounds: HashMap<DeclarationId, generics::GenericBound>,
+    /// During symbolic validation only: the positions, among its postcondition
+    /// selectors, of the clauses each checked canonical instance admits as
+    /// schema summaries. An instance taking that instance's outcomes admits
+    /// the same positions, so the two postcondition lists align.
+    symbolic_admitted: HashMap<FunctionId, Vec<usize>>,
     /// The receipt key of each function analyzed afresh, recorded once its
     /// analysis is accepted.
     receipt_keys: Vec<(usize, Vec<u8>)>,
@@ -1742,6 +1753,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .and_then(crate::DeclarationRecord::module),
             ..*check_context
         };
+        // [FN-2] a generic body is checked once, at its own symbolic
+        // instance. Another symbolic instance that only renames that
+        // instance's parameters forms its contract, which its callers read,
+        // and takes the checked canonical instance's outcomes for its body.
+        let summary_source = self
+            .analysis
+            .symbolic_canonical
+            .get(&signature.declaration)
+            .filter(|(canonical, class)| {
+                *canonical != signature.id
+                    && self.analysis.symbolic_admitted.contains_key(canonical)
+                    && generics::symbolic_renaming_class(
+                        signature,
+                        &self.analysis.symbolic_const_types,
+                    )
+                    .as_ref()
+                        == Some(class)
+                    && generics::renames_canonical_parameters(
+                        signature,
+                        &self.analysis.symbolic_type_bounds,
+                    )
+            })
+            .map(|(canonical, _)| *canonical);
         self.check_musttail_callees(FunctionContext {
             check_context,
             function: signature,
@@ -1873,11 +1907,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             )?;
 
         bindings = parameter_bindings;
-        let statements = self
-            .types
-            .declarations
-            .tree
-            .children_with(signature.node, Production::Stmt)?;
+        let statements = if summary_source.is_some() {
+            Vec::new()
+        } else {
+            self.types
+                .declarations
+                .tree
+                .children_with(signature.node, Production::Stmt)?
+        };
         let mut checked = self.check_block(
             FunctionContext {
                 check_context,
@@ -1894,11 +1931,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        self.check_spawned_callees_wait(signature)?;
+        // [WAIT-3] the canonical instance's body check recorded the waiting
+        // calls of these same source spawns.
+        if summary_source.is_none() {
+            self.check_spawned_callees_wait(signature)?;
+        }
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
-        let declaration_only = self.types.declarations.tree.is_body_less(signature.node)?;
+        let declaration_only = summary_source.is_some()
+            || self.types.declarations.tree.is_body_less(signature.node)?;
         if declaration_only {
             checked.can_continue = false;
             checked.effects = signature.declared_effects.clone();
@@ -1928,6 +1970,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .types
                 .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
             self.types.exhibited_rows.insert(signature.id, row);
+        } else if let Some(source) = summary_source {
+            // The renamed body writes what the canonical body writes: both
+            // root their paths at the declaration's own parameters.
+            if let Some(writes) = self.types.exhibited_writes.get(&source).cloned() {
+                self.types.exhibited_writes.insert(signature.id, writes);
+            }
+            if let Some(row) = self.types.exhibited_rows.get(&source).cloned() {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
         }
         self.types.validate_release_graphs(&checked.statements)?;
         // [EFF-1] the row has exactly two categories, and [STOR-8] gives
@@ -1991,25 +2042,47 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             )?);
             postconditions
         } else {
-            postcondition_selectors
+            let source_admitted = summary_source
+                .and_then(|source| self.analysis.symbolic_admitted.get(&source))
+                .cloned();
+            let mut admitted = Vec::new();
+            let mut postconditions = Vec::new();
+            for (position, (selector, relation)) in postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_schema_postcondition(
-                        FunctionContext {
-                            check_context,
-                            function: signature,
-                        },
-                        &parameters,
-                        selector,
-                        relation,
-                        &checked.statements,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
-                .collect()
+                .enumerate()
+            {
+                if source_admitted
+                    .as_ref()
+                    .is_some_and(|positions| !positions.contains(&position))
+                {
+                    continue;
+                }
+                if let Some(postcondition) = self.types.build_checked_schema_postcondition(
+                    FunctionContext {
+                        check_context,
+                        function: signature,
+                    },
+                    &parameters,
+                    selector,
+                    relation,
+                    &checked.statements,
+                )? {
+                    admitted.push(position);
+                    postconditions.push(postcondition);
+                }
+            }
+            if self
+                .analysis
+                .symbolic_canonical
+                .get(&signature.declaration)
+                .is_some_and(|(canonical, _)| *canonical == signature.id)
+            {
+                self.analysis
+                    .symbolic_admitted
+                    .insert(signature.id, admitted);
+            }
+            postconditions
         };
         let prelude_element = if signature.name == "paged_page_len"
             && self
@@ -2034,6 +2107,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let function = CheckedFunction {
             prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
+            summary_source,
             id: signature.id,
             declaration: signature.declaration,
             module: self
@@ -2142,134 +2216,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             refinement_witnesses: Vec::new(),
             call_value: true,
         })
-    }
-
-    /// Checks every source-generic body once with symbolic arguments, even when
-    /// no concrete instantiation is reachable from the executable program.
-    /// The ordinary entailment engine is the only acceptance path: generic
-    /// bodies do not receive a separate proof language or an assertion-based
-    /// exception.
-    fn validate_generic_body_entailment(
-        &mut self,
-        functions: &mut [CheckedFunctionInventory],
-        canonical: &[(usize, DeclarationId)],
-        callees: &[EntailmentCallee],
-    ) -> Result<Option<CheckStop>, CheckStop> {
-        let optimistic_batch = functions.iter().any(|checked| {
-            !checked.function.postconditions.is_empty()
-                || Checker::statements_contain_value_if(
-                    checked.function.body.as_deref().unwrap_or_default(),
-                )
-        });
-        // Only the canonical instances are judged below, and a judged body
-        // reads another function's analysis solely through the postcondition
-        // summaries of its callees. The other bodies of this symbolic
-        // view — every nongeneric function among them — are analyzed
-        // again by the concrete phase, so analyzing them here would repeat
-        // that whole cost for a result nothing reads.
-        let analyzed = Checker::generic_validation_scope(functions, canonical)?;
-        let mut judged = vec![false; functions.len()];
-        for (index, _) in canonical {
-            judged[*index] = true;
-        }
-        self.analyze_function_inventory(
-            functions,
-            callees,
-            optimistic_batch,
-            Some(&analyzed),
-            false,
-            Some(&judged),
-        )?;
-        if optimistic_batch {
-            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
-                if *analyzed && !self.analysis.renamed_summaries[index] {
-                    finalize_function_entailment(&mut checked.function.entailment);
-                }
-            }
-        }
-        if !self.reject_entailment {
-            return Ok(None);
-        }
-        for checked in functions.iter_mut() {
-            checked.function.body_disposition = checked.function.entailment.body_disposition;
-        }
-        let range_functions = functions
-            .iter()
-            .map(|checked| &checked.function)
-            .collect::<Vec<_>>();
-        let ranges = super::range_judgment::judge_program(
-            &range_functions,
-            &self.types.nominals,
-            &self.types.elements,
-            &judged,
-            &self.types.checked_constants,
-            super::range_judgment::JudgmentScope::Symbolic,
-            self.types.declarations.resolved,
-        );
-        for (index, declaration) in canonical {
-            let checked = functions
-                .get(*index)
-                .filter(|checked| checked.function.declaration == *declaration)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types.entailment_rejection_after_range(
-                &checked.function,
-                &ranges[*index].discharged,
-                &ranges[*index].inconclusive,
-            )?;
-        }
-        if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
-            matches!(
-                issue,
-                super::range_judgment::RangeIssue::Unsupported { .. }
-                    | super::range_judgment::RangeIssue::Undischarged {
-                        capacity: Some(_),
-                        ..
-                    }
-            )
-        }) {
-            return Ok(Some(self.range_issue(issue)));
-        }
-        for (index, _) in canonical {
-            if let Some(issue) = ranges[*index].issues.first() {
-                return Err(self.range_issue(issue));
-            }
-        }
-        Ok(None)
-    }
-    /// The functions whose bodies symbolic validation must analyze: the
-    /// canonical instances and everything their calls reach, by the same
-    /// call-graph shape the postcondition schedule is built from.
-    ///
-    /// The set is closed under callees, so a strongly connected component is
-    /// either wholly inside it or wholly outside, and every summary an
-    /// analyzed body can consume is published by an analyzed component.
-    fn generic_validation_scope(
-        functions: &[CheckedFunctionInventory],
-        canonical: &[(usize, DeclarationId)],
-    ) -> Result<Vec<bool>, CheckStop> {
-        let mut analyzed = vec![false; functions.len()];
-        let mut pending = canonical
-            .iter()
-            .map(|(index, _)| *index)
-            .collect::<Vec<_>>();
-        let mut calls = Vec::new();
-        while let Some(index) = pending.pop() {
-            let slot = analyzed
-                .get_mut(index)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if std::mem::replace(slot, true) {
-                continue;
-            }
-            let function = &functions[index].function;
-            calls.clear();
-            collect_statement_calls(
-                function.id,
-                function.body.as_deref().unwrap_or_default(),
-                &mut calls,
-            );
-            pending.extend(calls.iter().map(|call| call.callee.0 as usize));
-        }
-        Ok(analyzed)
     }
 
     fn install_call_requirements(
@@ -3235,9 +3181,14 @@ impl<'unit> TypeContext<'unit> {
                 checked.function.body.as_deref().unwrap_or_default(),
                 &mut calls,
             );
-            for call in &calls {
-                let callee = call.callee.0 as usize;
-                let Some(callee_callers) = callers.get_mut(callee) else {
+            // [FN-2] a contract-only renamed instance allocates when the
+            // canonical body it stands for does.
+            for callee in calls
+                .iter()
+                .map(|call| call.callee)
+                .chain(checked.function.summary_source)
+            {
+                let Some(callee_callers) = callers.get_mut(callee.0 as usize) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 callee_callers.push(index);

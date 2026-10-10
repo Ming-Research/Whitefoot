@@ -2003,6 +2003,7 @@ mod indexed_goal_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
@@ -2237,6 +2238,7 @@ mod range_argument_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
