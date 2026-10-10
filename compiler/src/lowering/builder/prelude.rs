@@ -45,7 +45,7 @@ impl IrBuilder<'_> {
         element: Option<crate::semantic::CheckedElement>,
     ) -> Result<(), LoweringFailure> {
         match name {
-            "box_new" => self.row_box_new(),
+            "box_new" | "frozen_new" => self.row_box_new(),
             "array_filled" => self.row_array_filled(),
             "slots_new" | "ring_new" => self.row_window_new(),
             "slots_from_array" | "slots_into_array" => self.row_full_array_conversion(),
@@ -67,7 +67,9 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
-            "shared_share" | "shared_read" | "shared_read_share" => self.row_shared_share(),
+            "shared_share" | "shared_read" | "shared_read_share" | "frozen_share" => {
+                self.row_shared_share()
+            }
             "shared_map_new" => self.row_shared_map_new(),
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
@@ -147,7 +149,8 @@ impl IrBuilder<'_> {
 
     // ---- [OP-13] construction ------------------------------------------
 
-    /// `box_new<T>(value: T) -> Box<T>`: one cell holding the value.
+    /// `box_new` and `frozen_new`: one pointer to the moved value. The
+    /// result nominal's release class selects allocation and reclamation.
     fn row_box_new(&mut self) -> Result<(), LoweringFailure> {
         let [value] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
@@ -282,8 +285,8 @@ impl IrBuilder<'_> {
         self.return_value(index)
     }
 
-    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle
-    /// to the object the argument names [SHARE-1].
+    /// The shared and frozen share rows: retain the object the argument
+    /// names and return its one-pointer handle [SHARE-1].
     fn row_shared_share(&mut self) -> Result<(), LoweringFailure> {
         let [shared] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {

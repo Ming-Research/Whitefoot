@@ -1,0 +1,137 @@
+fn iterations(args: &std::text::Args) -> result: Option<u64> reads(args) {
+  let count = std::text::args_count(args: args);
+  if count != 2_u64 {
+    return None<u64>();
+  }
+  let digits = array_filled::<u8, 12>(value: 0_u8);
+  let window = &digits[0_u64..12_u64];
+  let length = 0_u64;
+  match std::text::arg_get(args: args, position: 1_u64) {
+    Ok(value: text) => {
+      match std::text::host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 12_u64) {
+        Ok(value: next) => {
+          set length = next;
+        }
+        Err(error: problem) => {
+          return None<u64>();
+        }
+      }
+    }
+    Err(error: problem) => {
+      return None<u64>();
+    }
+  }
+  if length == 0_u64 {
+    return None<u64>();
+  }
+  let value = 0_u64;
+  for (index in 0_u64..length) {
+    let byte = window^[index];
+    if byte < 48_u8 {
+      return None<u64>();
+    }
+    if byte > 57_u8 {
+      return None<u64>();
+    }
+    let digit = byte - 48_u8;
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = value *wrap 10_u64;
+    set value = scaled +wrap wide;
+  }
+  return Some<u64>(value: value);
+}
+
+fn emit(factory: &std::io::HandleFactory, output: &std::io::OutputStream, bytes: &[u8]) -> result: Bool reads(bytes), writes(factory), writes(output) waits {
+  let end = bytes^.len;
+  let cancel = std::time::cancel_never();
+  let unlimited = None<std::time::Instant>();
+  let outcome = std::io::write_once(factory: factory, output: output, source: bytes, start: 0_u64, end: end, deadline: unlimited, cancel: &cancel);
+  std::time::close_cancel_watch(watch: move cancel);
+  match outcome {
+    Ok(value: next) => {
+      return next == end;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn burn(count: u64) -> checksum: u64 pure waits {
+  let x = 1_u64;
+  for (i in 0_u64..count) {
+    let product = x *wrap 6364136223846793005_u64;
+    let mixed = product +wrap i;
+    set x = mixed % 1000000007_u64;
+  }
+  return x;
+}
+
+fn compute(count: u64, factory: std::io::HandleFactory, output: std::io::OutputStream) -> result: Bool pure waits {
+  let checksum = burn(count: count);
+  let packet = array_filled::<u8, 9>(value: 67_u8);
+  let rest = checksum;
+  for (index in 1_u64..9_u64) {
+    let low = rest % 256_u64;
+    let byte = cvt::<u64, u8>(low);
+    set packet[index] = byte;
+    set rest = rest / 256_u64;
+  }
+  let bytes = &packet[0_u64..9_u64];
+  return emit(factory: &factory, output: &output, bytes: bytes);
+}
+
+fn timer(deadline: std::time::Instant, factory: &std::io::HandleFactory, output: &std::io::OutputStream) -> result: Bool writes(factory), writes(output) waits {
+  let cancel = std::time::cancel_never();
+  let outcome = std::time::sleep_until(deadline: deadline, cancel: &cancel);
+  std::time::close_cancel_watch(watch: move cancel);
+  match outcome {
+    Ok(value: elapsed) => {
+      let bytes = array_filled::<u8, 1>(value: 84_u8);
+      let window = &bytes[0_u64..1_u64];
+      return emit(factory: factory, output: output, bytes: window);
+    }
+    Err(error: cancelled) => {
+      return False();
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+  let std::fs::Directory(read: cwd, write: writable) = move directory;
+  let closed_write = std::fs::close_directory_write(factory: &factory, directory: move writable);
+  let closed_read = std::fs::close_directory(factory: &factory, directory: move cwd);
+  match closed_write {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 3_u8);
+    }
+  }
+  match closed_read {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 3_u8);
+    }
+  }
+  match iterations(args: &args) {
+    Some(value: count) => {
+      let worker_factory = std::io::factory_share(factory: &factory);
+      let now = std::time::now(clock: &clock);
+      let deadline = std::time::instant_after(instant: now, nanoseconds: 100000000_u64);
+      let job = spawn compute(count: count, factory: move worker_factory, output: move err);
+      let timer_ok = timer(deadline: deadline, factory: &factory, output: &out);
+      let compute_ok = job;
+      let succeeded = band(timer_ok, compute_ok);
+      if succeeded {
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 1_u8);
+    }
+    None() => {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+}

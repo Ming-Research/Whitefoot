@@ -801,3 +801,171 @@ fn swap_over_a_copy_place_is_refused() {
         matches!(kind, SemanticIssueKind::SwapOverCopyPlace { .. })
     });
 }
+
+/// [TYPE-9] an operand-supplied argument has no written `targ`, so the
+/// placement refusal cites the complete `call`, with the owning-Box repair.
+#[test]
+fn swap_of_runtime_capacity_contents_is_refused_at_the_call() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-runtime-array-content-swap.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-runtime-ring-content-swap.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-segments-content-swap.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/type9-neg-paged-content-swap.wf")
+            .as_slice(),
+    ] {
+        assert_rule_at(
+            source,
+            SemanticRule::Type9,
+            "swap(first: &small.inner, second: &large.inner)",
+        );
+        assert_rule_kind(source, SemanticRule::Type9, |kind| {
+            matches!(kind, SemanticIssueKind::InvalidRestrictedTypePlacement { mechanical_fix, .. }
+                if mechanical_fix == "swap the owning `Box` values instead of their contents")
+        });
+    }
+}
+
+/// [TYPE-9, FN-2] a parameter takes the exchange place in its concrete
+/// body's `swap`, and the refusal retains the caller's complete written `targ`.
+#[test]
+fn generic_swap_of_runtime_capacity_contents_is_refused_at_the_type_argument() {
+    assert_rule_at(
+        include_bytes!("../../../../tests/conformance/cases/type9-neg-generic-runtime-content-swap.wf"),
+        SemanticRule::Type9,
+        "Slots<u64>",
+    );
+}
+
+/// [TYPE-9, FN-2] equal concrete arguments preserve the identity of the
+/// parameter taking the exchange place, even when another argument comes first.
+#[test]
+fn generic_swap_blames_only_the_exchanging_parameter() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/type9-neg-generic-swap-argument-provenance.wf"
+    );
+    let text = std::str::from_utf8(source).expect("source is text");
+    let prefix = "exchange::<Slots<u64>, ";
+    let start = text.find(prefix).expect("call has both type arguments") + prefix.len();
+    super::with_semantics(source, |outcome| {
+        let crate::SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected TYPE-9 at the second type argument, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Type9);
+        let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        assert_eq!(coordinate.start().value(), start as u64);
+        assert_eq!(coordinate.end().value(), (start + "Slots<u64>".len()) as u64);
+    });
+}
+
+/// [TYPE-9, FN-2..FN-5] the actual swap parameter takes the exchange
+/// place before a formal call signature can conceal its prelude identity.
+/// Each refusal cites the complete written `targ`, not the formal type or
+/// the outer function-kind argument. A generic body's actual retains the
+/// caller's written targ supplying its exchanging parameter.
+#[test]
+fn function_kind_swap_actuals_refuse_runtime_contents_at_the_written_targ() {
+    for (source, prefix) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type9-neg-function-actual-runtime-content-swap.wf"
+            )
+            .as_slice(),
+            "fn swap::<",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type9-neg-binding-runtime-content-swap.wf"
+            )
+            .as_slice(),
+            "exchange = swap::<",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type9-neg-forwarded-runtime-content-swap.wf"
+            )
+            .as_slice(),
+            "fn swap::<",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type9-neg-generic-function-actual-runtime-content-swap.wf"
+            )
+            .as_slice(),
+            "relay::<",
+        ),
+    ] {
+        let text = std::str::from_utf8(source).expect("source is text");
+        let start = text.find(prefix).expect("written type argument") + prefix.len();
+        super::with_semantics(source, |outcome| {
+            let crate::SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected TYPE-9 at swap's supplied type argument, got {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Type9);
+            assert!(matches!(
+                issue.kind(),
+                SemanticIssueKind::InvalidRestrictedTypePlacement { mechanical_fix, .. }
+                    if mechanical_fix.contains("swap the owning `Box` values instead of their contents")
+            ));
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            assert_eq!(coordinate.start().value(), start as u64);
+            assert_eq!(coordinate.end().value(), (start + "Slots<u64>".len()) as u64);
+        });
+    }
+}
+
+/// [TYPE-9, FN-2] only the source-canonical symbolic instance records a
+/// call's exchanging parameter. A renamed instance must not overwrite that
+/// identity and move a later concrete refusal from its complete written targ.
+#[test]
+fn renamed_symbolic_swap_keeps_the_canonical_argument_provenance() {
+    assert_rule_at(
+        include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-renamed-generic-swap-argument.wf"
+        ),
+        SemanticRule::Type9,
+        "Slots<u64>",
+    );
+}
+
+/// [TYPE-9] the exchange home admits owning Boxes through raw actuals,
+/// forwarding, generic actuals and interface-member bindings.
+#[test]
+fn function_kind_swap_actuals_admit_runtime_capacity_owners() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-function-actual-box-swap.wf"
+    ));
+}
+
+/// [TYPE-9] Box values can take the exchange place; map targets explicitly
+/// include it in their home, including through a user generic parameter.
+#[test]
+fn swap_admits_runtime_capacity_owners_and_map_targets() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
+    ));
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-generic-runtime-box-swap.wf"
+    ));
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-map-swapped.wf"
+    ));
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-generic-map-swap.wf"
+    ));
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/exclusive-generic-whole-replacement.wf"
+    ));
+}

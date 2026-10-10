@@ -223,10 +223,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let Some(Relation::Bound { left, right, bound }) = &above.projection else {
         panic!("the ige member must retain its projection: {above:?}");
     };
-    assert_eq!(
-        summary.inventory.terms[left.0 as usize],
-        TermKind::Zero
-    );
+    assert_eq!(summary.inventory.terms[left.0 as usize], TermKind::Zero);
     assert!(matches!(
         summary.inventory.terms[right.0 as usize],
         TermKind::Place(..)

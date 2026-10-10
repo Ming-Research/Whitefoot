@@ -576,12 +576,16 @@ impl<'unit> Checker<'_, 'unit> {
                 .types
                 .readonly_member_on_resolved_path(check_context, path, bindings)?
                 .is_some();
+            let frozen_content = self
+                .types
+                .frozen_member_on_resolved_path(check_context, path, bindings)?
+                .is_some();
             let path = path.loop_carried(
                 token.loop_id,
                 token.owner,
                 u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
             )?;
-            contributions.push((path, readonly));
+            contributions.push((path, readonly, frozen_content));
         }
         let summaries = &mut self.body.loop_reference_summaries;
         let summary = match summaries.entry(token) {
@@ -590,7 +594,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // leaves those shapes. Merely entering a loop must not lose
                 // a previously established sibling-field separation.
                 entry.insert(LoopReferenceSummary {
-                    paths: contributions.into_iter().map(|(path, _)| path).collect(),
+                    paths: contributions.into_iter().map(|(path, _, _)| path).collect(),
                 });
                 return Ok(true);
             }
@@ -599,7 +603,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut changed = false;
 
         let paths = &mut summary.paths;
-        for (incoming, incoming_readonly) in contributions {
+        for (incoming, incoming_readonly, incoming_frozen) in contributions {
             if !incoming.has_descendant()
                 && paths.iter().any(|current| {
                     !current.has_descendant() && path_shapes_agree(current, &incoming)
@@ -617,11 +621,16 @@ impl<'unit> Checker<'_, 'unit> {
                 continue;
             }
             let mut readonly = incoming_readonly;
+            let mut frozen_content = incoming_frozen;
             let mut prefix = incoming.cover_prefix().to_vec();
             for current in &same_root {
                 readonly |= self
                     .types
                     .readonly_member_on_resolved_path(check_context, current, bindings)?
+                    .is_some();
+                frozen_content |= self
+                    .types
+                    .frozen_member_on_resolved_path(check_context, current, bindings)?
                     .is_some();
                 let shared = prefix
                     .iter()
@@ -641,6 +650,7 @@ impl<'unit> Checker<'_, 'unit> {
                 ty,
                 range: kind == ReferenceKind::Range,
                 readonly,
+                frozen_content,
             }));
             if same_root.as_slice() != [&joined] {
                 let index = paths
@@ -2045,12 +2055,8 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .resolved
-            .declarations()
-            .iter()
-            .find(|declaration| {
-                declaration.id() == local.declaration
-                    && declaration.role() == DeclarationRole::Parameter
-            })
+            .declaration(local.declaration)
+            .filter(|declaration| declaration.role() == DeclarationRole::Parameter)
             .map(|declaration| declaration.id())
     }
 
@@ -2059,11 +2065,8 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .resolved
-            .declarations()
-            .iter()
-            .any(|candidate| {
-                candidate.id() == declaration && candidate.role() == DeclarationRole::AtomicBinder
-            })
+            .declaration(declaration)
+            .is_some_and(|candidate| candidate.role() == DeclarationRole::AtomicBinder)
     }
 
     /// [EFF-2] the enclosing formal-rooted effect of one resolved access.
@@ -2091,19 +2094,17 @@ impl<'unit> Checker<'_, 'unit> {
         if local.mode == CheckedMode::Own {
             return Ok(Vec::new());
         }
-        let is_parameter =
-            self.types
-                .declarations
-                .resolved
-                .declarations()
-                .iter()
-                .any(|declaration| {
-                    declaration.id() == local.declaration
-                        && matches!(
-                            declaration.role(),
-                            DeclarationRole::Parameter | DeclarationRole::AtomicBinder
-                        )
-                });
+        let is_parameter = self
+            .types
+            .declarations
+            .resolved
+            .declaration(local.declaration)
+            .is_some_and(|declaration| {
+                matches!(
+                    declaration.role(),
+                    DeclarationRole::Parameter | DeclarationRole::AtomicBinder
+                )
+            });
         if !is_parameter {
             return Ok(Vec::new());
         }
@@ -2557,9 +2558,122 @@ impl<'unit> TypeContext<'unit> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InvalidationEvent, ReferenceInfo, ReferenceKind, ReferenceValidity};
-    use crate::semantic::model::BindingId;
-    use crate::semantic::places::{PlaceStep, ResolvedPlace};
+    use super::super::{AnalysisState, TreeView};
+    use super::*;
+    use crate::semantic::places::CaptureId;
+
+    /// The former effect-root classification, including find/any's absence rules.
+    fn scanned_effect_classification(
+        resolved: &crate::ResolvedSyntaxUnit,
+        id: DeclarationId,
+    ) -> (Option<DeclarationId>, bool, bool) {
+        (
+            resolved
+                .declarations()
+                .iter()
+                .find(|record| record.id() == id && record.role() == DeclarationRole::Parameter)
+                .map(|record| record.id()),
+            resolved
+                .declarations()
+                .iter()
+                .any(|record| record.id() == id && record.role() == DeclarationRole::AtomicBinder),
+            resolved.declarations().iter().any(|record| {
+                record.id() == id
+                    && matches!(
+                        record.role(),
+                        DeclarationRole::Parameter | DeclarationRole::AtomicBinder
+                    )
+            }),
+        )
+    }
+
+    #[test]
+    fn direct_effect_classification_matches_scan_for_every_role_and_absence() {
+        crate::resolution::with_each_declaration_role(|resolved| {
+            let declarations = DeclarationInventory {
+                resolved,
+                no_heap: false,
+                tree: TreeView::new(resolved.syntax()).unwrap(),
+            };
+            let mut types = TypeContext::new(&declarations);
+            let mut body = BodyChecker::default();
+            let mut analysis = AnalysisState::default();
+            let checker = Checker::new(&mut types, &mut body, &mut analysis, true, None);
+            for index in (0..=resolved.declarations().len()).chain([u32::MAX as usize]) {
+                let id = DeclarationId::from_index(index).unwrap();
+                let expected = scanned_effect_classification(resolved, id);
+                let direct = resolved.declaration(id);
+                let scanned = resolved
+                    .declarations()
+                    .iter()
+                    .find(|record| record.id() == id);
+                assert_eq!(direct, scanned);
+                if let (Some(direct), Some(scanned)) = (direct, scanned) {
+                    assert!(std::ptr::eq(direct, scanned), "return the very same record");
+                }
+                let local = LocalBinding {
+                    binding: BindingId(0),
+                    declaration: id,
+                    mode: CheckedMode::Reference,
+                    ty: CheckedType::Unit,
+                    live: true,
+                    loop_depth: 0,
+                    compiler_updated: false,
+                    reference: None,
+                    refinement_witnesses: Vec::new(),
+                    call_value: true,
+                    read_only_state: false,
+                };
+                let mut bindings = HashMap::from([(id, local)]);
+                let capture =
+                    CapturedValue::new(CaptureId::source(0), CapturedTerm::Binding(BindingId(0)));
+                let mut place = ResolvedPlace::binding(BindingId(0));
+                place.path.push(PlaceStep::Field(2));
+                assert_eq!(checker.captured_parameter(capture, &bindings), expected.0);
+                assert_eq!(checker.is_atomic_binder(id), expected.1);
+                let paths = checker
+                    .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
+                    .unwrap_or_else(|_| panic!("the place projects without a stop"))
+                    .into_iter()
+                    .map(|effect| effect.path)
+                    .collect::<Vec<_>>();
+                let expected_paths = if expected.2 {
+                    vec![CheckedStatePath {
+                        root: id,
+                        steps: vec![CheckedEffectStep::Field(2)],
+                    }]
+                } else {
+                    vec![]
+                };
+                assert_eq!(paths, expected_paths);
+                bindings.get_mut(&id).unwrap().mode = CheckedMode::Own;
+                assert!(
+                    checker
+                        .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
+                        .unwrap_or_else(|_| panic!("the place projects without a stop"))
+                        .is_empty()
+                );
+                bindings.get_mut(&id).unwrap().call_value = false;
+                assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                checker.body.call_value_captures.insert(capture.capture);
+                let superseded =
+                    CapturedValue::new(capture.capture, CapturedTerm::Superseded(BindingId(0)));
+                assert_eq!(
+                    checker.captured_parameter(superseded, &bindings),
+                    expected.0
+                );
+                checker.body.call_value_captures.clear();
+                bindings.clear();
+                assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                assert!(
+                    checker
+                        .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
+                        .unwrap_or_else(|_| panic!("the place projects without a stop"))
+                        .is_empty()
+                );
+            }
+        });
+    }
 
     /// This module is the only place [REF-2]'s validity lattice can be read
     /// directly: `ReferenceInfo` is `pub(super)` inside
