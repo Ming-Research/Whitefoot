@@ -54,6 +54,15 @@ pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {
 
 /// [FN-6] repair the changed argument under the callee's ordinary kind and
 /// bound requirements, or move its construction outside the cycle.
+/// [FORM-7] a non-canonical float literal: write its canonical spelling, or,
+/// when it denotes no finite value of its type, one that does.
+pub(super) fn float_literal_repair(canonical_spelling: Option<&str>) -> String {
+    match canonical_spelling {
+        Some(spelling) => format!("write the literal as `{spelling}`"),
+        None => "replace the literal with a canonical spelling of a finite value representable in its stated type".to_owned(),
+    }
+}
+
 pub(super) const fn instantiation_cycle_repair() -> &'static str {
     "use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle"
 }
