@@ -1579,3 +1579,59 @@ mixed results stay undecided; `dedup` is supported only by disjoint, lower
 CPU-margin intervals. The six-round sizing projection scales interval width
 by `sqrt(6/n)`, and the decisive reducer requires the saved sample and its
 selected round count.
+
+## Experiment 3's results
+
+[Compute-bench run 38063795788](https://github.com/Ming-Research/Whitefoot/actions/runs/38063795788)
+(revision 5a6f57277; native 14900K, 15:32–15:51 UTC; one logical CPU per
+performance core). The harness ran the six-round sample, which by the rule
+selected thirty rounds, then the thirty decisive rounds, not pooled with
+the sample; counter builds ran once per arm and decide nothing. Every twin
+interval contains 1 except none: all cells are valid. Wall ratios are each
+arm ÷ `demand` (below 1 is faster), median and 95 percent interval;
+`par` is shown as `par ÷ demand` for reference.
+
+| Workload | W | `par` | `order` | `seed` | `extent` | `dedup` |
+|---|---:|---|---|---|---|---|
+| mandelbrot | 4 | 0.944 | 1.061 [1.037, 1.075] | 0.961 [0.937, 0.984] | 0.952 [0.921, 0.955] | 1.001 [0.994, 1.032] |
+| mandelbrot | 8 | 0.836 | 1.081 [1.063, 1.101] | 0.912 [0.903, 0.918] | 0.838 [0.831, 0.848] | 1.011 [1.000, 1.035] |
+| stencil | 4 | 0.960 | 1.000 [0.990, 1.016] | 0.973 [0.962, 0.993] | 0.947 [0.935, 0.961] | 1.010 [0.990, 1.019] |
+| stencil | 8 | 0.892 | 0.994 [0.983, 1.001] | 0.957 [0.948, 0.973] | 0.888 [0.883, 0.896] | 0.996 [0.986, 1.013] |
+| recursion | 4 | 0.943 | 1.001 [0.978, 1.027] | 0.982 [0.969, 1.019] | 0.992 [0.969, 1.026] | 0.991 [0.960, 1.012] |
+| recursion | 8 | 0.938 | 1.037 [0.978, 1.075] | 1.018 [0.990, 1.049] | 1.017 [0.980, 1.041] | 1.005 [0.979, 1.042] |
+| histogram | 8 | 0.996 | 1.007 [0.965, 1.036] | 0.987 [0.949, 1.014] | 0.990 [0.961, 1.049] | 0.992 [0.966, 1.025] |
+| records | 8 | 0.980 | 0.993 [0.977, 1.021] | 3.579 [3.488, 3.693] | 1.002 [0.990, 1.020] | 1.004 [0.967, 1.057] |
+| fir | 8 | 1.995 | 1.004 [0.999, 1.006] | 3.706 [3.699, 3.708] | 0.996 [0.993, 0.997] | 1.000 [0.998, 1.003] |
+
+E2-H3 CPU margin (at most 0 passes), `demand` against `extent`: `stencil`
+at four +0.284 against +0.186, at eight +1.064 against +0.605; `histogram`
+at eight +0.240 against +0.176.
+
+**Per cause, by the registered rule:**
+
+- `order` on `mandelbrot` at eight: undecided by the rule (its interval
+  excludes 1, but in the worsening direction): publishing the near half and
+  running the far half is 6 to 8 percent slower. Publication order is not
+  the cause; the change is dropped.
+- `seed` on `mandelbrot` and `stencil`: supported (4 to 9 percent faster
+  than `demand`), on `recursion` rejected. It is not adoptable as built: it
+  makes `records` and `fir` at eight 3.6 to 3.7 times slower, its counter
+  build parking workers on `fir` (14 parks, 16 ms) where `demand` parks
+  none; the cause of that is not yet attributed.
+- `extent` on `stencil`: supported, reaching `par`'s wall at eight (0.888
+  against 0.892) and passing it at four; on `histogram`: rejected.
+  Exploratory, beyond the registration: it also closes `mandelbrot`'s whole
+  loss to `par` (0.838 against 0.836 at eight, 0.952 against 0.944 at four)
+  and changes no other cell outside its noise. Static per-iteration weights
+  under-price a slice whose iterations do variable work, so demand's slices
+  were too coarse to balance.
+- `dedup` on `stencil` and `histogram`: rejected; the counted request does
+  not cost the excess CPU.
+
+**What stays unexplained.** `recursion` at eight is 6 percent slower than
+`par` under every arm. `stencil` still fails E2-H3 with `extent`; its
+counters (one process, eight workers) show demand spinning about 120 ms in
+total and `extent` 22 ms, while process CPU stays about twice sequential, so
+most of the excess is in the slices' own execution, consistent with memory
+bandwidth shared by eight workers rather than with waiting.
+
