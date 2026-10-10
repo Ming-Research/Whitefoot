@@ -1,0 +1,202 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias MemoryMeter = std::process::MemoryMeter;
+alias heap_in_use = std::process::heap_in_use;
+alias exit_status = std::process::exit_status;
+
+struct Reading {
+  before: u64;
+  after: u64;
+}
+
+struct DiagNode {
+  bytes: Box<Array<u8>>;
+}
+
+struct DiagProgress {
+  requested: u64;
+  published: u64;
+}
+
+fn discard<T: drop>(value: T) -> result: unit pure {
+  return unit;
+}
+
+fn new_node(value: u8) -> result: SharedRead<DiagNode> pure {
+  let bytes = box_array_filled::<u8>(count: 1_u64, value: value);
+  let node = DiagNode(bytes: move bytes);
+  let writer = shared_new::<DiagNode>(value: move node);
+  return shared_read::<DiagNode>(shared: &writer);
+}
+
+fn scope_phase(meter: &MemoryMeter) -> result: u64 writes(meter) waits {
+  doc "Repeat the ownership operations internally, leaving the scalar, reader, publication cell and Progress for implicit scope-exit cleanup. The result is the live reading immediately before that cleanup.";
+  let scalar = shared_new::<u64>(value: 7_u64);
+  let payload = box_new::<u64>(value: 11_u64);
+  let writer = shared_new::<Box<u64>>(value: move payload);
+  let reader = shared_read::<Box<u64>>(shared: &writer);
+  discard::<Shared<Box<u64>>>(value: move writer);
+  let empty = None<SharedRead<DiagNode>>();
+  let current = shared_new::<Option<SharedRead<DiagNode>>>(value: move empty);
+  let first = new_node(value: 21_u8);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move first);
+  }
+  let second = new_node(value: 22_u8);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move second);
+  }
+  let third = new_node(value: 23_u8);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move third);
+  }
+  let start = DiagProgress(requested: 0_u64, published: 0_u64);
+  let progress = shared_new::<DiagProgress>(value: start);
+  atomic state = &progress {
+    set state^.requested = 1_u64;
+  }
+  atomic state = &progress {
+    set state^.published = 1_u64;
+  }
+  return heap_in_use(meter: meter);
+}
+
+fn frame_only(meter: &MemoryMeter, depth: u64) -> result: u64 writes(meter) waits {
+  doc "No Box or Shared: non-tail waiting recursion isolates runtime frame-arena retention. Return the largest reading while unwinding; the post-call read prevents a tail transfer.";
+  if depth == 0_u64 {
+    return heap_in_use(meter: meter);
+  }
+  let next = depth - 1_u64;
+  let nested = frame_only(meter: meter, depth: next);
+  let here = heap_in_use(meter: meter);
+  if nested > here {
+    return nested;
+  }
+  return here;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Collect every reading before the first output operation so reporting frames and I/O cannot contaminate a measured interval. No assertions replace the witness's expectations.";
+  let Inputs(cwd: directory, stdout: output, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let zero = Reading(before: 0_u64, after: 0_u64);
+  let readings = array_filled::<Reading, 26>(value: zero);
+  let before_1 = heap_in_use(meter: &meter);
+  let scalar = shared_new::<u64>(value: 7_u64);
+  let after_1 = heap_in_use(meter: &meter);
+  set readings[0_u64] = Reading(before: before_1, after: after_1);
+  let before_2 = heap_in_use(meter: &meter);
+  discard::<Shared<u64>>(value: move scalar);
+  let after_2 = heap_in_use(meter: &meter);
+  set readings[1_u64] = Reading(before: before_2, after: after_2);
+  let before_3 = heap_in_use(meter: &meter);
+  let payload = box_new::<u64>(value: 11_u64);
+  let after_3 = heap_in_use(meter: &meter);
+  set readings[2_u64] = Reading(before: before_3, after: after_3);
+  let before_4 = heap_in_use(meter: &meter);
+  let writer = shared_new::<Box<u64>>(value: move payload);
+  let after_4 = heap_in_use(meter: &meter);
+  set readings[3_u64] = Reading(before: before_4, after: after_4);
+  let before_5 = heap_in_use(meter: &meter);
+  let reader = shared_read::<Box<u64>>(shared: &writer);
+  let after_5 = heap_in_use(meter: &meter);
+  set readings[4_u64] = Reading(before: before_5, after: after_5);
+  let before_6 = heap_in_use(meter: &meter);
+  discard::<Shared<Box<u64>>>(value: move writer);
+  let after_6 = heap_in_use(meter: &meter);
+  set readings[5_u64] = Reading(before: before_6, after: after_6);
+  let before_7 = heap_in_use(meter: &meter);
+  discard::<SharedRead<Box<u64>>>(value: move reader);
+  let after_7 = heap_in_use(meter: &meter);
+  set readings[6_u64] = Reading(before: before_7, after: after_7);
+  let before_8 = heap_in_use(meter: &meter);
+  let empty = None<SharedRead<DiagNode>>();
+  let current = shared_new::<Option<SharedRead<DiagNode>>>(value: move empty);
+  let after_8 = heap_in_use(meter: &meter);
+  set readings[7_u64] = Reading(before: before_8, after: after_8);
+  let before_9 = heap_in_use(meter: &meter);
+  let first = new_node(value: 21_u8);
+  let after_9 = heap_in_use(meter: &meter);
+  set readings[8_u64] = Reading(before: before_9, after: after_9);
+  let before_10 = heap_in_use(meter: &meter);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move first);
+  }
+  let after_10 = heap_in_use(meter: &meter);
+  set readings[9_u64] = Reading(before: before_10, after: after_10);
+  let before_11 = heap_in_use(meter: &meter);
+  let second = new_node(value: 22_u8);
+  let after_11 = heap_in_use(meter: &meter);
+  set readings[10_u64] = Reading(before: before_11, after: after_11);
+  let before_12 = heap_in_use(meter: &meter);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move second);
+  }
+  let after_12 = heap_in_use(meter: &meter);
+  set readings[11_u64] = Reading(before: before_12, after: after_12);
+  let before_13 = heap_in_use(meter: &meter);
+  let third = new_node(value: 23_u8);
+  let after_13 = heap_in_use(meter: &meter);
+  set readings[12_u64] = Reading(before: before_13, after: after_13);
+  let before_14 = heap_in_use(meter: &meter);
+  atomic state = &current {
+    set state^ = Some<SharedRead<DiagNode>>(value: move third);
+  }
+  let after_14 = heap_in_use(meter: &meter);
+  set readings[13_u64] = Reading(before: before_14, after: after_14);
+  let before_15 = heap_in_use(meter: &meter);
+  discard::<Shared<Option<SharedRead<DiagNode>>>>(value: move current);
+  let after_15 = heap_in_use(meter: &meter);
+  set readings[14_u64] = Reading(before: before_15, after: after_15);
+  let before_16 = heap_in_use(meter: &meter);
+  let start = DiagProgress(requested: 0_u64, published: 0_u64);
+  let progress = shared_new::<DiagProgress>(value: start);
+  let after_16 = heap_in_use(meter: &meter);
+  set readings[15_u64] = Reading(before: before_16, after: after_16);
+  let before_17 = heap_in_use(meter: &meter);
+  atomic state = &progress {
+    set state^.requested = 1_u64;
+  }
+  atomic state = &progress {
+    set state^.published = 1_u64;
+  }
+  let after_17 = heap_in_use(meter: &meter);
+  set readings[16_u64] = Reading(before: before_17, after: after_17);
+  let before_18 = heap_in_use(meter: &meter);
+  discard::<Shared<DiagProgress>>(value: move progress);
+  let after_18 = heap_in_use(meter: &meter);
+  set readings[17_u64] = Reading(before: before_18, after: after_18);
+  let before_19 = heap_in_use(meter: &meter);
+  let during_19 = scope_phase(meter: &meter);
+  let after_19 = heap_in_use(meter: &meter);
+  set readings[18_u64] = Reading(before: before_19, after: during_19);
+  set readings[19_u64] = Reading(before: before_19, after: after_19);
+  let before_21 = heap_in_use(meter: &meter);
+  let during_21 = scope_phase(meter: &meter);
+  let after_21 = heap_in_use(meter: &meter);
+  set readings[20_u64] = Reading(before: before_21, after: during_21);
+  set readings[21_u64] = Reading(before: before_21, after: after_21);
+  let before_23 = heap_in_use(meter: &meter);
+  let during_23 = frame_only(meter: &meter, depth: 256_u64);
+  let after_23 = heap_in_use(meter: &meter);
+  set readings[22_u64] = Reading(before: before_23, after: during_23);
+  set readings[23_u64] = Reading(before: before_23, after: after_23);
+  let before_25 = heap_in_use(meter: &meter);
+  let during_25 = frame_only(meter: &meter, depth: 256_u64);
+  let after_25 = heap_in_use(meter: &meter);
+  set readings[24_u64] = Reading(before: before_25, after: during_25);
+  set readings[25_u64] = Reading(before: before_25, after: after_25);
+  for (index in 0_u64..26_u64) {
+    let step = cvt::<u64, u8>(index);
+    let displayed = step + 1_u8;
+    let reading = readings[index];
+    let printed = heap_report(factory: &factory, output: &output, step: displayed, before: reading.before, after: reading.after);
+    if printed {
+    } else {
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

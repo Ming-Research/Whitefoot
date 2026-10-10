@@ -1,0 +1,65 @@
+const heap_report_pattern: Array<u8, 97> = "step=000 before=00000000000000000000 after=00000000000000000000 difference=+00000000000000000000\n";
+
+fn heap_digits(value: u64) -> result: Array<u8, 20> pure {
+  let digits = array_filled::<u8, 20>(value: 48_u8);
+  let rest = value;
+  for (index in 0_u64..20_u64) {
+    let at = 19_u64 - index;
+    let digit = rest % 10_u64;
+    let byte = cvt::<u64, u8>(digit);
+    set digits[at] = byte + 48_u8;
+    set rest = rest / 10_u64;
+  }
+  return digits;
+}
+
+fn heap_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, step: u8, before: u64, after: u64) -> result: Bool writes(factory), writes(output) waits {
+  doc "Prints saved readings only; callers finish measuring before invoking this waiting I/O path. Step 009 on witness stderr names its unchanged failure code; diag stdout step meanings are in DIAGNOSTICS.md.";
+  let text = heap_report_pattern;
+  let number = cvt::<u8, u64>(step);
+  let step_digits = heap_digits(value: number);
+  set text[5_u64] = step_digits[17_u64];
+  set text[6_u64] = step_digits[18_u64];
+  set text[7_u64] = step_digits[19_u64];
+  let before_digits = heap_digits(value: before);
+  let after_digits = heap_digits(value: after);
+  let difference = 0_u64;
+  if after >= before {
+    set difference = after - before;
+  } else {
+    set text[75_u64] = 45_u8;
+    set difference = before - after;
+  }
+  let difference_digits = heap_digits(value: difference);
+  for (index in 0_u64..20_u64) {
+    let before_at = 16_u64 + index;
+    let after_at = 43_u64 + index;
+    let difference_at = 76_u64 + index;
+    set text[before_at] = before_digits[index];
+    set text[after_at] = after_digits[index];
+    set text[difference_at] = difference_digits[index];
+  }
+  let source = &text[0_u64..97_u64];
+  let sent = 0_u64;
+  loop @publish {
+    if sent < 97_u64 {
+      let deadline = None<std::time::Instant>();
+      let cancel = std::time::cancel_never();
+      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: 97_u64, deadline: deadline, cancel: &cancel);
+      std::time::close_cancel_watch(watch: move cancel);
+      match outcome {
+        Ok(value: next) => {
+          if next == sent {
+            return False();
+          }
+          set sent = next;
+        }
+        Err(error: problem) => {
+          return False();
+        }
+      }
+    } else {
+      return True();
+    }
+  }
+}

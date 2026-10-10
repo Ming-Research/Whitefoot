@@ -454,7 +454,7 @@ fn concurrent(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let Inputs(cwd: directory, stderr: error_output, handles: factory, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
@@ -467,6 +467,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   let after = heap_in_use(meter: &meter);
   if after != before {
+    let reported = heap_report(factory: &factory, output: &error_output, step: 9_u8, before: before, after: after);
     return exit_status(code: 9_u8);
   }
   let parallel = concurrent(meter: &meter);
