@@ -18,10 +18,6 @@
 # are report data; only malformed evidence or construction/correctness errors
 # fail this manual workflow. No research path enters the formal gate.
 #
-# With `experiment: par-cpu-split` (temporary, removed with the commit that
-# records its result), the 14900K measures where ordinary --par spends its
-# extra CPU: research/investigations/par-demand/DESIGN.md names the arms.
-#
 # FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
 # nothing else. The manual `compare` step's exit status is the reducer's, and the
 # reducer fails only on a missing or malformed row. No ratio, no spread, no
@@ -45,7 +41,7 @@ on:
       experiment:
         description: The compute scoreboard, code placement, or demand hand-out experiment
         type: choice
-        options: [scoreboard, placement, par-demand, par-cpu-split]
+        options: [scoreboard, placement, par-demand]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -438,46 +434,3 @@ jobs:
         with:
           name: par-demand-results-${{ inputs.placement_runner }}
           path: ${{ runner.temp }}/par-demand
-
-  par-cpu-split:
-    name: par-cpu-split (14900k, temporary)
-    if: inputs.experiment == 'par-cpu-split'
-    runs-on: [self-hosted, 14900k]
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check the host tools
-        run: |
-          if [ -d "$HOME/.cargo/bin" ]; then
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            export PATH="$HOME/.cargo/bin:$PATH"
-          fi
-          for tool in /usr/bin/clang cargo make python3 taskset; do
-            command -v "$tool"
-          done
-          command -v perf || echo "perf: not installed"
-      - name: Build the compiler and the seq, par and nospin images
-        run: |
-          cargo fetch --locked --manifest-path compiler/Cargo.toml
-          make -C compiler build
-          perl .github/run-check.pl par-demand/build \
-            make -C research/experiments/par-demand cpu-split-build BUILD="$RUNNER_TEMP/cpu-split"
-          if cmp -s "$RUNNER_TEMP/cpu-split/native/sched/core.o" "$RUNNER_TEMP/cpu-split/nospin-core.o"; then
-            echo "nospin core is identical to the shipped core" >&2
-            exit 1
-          fi
-      - name: Measure seq, par and nospin
-        env:
-          ROUNDS: ${{ inputs.placement_rounds }}
-          WHITEFOOT_CHECK_TIMEOUT: "5400"
-        run: |
-          { lscpu; cat /proc/self/status; } > "$RUNNER_TEMP/cpu-split/measurement-host.txt"
-          perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/cpu_split.py \
-            --build "$RUNNER_TEMP/cpu-split" --rounds "$ROUNDS"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: par-cpu-split
-          path: |
-            ${{ runner.temp }}/cpu-split/cpu-split*
-            ${{ runner.temp }}/cpu-split/measurement-host.txt

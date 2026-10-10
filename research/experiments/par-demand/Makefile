@@ -76,21 +76,5 @@ summarize:
 legacy-identity:
 	test -n "$(BASE_WFC)"
 	python3 legacy_identity.py --base "$(BASE_WFC)" --candidate "$(WFC)" --output "$(BUILD)/legacy"
-# Temporary (DESIGN.md, "Where today's --par spends its extra CPU"): par's
-# object linked against a core.c whose idle window is zero. Removed with the
-# commit that records the result.
-native-nospin := $(BUILD)/nospin-core.o $(filter-out $(BUILD)/native/sched/core.o,$(NATIVE_OBJECTS))
-$(BUILD)/nospin-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
-	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT) -I$(NATIVE_ROOT)/completion -DWF_PAR_IDLE_WINDOW_US=0 -c $< -o $@
-$(addprefix $(BUILD)/nospin/,$(MICROS)): $(BUILD)/nospin/%: $(BUILD)/par/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-nospin)
-	@mkdir -p $(@D)
-	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
-$(addprefix $(BUILD)/nospin/,$(KERNELS)): $(BUILD)/nospin/%: $(BUILD)/par/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-nospin)
-	@mkdir -p $(@D)
-	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
-cpu-split-build: $(foreach arm,seq par nospin,$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
-	for image in $^; do "$$image" verify; done
-cpu-split: cpu-split-build
-	python3 cpu_split.py --build "$(BUILD)" --rounds $(or $(ROUNDS),10)
 .SECONDARY:
-.PHONY: build verify measure summarize legacy-identity cpu-split-build cpu-split
+.PHONY: build verify measure summarize legacy-identity

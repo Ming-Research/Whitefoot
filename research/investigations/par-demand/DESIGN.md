@@ -1036,3 +1036,71 @@ The arm, driver and job are temporary: `cpu_split.py`, the `cpu-split`
 targets in the experiment's Makefile and the `par-cpu-split` job of
 `compute-bench.yml` are removed in the commit that records the result, which
 names the revision that held them.
+
+## Results of the CPU breakdown
+
+Run: [compute-bench 38031476878](https://github.com/Ming-Research/Whitefoot/actions/runs/38031476878),
+`claude/par-demand` at 81330087b (which held the temporary arm, driver and
+job), i9-14900K, built and measured on that host, 10 interleaved rounds,
+pinned one CPU per core, 2026-10-10 06:35 to 06:41 UTC. Medians of the second
+call; ratios against the same width's `seq`. The host's `perf_event_paranoid`
+reads -1, yet every hardware event (`cycles`, `instructions`, user and
+kernel) reads `<not supported>`: the Hyper-V guest exposes no performance
+counters. Only software counters were recorded, so (b) extra hand-out
+instructions and (c) slower instructions on more cores stay unseparated.
+
+| Workload | W | `par` wall | `par` CPU | `nospin` wall | `nospin` CPU | Spin share (`par` − `nospin` CPU, over `seq` CPU) | Steals per process (`par`) |
+|---|---|---|---|---|---|---|---|
+| `large_helper` | 4 | 0.525 | 2.098 | 0.544 | 1.475 | 0.62 | 1,380 |
+| `large_helper` | 8 | 0.525 | 4.193 | 0.544 | 2.348 | 1.85 | 2,921 |
+| `spine` | 4 | 3.464 | 13.947 | 3.049 | 12.056 | 1.89 | 136,698 |
+| `spine` | 8 | 4.277 | 33.664 | 3.838 | 30.062 | 3.60 | 156,560 |
+| `small_split` | 4 | 5.717 | 5.717 | 5.713 | 5.713 | 0.00 | 0 (no worker started) |
+| `small_split` | 8 | 5.648 | 5.648 | 5.638 | 5.637 | 0.01 | 0 (no worker started) |
+| `recursion` | 4 | 0.272 | 1.105 | 0.279 | 1.067 | 0.04 | 30 |
+| `recursion` | 8 | 0.140 | 1.109 | 0.148 | 1.099 | 0.01 | 80 |
+| `stencil` | 4 | 0.559 | 1.548 | 0.562 | 1.528 | 0.02 | 259 |
+| `stencil` | 8 | 0.464 | 2.112 | 0.482 | 2.150 | -0.04 | 983 |
+| `mandelbrot` | 8 | 0.270 | 1.676 | 0.262 | 1.250 | 0.43 | 42 |
+| `records` | 8 | 0.313 | 1.888 | 0.357 | 1.289 | 0.60 | 72 |
+| `prefix` | 8 | 0.974 | 3.304 | 0.886 | 0.886 | 2.42 | 57 |
+| `histogram` | 8 | 0.929 | 1.433 | 0.962 | 1.156 | 0.28 | 45 |
+
+Against the predictions:
+
+- `large_helper`: **rejected.** `nospin` reads 1.475 at four workers and
+  2.348 at eight, above the 1.3 and 1.5 bounds; its wall is 3.6 percent above
+  `par`'s. Spinning in the window is 57 to 58 percent of the extra CPU, not
+  nearly all of it. The steal counts also contradict the reading that at most
+  about two lanes work: each of the 400 helper calls a process makes is
+  stolen from about 3.5 times at four workers and 7.3 at eight, so the loop
+  is handed out, and the 1.9x ceiling at both widths has another cause, not
+  yet identified. `nospin`'s context switches (527 and 1,422 per process
+  against 9 and 21) show its lanes park and wake around every call.
+- `spine`: holds. `nospin` removes 14 and 11 percent of the CPU; the rest is
+  hand-out work with every lane busy, about 5 to 8 steals per call.
+- `small_split`: holds, and more sharply than predicted: the pool never
+  starts (`workers_started=0`), so the 5.7x cost is entirely the code the
+  `--par` build runs on the main thread.
+- `recursion`: holds; `nospin` moves its CPU by 3.4 and 0.9 percent.
+- Pool start: the design could not test it cleanly, because the `par` and
+  `nospin` arms hand work out during the first call too. As the first call's
+  CPU above wall minus the second call's, the five kernels read 5 to 22 ms in
+  `par` and 0.55 to 0.94 ms in `nospin` at eight workers, except `histogram`
+  at 1.58 ms, which exceeds the 1 ms bound. The candidate's own start-up
+  cost needs the candidate linked against the zero-window core.
+- No prediction: spinning is most of the extra CPU at eight workers for
+  `prefix` (all), `records`, `mandelbrot` and `histogram` (63 to 67
+  percent), and none of it for `stencil`, whose extra CPU is hand-out or
+  memory cost the counters could not separate. Removing the window costs
+  wall on several of them (`records` W=8 0.313 to 0.357, `mandelbrot` W=4
+  0.274 to 0.309), the trade the window was chosen for.
+
+Found along the way: the corrected `small_constant` folds completely in the
+sequential build (1.3 us per call) and runs 886 ms in the `--par` build with
+no worker started, so ordinary `--par` currently blocks an optimization the
+sequential build performs. Experiment 1's next run measures whether the
+demand build does the same.
+
+The temporary arm, driver and job are removed in the commit that records this
+section; 81330087b holds them.
