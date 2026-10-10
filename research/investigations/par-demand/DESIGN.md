@@ -1697,3 +1697,199 @@ further building; E4-H3 still reports whether extra CPU buys saved wall time.
 E4-par. `small_split` fails E4-seq: its remaining 10 to 11 percent is the
 per-call decision cost, which runtime-extent pricing does not remove; the
 hybrid plan's cheap-region versioning that addresses it is not yet built.
+
+
+## Experiment 4's results
+
+[Compute-bench run 38091958903](https://github.com/Ming-Research/Whitefoot/actions/runs/38091958903),
+`claude/par-demand` at `ff90cbdd4b398eb3a3a6b0f71c6a87757b282447`, native
+i9-14900K (`MBSDESKTOP`, Linux 7.0.0-38-generic, x86-64; Clang 18.1.3),
+2026-10-10 22:39–23:03 UTC. The native measurement log ends with exit 0;
+both its job and the hosted build/verification job succeeded.
+The saved `par-demand-results-14900k/sizing-e4/{measurements.tsv,summary.json,identity.json}`
+contains six full-work rounds. Recalculation with this revision's
+`summarize.py` freezes **n = 30**: no count through thirty qualifies; for
+example, sizing `histogram` W=4 E4-par has interval width 0.421261, still
+0.188394 after projection to thirty, against target 0.02. These rounds judge
+nothing and are not pooled. The decisive TSV has 13,200 rows: thirty rounds
+of all 36 cells, both calls and all five arms, plus exactly one thirty-round
+rerun of each of eight exceeding cells. The frozen count, pairing, call
+coverage and constant comparison counts agree with the identities and source
+harness. Recomputed numerical summaries match the downloaded summaries;
+four independently calculated medians and bootstrap intervals (small_split
+W=4 E4-seq, recursion W=8 rerun E4-par, mandelbrot W=8 E4-par, stencil W=8
+rerun E4-H3) also match exactly. All downloaded executable hashes match
+`identity.json`; each twin is byte-identical to demand. All 48 inspected
+workload objects byte-match `par-demand-images/par-demand-images.tar.gz`.
+No downloaded image was executed.
+
+Placement: `measurement-host.txt` identifies the 14900K; the saved
+`identity.json` records the pin sets and Linux P-core topology, and this
+revision's `measure.py` passes those sets to `taskset -c` for every process.
+The native log confirms execution of that harness; it does not print
+per-process affinity. The recorded sets are: W=1 uses CPU
+`0`, W=4 uses `0,2,4,6`, W=8 uses `0,2,4,6,8,10,12,14`, one logical CPU
+per P-core. CPU 0 was retained for comparability with experiments 1–3. As the
+owner notes, CPU 0 handles interrupts and has larger noise than the other
+P-cores; this is a placement caveat, not a reason to widen a bound or discard
+an observation. No per-CPU interrupt measurement is in the artifacts.
+
+All ratios below are dimensionless paired **second-call** wall ratios
+(10,000 bootstrap draws, seed `20261010`);
+H3 is the dimensionless margin defined above, normalized by same-round seq
+CPU. Values are initial decisive medians [95% intervals], except the
+reference H3 column, which contains only par/static medians (their full
+intervals remain in `summary.json`). Verdicts use full precision, both
+attempts where required, twin voiding and the optimized-code inspection
+below. P = pass, F = fail, I = inconclusive, V = void, – = not applicable
+or prospectively excluded. The verdict order is **seq / par / gain / H3**.
+E4-par and E4-gain apply only when their respective reference/seq interval
+is wholly below 1; this includes W=1 large_helper, fir and histogram.
+Small_constant and spine decide nothing at every width. All numerical
+evidence is in this run's `par-demand-results-14900k/{summary.json,measurements.tsv}`.
+
+| Workload | W | demand / seq wall, median [95% interval], ideal ≤ 1.00 | demand / par wall, median [95% interval], ideal ≤ 1.05 | demand / static wall, median [95% interval], ideal ≤ 1.05 | demand H3 m, normalized to seq CPU, median [95% interval], ideal ≤ 0 | par / static H3 m, normalized to seq CPU, medians, ideal ≤ 0 | Verdict seq / par / gain / H3 |
+|---|---:|---|---|---|---|---|---|
+| small_constant | 1 | 0.9887 [0.9370, 1.0313] | 0.9805 [0.9657, 1.0071] | 1.0023 [0.9571, 1.0203] | -0.1144 [-0.1564, -0.0656] | -0.1012 / -0.0943 | – / – / – / – |
+| small_constant | 4 | 0.9736 [0.9291, 1.0508] | 1.32e-06 [1.27e-06, 1.51e-06] | 0.9756 [0.9493, 1.0050] | -0.1311 [-0.1870, -0.0461] | 610665.7059 / -0.1079 | – / – / – / – |
+| small_constant | 8 | 0.9711 [0.9104, 1.1003] | 1.37e-06 [1.31e-06, 1.5e-06] | 0.9789 [0.8632, 1.0494] | -0.1292 [-0.2533, -0.0241] | 598671.4273 / -0.0937 | – / – / – / – |
+| small_split | 1 | 1.0004 [0.9999, 1.0013] | 0.9999 [0.9990, 1.0008] | 1.0000 [0.9994, 1.0004] | -0.0997 [-0.1004, -0.0990] | -0.0999 / -0.0998 | I / – / – / P |
+| small_split | 4 | 1.0992 [1.0937, 1.1222] | 0.2523 [0.2503, 0.2576] | 1.0018 [0.9948, 1.0178] | -0.0037 [-0.0063, 0.0087] | 3.2574 / -0.0056 | F / – / – / I |
+| small_split | 8 | 1.0962 [1.0940, 1.1020] | 0.2519 [0.2488, 0.2570] | 1.0011 [0.9975, 1.0037] | -0.0038 [-0.0056, 0.0020] | 3.2969 / -0.0052 | F / – / – / I |
+| recursion | 1 | 1.0004 [0.9995, 1.0011] | 1.0001 [0.9998, 1.0007] | 0.9998 [0.9995, 1.0003] | -0.0997 [-0.1009, -0.0990] | -0.0998 / -0.0998 | I / – / – / P |
+| recursion | 4 | 0.2737 [0.2682, 0.2771] | 1.0417 [1.0256, 1.0686] | 0.9875 [0.9626, 1.0099] | -0.2956 [-0.3153, -0.2814] | -0.3496 / -0.3177 | P / I / P / P |
+| recursion | 8 | 0.1425 [0.1392, 0.1449] | 1.0941 [1.0743, 1.1194] | 1.0169 [1.0042, 1.0315] | -0.6354 [-0.6616, -0.6272] | -0.7518 / -0.6443 | P / F / P / P |
+| spine | 1 | 0.9897 [0.9875, 0.9912] | 1.0004 [0.9995, 1.0009] | 0.9999 [0.9992, 1.0009] | -0.1107 [-0.1131, -0.1096] | -0.1110 / -0.1099 | – / – / – / – |
+| spine | 4 | 2.9113 [2.8859, 2.9306] | 0.8247 [0.8137, 0.8329] | 1.0051 [0.9808, 1.0214] | 10.6322 [10.3605, 10.6695] | 13.0115 / 10.4138 | – / – / – / – |
+| spine | 8 | 3.4936 [3.4424, 3.5112] | 0.8672 [0.8591, 0.8801] | 0.9939 [0.9799, 1.0134] | 26.8951 [26.3962, 27.0988] | 30.8165 / 26.9584 | – / – / – / – |
+| hot_helper | 1 | 1.000052 [0.999933, 1.000106] | 1.000002 [0.999891, 1.000057] | 1.000091 [0.999974, 1.000150] | -0.099944 [-0.100087, -0.099911] | -0.1000 / -0.1001 | I / – / – / P |
+| hot_helper | 4 | 0.999902 [0.999760, 1.000112] | 1.000071 [0.999943, 1.000339] | 1.000059 [0.999897, 1.000158] | -0.100093 [-0.100206, -0.099888] | -0.1002 / -0.1001 | I / – / – / P |
+| hot_helper | 8 | 1.000200 [0.999999, 1.000350] | 1.000092 [0.999934, 1.000226] | 0.999940 [0.999800, 1.000071] | -0.099795 [-0.100036, -0.099654] | -0.0999 / -0.0999 | I / – / – / P |
+| large_helper | 1 | 0.9952 [0.9950, 0.9954] | 0.9999 [0.9997, 1.0001] | 0.9999 [0.9997, 1.0001] | -0.1053 [-0.1055, -0.1051] | -0.1054 / -0.1054 | P / P / P / P |
+| large_helper | 4 | 0.2568 [0.2566, 0.2571] | 0.5158 [0.5155, 0.5163] | 1.0004 [0.9992, 1.0014] | -0.3902 [-0.3915, -0.3318] | 0.6928 / -0.3901 | P / P / P / P |
+| large_helper | 8 | 0.1381 [0.1378, 0.1382] | 0.2771 [0.2770, 0.2777] | 1.0010 [0.9988, 1.0023] | -0.7765 [-0.7781, -0.6430] | 2.4872 / -0.7779 | P / P / P / P |
+| mandelbrot | 1 | 1.0025 [1.0020, 1.0033] | 1.0005 [0.9999, 1.0009] | 0.9994 [0.9987, 1.0003] | -0.0975 [-0.0982, -0.0967] | -0.0976 / -0.0968 | F / – / – / P |
+| mandelbrot | 4 | 0.2609 [0.2600, 0.2617] | 1.0044 [1.0003, 1.0083] | 0.9495 [0.8976, 0.9556] | -0.4465 [-0.4479, -0.4391] | -0.4466 / -0.2022 | P / P / P / P |
+| mandelbrot | 8 | 0.1378 [0.1373, 0.1383] | 1.0084 [1.0031, 1.0122] | 0.8370 [0.8150, 0.8543] | -0.5822 [-0.5844, -0.5782] | -0.5851 / -0.5366 | P / P / P / P |
+| records | 1 | 1.0015 [1.0010, 1.0027] | 1.0010 [1.0002, 1.0018] | 0.9995 [0.9992, 1.0006] | -0.0983 [-0.0991, -0.0973] | -0.0994 / -0.0980 | F / – / – / P |
+| records | 4 | 0.2697 [0.2672, 0.2715] | 0.9884 [0.9826, 0.9943] | 0.9988 [0.9892, 1.0064] | -0.3699 [-0.4568, -0.3561] | -0.4412 / -0.3880 | P / P / P / P |
+| records | 8 | 0.1554 [0.1527, 0.1576] | 1.0241 [1.0032, 1.0397] | 1.0143 [0.9875, 1.0307] | -0.7302 [-1.0752, -0.4938] | -1.0385 / -0.8945 | P / P / P / P |
+| fir | 1 | 0.9484 [0.9478, 0.9491] | 1.0004 [0.9998, 1.0011] | 0.9995 [0.9989, 1.0008] | -0.1570 [-0.1576, -0.1564] | -0.1571 / -0.1575 | P / P / P / P |
+| fir | 4 | 0.2484 [0.2481, 0.2487] | 0.6540 [0.6501, 0.6578] | 0.9971 [0.9961, 0.9978] | -0.3486 [-0.3531, -0.3471] | 0.0844 / -0.3463 | P / P / P / P |
+| fir | 8 | 0.1300 [0.1297, 0.1304] | 0.4964 [0.4927, 0.5054] | 0.9949 [0.9934, 0.9983] | -0.7288 [-0.7323, -0.7255] | 0.1192 / -0.7266 | P / P / P / P |
+| stencil | 1 | 1.0020 [0.9969, 1.0047] | 0.9994 [0.9976, 1.0040] | 1.0000 [0.9976, 1.0024] | -0.0982 [-0.1034, -0.0956] | -0.0991 / -0.0989 | I / – / – / P |
+| stencil | 4 | 0.5541 [0.5451, 0.5625] | 0.9889 [0.9799, 1.0019] | 0.9592 [0.9506, 0.9643] | 0.1849 [0.1582, 0.2252] | 0.1932 / 0.2982 | V / V / V / V |
+| stencil | 8 | 0.4865 [0.4796, 0.5306] | 0.9994 [0.9960, 1.0080] | 0.8896 [0.8813, 0.8999] | 0.6169 [0.5502, 0.7987] | 0.6094 / 1.0504 | P / P / P / F |
+| prefix | 1 | 1.0023 [0.9952, 1.0111] | 1.0011 [0.9957, 1.0061] | 1.0012 [0.9942, 1.0068] | -0.0977 [-0.1049, -0.0927] | -0.0999 / -0.0983 | I / – / – / P |
+| prefix | 4 | 0.8573 [0.8430, 0.8743] | 1.0048 [0.9898, 1.0203] | 0.9896 [0.9750, 1.0032] | -0.2549 [-0.2810, 0.3972] | -0.2858 / -0.1975 | P / P / P / I |
+| prefix | 8 | 0.8399 [0.8302, 0.8514] | 1.0176 [1.0067, 1.0296] | 0.9825 [0.9780, 0.9969] | -0.3451 [-0.3689, 0.7606] | -0.3966 / -0.2652 | P / P / P / I |
+| histogram | 1 | 0.9781 [0.9710, 0.9864] | 1.0003 [0.9919, 1.0066] | 0.9983 [0.9945, 1.0042] | -0.1244 [-0.1318, -0.1150] | -0.1196 / -0.1248 | P / P / P / P |
+| histogram | 4 | 0.8763 [0.8625, 0.8913] | 0.9970 [0.9809, 1.0133] | 0.9956 [0.9729, 1.0214] | -0.0127 [-0.0368, 0.0129] | -0.0190 / -0.0172 | V / V / V / V |
+| histogram | 8 | 0.8920 [0.8542, 0.9159] | 1.0121 [0.9960, 1.0390] | 0.9746 [0.9496, 1.0183] | 0.2136 [0.1220, 0.2722] | 0.1755 / 0.2265 | P / P / P / I |
+
+**Rule totals (36 cells each):** E4-seq 17 P / 4 F / 7 I / 2 V / 6 –;
+E4-par 15 P / 1 F / 1 I / 2 V / 17 –; E4-gain 17 P / 0 F / 0 I / 2 V /
+17 –; E4-H3 22 P / 1 F / 5 I / 2 V / 6 –. There are no missing reruns
+and no inspection-dependent pass left unverified.
+
+**The one rerun.** Initial quantities and straddles are in the table above;
+these are the second attempt's median [95% interval] for each initially
+exceeding rule. All other rules retain their initial verdicts unless a twin
+voids the cell. A straddle does not trigger another attempt or become a pass
+because a rerun for another rule happened to pass.
+
+| Workload | W | Rerun E4-seq wall, demand/seq, ideal ≤ 1.00 | Rerun E4-par wall, demand/par, ideal ≤ 1.05 | Rerun E4-H3 m, normalized to seq CPU, ideal ≤ 0 | Disposition |
+|---|---:|---|---|---|---|
+| small_split | 4 | 1.0966 [1.0940, 1.1128] | – | – | seq fails; H3 still straddles 0 |
+| small_split | 8 | 1.0944 [1.0899, 1.0985] | – | – | seq fails; initial H3 straddle stays inconclusive despite rerun -0.0056 [-0.0101, -0.0015] |
+| recursion | 8 | – | 1.0814 [1.0641, 1.1107] | – | par fails |
+| mandelbrot | 1 | 1.0029 [1.0024, 1.0034] | – | – | seq fails; no one-worker tolerance |
+| records | 1 | 1.0017 [1.0006, 1.0022] | – | – | seq fails; no one-worker tolerance |
+| stencil | 4 | – | – | +0.1845 [0.1528, 0.2290] | every rule void: rerun twin/demand 0.991756 [0.983806, 0.998745] |
+| stencil | 8 | – | – | +0.6512 [0.5525, 0.7947] | H3 fails |
+| histogram | 8 | – | – | +0.0982 [-0.0081, 0.2187] | H3 inconclusive: rerun straddles 0 |
+
+Histogram W=4 is also void, initially: twin/demand 1.016731
+[1.000368, 1.028459]. All other initial and rerun twin intervals contain 1.
+Recursion W=4 E4-par and the seven E4-seq straddles receive no rerun for
+those rules. Hot_helper W=8 E4-seq's lower end is 0.999999; rounding it to
+1.000 must not manufacture a verdict.
+
+**Optimized-code inspection.** The evidence here is this run's ELF objects,
+read with `xcrun llvm-objdump -dr --no-show-raw-insn` for
+`{seq,demand,par,static}/<workload>.o`, not earlier runs' assembly. Addresses
+below identify instructions in `demand/<workload>.o`; the matched seq
+objects retain the corresponding computation. The timed `wf_bench_*`
+entries were followed into the selected bodies. For workloads with a retained offer, W=1 pool-active dispatch selects the
+sequential clone; W=4/8 select the demand body. The grain-pruned hot_helper
+and literal-pruned small_constant have no dispatch. Nonzero TLS requests lead to lane acquisition and publication,
+with join/release after local work. No compiler, test or workload was built or run locally.
+
+| Workload | Surviving timed work and compiled decision in this run |
+|---|---|
+| small_constant | `wf_bench_micro` at 0x410 reduces the repetition loop to final-salt arithmetic and three stores at 0x450–0x46a; seq does likewise. Allocation, zeroing and checksum remain, but the 200 million mark calls do not. Literal pruning emits no request test. Excluded by registration and optimized-away inspection. |
+| small_split | `wf_workload` retains the repetition loop (exit test at 0x47d, backward jump at 0x551) and runtime-extent stores. Its saturated span calculation and `cmp $21428` at 0x4b2–0x4c8 bypass the slice driver for extent 3. The cold driver retains a guarded TLS poll; the timed tiny path pays the span decision and its surrounding live state, not that poll. |
+| recursion | `wf__par_budget_fib` at 0x280 retains both recursive children and addition; the sequential clone retains recursion/accumulation. Budget exhaustion transfers to the seq clone. Above the cut, decrement precedes `GOTTPOFF`, `%fs` load, test and branch at 0x2a6–0x2b4, then hand-out. Demand and static executable hashes are identical; extent pricing does not change this call-only workload. The loss's detailed attribution remains open. |
+| spine | Budgeted recursion and leaf arithmetic survive; the sequential clone is an unrolled accumulation loop. Budget/TLS request tests remain. Prospectively excluded because stage 4 owns recursion. |
+| hot_helper | `wf_bench_micro` at 0x550 retains data-dependent rotate/add loops at 0x5f0 and 0x6c0 and the repetition loop (exit test at 0x57f, backward jump at 0x76c). The call grain removes the cheap sibling offer: this object has no demand-word relocation or pool-active call. This tests the grain-pruned path, not a surviving group poll. |
+| large_helper | The repeated pair of helper calls remains; `wf__par_slice_helper.0` at 0x680 retains rotate-by-13/multiply/add work. The group TLS test at 0x41f, call-site span guards, slice-entry divisions and guarded `%fs` load/test/branch at 0x707–0x70e survive. |
+| mandelbrot | Point stores and the floating-point escape loop at 0x960–0x998 survive. Runtime limit-derived saturated pricing at 0x40f–0x459 feeds the span/driver decision; static uses its constant price. Remaining-span guard precedes TLS load/test/branch at 0x8f7–0x905. |
+| records | `wf__par_slice_summarize_records.0` at 0xac0 retains offset/UTF-8 scans and output stores. Span guards and slice divisions lead to guarded TLS load/test/branch at 0xb84–0xb92. Demand and static executable hashes are identical. |
+| fir | Slice and sequential clone retain tap/input loads, ordered `mulsd`/`addsd` loops and result stores. Runtime tap-count pricing feeds the span decision; slice-entry divisions and guarded TLS load/test/branch at 0x8ae–0x8bc remain. |
+| stencil | Initialization and both row-step branches retain grid stores and neighbor `addpd`/`mulpd` loops. Runtime width-derived pricing feeds outer slices; remaining-span guards precede TLS polls, e.g. initialization at 0x1aca–0x1ad8. Nested row-width guards bypass the driver for width 1024 while retaining inlined FP work. The fixture measures outer polls, not the nested row poll. |
+| prefix | Vector block sums and dependent middle/output/tail scans survive. Runtime block-size pricing feeds outer slices and guarded TLS load/test/branch at 0x11a6–0x11b4; nested `sum_block`'s `cmp $29999` bypasses its driver for block size 64. |
+| histogram | Key loads/division/indexed increments survive in the block body, with strided bucket sums in merging. Runtime extents feed outer block slicing and guarded TLS tests. Bucket/merge span guards bypass their drivers for the fixture's sizes; indexed scatter remains sequential. |
+
+**First-call CPU above wall, reported separately.** These are initial-round
+medians of `cpu_ns − wall_ns` in ms; signed values are retained (the clocks
+have separate read boundaries), and none enters a steady-call verdict.
+
+| Workload | demand W=1 / 4 / 8 CPU−wall, median ms, ideal 0 | par W=4 / 8 CPU−wall, median ms, ideal 0 | static W=4 / 8 CPU−wall, median ms, ideal 0 |
+|---|---|---|---|
+| small_constant | 0.0016 / 0.0024 / 0.0024 | -0.0542 / -0.0788 | 0.0024 / 0.0024 |
+| small_split | -0.0139 / 3.3803 / 8.2187 | -0.1068 / -0.1031 | 3.4013 / 8.1885 |
+| recursion | -0.0032 / 58.6776 / 72.3896 | 53.4516 / 60.7479 | 58.9268 / 71.1980 |
+| spine | 0.0016 / 90.6879 / 253.5804 | 110.2206 / 292.3816 | 90.1117 / 253.6083 |
+| hot_helper | -0.0077 / -0.0027 / -0.0031 | -0.0034 / -0.0027 | -0.0034 / -0.0027 |
+| large_helper | -0.0027 / 35.9732 / 45.2909 | 70.0066 / 159.0723 | 35.9995 / 46.3221 |
+| mandelbrot | 0.0018 / 9.4164 / 10.6356 | 8.8321 / 8.4725 | 9.9036 / 12.8402 |
+| records | 0.0051 / 7.4890 / 8.3003 | 6.7880 / 7.5329 | 7.2183 / 7.7723 |
+| fir | 0.0029 / 6.2211 / 9.6228 | 3.8076 / 3.8623 | 6.8987 / 10.1412 |
+| stencil | 0.0050 / 68.1400 / 124.2821 | 65.6379 / 118.1590 | 72.9925 / 148.0322 |
+| prefix | 0.0041 / 3.4380 / 8.1107 | 0.0643 / 0.1648 | 3.4354 / 8.0822 |
+| histogram | -0.0032 / 9.9364 / 20.8326 | 6.6548 / 13.8529 | 9.8177 / 20.5029 |
+
+**Predictions and direction.** Mandelbrot passes E4-par at W=4 and 8,
+1.0044 [1.0003, 1.0083] and 1.0084 [1.0031, 1.0122]. Stencil passes at
+W=8, 0.9994 [0.9960, 1.0080]; its W=4 initial ratio 0.9889
+[0.9799, 1.0019] is numerically within the bound but void after the twin
+check, so the prediction is only partly verified. Small_split fails E4-seq
+at W=4/8 as predicted; W=1 remains inconclusive. Runtime-extent pricing
+supports the speedup correction for mandelbrot and the valid stencil W=8
+cell: demand/static is 0.9495 and 0.8370 on mandelbrot, 0.8896 on stencil
+W=8. Every valid applicable E4-gain cell passes. Nevertheless recursion W=8
+rejects preservation of all available par speedups; small_split and the
+mandelbrot/records one-worker controls reject the literal never-slower claim
+as built. Stencil W=8 still fails the CPU-for-saved-wall criterion. The
+registration returns these failures to the owner before further building;
+this result selects no additional lowering change.
+
+**Data cautions and remaining evidence.** No missing/duplicate paired row,
+changed comparison count, hash mismatch or oracle mismatch was found. The
+hosted job log records thirty oracle PASS lines for each workload; the native
+measurement log records no oracle error, and the source runner emits each
+TSV row only after its oracle check. Logs were read through the GitHub
+connector after `gh run view` could not connect. This is not a local oracle
+rerun. All outliers remain in the paired bootstrap: for example, initial
+prefix demand second-call CPU at W=4 ranges 1.7147–5.2940 ms (median
+1.8234), at W=8 1.6844–8.7350 ms (median 1.8402), consistent with its broad,
+undecided H3 intervals despite negative medians. Histogram W=8 demand
+wall ranges 19.1498–29.8708 ms (median 20.9053); small_split W=4 demand
+wall ranges 243.1115–269.5096 ms (median 244.8592). The excluded
+small_constant's roughly microsecond demand/seq timings and enormous par
+H3 margins compare folded work with surviving ordinary-par repetitions and
+cannot establish pruning cost. Detailed causes of the recursion loss,
+one-worker losses and CPU tails remain unverified; stencil W=4 and
+histogram W=4 require new machine-qualified evidence, not reinterpretation
+of these void cells. No specification, compiler, test or design-tree
+commitment changes in this results-only edit.
