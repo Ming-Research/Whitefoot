@@ -25,8 +25,8 @@ fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8>
       }
     }
     Branch(zero: zero_child, one: one_child) => {
-      let selected = key & mask;
-      let next_mask = mask >> 1_u64;
+      let selected = iand(key, mask);
+      let next_mask = ishr(mask, 1_u32);
       if selected == 0_u64 {
         return map_lookup_at(root: zero_child, key: key, mask: next_mask);
       } else {
@@ -37,11 +37,11 @@ fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8>
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let zero_value = Leaf(key: 0_u64, byte: 7_u8);
+  let zero_value = Node::Leaf(key: 0_u64, byte: 7_u8);
   let zero_node = frozen_new::<Node>(value: move zero_value);
-  let one_value = Leaf(key: 1_u64, byte: 9_u8);
+  let one_value = Node::Leaf(key: 1_u64, byte: 9_u8);
   let one_node = frozen_new::<Node>(value: move one_value);
-  let branch_value = Branch(zero: move zero_node, one: move one_node);
+  let branch_value = Node::Branch(zero: move zero_node, one: move one_node);
   let root_node = frozen_new::<Node>(value: move branch_value);
   let found = map_lookup_at(root: &root_node, key: 0_u64, mask: 1_u64);
   match found {
@@ -78,8 +78,8 @@ fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8>
       }
     }
     Branch(zero: zero_child, one: one_child) => {
-      let selected = key & mask;
-      let next_mask = mask >> 1_u64;
+      let selected = iand(key, mask);
+      let next_mask = ishr(mask, 1_u32);
       if selected == 0_u64 {
         return map_lookup_at(root: zero_child, key: key, mask: next_mask);
       } else {
@@ -90,11 +90,11 @@ fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8>
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let zero_value = Leaf(key: 0_u64, byte: 7_u8);
+  let zero_value = Node::Leaf(key: 0_u64, byte: 7_u8);
   let zero_node = frozen_new::<Node>(value: move zero_value);
-  let one_value = Leaf(key: 1_u64, byte: 9_u8);
+  let one_value = Node::Leaf(key: 1_u64, byte: 9_u8);
   let one_node = frozen_new::<Node>(value: move one_value);
-  let branch_value = Branch(zero: move zero_node, one: move one_node);
+  let branch_value = Node::Branch(zero: move zero_node, one: move one_node);
   let root_node = frozen_new::<Node>(value: move branch_value);
   let found = map_lookup_at(root: &root_node, key: 0_u64, mask: 1_u64);
   match found {
@@ -129,8 +129,8 @@ fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> re
       }
     }
     Branch(zero: zero_child, one: one_child) => {
-      let selected = key & mask;
-      let next_mask = mask >> 1_u64;
+      let selected = iand(key, mask);
+      let next_mask = ishr(mask, 1_u32);
       if selected == 0_u64 {
         return map_lookup_at(root: zero_child, key: key, mask: next_mask);
       } else {
@@ -141,11 +141,11 @@ fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> re
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let zero_value = Leaf(key: 0_u64, byte: 7_u8);
+  let zero_value = Node::Leaf(key: 0_u64, byte: 7_u8);
   let zero_node = box_new::<Node>(value: move zero_value);
-  let one_value = Leaf(key: 1_u64, byte: 9_u8);
+  let one_value = Node::Leaf(key: 1_u64, byte: 9_u8);
   let one_node = box_new::<Node>(value: move one_value);
-  let branch_value = Branch(zero: move zero_node, one: move one_node);
+  let branch_value = Node::Branch(zero: move zero_node, one: move one_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = map_lookup_at(root: &root_node, key: 0_u64, mask: 1_u64);
   match found {
@@ -182,8 +182,8 @@ fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> re
       }
     }
     Branch(zero: zero_child, one: one_child) => {
-      let selected = key & mask;
-      let next_mask = mask >> 1_u64;
+      let selected = iand(key, mask);
+      let next_mask = ishr(mask, 1_u32);
       if selected == 0_u64 {
         return map_lookup_at(root: zero_child, key: key, mask: next_mask);
       } else {
@@ -194,11 +194,11 @@ fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> re
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let zero_value = Leaf(key: 0_u64, byte: 7_u8);
+  let zero_value = Node::Leaf(key: 0_u64, byte: 7_u8);
   let zero_node = box_new::<Node>(value: move zero_value);
-  let one_value = Leaf(key: 1_u64, byte: 9_u8);
+  let one_value = Node::Leaf(key: 1_u64, byte: 9_u8);
   let one_node = box_new::<Node>(value: move one_value);
-  let branch_value = Branch(zero: move zero_node, one: move one_node);
+  let branch_value = Node::Branch(zero: move zero_node, one: move one_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = map_lookup_at(root: &root_node, key: 0_u64, mask: 1_u64);
   match found {
@@ -242,9 +242,9 @@ fn lookup_second(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let leaf_value = Leaf(byte: 7_u8);
+  let leaf_value = Node::Leaf(byte: 7_u8);
   let leaf_node = box_new::<Node>(value: move leaf_value);
-  let branch_value = Branch(next: move leaf_node);
+  let branch_value = Node::Branch(next: move leaf_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = lookup_first(root: &root_node);
   return std::process::exit_status(code: found);
@@ -283,9 +283,9 @@ fn lookup_second(root: &Box<Node>) -> result: u8 reads(root.inner) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let leaf_value = Leaf(byte: 7_u8);
+  let leaf_value = Node::Leaf(byte: 7_u8);
   let leaf_node = box_new::<Node>(value: move leaf_value);
-  let branch_value = Branch(next: move leaf_node);
+  let branch_value = Node::Branch(next: move leaf_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = lookup_first(root: &root_node);
   return std::process::exit_status(code: found);
@@ -322,9 +322,9 @@ fn lookup_second<U>(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte) 
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let leaf_value = Leaf(byte: 7_u8);
+  let leaf_value = Node::Leaf(byte: 7_u8);
   let leaf_node = box_new::<Node>(value: move leaf_value);
-  let branch_value = Branch(next: move leaf_node);
+  let branch_value = Node::Branch(next: move leaf_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = lookup_first::<u64>(root: &root_node);
   return std::process::exit_status(code: found);
@@ -363,9 +363,9 @@ fn lookup_second<U>(root: &Box<Node>) -> result: u8 reads(root.inner) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let leaf_value = Leaf(byte: 7_u8);
+  let leaf_value = Node::Leaf(byte: 7_u8);
   let leaf_node = box_new::<Node>(value: move leaf_value);
-  let branch_value = Branch(next: move leaf_node);
+  let branch_value = Node::Branch(next: move leaf_node);
   let root_node = box_new::<Node>(value: move branch_value);
   let found = lookup_first::<u64>(root: &root_node);
   return std::process::exit_status(code: found);
