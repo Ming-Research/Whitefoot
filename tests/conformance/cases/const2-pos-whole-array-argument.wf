@@ -1,0 +1,9 @@
+const PATTERN: Array<u8, 5> = "abcde";
+
+fn consume<const n: u64>(bytes: Array<u8, n>) -> result: Array<u8, n> pure {
+  return bytes;
+}
+
+fn copied() -> result: Array<u8, 5> pure {
+  return consume::<5>(bytes: PATTERN);
+}

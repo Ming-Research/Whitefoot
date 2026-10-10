@@ -68,6 +68,52 @@ use super::system::with_ir;
 use super::{compile, compile_and_run, compile_rejection, emitted_function};
 use crate::target::{TargetLayout, TargetLayoutFailure, validate_program};
 
+/// The conformance fixtures own execution; this checks that whole-const
+/// lowering uses the static as a snapshot source, never as its destination.
+#[test]
+fn whole_constant_copies_load_from_static_storage() {
+    use crate::{IrInstruction, IrOperation};
+
+    for case in [
+        "const2-pos-whole-array-copy-patch",
+        "const2-pos-whole-struct-copy",
+    ] {
+        let source = super::system::corpus_source(case);
+        with_ir(&source, |program| {
+            let mut copies = 0;
+            for function in program.functions() {
+                let plan = crate::backend::storage::FunctionStoragePlan::build(program, function)
+                    .expect("constant-copy storage plan");
+                let definitions: Vec<_> = function
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect();
+                for (result, operation) in &definitions {
+                    let IrOperation::Load { address, referent } = operation else {
+                        continue;
+                    };
+                    if definitions.iter().any(|(value, operation)| {
+                        value == address && matches!(operation, IrOperation::ConstantAddress { .. })
+                    }) {
+                        let slot = plan.slot(*result).expect("aggregate copy has storage");
+                        assert_eq!(function.value_type(*result), Some(referent.ty()));
+                        assert_ne!(plan.destination(slot), Some(*address));
+                        copies += 1;
+                    }
+                }
+            }
+            assert_eq!(copies, 1, "{case}: one whole-static snapshot");
+        });
+    }
+}
+
 #[test]
 fn structural_copy_aggregates_keep_independent_storage_after_generic_substitution() {
     let source = br#"struct Pair {

@@ -11,7 +11,7 @@ Nodes: language/ownership
 
 Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated).
 
-Summary: language/ownership adds the decision that a const item is also read as a whole value, a copy into the reader's storage, because every const-eligible type is copy and copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
+Summary: language/ownership adds the decision that a const item of a copy type is also read as a whole value, a copy into the reader's storage, because copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
 
 ## 2026-10-10 Value equality
 

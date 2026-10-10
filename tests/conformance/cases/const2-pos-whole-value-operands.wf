@@ -1,0 +1,43 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Parcel {
+  bytes: Array<u8, 5>;
+}
+
+const PATTERN: Array<u8, 5> = "abcde";
+const EXPECTED: Parcel = Parcel(bytes: "abcde");
+
+fn returned() -> result: Array<u8, 5> pure {
+  return PATTERN;
+}
+
+fn selected(flag: Bool) -> result: Parcel pure {
+  let choice = if flag {
+    give EXPECTED;
+  } else {
+    give EXPECTED;
+  }
+  return choice;
+}
+
+fn main() -> status: ExitStatus pure {
+  let direct = returned();
+  let parcel = Parcel(bytes: PATTERN);
+  let flag = True();
+  let chosen = selected(flag: flag);
+  if direct != PATTERN {
+    return exit_status(code: 1_u8);
+  }
+  if parcel != EXPECTED {
+    return exit_status(code: 2_u8);
+  }
+  set chosen.bytes[0_u64] = 'Z'_u8;
+  if chosen == EXPECTED {
+    return exit_status(code: 3_u8);
+  }
+  if EXPECTED.bytes[0_u64] != 'a'_u8 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

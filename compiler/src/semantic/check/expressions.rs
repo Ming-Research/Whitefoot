@@ -1192,31 +1192,20 @@ impl<'unit> Checker<'_, 'unit> {
                     .copied()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let constant = self.types.constant(constant)?;
-                if matches!(
-                    constant.ty,
-                    CheckedType::Array { .. }
-                        | CheckedType::Buffer { .. }
-                        | CheckedType::Window { .. }
-                ) {
+                if !self.types.is_copy_type(check_context, constant.ty)? {
                     return self.types.declarations.issue_node(
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "read a const Array<T, n> through a subscript, or read one of its measures as `p.len`",
+                            mechanical_fix: "read the const through a field, subscript or measure supported by its type, or take a `&` reference",
                         },
                     );
                 }
-                if matches!(constant.value, CheckedValue::Struct { .. }) {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Own1,
-                        use_node,
-                        SemanticIssueKind::BareAffineUse {
-                            mechanical_fix: "read a const struct through its fields",
-                        },
-                    );
-                }
+                // [CONST-2, OWN-1] a whole const read requires copy;
+                // immutable static storage is rooted at no parameter [EFF-2].
                 Ok(TypedExpression::owned(
                     CheckedExpression::NamedConstant {
+                        constant: constant.id,
                         declaration,
                         value: constant.value.clone(),
                     },

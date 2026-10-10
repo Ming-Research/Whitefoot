@@ -2340,8 +2340,9 @@ pub(crate) struct CheckedResultBorrow {
 pub(crate) enum CheckedExpression {
     Constant(CheckedValue),
     /// A named const read retains declaration identity for exact goal-origin
-    /// equality while lowering the same immutable value as before.
+    /// equality and static storage identity for aggregate copy lowering.
     NamedConstant {
+        constant: CheckedConstantId,
         declaration: DeclarationId,
         value: CheckedValue,
     },
