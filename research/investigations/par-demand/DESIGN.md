@@ -1463,3 +1463,60 @@ decisive run:
 interval is narrower than its distance to its bound only well beyond thirty
 rounds for several cells, so the decisive run takes thirty.
 
+### Experiment 2's decisive run (thirty rounds)
+
+[Compute-bench run 38059295009](https://github.com/Ming-Research/Whitefoot/actions/runs/38059295009)
+(revision 21c56e36f, the lowering of 037c2add2; native 14900K, 14:30–14:47
+UTC; widths 1, 4 and 8, one logical CPU per performance core; thirty
+interleaved rounds, then one rerun of every exceeding cell, which the
+harness ran: 1,500 second-attempt rows). Columns are each rule's median and
+95 percent paired-bootstrap interval: wall ratios (E2-H1 against `seq`,
+E2-keep against `par` where `par` speeds up, E2-idle `idle1 / demand`) and
+the CPU margin `m` of E2-H3 (at most 0 passes). "Inconclusive" here includes
+cells whose intervals pass: by the rule, a pass also needs this run's
+optimized-code inspection, not yet done. Fails need none.
+
+| Workload | W | demand / seq | demand / par | demand CPU m | idle1 / par | idle1 CPU m | idle1 / demand | Verdict |
+|---|---:|---|---|---|---|---|---|---|
+| small_split | 4 | 1.113 [1.095, 1.134] | – | 0.013 [-0.005, 0.034] | – | -0.003 [-0.005, 0.021] | 0.999 [0.976, 1.004] | inconclusive |
+| small_split | 8 | 1.104 [1.096, 1.167] | – | 0.005 [-0.004, 0.067] | – | -0.004 [-0.006, 0.015] | 1.001 [0.991, 1.003] | inconclusive |
+| recursion | 4 | 0.272 [0.256, 0.280] | 1.050 [1.031, 1.079] | -0.311 [-0.366, -0.273] | 1.057 [1.028, 1.084] | -0.340 [-0.399, -0.326] | 1.006 [0.987, 1.032] | inconclusive |
+| recursion | 8 | 0.137 [0.134, 0.143] | 1.080 [1.052, 1.099] | -0.706 [-0.738, -0.641] | 1.093 [1.057, 1.128] | -0.716 [-0.743, -0.671] | 1.017 [0.976, 1.042] | fail (keep-idle1) |
+| hot_helper | 4 | 1.000 [1.000, 1.000] | – | -0.100 [-0.100, -0.100] | – | -0.100 [-0.100, -0.100] | 1.000 [1.000, 1.000] | inconclusive |
+| hot_helper | 8 | 1.000 [1.000, 1.000] | – | -0.100 [-0.100, -0.100] | – | -0.100 [-0.100, -0.100] | 1.000 [1.000, 1.000] | inconclusive |
+| large_helper | 4 | 0.256 [0.256, 0.257] | 0.516 [0.515, 0.516] | -0.392 [-0.393, -0.335] | 0.515 [0.514, 0.515] | -0.392 [-0.394, -0.379] | 0.998 [0.997, 1.001] | inconclusive |
+| large_helper | 8 | 0.138 [0.138, 0.138] | 0.277 [0.277, 0.277] | -0.635 [-0.707, -0.633] | 0.277 [0.277, 0.278] | -0.645 [-0.776, -0.634] | 1.001 [0.998, 1.004] | inconclusive |
+| mandelbrot | 4 | 0.280 [0.275, 0.288] | 1.081 [1.050, 1.112] | -0.204 [-0.319, -0.194] | 1.128 [1.065, 1.149] | -0.298 [-0.327, -0.270] | 1.026 [0.993, 1.071] | fail (keep-idle1) |
+| mandelbrot | 8 | 0.167 [0.163, 0.168] | 1.215 [1.198, 1.243] | -0.527 [-0.537, -0.515] | 1.273 [1.248, 1.309] | -0.654 [-0.698, -0.624] | 1.058 [1.010, 1.092] | fail (keep-demand, keep-idle1) |
+| records | 4 | 0.269 [0.268, 0.272] | 0.987 [0.981, 0.994] | -0.436 [-0.559, -0.360] | 0.982 [0.977, 0.985] | -0.562 [-0.588, -0.517] | 0.993 [0.990, 0.999] | inconclusive |
+| records | 8 | 0.153 [0.150, 0.157] | 1.014 [0.986, 1.048] | -0.592 [-1.053, -0.482] | 1.017 [0.989, 1.027] | -0.959 [-1.114, -0.907] | 0.990 [0.971, 1.004] | inconclusive |
+| fir | 4 | 0.249 [0.248, 0.250] | 0.656 [0.652, 0.658] | -0.348 [-0.350, -0.346] | 0.662 [0.656, 0.665] | -0.535 [-0.610, -0.509] | 1.006 [1.005, 1.008] | inconclusive |
+| fir | 8 | 0.131 [0.130, 0.131] | 0.502 [0.497, 0.509] | -0.727 [-0.730, -0.725] | 0.524 [0.516, 0.535] | -1.241 [-1.347, -1.015] | 1.040 [1.014, 1.054] | inconclusive |
+| stencil | 4 | 0.571 [0.566, 0.577] | 1.035 [1.029, 1.055] | 0.257 [0.245, 0.290] | 1.067 [1.055, 1.077] | 0.196 [0.164, 0.223] | 1.025 [1.014, 1.038] | fail (H3-demand, keep-idle1, H3-idle1) |
+| stencil | 8 | 0.539 [0.530, 0.548] | 1.119 [1.105, 1.132] | 0.991 [0.919, 1.074] | 1.170 [1.155, 1.193] | 0.377 [0.365, 0.411] | 1.044 [1.031, 1.063] | void |
+| prefix | 4 | 0.862 [0.844, 0.873] | 1.020 [0.987, 1.024] | -0.250 [-0.283, -0.215] | 1.004 [0.985, 1.038] | -0.300 [-0.312, -0.252] | 0.999 [0.988, 1.020] | inconclusive |
+| prefix | 8 | 0.840 [0.816, 0.854] | 1.023 [1.017, 1.040] | -0.323 [-0.411, 0.105] | 1.030 [1.005, 1.049] | -0.382 [-0.441, -0.349] | 0.997 [0.980, 1.012] | inconclusive |
+| histogram | 4 | 0.889 [0.874, 0.921] | 0.999 [0.985, 1.017] | 0.005 [-0.025, 0.052] | 1.012 [0.989, 1.029] | -0.090 [-0.100, -0.045] | 1.013 [0.996, 1.035] | inconclusive |
+| histogram | 8 | 0.865 [0.838, 0.908] | 1.021 [1.002, 1.029] | 0.152 [0.085, 0.230] | 1.006 [0.982, 1.027] | -0.138 [-0.179, -0.098] | 0.993 [0.971, 1.012] | fail (H3-demand) |
+
+
+**What this rejects**, by the rules fixed before measuring:
+
+- Demand-driven hand-out as built loses speedup where today's `par` has it:
+  `mandelbrot` at eight workers is 21.5 percent slower than `par` after the
+  rerun (E2-keep fails); `recursion` and `stencil` lie above 1.05 at eight
+  workers too but only `idle1` fails there, and `stencil` at eight is void
+  (its twin disagreed).
+- The single-spinner idle policy (`idle1`) is not an improvement: it fails
+  E2-keep on `recursion` at eight, `mandelbrot` at four and eight and
+  `stencil` at four, and nowhere passes E2-idle by a margin; today's idle
+  policy stays.
+- Waiting workers still burn CPU that buys no time on `stencil` at four
+  (both arms) and `histogram` at eight (`demand`), so E2-H3 fails there.
+
+The rejection paragraph sends each of these back to the direction card. The
+fixed points the run does give: `hot_helper` is now 1.000 against `seq` at
+both widths, `large_helper`, `records`, `fir` and `prefix` keep or improve
+on `par`, and no cell is slower than `seq` (E2-H1's upper ends are below
+1.17 everywhere, and below 1 wherever the workload has parallel work).
+
