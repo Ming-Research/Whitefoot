@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.121: an affine loop's reads are judged by overlap with the mapped root
+
+Rules: changed PAR-2
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose A on the card "when a loop writes one array field of a reference element by element, does reading another field of the same reference inside the loop count as touching the written array?" (translated), whose option A read "judge by path overlap: change PAR-2's sentence to 'a read whose path overlaps the written mapped root must be a measure read, a page descriptor read or an element read of the same map', consistent with RANGE-5; the compiler records such reads by field path" (translated).
+
+Summary: PAR-2's affine-element condition required every read "through that same root binding" to be a measure read, a page-formation descriptor read or an element of the same map, so reading a sibling scalar field of the written reference (`state^.shared.scale` beside writes of `state^.one.inner[i]`) denied the loop, while RANGE-5's certified elements already judged reads by overlap with the written root and the compiler admitted a sibling array's measure read. The condition now covers every read whose resolved path overlaps the mapped root under OWN-7, the reading RANGE-5 already used; keeping the literal binding-wide restriction, and making the compiler deny the sibling measure read to match it, was rejected because it refuses disjoint accesses that downstream programs write naturally.
+
 ## 2026-10-10 v0.120: value equality
 
 Rules: added OP-16; changed DIAG-1, ENT-2, ENT-3, ENT-4, FN-2, GRAM-6, OP-1, OP-2, OP-7, OP-8, PRE-1, RANGE-1, RANGE-3, TYPE-6
