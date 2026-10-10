@@ -819,3 +819,29 @@ executes its decision point once per `mark` call, 200,000,000 times in
 `T_seq` of about 188 ms, so `t` is about 0.94 ns and its bound about 2.06;
 every other workload's decision points are far rarer, so their bound stays
 1.02. This rule is fixed before the fifth change is measured.
+
+## Results of the fifth rerun
+
+Run: [compute-bench 38008068559](https://github.com/Ming-Research/Whitefoot/actions/runs/38008068559),
+`claude/par-demand` at 3cc812a5a, i9-14900K, 10 interleaved rounds,
+2026-10-10 00:18 to 00:23 UTC, the rule with the decision-point allowance.
+
+No cell fails. At four and eight workers: `large_helper` 1.038 and 1.039
+(above its 1.03 bound in the first attempt at a 0.7 percent spread; its rerun,
+1.040, had a 6.3 percent spread and decides nothing), against 1.065 before the
+poll became a load and the predicted 1.00 to 1.02; `fir` 0.957 and 0.984;
+`small_split` 1.107 and 1.117, within its 2.2 allowance but undecided by its
+9 to 13 percent spread; `spine` 0.985 and 1.031; `recursion` and
+`hot_helper` within 1 percent; `records` 1.068 and 1.077 and `mandelbrot` up
+to 1.050, both undecided by spreads of 6 to 8 percent. Process CPU equalled
+wall in every demand cell.
+
+What remains for `large_helper` is per-slice cost: at the 5,000-unit interval
+its weight-8 loop slices every 625 iterations of about one cycle, so about 24
+cycles of slice setup per slice give its 3.8 percent. Widening the interval
+to one offer unit (150,000 units) would divide that by 30 without changing
+the loop's shape, but it lengthens how long an idle worker can wait for work,
+which experiment 2 measures; that choice is the owner's. No cell can pass
+until the optimized-site inspection is written, and most cells stay
+undecided while the twin spread on this host exceeds 2 percent: the timed
+processes are not pinned to CPUs on a 32-vCPU Hyper-V guest.
