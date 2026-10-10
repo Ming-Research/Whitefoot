@@ -11,8 +11,9 @@ Owner questions belong in the conversation. -->
 
 <!-- Defects and improvement opportunities this work exposed outside its
 requested change, kept current while working (AGENTS.md, "Fix or record what
-you notice"). Give each its disposition: fixed here, recorded on the status board
-(name the item's key), or declined (why). Write "none" when nothing was found. -->
+you notice"). Give each its disposition: fixed here, recorded on the status
+board (name the item's key), or declined (why). Write "none" when nothing was
+found. -->
 
 ## Review
 
