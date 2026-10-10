@@ -758,3 +758,30 @@ microseconds here; a body whose optimized cost per unit is much lower still
 and costs a few cycles per slice. The driver, once entered, halves on demand
 as before, so the speedup side of experiment 2 is unchanged by this round
 except for the lower cost of each poll inside it.
+
+## Results of the fourth rerun (the strongest model's candidate)
+
+Run: [compute-bench 38006694877](https://github.com/Ming-Research/Whitefoot/actions/runs/38006694877),
+`claude/par-demand` at 31b4a1588, i9-14900K, 10 interleaved rounds,
+2026-10-10 00:00 to 00:06 UTC, same rule.
+
+| workload | predicted, 4 and 8 workers | measured, 4 / 8 workers | best earlier (122afdc1d) |
+|---|---|---|---|
+| small_split | 1.06 to 1.14 | 1.799 / 1.795 (both fail: reruns 1.798, 1.800, spreads 1.1 to 1.9 percent) | 1.126 / 1.123 |
+| large_helper | 1.00 to 1.02 | 1.294 / 1.294 | 1.065 / 1.063 |
+| fir | 0.98 to 1.06 | 1.249 / 1.386 (spreads 40 percent) | 1.079 / 1.091 |
+| spine | 1.00 to 1.03 | 1.026 / 1.037 | 1.034 / 1.035 |
+| recursion, hot_helper, mandelbrot, records, small_constant | about 1.00 | within 2.3 percent | within 2.1 percent |
+
+The candidate's process CPU equalled its wall time in every cell, which
+confirms its diagnosis that parked helpers cost nothing here. Its stated
+falsifier for `large_helper` holds: in `demand/large_helper.o.s` the slice
+loop inlined into `wf_workload` (`bb2.i.i`) runs one `rolq`/`imulq` per trip,
+not the sequential loop's four, so the variable-length slice loop did not
+recover the sequential shape. Neither restructuring of the slice loop (the
+third and fourth reruns) beat the second rerun's out-of-line chunk, whose
+unrolled body was intact and whose loss the strongest model attributed to one
+runtime call per slice.
+
+Both escalations the owner named are spent; the next step goes back to the
+owner.
