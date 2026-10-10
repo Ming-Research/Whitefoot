@@ -340,6 +340,12 @@ pub(crate) struct CallStorageConflict {
 }
 
 impl CallStorageEffects {
+    /// Whether reference formation here loads an owner slot.
+    #[cfg(test)]
+    pub(crate) fn has_owner_slot_borrow(&self) -> bool {
+        self.borrowed.iter().any(|place| place.owner)
+    }
+
     pub(crate) fn conflict(
         &self,
         oracle: &dyn SeparationOracle,
@@ -352,6 +358,13 @@ impl CallStorageEffects {
             for release in released {
                 for borrow in borrowed {
                     let overlaps = match (&release.place, &borrow.place) {
+                        // A loaded owner slot is not storage of any place
+                        // below it: those lie in the block it points to, and a
+                        // release frees and writes only its own subtree.
+                        (Some(release), Some(slot)) if borrow.owner => {
+                            release.path.len() <= slot.path.len()
+                                && places_overlap(oracle, release, slot)
+                        }
                         (Some(release), Some(borrow)) => places_overlap(oracle, release, borrow),
                         _ => true,
                     };

@@ -1745,3 +1745,94 @@ fn calls_to(program: &IrProgram, caller: &IrFunction, names: &[&str]) -> Vec<IrV
         })
         .collect()
 }
+
+/// Forming `&old^.cells.inner[i].b` loads the owner slot `old^.cells`; the
+/// earlier swap releases only storage below `old^.cells.inner[i].a`, which
+/// lies in the block that slot points to. Snowghost's `take_prepared` swaps
+/// sibling fields of one element this way.
+#[test]
+fn a_release_below_a_loaded_owner_slot_keeps_the_overlap_group() {
+    let source = br#"struct Pair {
+  a: Box<u64>;
+  b: Box<u64>;
+}
+
+struct Holder {
+  cells: Box<Slots<Pair>>;
+}
+
+fn take(fresh: &Pair, old: &Holder, i: u64) -> result: unit writes(fresh), writes(old) contract {
+  requires i < old^.cells.inner.len;
+} {
+  swap(first: &fresh^.a, second: &old^.cells.inner[i].a);
+  swap(first: &fresh^.b, second: &old^.cells.inner[i].b);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_checked(source, |checked| {
+        let permissions = checked
+            .data
+            .permission
+            .named("take")
+            .expect("take permissions");
+        let pair = permissions
+            .pairs
+            .iter()
+            .find(|pair| {
+                pair.first.callee_name.starts_with("swap")
+                    && pair.second.callee_name.starts_with("swap")
+            })
+            .expect("the two swaps are adjacent");
+        assert!(pair.verdict.is_eligible(), "{pair:?}");
+        assert!(
+            pair.second.storage_effects.has_owner_slot_borrow(),
+            "the second formation loads the owner slot: {pair:?}"
+        );
+        assert_eq!(
+            pair.first.storage_effects.conflict(
+                &crate::semantic::UnprovedSeparations,
+                &pair.second.storage_effects
+            ),
+            None,
+            "{pair:?}"
+        );
+    });
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let take = function(program, "take");
+        // A generic prelude row's instance carries its instance key after
+        // `$instance$`.
+        let calls = take
+            .blocks()
+            .iter()
+            .flat_map(IrBlock::instructions)
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { function, .. },
+                    ..
+                } if program.functions()[*function as usize]
+                    .name()
+                    .starts_with("swap") =>
+                {
+                    Some(*result)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(take.overlaps().len(), 1);
+        assert_eq!(take.overlaps()[0].members, calls);
+        assert!(
+            !program
+                .actualization_ledger()
+                .iter()
+                .any(|line| line.contains("release/borrow conflict")),
+            "{:?}",
+            program.actualization_ledger()
+        );
+    });
+}
