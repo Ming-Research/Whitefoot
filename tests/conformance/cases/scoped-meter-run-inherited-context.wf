@@ -7,7 +7,7 @@ fn build(argument: Option<u64>) -> result: Box<u64> pure waits {
   return box_new::<u64>(value: 47_u64);
 }
 
-fn release(value: Box<u64>, view: &ScopeView) -> result: unit writes(view) {
+fn release(value: Box<u64>) -> result: unit pure {
   return unit;
 }
 
@@ -16,7 +16,7 @@ fn inherited(argument: ScopeView) -> result: u8 pure waits {
   let block = spawn build(argument: before);
   let payload = block.inner == 47_u64;
   let held = std::process::scope_bytes(view: &argument);
-  release(value: move block, view: &argument);
+  release(value: move block);
   let after = std::process::scope_bytes(view: &argument);
   let wrong_payload = bnot(payload);
   if wrong_payload {

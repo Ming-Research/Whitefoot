@@ -7,20 +7,16 @@ struct Measured {
   correct: Bool;
 }
 
-fn allocate(meter: &MemoryMeter) -> result: Box<u64> writes(meter) {
-  return box_new::<u64>(value: 43_u64);
-}
-
-fn release(value: Box<u64>, meter: &MemoryMeter) -> result: unit writes(meter) {
+fn release(value: Box<u64>) -> result: unit pure {
   return unit;
 }
 
 fn measure(argument: MemoryMeter) -> result: Measured pure {
   let before = std::process::heap_in_use(meter: &argument);
-  let block = allocate(meter: &argument);
+  let block = box_new::<u64>(value: 43_u64);
   let held = std::process::heap_in_use(meter: &argument);
   let payload = block.inner == 43_u64;
-  release(value: move block, meter: &argument);
+  release(value: move block);
   let after = std::process::heap_in_use(meter: &argument);
   let expected = before +wrap 8_u64;
   let grew = held == expected;

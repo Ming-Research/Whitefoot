@@ -22,7 +22,7 @@ binding Enlarge : ScopeBody<Box<Paged<u64>>, Box<Paged<u64>>> {
   run = enlarge;
 }
 
-fn release(value: Box<Paged<u64>>, first: &ScopeView, second: &ScopeView) -> result: unit writes(first), writes(second) {
+fn release(value: Box<Paged<u64>>) -> result: unit pure {
   return unit;
 }
 
@@ -87,8 +87,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
           let opened_b = std::process::scope_open(meter: &meter);
           match move opened_b {
             Err(error: exhausted) => {
-              let unused = std::process::scope_view(scope: &returned_a);
-              release(value: move block, first: &av, second: &unused);
+              release(value: move block);
               close(meter: &meter, scope: move returned_a);
               return std::process::exit_status(code: 4_u8);
             }
@@ -97,7 +96,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
               let grown = spawn std::process::scope_run::<Enlarge>(scope: move b, argument: move block);
               match move grown {
                 Refused(scope: refused_b, argument: refused_block) => {
-                  release(value: move refused_block, first: &av, second: &bv);
+                  release(value: move refused_block);
                   close(meter: &meter, scope: move refused_b);
                   close(meter: &meter, scope: move returned_a);
                   return std::process::exit_status(code: 5_u8);
@@ -106,7 +105,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
                   let capacity = larger.inner.cap == 513_u64;
                   let directory_retained = positive(view: &av);
                   let pages_added = positive(view: &bv);
-                  release(value: move larger, first: &av, second: &bv);
+                  release(value: move larger);
                   let a_empty = empty(view: &av);
                   let b_empty = empty(view: &bv);
                   close(meter: &meter, scope: move returned_b);

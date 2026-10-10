@@ -11,7 +11,7 @@ binding Build : ScopeBody<unit, Box<u64>> {
   run = build;
 }
 
-fn release(value: Box<u64>, view: &ScopeView) -> result: unit writes(view) {
+fn release(value: Box<u64>) -> result: unit pure {
   return unit;
 }
 
@@ -65,11 +65,11 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
           let attempt = std::process::scope_close(meter: &meter, scope: move owner);
           match move attempt {
             Ok(value: premature) => {
-              release(value: move block, view: &view);
+              release(value: move block);
               return std::process::exit_status(code: 4_u8);
             }
             Err(error: busy_owner) => {
-              release(value: move block, view: &view);
+              release(value: move block);
               let empty = equals(view: &view, expected: 0_u64);
               close(meter: &meter, scope: move busy_owner);
               let not_retained = bnot(retained);
