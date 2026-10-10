@@ -12,14 +12,10 @@ const CANDIDATE_RADIUS: i128 = 64;
 /// A checked canonical literal, or its finite canonical spelling (suffix
 /// included). Non-finite or unparsable candidates have no such spelling.
 pub(super) fn parse_float_literal(bytes: &[u8]) -> Result<CheckedValue, Option<String>> {
-    let (number, ty, suffix) = if let Some(number) = bytes.strip_suffix(b"_f32") {
-        (number, FloatType::F32, "f32")
+    let (number, ty) = if let Some(number) = bytes.strip_suffix(b"_f32") {
+        (number, FloatType::F32)
     } else {
-        (
-            bytes.strip_suffix(b"_f64").ok_or(None)?,
-            FloatType::F64,
-            "f64",
-        )
+        (bytes.strip_suffix(b"_f64").ok_or(None)?, FloatType::F64)
     };
     let number = std::str::from_utf8(number).map_err(|_| None)?;
     let (bits, canonical) = match ty {
@@ -42,7 +38,7 @@ pub(super) fn parse_float_literal(bytes: &[u8]) -> Result<CheckedValue, Option<S
         }
     };
     if canonical != number {
-        return Err(Some(format!("{canonical}_{suffix}")));
+        return Err(Some(float_value_spelling(ty, bits)));
     }
     Ok(CheckedValue::Float { ty, bits })
 }

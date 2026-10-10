@@ -1464,10 +1464,8 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         if bytes.ends_with(b"_f32") || bytes.ends_with(b"_f64") {
             return parse_float_literal(bytes).map_err(|canonical_spelling| {
-                let mechanical_fix = match &canonical_spelling {
-                    Some(spelling) => format!("write the literal as `{spelling}`"),
-                    None => "replace the literal with a canonical spelling of a finite value representable in its stated type".to_owned(),
-                };
+                let mechanical_fix =
+                    super::repairs::float_literal_repair(canonical_spelling.as_deref());
                 self.issue_value(
                     SemanticRule::Form7,
                     node,
