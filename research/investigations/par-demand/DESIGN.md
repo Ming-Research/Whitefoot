@@ -915,7 +915,12 @@ runtime defines and declares it with `tls_model("initial-exec")` (not on
 Windows), valid because every image is a statically linked executable. A
 clang check of the same IR at `-O2 -fPIC` gives `movq
 wf__par_demand_word@GOTTPOFF(%rip), %rax; movq %fs:(%rax), %rax` with no call,
-against the `__tls_get_addr` call without the model.
+against the `__tls_get_addr` call without the model. That check compiled a
+five-line IR file to assembly on the owner's MacBook (clang targeting
+x86_64 Linux, no linking or running), because it decided whether the change
+was worth a 14900K slot and a CI round would have taken longer than the
+change; the next run's own `demand/*.o.s` images, which CI keeps, are the
+evidence of record for what the poll compiled to.
 
 Prediction at four and eight workers: `large_helper`, `small_split`,
 `recursion`, `hot_helper`, `spine` as in the sixth rerun; `records` lower than
