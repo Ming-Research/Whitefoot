@@ -46,6 +46,7 @@ mod entry_form;
 mod exclusive_contracts;
 mod float_conversion;
 mod floating;
+mod frozen;
 mod generics;
 mod infix;
 mod integer_absolute;

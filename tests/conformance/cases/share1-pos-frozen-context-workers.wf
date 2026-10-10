@@ -1,0 +1,28 @@
+fn worker(value: Frozen<Box<Array<u8>>>) -> result: u8 pure waits {
+  if value.inner.inner.len > 0_u64 {
+    return value.inner.inner[0_u64];
+  }
+  return 0_u8;
+}
+
+fn fill(value: &Frozen<u8>, out: &Array<u8, 4096>) -> result: unit reads(value), writes(out) {
+  for (index in 0_u64..out^.len) {
+    set out^[index] = value^.inner;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let bytes = box_array_filled::<u8>(count: 64_u64, value: 7_u8);
+  let dataset = frozen_new::<Box<Array<u8>>>(value: move bytes);
+  let peer = frozen_share::<Box<Array<u8>>>(frozen: &dataset);
+  let answer = spawn worker(value: move peer);
+  let seed = frozen_new::<u8>(value: 7_u8);
+  let out = array_filled::<u8, 4096>(value: 0_u8);
+  fill(value: &seed, out: &out);
+  let byte = out[4095_u64];
+  if byte == 7_u8 {
+    return std::process::exit_status(code: answer);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

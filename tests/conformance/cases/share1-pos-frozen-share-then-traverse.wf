@@ -1,0 +1,44 @@
+struct Node {
+  child: Option<Frozen<Node>>;
+  byte: u8;
+}
+
+struct Registry {
+  root: Frozen<Node>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let empty = None<Frozen<Node>>();
+  let leaf_value = Node(child: move empty, byte: 7_u8);
+  let leaf = frozen_new::<Node>(value: move leaf_value);
+  let leaf_child = Some<Frozen<Node>>(value: move leaf);
+  let branch_value = Node(child: move leaf_child, byte: 1_u8);
+  let branch = frozen_new::<Node>(value: move branch_value);
+  let branch_child = Some<Frozen<Node>>(value: move branch);
+  let root_value = Node(child: move branch_child, byte: 2_u8);
+  let root = frozen_new::<Node>(value: move root_value);
+  let state = Registry(root: move root);
+  let dataset = shared_new::<Registry>(value: move state);
+  let vacant = None<Frozen<Node>>();
+  let held_value = Node(child: move vacant, byte: 0_u8);
+  let held = frozen_new::<Node>(value: move held_value);
+  atomic registry = &dataset {
+    set held = frozen_share::<Node>(frozen: &registry^.root);
+  }
+  match &held.inner.child {
+    Some(value: first) => {
+      match &first^.inner.child {
+        Some(value: second) => {
+          let byte = second^.inner.byte;
+          return std::process::exit_status(code: byte);
+        }
+        None() => {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+    }
+    None() => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
+}

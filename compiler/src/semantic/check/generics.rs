@@ -1802,6 +1802,9 @@ impl<'unit> Checker<'_, 'unit> {
             };
             match (parameter, value) {
                 (GenericParameter::Type { declaration, bound }, GenericArgument::Type(ty)) => {
+                    if self.types.is_frozen_content_parameter(declaration)? {
+                        self.types.reject_frozen_part(source, ty)?;
+                    }
                     let requirement = match bound {
                         GenericBound::Int
                             if !matches!(
