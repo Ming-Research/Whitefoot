@@ -1227,8 +1227,8 @@ typedef struct wf_shared {
     _Atomic uint8_t claimed;
     uint32_t watched;
     _Atomic uint64_t holders;
-    /* Outstanding attempts of guards woken through this object's list.
-     * Mutated under lock; read relaxed as an acquisition hint. */
+    /* Outstanding attempts of aged guards woken through this object's list.
+     * Mutated and read relaxed under lock for admission. */
     _Atomic uint64_t turns;
     /* Circular queue: tail->next is the head. One pointer leaves room for
      * turns within WF_SHARED_STATE_OFFSET, with constant-time operations. */
@@ -1309,6 +1309,12 @@ struct wf_context {
      * the watch lock for an early wake, or the run queue for a parked one;
      * consumed under this object's lock on the retry's acquisition. */
     wf_shared *shared_turn;
+    /* First false-guard registration of the current statement, retained
+     * across retries, and zero before it waits or after it completes.
+     * Only statements holding an ordinary object need an age: they release
+     * such a hold on completion, which clears it. Table-only waits cannot
+     * receive object turns. Published to writers under wf_watch_lock. */
+    uint64_t guard_started;
     /* The watch its running statement registered after a false guard and
      * has not parked yet, while that statement's releases write nothing;
      * and the watch `wf__shared_watch` registers for a guard that read only
@@ -2497,6 +2503,19 @@ static void wf_context_finish(wf_context *context) {
 
 /* ------------------------------------------------------ guard watches */
 
+/* How many unlocks wake a parked statement to try again before the next one
+ * hands it the object: one retry lets the common case keep the object with a
+ * running context, and the bound keeps a statement from being overtaken
+ * without end. */
+#define WF_SHARED_HANDOFF 2u
+/* Provisional: let short guard waits race normally, but give a long wait a
+ * turn. The 1 ms threshold is a hypothesis, to be rejected or revisited by
+ * the probe and firn engine criteria in guard-fairness/DESIGN.md; it is not
+ * a measured optimum or a language progress bound. */
+#ifndef WF_GUARD_TURN_AGE_NS
+#define WF_GUARD_TURN_AGE_NS UINT64_C(1000000)
+#endif
+
 /* A statement whose guard reads false registers a watch, while it still
  * holds every unit its guard read, on each such unit's list: the object's
  * other fields, or a keyed table's entries (keyed_table.c).  It then
@@ -2518,6 +2537,13 @@ static atomic_flag wf_watch_lock = ATOMIC_FLAG_INIT;
  * does nothing. */
 __attribute__((weak)) void wf__watch_seen(unsigned moment) {
     (void)moment;
+}
+
+/* Clock seam for deterministic runtime tests, like the observation hooks
+ * above. Production uses the same platform monotonic clock as host waits.
+ * Called only at watch registration and at writes waking object watches. */
+__attribute__((weak)) uint64_t wf__guard_clock_ns(void) {
+    return wf_file_monotonic_ns();
 }
 
 static void wf_ready_all(wf_context *list) {
@@ -2576,6 +2602,9 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
             wf_spin_unlock(&wf_watch_lock);
             break;
         }
+        if (self->guard_started == 0u && self->shared_holds != 0u) {
+            self->guard_started = wf__guard_clock_ns();
+        }
         if (watch->used < WF_WATCH_INLINE_LINKS) {
             link = &watch->links[watch->used];
         } else if (watch->more != NULL && watch->more->used < WF_WATCH_CHUNK_LINKS) {
@@ -2628,14 +2657,19 @@ static void wf_watch_link_off(wf_watch_link *link) {
  * through `next`, to make ready then. */
 static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead, wf_shared *turn) {
     wf_context *ready = NULL;
+    uint64_t now = turn != NULL && *head != NULL ? wf__guard_clock_ns() : 0u;
     while (*head != NULL) {
         wf_watch *watch = (*head)->watch;
         uint32_t index;
         wf_watch_chunk *chunk;
         /* Only the list whose write won grants a turn. Table writes pass
          * NULL even when the watch also named a shared object. A writer
-         * never watches: false-guard releases are quiet. */
-        if (turn != NULL) {
+         * never watches: false-guard releases are quiet. Young watches
+         * still wake and race normally. A missing/backward clock sample
+         * grants no turn, rather than underflowing into an ancient age. */
+        uint64_t started = watch->context->guard_started;
+        if (turn != NULL && started != 0u && now >= started
+            && now - started > WF_GUARD_TURN_AGE_NS) {
             if (watch->context->shared_turn != NULL) {
                 wf_bridge_fail("a guard was woken before using its previous turn");
             }
@@ -2756,11 +2790,6 @@ _Static_assert(
  * it parks: long enough for a block's compute, short against a park and a
  * wake. */
 #define WF_SHARED_SPINS 256u
-/* How many unlocks wake a parked statement to try again before the next one
- * hands it the object: one retry lets the common case keep the object with a
- * running context, and the bound keeps a statement from being overtaken
- * without end. */
-#define WF_SHARED_HANDOFF 2u
 
 /* What the object's test observes (bridge.h); a program links this, which
  * does nothing. */
@@ -2846,7 +2875,7 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
     return write != 0u ? holders == 0u : holders != WF_SHARED_WRITER;
 }
 
-/* A new statement waits for the guards this object woke to attempt it.
+/* A new statement waits for the aged guards this object woke to attempt it.
  * Statements already holding objects are exempt, as is shared_take for
  * table entries: a retry may need their earlier locks first. The common
  * case adds only this relaxed load to the ordinary admission test. */
@@ -3014,7 +3043,10 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
         return 1;
     }
     for (;;) {
-        if (wf_shared_admits_context(shared, write, self, exempt)) {
+        /* The optimistic hint reads holders only: checking turns here too
+         * would add two relaxed loads to an uncontended acquisition. The
+         * one authoritative admission check is under the object's lock. */
+        if (wf_shared_admits(shared, write)) {
             wf_spin_lock(&shared->lock);
             if (wf_shared_admits_context(shared, write, self, exempt)) {
                 wf_shared_hold_locked(shared, write);
@@ -3168,6 +3200,14 @@ void wf__shared_unlock(void *object, uint32_t write) {
     wf_watch_chunk *dead = NULL;
     if (wf_context_current != NULL) {
         wf_context_current->shared_holds -= 1u;
+        /* A false guard registers before any release, so quiet releases
+         * preserve the first wait across every retry, including table wakes
+         * and early wakes. A nonquiet release follows the successful block:
+         * every guard target has already been retaken and its turn consumed.
+         * Reset even for a read hold and on every block-exit edge. */
+        if (!wf_watch_quiet()) {
+            wf_context_current->guard_started = 0u;
+        }
     }
     wf_spin_lock(&shared->lock);
     if (atomic_load_explicit(&shared->borrowed, memory_order_relaxed) != 0u) {

@@ -34,12 +34,14 @@
  * on its unit never enters the wake, a release that follows W's own false
  * guard wakes no one, and a wake takes W's watch off every unit it was on.
  *
- * Finally, on the same driver, R writes an object watched by W and asks
- * for it again before yielding: it must park until W's next acquisition,
+ * Finally, on the same driver, R writes an object watched by an aged W and
+ * asks for it again before yielding: it must park until W's next acquisition,
  * even though W's guard is still false. Repeat with two watchers and with
  * R first taking an exempt statement holding another object or table entry.
  * The final nonexempt acquire detects leaked hold counts as well as missing
- * turns. No clock selects any of these interleavings.
+ * turns. A supplied clock also checks young and exactly-at-threshold wakes,
+ * age retained over retries, and age reset for the next statement. No wall
+ * clock selects any of these interleavings.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -94,6 +96,12 @@ static _Atomic uint64_t handed, woken, lent, handed_total, resumes, p_suspends, 
 static _Atomic int resumed;
 static uint64_t resumed_at, worst_after_resume, worst_handed, p_statements;
 static struct timespec started;
+
+/* The runtime's default threshold, independent of elapsed host time. Keep
+ * the supplied clock nonzero, since the platform uses zero for failure. */
+enum { TURN_AGE_NS = 1000000 };
+static _Atomic uint64_t guard_now = 1;
+uint64_t wf__guard_clock_ns(void) { return atomic_load(&guard_now); }
 
 static void fail(const char *what, unsigned long long a, unsigned long long b) {
     printf("shared-object-test: %s (%llu, %llu)\n", what, a, b);
@@ -405,6 +413,9 @@ static void *g_thread(void *arg) {
     unsigned spins = 0;
     while (!atomic_load(&w_released))
         relax(&spins);
+    /* The early wake must carry an aged turn through park's immediate
+     * answer, just as the later tests carry one through a suspended park. */
+    atomic_store(&guard_now, TURN_AGE_NS + 2u);
     write_object(arg);
     atomic_store(&g_wrote, 1);
     return NULL;
@@ -612,6 +623,7 @@ static void turn_r_step(test_frame *f) {
             fail("W had not parked before R ran (parks, watchers)", turn_parks, turn_waiters);
         if (wf__shared_acquire(turn_object, 1, f))
             return;
+        atomic_store(&guard_now, TURN_AGE_NS + 2u);
         *state_of(turn_object) = 1;
         wf__shared_unlock(turn_object, 1);
 
@@ -660,6 +672,7 @@ static void turn_r_step(test_frame *f) {
 }
 
 static void turn_phase_begin(test_frame *root) {
+    atomic_store(&guard_now, 1u);
     turn_waiters = turn_case == TURN_PLAIN ? 1 : 2;
     turn_parks = turn_attempts = turn_finished = turn_r_parked = turn_exempt = 0;
     turn_object = wf__shared_new(sizeof(uint64_t));
@@ -691,6 +704,92 @@ static void turn_phase_end(void) {
         wf__shared_free(turn_other);
 }
 
+/* Four writes at supplied ages T-1, T, T+1 and (in a new statement) 1.
+ * W retries the same statement after the first two; only the third grants
+ * a turn. Thus resetting age at wake, watch_begin, park, acquisition, or a
+ * false-guard release all fail the third write's refusal of R. */
+static unsigned age_parks, age_retries, age_r_parked;
+static void *age_object;
+
+static void age_w_step(test_frame *f) {
+    guard_frame *g = (guard_frame *)f;
+    if (wf__shared_acquire(age_object, 1, f))
+        return;
+    if (*state_of(age_object) != f->statements)
+        fail("age watcher missed a write (state, expected)", *state_of(age_object), f->statements);
+    if (f->statements != 0) {
+        age_retries += 1;
+        if (f->statements == 3) {
+            if (!age_r_parked)
+                fail("an aged watcher retried without refusing R (parked)", age_r_parked, 1);
+            /* Complete this statement, then execute it again in the same
+             * context and frame. The next watch must start a fresh age. */
+            wf__shared_unlock(age_object, 1);
+            if (wf__shared_acquire(age_object, 1, f))
+                fail("a consumed turn blocked its next statement (retries)", age_retries, 3);
+        } else if (f->statements == 4) {
+            wf__shared_unlock(age_object, 1);
+            f->done = 1;
+            return;
+        }
+    }
+    f->statements += 1;
+    age_parks += 1;
+    /* Use the general watch path as well as the shared_watch path exercised
+     * by TURN_PLAIN: watch_begin must not restart an execution's age. */
+    wf__watch_begin(g->watch);
+    wf__watch_object(g->watch, age_object);
+    wf__shared_unlock(age_object, 1);
+    if (!wf__watch_park(g->watch, f))
+        fail("age watcher did not park (parks)", age_parks, 0);
+}
+
+static void age_r_step(test_frame *f) {
+    if (f->begun == 3) {
+        /* Resume the acquire refused by the aged turn. */
+        if (wf__shared_acquire(age_object, 1, f))
+            return;
+        if (age_retries != 3 || age_parks != 4)
+            fail("R passed an outstanding aged turn (retries, parks)", age_retries, age_parks);
+    } else {
+        if (age_parks != (unsigned)f->begun + 1u)
+            fail("age watcher had not parked before writer (parks, round)", age_parks, f->begun);
+        if (wf__shared_acquire(age_object, 1, f))
+            return;
+    }
+    atomic_store(&guard_now, TURN_AGE_NS + (unsigned)f->begun);
+    *state_of(age_object) = (uint64_t)f->begun + 1u;
+    wf__shared_unlock(age_object, 1);
+    int parked = wf__shared_acquire(age_object, 1, f);
+    if (f->begun == 2) {
+        if (!parked)
+            fail("R overtook a watcher older than T (retries)", age_retries, 2);
+        age_r_parked = 1;
+        f->begun = 3;
+        return;
+    }
+    if (parked)
+        fail("a young, boundary, or fresh-statement watch blocked R (round)", f->begun, 0);
+    if (age_retries != (unsigned)f->begun)
+        fail("W ran before the permitted newcomer (retries, round)", age_retries, f->begun);
+    wf__shared_unlock(age_object, 1);
+    if (++f->begun == 4) {
+        f->done = 1;
+        return;
+    }
+    /* Only now let the queued W retry; no host time selects this order. */
+    while (!wf__context_pass(f)) {
+    }
+}
+
+static void age_phase_begin(test_frame *root) {
+    atomic_store(&guard_now, 1u);
+    age_object = wf__shared_new(sizeof(uint64_t));
+    *state_of(age_object) = 0;
+    launch_guard(root, age_w_step);
+    launch(root, age_r_step);
+}
+
 /* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
@@ -705,6 +804,14 @@ static void root_step(test_frame *f) {
         launch(f, p_step);
     }
     if (wf__context_join_wait(f->group, f)) {
+        return;
+    }
+    if (root_phase == 4) {
+        if (age_retries != 4 || age_parks != 4 || !age_r_parked)
+            fail("age cases did not finish (retries, parks)", age_retries, age_parks);
+        if (wf__shared_release(age_object))
+            wf__shared_free(age_object);
+        f->done = 1;
         return;
     }
     if (root_phase == 1) {
@@ -730,7 +837,10 @@ static void root_step(test_frame *f) {
         if (wf__context_join_wait(f->group, f))
             return;
     }
-    f->done = 1;
+    root_phase = 4;
+    age_phase_begin(f);
+    if (!wf__context_join_wait(f->group, f))
+        fail("newly launched age cases did not suspend their join (phase)", root_phase, 0);
 }
 
 int main(void) {

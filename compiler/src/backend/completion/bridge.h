@@ -520,6 +520,9 @@ void wf__watch_unit(void *watch, wf_watch_list *list);
 void wf__watch_written(wf_watch_list *list);
 enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
 void wf__watch_seen(unsigned moment);
+/* Tests may replace the guard-age clock; production reads the platform's
+ * monotonic clock only for registration and writes waking object watches. */
+uint64_t wf__guard_clock_ns(void);
 
 /* Emitted heap storage uses the optional heap.c unit; accounting and reads
  * are always available without allocator references. Resident observation

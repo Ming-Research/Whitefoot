@@ -166,3 +166,30 @@ behind it. Turns as built are rejected on the workload that motivated
 them; any further candidate is measured the same way before it is
 proposed.
 
+## Age-bounded turns, fixed before it measures
+
+The owner selected option C on card gran-guard-fairness: normally a releaser
+may take the object again immediately, and a write wakes all watchers to
+race. Only a watcher whose statement has waited longer than T at that write
+receives a turn. Age starts at the first false-guard watch registration of
+this statement execution and survives wakes and false-guard retries; it is
+not time since the latest wake. T is the compile-time constant
+`WF_GUARD_TURN_AGE_NS`, provisionally 1,000,000 ns (1 ms): a hypothesis that
+short contention can retain throughput while long waits force a retry,
+not a measured optimum. The existing turn consumption, parked-turn-holder
+priority, bounded acquisition handoff, earlier-object/table-entry exemptions
+and cancellation-state-update exemption remain. Only registration and a
+write waking watchers read the existing monotonic clock; uncontended
+acquisition adds at most the existing relaxed turn-count load.
+
+The candidate is compared with the base on firn's probe on the native
+14900K, two drivers on CPUs 2 and 4, N = 2, 8 and 50, K = 1,000, two passes
+with reversed arm order. In each pass, longest wait at N = 50 must be at
+most T + 4 x N x mean hold + 1 ms, and run time at every N must be at most
+1.10 x base. Firn's session measures its engine with the same settings as
+[run 38065358945](https://github.com/Ming-Research/Firn-wf/actions/runs/38065358945),
+including the control twin and reversed second pass: throughput must be at
+least 0.95 x control at both 8 and 50 connections, and p99 at 50 connections
+must be at most 1.5 x control, in each pass. Either the probe criteria or the
+engine criteria failing rejects this candidate. These criteria precede its
+implementation and measurement; no result for age-bounded turns is claimed.
