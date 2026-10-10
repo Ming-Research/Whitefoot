@@ -1463,11 +1463,16 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(CheckedValue::Unit);
         }
         if bytes.ends_with(b"_f32") || bytes.ends_with(b"_f64") {
-            return parse_float_literal(bytes).ok_or_else(|| {
+            return parse_float_literal(bytes).map_err(|canonical_spelling| {
+                let mechanical_fix =
+                    super::repairs::float_literal_repair(canonical_spelling.as_deref());
                 self.issue_value(
                     SemanticRule::Form7,
                     node,
-                    SemanticIssueKind::InvalidFloatLiteral,
+                    SemanticIssueKind::InvalidFloatLiteral {
+                        canonical_spelling,
+                        mechanical_fix,
+                    },
                 )
             });
         }

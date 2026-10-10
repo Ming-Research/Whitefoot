@@ -796,6 +796,7 @@ mod tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
