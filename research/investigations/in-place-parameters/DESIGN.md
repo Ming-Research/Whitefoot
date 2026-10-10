@@ -1010,9 +1010,15 @@ about 2%. Experiment 2 speeds every kernel. Its final code shows the predicted
 risk only in part: Value transfers became scalar (ForLoop `arm.66`, 36 to 19
 128-bit moves; whole program 3680 to 3158), but LLVM re-merged adjacent 8-byte
 Frame fields in `push_frame` into three 16-byte moves (12 to 8 moves), so the
-Frame copy still has wide loads over its two widest field pairs. Keeping those
-boundaries through LLVM would need the late target-aware lowering named above;
-it is not part of this change.
+Frame copy still has wide loads over its two widest field pairs. For Frame,
+the machine-width criterion stated above therefore fails: the frontend-only
+remedy does not keep its boundaries through LLVM. The bounded emission is kept
+because the criterion that decides cost holds: every kernel is faster than the
+control beyond the twin's spread, and the Value transfers, which the
+integer-table and loop stalls involve, do keep their boundaries. Keeping the
+Frame boundaries through LLVM would need the late target-aware lowering named
+above; it is deferred to the status board item for this work, not part of this
+change.
 No specification, acceptance, verdict, diagnostic or ABI change is proposed.
 
 
@@ -1025,7 +1031,9 @@ safety, case ownership/wiring and design correspondence groups. It found a
 rejection-list format issue, masked bound coverage and an insufficient byte-copy
 ordering oracle; all were repaired and the changed coverage/layout hunks received
 limited follow-up review with no new finding. This is inspection, not executed
-backend evidence. Rust compilation, baseline failures, emitted IR assertions,
-native overlap/cleanup behavior, gates, optimized/LTO widths and other-target
-code generation remain pending CI. No local build, Cargo, Make, native test or
-performance run was made; no approval or specification log was written.
+backend evidence at that point; the gate later passed on both code commits
+(runs 38092297049 at `cd79ad705` and 38092299946 at `5fe3dd3e4`), and the
+optimized/LTO widths and timing are in [Halo timing of both
+steps](#halo-timing-of-both-steps). Baseline failures of the new cases were not
+executed, and other-target code generation remains unverified. No local build,
+Cargo, Make, native test or performance run was made.
