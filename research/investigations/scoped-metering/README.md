@@ -9,6 +9,14 @@ it spawns are counted there, and other contexts can observe that count.
 The surface, attribution, lifetime and implementation below are proposals,
 not additional owner rulings or implemented capabilities.
 
+**Status, 2026-10-10: paused without a consumer.** The owner later ruled
+that firn's rewrite must stop building a private copy of the dataset
+(card `firn-maxmem-scope`, option B), which removes the exclusion this work
+was built for, and chose to keep this branch paused and unmerged until a
+real consumer appears (card `firn-q-snap-322`, option A). The reasons are in
+the [consistent-snapshots investigation](../consistent-snapshots/README.md)
+on its own branch, Whitefoot PR #328.
+
 Can this give firn an accurate exclusion for its private AOF rewrite without
 materially taxing allocation or weak embedded CPUs? Compare the current
 process-only meter with scoped accounting, both unused and active, and compare
@@ -593,6 +601,30 @@ actual value-size distribution before claiming suitability for embedded CPUs;
 the i9 estimate establishes neither their latency nor their RAM budget.
 Keep accounting/observation allocator-free when emitted heap is absent,
 as required by `design/language/system-interface/memory-statistics.md:7`.
+
+**Owner ruling, 2026-10-10 (status-board card `firn-sm-embedded`, option C).**
+Embedded acceptance waits for the first MCU target; until then scoped
+metering is accepted, if at all, on desktop evidence only and claims no
+embedded suitability. The two costs that matter there follow from the
+design without measurement:
+
+- The emitted-block prefix adds 16 bytes per block before allocator
+  rounding: a 16-byte request becomes 32 (+100%), 32 becomes 48 (+50%),
+  64 becomes 80 (+25%). An 8-byte `Box<u64>` requests 24 bytes.
+- The implementation fixes `WF_SCOPE_CAPACITY` at 64 slots including the
+  default account (`compiler/src/backend/completion/bridge.h:544`), so each
+  allocating thread publishes a 512-byte counter row and keeps a 512-byte
+  thread-local mirror (`compiler/src/backend/completion/bridge.c:1377`,
+  `:1383`); a single-core target with 16 slots needs 128 bytes, as above.
+
+A third cost found in the implementation: allocation and release inside a
+non-default scope update the scope's retained-block count under one global
+spin lock (`wf__scope_retain` and `wf__scope_release`,
+`compiler/src/backend/completion/bridge.c:1440`, `:1452`), which serializes
+scoped allocation across threads. No measurement has exercised it; a
+reopened implementation should count retention per thread first. If the
+prefix proves too expensive on the first MCU target, per-scope arenas with
+address lookup replace it, as the runtime candidate above allows.
 
 All following execution is future work through CI; none ran for this record.
 
