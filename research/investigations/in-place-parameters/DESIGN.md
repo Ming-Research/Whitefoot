@@ -1013,8 +1013,10 @@ Frame fields in `push_frame` into three 16-byte moves (12 to 8 moves), so the
 Frame copy still has wide loads over its two widest field pairs. For Frame,
 the machine-width criterion stated above therefore fails: the frontend-only
 remedy does not keep its boundaries through LLVM. The bounded emission is kept
-because the criterion that decides cost holds: every kernel is faster than the
-control beyond the twin's spread, and the Value transfers, which the
+because the criterion that decides cost holds: six kernels are faster than the
+control beyond the twin's spread in all three pair counts (string-key, whose
+twin varied from 0.947 to 1.001, is faster in every count but within that
+noise), and the Value transfers, which the
 integer-table and loop stalls involve, do keep their boundaries. Keeping the
 Frame boundaries through LLVM would need the late target-aware lowering named
 above; it is deferred to the status board item for this work, not part of this
