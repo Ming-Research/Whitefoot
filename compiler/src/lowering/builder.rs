@@ -728,6 +728,10 @@ struct IrBuilder<'program> {
     /// identity every written call position has, so this is how a permitted
     /// group is found in the IR.
     call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
+    /// Permission sites preceded by an implicit context await in this body.
+    /// An await may suspend without changing the IR block, so these sites
+    /// must start a fresh compute window even when their calls do not wait.
+    awaited_sites: HashSet<NodePath>,
     /// The permission table of the source function this body belongs to: the
     /// [PAR-1] groups its statements may overlap and the [PAR-2] verdict of
     /// each of its counted loops.
@@ -824,6 +828,7 @@ impl<'program> IrBuilder<'program> {
             addressed_bindings,
             function_results,
             call_results: HashMap::new(),
+            awaited_sites: HashSet::new(),
             permissions,
             overlap,
             synthesis,
@@ -989,22 +994,31 @@ impl<'program> IrBuilder<'program> {
     ///
     /// The judgment is the checker's; this only narrows it to what the emitted
     /// shape can carry, and every narrowing drops members rather than adding
-    /// any. A group is a contiguous part of a permitted chain, kept only while
+    /// any. A group keeps the calls within a contiguous part of a permitted
+    /// chain. Non-call statements stay on the owning thread at their original
+    /// instruction positions; those between group calls execute after earlier
+    /// hand-outs and before the source-last call and join. A trailing non-call
+    /// does not move that join. The group is kept only while
     ///
-    /// - each site's `let` or expression statement lowered to exactly one
-    ///   recorded call definition, so a chain member whose statement lowered
-    ///   to something else (a `propagate`, or a discarded result's release,
-    ///   for instance) ends the group;
+    /// - each call site lowered to exactly one recorded call definition, so a
+    ///   call member whose statement lowered to something else (a `propagate`,
+    ///   or a discarded result's release, for instance) ends the group;
     /// - every member's definition is in one block, so the handed-out call
     ///   and its join sit on one straight-line edge; and
+    /// - no site after the first call has an implicit context await before
+    ///   it. Such a site ends the group before the await and may start
+    ///   another afterward: an await can suspend in the same IR block, moving
+    ///   the context away from the compute offers' owning lane. Other waiting
+    ///   calls are already refused by permission; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
-    /// - no member releases a place that overlaps a place another member
+    /// - no call member releases a place that overlaps a place a later site
     ///   borrows at entry or loads through during argument formation. These
-    ///   places and pair-local separation answers come from the checker; a
-    ///   conflict ends the group before the new member's argument formation,
-    ///   after earlier members have joined.
+    ///   sites include non-call statements, and the same check applies with
+    ///   release and borrow reversed. These places and pair-local separation
+    ///   answers come from the checker; a conflict ends the group before the
+    ///   new site's argument formation, after earlier members have joined.
     ///   The new member can start another group, and disjoint written Box
     ///   references remain eligible together.
     ///
@@ -1043,30 +1057,35 @@ impl<'program> IrBuilder<'program> {
             let mut members = Vec::new();
             let mut home = None;
             for site in sites {
+                if self.awaited_sites.contains(&site.statement) {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                    home = None;
+                }
                 // [PAR-1] judges every adjacent statement pair, so a run's
-                // members include statements that are not calls. The hand-out
-                // lowering has no form for one, so a non-call member ends the
-                // group here. A later contiguous part can start another
-                // group, but no group bridges this intervening statement.
-                let Some(call) = &site.call else {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
-                    continue;
+                // members include statements that are not calls. They add no
+                // hand-out: their instructions remain in source position
+                // inside the window. Keep the pending calls across them,
+                // subject to the await and storage boundaries; the next call
+                // still has to land in the group's block.
+                let value = if let Some(call) = &site.call {
+                    let Some((block, value)) = self.call_results.get(call).copied() else {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                        home = None;
+                        continue;
+                    };
+                    if claimed.contains(&value) {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                        home = None;
+                        continue;
+                    }
+                    if home.is_some_and(|previous| previous != block) {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                    }
+                    home = Some(block);
+                    Some(value)
+                } else {
+                    None
                 };
-                let Some((block, value)) = self.call_results.get(call).copied() else {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
-                    continue;
-                };
-                if claimed.contains(&value) {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
-                    continue;
-                }
-                if home.is_some_and(|previous| previous != block) {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                }
-                home = Some(block);
                 let conflict = members.iter().find_map(|(_, previous)| {
                     let pair = permissions.storage_pairs.iter().find(|pair| {
                         pair.first == previous.statement && pair.second == site.statement
@@ -1074,7 +1093,7 @@ impl<'program> IrBuilder<'program> {
                     match pair {
                         Some(pair) if pair.conflict.is_none() => None,
                         Some(pair) => Some(pair.ledger.clone()),
-                        // Every current permitted call pair is recorded. If a
+                        // Every call/later-site pair is recorded. If a
                         // new producer omits one, it cannot authorize overlap.
                         None => Some(format!(
                             "PAR actualization  {}  pair({}, {})  narrowed: unavailable pair-local storage evidence",
@@ -1086,6 +1105,9 @@ impl<'program> IrBuilder<'program> {
                     self.synthesis.borrow_mut().note_storage_conflict(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
+                let Some(value) = value else {
+                    continue;
+                };
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
@@ -1258,7 +1280,11 @@ impl<'program> IrBuilder<'program> {
             if self.current.is_none() {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
+            let pending = self.pending_contexts.len();
             self.await_contexts_before(outer_pending, index)?;
+            if self.pending_contexts.len() < pending {
+                self.note_awaited_site(statement);
+            }
             // [SHARE-3] inside an atomic block, the units the statement
             // reaches are taken before it runs.
             if !self.atomics.is_empty() {
@@ -2028,7 +2054,7 @@ impl<'program> IrBuilder<'program> {
                     },
                 )
             }
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
@@ -2041,7 +2067,7 @@ impl<'program> IrBuilder<'program> {
                 let right = self.expression(right)?;
                 self.define(
                     IrType::Bool,
-                    IrOperation::EnumEquality {
+                    IrOperation::ValueEquality {
                         equal: *equal,
                         operand_type: lower_type(self.erasure, *operand_type)?,
                         arguments: [left, right],
@@ -2152,7 +2178,7 @@ impl<'program> IrBuilder<'program> {
                 self.lower_range_element_measure(*measure, place)
             }
             CheckedExpression::ReadStorage { root, .. } => {
-                let address = self.lower_place_address(root)?;
+                let address = self.lower_place_address_access(root, false)?;
                 self.load_storage_value(address)
             }
             CheckedExpression::BufferIndex {
@@ -2336,7 +2362,7 @@ impl<'program> IrBuilder<'program> {
                         ty: *ty,
                         proof_base: None,
                     };
-                    let address = self.lower_place_address(&root)?;
+                    let address = self.lower_place_address_access(&root, false)?;
                     return self.load_storage_value(address);
                 }
                 let root = self.binding_value(*binding)?;

@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.121: an affine loop's reads are judged by overlap with the mapped root
+
+Rules: changed PAR-2
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose A on the card "when a loop writes one array field of a reference element by element, does reading another field of the same reference inside the loop count as touching the written array?" (translated), whose option A read "judge by path overlap: change PAR-2's sentence to 'a read whose path overlaps the written mapped root must be a measure read, a page descriptor read or an element read of the same map', consistent with RANGE-5; the compiler records such reads by field path" (translated).
+
+Summary: PAR-2's affine-element condition required every read "through that same root binding" to be a measure read, a page-formation descriptor read or an element of the same map, so reading a sibling scalar field of the written reference (`state^.shared.scale` beside writes of `state^.one.inner[i]`) denied the loop, while RANGE-5's certified elements already judged reads by overlap with the written root and the compiler admitted a sibling array's measure read. The condition now covers every read whose resolved path overlaps the mapped root under OWN-7, the reading RANGE-5 already used; keeping the literal binding-wide restriction, and making the compiler deny the sibling measure read to match it, was rejected because it refuses disjoint accesses that downstream programs write naturally.
+
+## 2026-10-10 v0.120: value equality
+
+Rules: added OP-16; changed DIAG-1, ENT-2, ENT-3, ENT-4, FN-2, GRAM-6, OP-1, OP-2, OP-7, OP-8, PRE-1, RANGE-1, RANGE-3, TYPE-6
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, after investigation #326 the owner chose option A on each of six cards: "which types can == compare, decided by what rule?" (structure decides, automatically); "can a struct with a float field use ==, and how do floats count in value equality?" (floats and types with a float part are not comparable; floats keep feq); "should eeq/ene merge into ==/!= and retire?" (merge and retire); "how does generic code use ==: is an eq bound needed?" (keep the bound, meaning copy with no float part, and admit opaque copy structs); "how do proofs use value equality: decompose by definition or an opaque predicate?" (decompose by definition); and "what happens to #323?" (rewrite it in place into the full implementation) (all translated).
+
+Summary: OP-16 defines the equality types (integers, `unit`, enums and structs, opaque or not, that remove no capability and whose parts are all equality types, and `Array<T, N>` of an equality type) and value equality over them: two values are equal exactly when they are the same value, compared field by field, by variant and payload, and element by element, an equivalence; lowering compares parts and never padding. OP-1's `==` and `!=` take one equality type, the ordering symbols stay integer-only (OP-1, OP-2, OP-7, GRAM-6), and the tag-only `eeq`/`ene` rows retire with their OP-8 text. The built-in bound `Eq` admits exactly the equality types and implies copy (FN-2, PRE-1's declaration preorder Int, Float, Eq, Run), and the numeric-bound name domain becomes the built-in-bound domain (TYPE-6, DIAG-1, PRE-1). Ordinary entailment decomposes an established struct equality into field equalities and reconstructs a struct-equality goal from them, enum and Array equalities staying exact goals (ENT-2, ENT-3, ENT-4). A range relation `==` between two sides of a non-integer equality type reads as the equality of their integer parts with tags and variant-conditioned payload parts, in generic and non-generic clauses, and a by-value parameter's parts denote its entry value only in a range postcondition (RANGE-1, RANGE-3). Selection ground: proofs and executable code share one equality, writers no longer hand-write field-by-field comparators, and floats are excluded because IEEE equality is not reflexive.
+
 ## 2026-10-10 v0.119: cancellation handles become droppable structs over shared handles
 
 Rules: changed PRE-2, PROV-6, STOR-3

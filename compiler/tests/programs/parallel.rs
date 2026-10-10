@@ -465,6 +465,17 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
+/// A value read under a read-only whole-map hold must not lock its cell:
+/// that hold's release only opens the map gate. The old lowering left the
+/// first read's cell locked and the second read spun forever, so the shared
+/// program harness's deadline fails this case even with one context/driver.
+#[test]
+fn whole_map_value_reads_release_before_the_next_statement() {
+    let program = build_program(&compile_program("map_value_reads.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
 /// [SHARE-3] guards that read entries of a map: four pairs pass values
 /// through one entry each, a sender waiting for its entry to be empty and a
 /// taker for it to hold a value, and two contexts wait on a guard reading an

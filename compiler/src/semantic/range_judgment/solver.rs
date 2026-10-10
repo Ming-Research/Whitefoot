@@ -200,11 +200,12 @@ impl Inequality {
     /// which is exact over the integers: the tightening [RANGE-3] applies to
     /// each inequality a literal forms.
     fn normalized(self) -> Self {
-        let divisor = self
-            .0
-            .terms
-            .iter()
-            .fold(0_i128, |gcd, (_, value)| greatest_divisor(gcd, value.abs()));
+        let divisor = self.0.terms.iter().fold(0_u128, |gcd, (_, value)| {
+            greatest_divisor(gcd, value.unsigned_abs())
+        });
+        let Ok(divisor) = i128::try_from(divisor) else {
+            return self;
+        };
         if divisor <= 1 {
             return self;
         }
@@ -232,9 +233,14 @@ impl Inequality {
             .0
             .terms
             .iter()
-            .fold(self.0.constant.abs(), |gcd, (_, value)| {
-                greatest_divisor(gcd, value.abs())
+            .fold(self.0.constant.unsigned_abs(), |gcd, (_, value)| {
+                greatest_divisor(gcd, value.unsigned_abs())
             });
+        // A divisor beyond `i128` divides only `i128::MIN` and zero; the
+        // unreduced inequality has the same rational solutions.
+        let Ok(divisor) = i128::try_from(divisor) else {
+            return self;
+        };
         if divisor <= 1 {
             return self;
         }
@@ -258,7 +264,7 @@ impl Inequality {
     }
 }
 
-fn greatest_divisor(left: i128, right: i128) -> i128 {
+fn greatest_divisor(left: u128, right: u128) -> u128 {
     let (mut left, mut right) = (left, right);
     while right != 0 {
         (left, right) = (right, left % right);
@@ -393,15 +399,33 @@ impl Problem {
                     _ => {}
                 }
             }
-            for (index, rule) in self.rules.iter().enumerate() {
+            let mut index = 0;
+            while index < self.rules.len() {
                 if fired[index] {
+                    index += 1;
                     continue;
                 }
-                if let Some(because) = self.entailment(&units, &rule.guards, depth)? {
-                    units.extend(Unit::resting_on(&rule.conclusions, &because));
-                    fired[index] = true;
-                    changed = true;
+                let guards = &self.rules[index].guards;
+                let mut end = index + 1;
+                while end < self.rules.len() && self.rules[end].guards == *guards {
+                    end += 1;
                 }
+                // Adjacent rules with identical guards are one implication
+                // with all of their conclusions. Ask once against unchanged
+                // units and split tags, then apply every conclusion before
+                // the next distinct guard list: earlier conclusions can
+                // simplify that next probe's arithmetic as well as prove it.
+                if let Some(because) = self.entailment(&units, guards, depth, run)? {
+                    let batch = self.rules[index..end].iter().zip(&mut fired[index..end]);
+                    for (rule, fired) in batch {
+                        if !*fired {
+                            units.extend(Unit::resting_on(&rule.conclusions, &because));
+                            *fired = true;
+                            changed = true;
+                        }
+                    }
+                }
+                index = end;
             }
             if !changed {
                 break;
@@ -522,6 +546,7 @@ impl Problem {
         units: &[Unit],
         guards: &[Literal],
         depth: usize,
+        run: &Run,
     ) -> Result<Option<Tags>, Capacity> {
         let mut because = Tags::default();
         for guard in guards {
@@ -531,6 +556,7 @@ impl Problem {
                     literal: negation,
                     tags: Tags::single(depth),
                 });
+                run.guard_probes.set(run.guard_probes.get() + 1);
                 match self.contradiction(&with)? {
                     Some(core) => because.union(&core.without(depth)),
                     None => return Ok(None),
@@ -838,12 +864,14 @@ impl Unit {
     }
 }
 
-/// One judgment's search: how many branches it has saturated, and whether
-/// a branch refuted without its split's case closes the split's other
-/// branches. Without backjumping the search is the full case analysis,
-/// against which tests compare it.
+/// One judgment's search work, and whether a branch refuted without its
+/// split's case closes the split's other branches. Without backjumping the
+/// search is the full case analysis, against which tests compare it.
 struct Run {
     nodes: Cell<usize>,
+    /// Actual contradiction calls for rule guards, one per negation tried.
+    /// Shared answers, choice probes and read-pair probes are not counted.
+    guard_probes: Cell<usize>,
     backjump: bool,
 }
 
@@ -851,6 +879,7 @@ impl Run {
     fn backjumping() -> Self {
         Self {
             nodes: Cell::new(0),
+            guard_probes: Cell::new(0),
             backjump: true,
         }
     }
@@ -907,10 +936,10 @@ impl Solved {
     /// otherwise solves it for one atom, renaming atoms first until one has
     /// a unit coefficient. Whether it solved an atom.
     fn equate(&mut self, difference: Linear, why: Tags) -> Result<bool, Capacity> {
-        let divisor = difference
-            .terms
-            .iter()
-            .fold(0_i128, |gcd, (_, value)| greatest_divisor(gcd, value.abs()));
+        let divisor = difference.terms.iter().fold(0_u128, |gcd, (_, value)| {
+            greatest_divisor(gcd, value.unsigned_abs())
+        });
+        let divisor = i128::try_from(divisor).map_err(|_| Capacity::Arithmetic)?;
         if divisor == 0 || difference.constant % divisor != 0 {
             if difference.constant != 0 && self.contradiction.is_none() {
                 self.contradiction = Some(why);
@@ -931,7 +960,7 @@ impl Solved {
                 .terms
                 .iter()
                 .rev()
-                .find(|(_, coefficient)| coefficient.abs() == 1)
+                .find(|(_, coefficient)| coefficient.unsigned_abs() == 1)
                 .copied()
             {
                 // atom * c + rest = 0, so atom = -rest / c with c = +-1.
@@ -951,7 +980,7 @@ impl Solved {
                 .terms
                 .iter()
                 .rev()
-                .min_by_key(|(_, coefficient)| coefficient.abs())
+                .min_by_key(|(_, coefficient)| coefficient.unsigned_abs())
                 .copied()
                 .ok_or(Capacity::Arithmetic)?;
             let renamed = self.fresh;
@@ -1020,6 +1049,14 @@ fn substituted(
 /// the inequalities, each already tightened over the integers, rests on, or
 /// `None` when they have a rational solution.
 fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capacity> {
+    eliminate_counting(inequalities, &mut 0)
+}
+
+/// [`eliminate`], counting the rounds that each remove one shared atom.
+fn eliminate_counting(
+    inequalities: Vec<(Inequality, Tags)>,
+    rounds: &mut usize,
+) -> Result<Option<Tags>, Capacity> {
     let mut current: BTreeMap<Inequality, Tags> = BTreeMap::new();
     for (inequality, why) in inequalities {
         if inequality.contradictory() {
@@ -1029,7 +1066,47 @@ fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capa
             current.entry(inequality).or_insert(why);
         }
     }
+    // An atom that no inequality names beside another atom has only its own
+    // bounds; eliminating it pairs those bounds and leaves every other
+    // inequality as it is. Do that for all such atoms in one pass rather than
+    // rebuilding the set once per atom: the order of elimination does not
+    // change the answer [RANGE-3].
+    let mut shared = BTreeSet::new();
+    for inequality in current.keys() {
+        if inequality.0.terms.len() > 1 {
+            shared.extend(inequality.0.terms.iter().map(|(atom, _)| *atom));
+        }
+    }
+    let mut bounds: BTreeMap<AtomId, Bounds> = BTreeMap::new();
+    current.retain(|inequality, why| match inequality.0.terms.as_slice() {
+        [(atom, weight)] if !shared.contains(atom) && *weight != i128::MIN => {
+            let entry = bounds.entry(*atom).or_default();
+            let side = if *weight > 0 {
+                &mut entry.upper
+            } else {
+                &mut entry.lower
+            };
+            side.push((weight.abs(), inequality.clone(), why.clone()));
+            false
+        }
+        _ => true,
+    });
+    // An atom whose bounds cannot be paired within the arithmetic returns
+    // to the loop, so the pass never stops a problem the loop would decide.
+    for atom_bounds in bounds.into_values() {
+        let mut paired = BTreeMap::new();
+        match combine_bounds(&atom_bounds.upper, &atom_bounds.lower, &mut paired) {
+            Ok(Some(why)) => return Ok(Some(why)),
+            Ok(None) => current.extend(paired),
+            Err(_) => {
+                for (_, inequality, why) in atom_bounds.upper.into_iter().chain(atom_bounds.lower) {
+                    current.entry(inequality).or_insert(why);
+                }
+            }
+        }
+    }
     loop {
+        *rounds += 1;
         // The atom with the fewest products, least identity first.
         let mut counts: BTreeMap<AtomId, (usize, usize)> = BTreeMap::new();
         for inequality in current.keys() {
@@ -1057,28 +1134,54 @@ fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capa
             if weight > 0 {
                 upper.push((weight, inequality, why));
             } else if weight < 0 {
-                lower.push((-weight, inequality, why));
+                lower.push((
+                    weight.checked_neg().ok_or(Capacity::Arithmetic)?,
+                    inequality,
+                    why,
+                ));
             } else {
                 next.entry(inequality).or_insert(why);
             }
         }
-        for (up_weight, up, up_why) in &upper {
-            for (low_weight, low, low_why) in &lower {
-                let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
-                let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
-                let combined = Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).reduced();
-                let mut why = up_why.clone();
-                why.union(low_why);
-                if combined.contradictory() {
-                    return Ok(Some(why));
-                }
-                if !combined.trivial() {
-                    next.entry(combined).or_insert(why);
-                }
-            }
+        if let Some(why) = combine_bounds(&upper, &lower, &mut next)? {
+            return Ok(Some(why));
         }
         current = next;
     }
+}
+
+/// One atom's inequalities, split by the sign of its coefficient, each with
+/// that coefficient's magnitude.
+#[derive(Default)]
+struct Bounds {
+    upper: Vec<(i128, Inequality, Tags)>,
+    lower: Vec<(i128, Inequality, Tags)>,
+}
+
+/// Fourier-Motzkin's step for one atom: every upper and lower inequality
+/// combined so the atom cancels, each result added to `next`, or the splits
+/// of the first contradictory result.
+fn combine_bounds(
+    upper: &[(i128, Inequality, Tags)],
+    lower: &[(i128, Inequality, Tags)],
+    next: &mut BTreeMap<Inequality, Tags>,
+) -> Result<Option<Tags>, Capacity> {
+    for (up_weight, up, up_why) in upper {
+        for (low_weight, low, low_why) in lower {
+            let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
+            let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
+            let combined = Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).reduced();
+            let mut why = up_why.clone();
+            why.union(low_why);
+            if combined.contradictory() {
+                return Ok(Some(why));
+            }
+            if !combined.trivial() {
+                next.entry(combined).or_insert(why);
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1126,11 +1229,242 @@ mod tests {
     }
 
     #[test]
+    fn bound_only_atoms_are_eliminated_beside_shared_ones() {
+        let bounded = |problem: &mut Problem, count: usize| -> Vec<Linear> {
+            (0..count)
+                .map(|_| {
+                    let atom = plain(problem);
+                    unit(problem, &atom, Relation::GreaterEqual, &Linear::constant(0));
+                    unit(problem, &atom, Relation::LessEqual, &Linear::constant(255));
+                    atom
+                })
+                .collect()
+        };
+        // Many atoms with only their own bounds and a consistent remainder.
+        let mut problem = Problem::default();
+        let atoms = bounded(&mut problem, 600);
+        let y = plain(&mut problem);
+        unit(&mut problem, &atoms[0], Relation::Less, &y);
+        assert_eq!(problem.judge(), Ok(Verdict::Open));
+        // One bound-only atom whose own bounds conflict.
+        let mut problem = Problem::default();
+        let atoms = bounded(&mut problem, 600);
+        unit(
+            &mut problem,
+            &atoms[599],
+            Relation::GreaterEqual,
+            &Linear::constant(256),
+        );
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+        // A cycle among shared atoms is still refuted beside them.
+        let mut problem = Problem::default();
+        bounded(&mut problem, 600);
+        let (x, y, z) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        unit(&mut problem, &x, Relation::Less, &y);
+        unit(&mut problem, &y, Relation::Less, &z);
+        unit(&mut problem, &z, Relation::Less, &x);
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn bound_only_atoms_take_no_elimination_round() {
+        let mut inequalities = Vec::new();
+        for atom in 0..600 {
+            let at = Linear::atom(atom);
+            let below = Inequality::at_most(&at, &Linear::constant(255)).expect("bound");
+            let above = Inequality::at_most(&Linear::constant(0), &at).expect("bound");
+            inequalities.push((below, Tags::default()));
+            inequalities.push((above, Tags::default()));
+        }
+        let mut rounds = 0;
+        assert_eq!(eliminate_counting(inequalities, &mut rounds), Ok(None));
+        // One round finds no atom left; one round per atom rebuilt the set
+        // 600 times.
+        assert_eq!(rounds, 1);
+    }
+
+    #[test]
+    fn bound_pairs_beyond_the_arithmetic_leave_the_loop_its_refutation() {
+        let ineq = |terms: Vec<(AtomId, i128)>, constant: i128| {
+            (Inequality(Linear { terms, constant }), Tags::default())
+        };
+        // a < b and b < a refute; z's bounds cannot be paired in `i128`.
+        let refuted = vec![
+            ineq(vec![(0, 1), (1, -1)], 1),
+            ineq(vec![(0, -1), (1, 1)], 1),
+            ineq(vec![(2, 1)], -i128::MAX),
+            ineq(vec![(2, -1)], -i128::MAX),
+        ];
+        assert_eq!(eliminate(refuted), Ok(Some(Tags::default())));
+        // Pairing reaches `i128::MIN`, whose reduction must not overflow.
+        let at_minimum = vec![
+            ineq(vec![(0, 1), (1, -1)], 1),
+            ineq(vec![(0, -1), (1, 1)], 1),
+            ineq(vec![(2, 1)], -i128::MAX),
+            ineq(vec![(2, -1)], -1),
+        ];
+        assert_eq!(eliminate(at_minimum), Ok(Some(Tags::default())));
+        // Non-unit coefficients normalize before elimination: 2x <= 5 and
+        // 3x >= 7 leave no integer x.
+        let mut problem = Problem::default();
+        let x = plain(&mut problem);
+        let twice = x.scaled(2).expect("scaled");
+        let thrice = x.scaled(3).expect("scaled");
+        unit(
+            &mut problem,
+            &twice,
+            Relation::LessEqual,
+            &Linear::constant(5),
+        );
+        unit(
+            &mut problem,
+            &thrice,
+            Relation::GreaterEqual,
+            &Linear::constant(7),
+        );
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
     fn a_consistent_set_stays_open() {
         let mut problem = Problem::default();
         let (x, y) = (plain(&mut problem), plain(&mut problem));
         unit(&mut problem, &x, Relation::Less, &y);
         assert_eq!(problem.judge(), Ok(Verdict::Open));
+    }
+
+    #[test]
+    fn shared_rule_guards_are_probed_once_per_batch() {
+        // The 257-projection conformance case has these two shared bounds.
+        // Plain atoms here ensure sharing is independent of read/array shape.
+        for count in [1, 257] {
+            let mut problem = Problem::default();
+            let k = plain(&mut problem);
+            let zero = Linear::constant(0);
+            let guards = vec![
+                Literal::new(k.clone(), Relation::GreaterEqual, zero.clone()),
+                Literal::new(k, Relation::Less, Linear::constant(1)),
+            ];
+            problem.units.extend(guards.iter().cloned());
+            let mut sum = zero.clone();
+            for _ in 0..count {
+                let value = plain(&mut problem);
+                sum = sum.plus(&value).unwrap();
+                problem.rules.push(Rule {
+                    guards: guards.clone(),
+                    conclusions: vec![Literal::new(value, Relation::Equal, zero.clone())],
+                });
+            }
+            // All conclusions are needed: an omitted value could be positive.
+            unit(&mut problem, &sum, Relation::Greater, &zero);
+            let run = Run::backjumping();
+            assert_eq!(problem.judge_in(&run), Ok(Verdict::Refuted));
+            assert_eq!(
+                run.guard_probes.get(),
+                2,
+                "{count} conclusions must share two probes, not require {}",
+                2 * count
+            );
+        }
+    }
+
+    #[test]
+    fn open_shared_guards_are_retried_after_new_conclusions() {
+        // x == 1 is open in the first round, then the last rule establishes
+        // it. Its shared failure must expire; its later proof needs both
+        // equality negations and must be shared by the two earlier rules.
+        let mut problem = Problem::default();
+        let (x, y, z) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let guard = Literal::new(x, Relation::Equal, Linear::constant(1));
+        for value in [&y, &z] {
+            problem.rules.push(Rule {
+                guards: vec![guard.clone()],
+                conclusions: vec![Literal::new(
+                    value.clone(),
+                    Relation::Equal,
+                    Linear::constant(0),
+                )],
+            });
+        }
+        problem.rules.push(Rule {
+            guards: Vec::new(),
+            conclusions: vec![guard],
+        });
+        unit(
+            &mut problem,
+            &y.plus(&z).unwrap(),
+            Relation::Greater,
+            &Linear::constant(0),
+        );
+        let run = Run::backjumping();
+        assert_eq!(problem.judge_in(&run), Ok(Verdict::Refuted));
+        assert_eq!(run.guard_probes.get(), 3);
+    }
+
+    #[test]
+    fn shared_guard_proofs_keep_their_split_dependencies() {
+        // s == 0 or s == 1. Both rules fire only in the first branch; only
+        // the second rule (sharing the proof) contradicts y >= 1. Losing its
+        // tag would backjump past the open s == 1 branch and falsely refute it.
+        let mut problem = Problem::default();
+        let (s, x, y) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let zero = Linear::constant(0);
+        let guard = Literal::new(s.clone(), Relation::Equal, zero.clone());
+        problem.choices.push(vec![
+            vec![guard.clone()],
+            vec![Literal::new(s, Relation::Equal, Linear::constant(1))],
+        ]);
+        for value in [x, y.clone()] {
+            problem.rules.push(Rule {
+                guards: vec![guard.clone()],
+                conclusions: vec![Literal::new(value, Relation::Equal, zero.clone())],
+            });
+        }
+        unit(
+            &mut problem,
+            &y,
+            Relation::GreaterEqual,
+            &Linear::constant(1),
+        );
+        assert_rests_on_the_choice(&problem);
+    }
+
+    #[test]
+    fn distinct_guards_see_earlier_conclusions_before_their_arithmetic() {
+        // Batching distinct guard lists across an entire round would probe
+        // MAX*x > -MAX*x before x == 0 simplifies it. Forming the inequality
+        // would overflow on -MAX - MAX, although the original ordered scan
+        // decides this problem without leaving i128 arithmetic.
+        let mut problem = Problem::default();
+        let x = plain(&mut problem);
+        let conclusion = Literal::new(x.clone(), Relation::Equal, Linear::constant(0));
+        problem.rules.push(Rule {
+            guards: Vec::new(),
+            conclusions: vec![conclusion.clone()],
+        });
+        problem.rules.push(Rule {
+            guards: vec![Literal::new(
+                x.scaled(i128::MAX).unwrap(),
+                Relation::LessEqual,
+                x.scaled(-i128::MAX).unwrap(),
+            )],
+            conclusions: vec![conclusion],
+        });
+        let run = Run::backjumping();
+        assert_eq!(problem.judge_in(&run), Ok(Verdict::Open));
+        assert_eq!(run.guard_probes.get(), 1);
     }
 
     #[test]
@@ -1863,8 +2197,8 @@ mod tests {
         for index in 0..4000 {
             let problem = drawn_problem(&mut draw);
             let full = Run {
-                nodes: Cell::new(0),
                 backjump: false,
+                ..Run::backjumping()
             };
             assert_eq!(
                 problem.judge(),

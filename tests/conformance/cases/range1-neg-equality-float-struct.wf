@@ -1,0 +1,14 @@
+struct RangeFloat {
+  index: u64;
+  fraction: f64;
+}
+
+fn need(xs: &[RangeFloat], v: RangeFloat) -> result: unit pure contract {
+  requires forall same(k in 0_u64..xs^.len): xs^[k] == v;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

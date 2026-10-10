@@ -3,9 +3,9 @@ struct Mark {
 }
 
 fn first_of<T: copy>(values: &[T]) -> result: Option<Box<Array<T>>> reads(values) contract {
-  ensures when Some(value: cells): forall same(k in 0_u64..cells.inner.len): cells.inner[k] == cells.inner[0_u64];
+  ensures when Some(value: cells): forall same(k in 0_u64..cells.inner.len): cells.inner[k] != cells.inner[0_u64];
 } {
-  doc "Returns None at every exit; the postcondition compares values of T.";
+  doc "Returns None at every exit; the postcondition uses a non-equality comparison of values of T.";
   if values^.len > 1000_u64 {
     return None<Box<Array<T>>>();
   }
@@ -13,7 +13,7 @@ fn first_of<T: copy>(values: &[T]) -> result: Option<Box<Array<T>>> reads(values
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "At the Mark instance the postcondition states nothing, so it owes no selected exit either.";
+  doc "At the Mark instance the non-equality postcondition states nothing, so it owes no selected exit either.";
   let weight = Mark(weight: 1_u64);
   let marks = box_array_filled::<Mark>(count: 2_u64, value: weight);
   let got = first_of::<Mark>(values: &marks.inner[0_u64..2_u64]);

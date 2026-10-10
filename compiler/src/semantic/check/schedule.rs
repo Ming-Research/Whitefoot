@@ -32,6 +32,7 @@ impl Checker<'_, '_> {
     ) -> Result<PostconditionSchedule, CheckStop> {
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
         let const_parameter_types: HashMap<_, _> = self.types.const_generic_types().collect();
+        let copy_type_parameters = self.types.copy_type_parameters();
         let renaming_classes = (0..functions.len())
             .map(|index| {
                 judged
@@ -96,6 +97,7 @@ impl Checker<'_, '_> {
                         constants: &types.checked_constants,
                         constant_ids: &types.constants,
                         const_parameter_types: &const_parameter_types,
+                        copy_type_parameters: &copy_type_parameters,
                         nominals: &types.nominals,
                         elements: &types.elements,
                         contract_queries: &contract_queries,
@@ -240,6 +242,7 @@ impl Checker<'_, '_> {
                             constants: &types.checked_constants,
                             constant_ids: &types.constants,
                             const_parameter_types: &const_parameter_types,
+                            copy_type_parameters: &copy_type_parameters,
                             nominals: &types.nominals,
                             elements: &types.elements,
                             contract_queries: &contract_queries,

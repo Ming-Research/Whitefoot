@@ -911,7 +911,7 @@ pub enum IrOperation {
         operation: IrBooleanOperation,
         arguments: Vec<IrValueId>,
     },
-    EnumEquality {
+    ValueEquality {
         equal: bool,
         operand_type: IrType,
         arguments: [IrValueId; 2],
@@ -1767,6 +1767,9 @@ pub enum RecursionBudget {
 /// block of one function. The compute scheduler may hand out every member but
 /// the last, runs that source-last member on the calling lane, and joins the
 /// handed-out calls before any value use or block exit.
+/// Independent non-call statements between members keep their instruction
+/// positions on the calling lane, inside that window. They neither add a
+/// member nor move the join beyond the last call.
 ///
 /// The group is a permission the target stage may take, never an obligation:
 /// a target that hands nothing out emits exactly the sequential code, because

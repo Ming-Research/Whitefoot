@@ -1016,6 +1016,12 @@ fn condition_kept_across_a_join() {
 }
 
 #[test]
+fn different_conditions_across_a_join_do_not_keep_one_arms_bound() {
+    let source = condition("").replace("set inside = x < 4_u64;", "set inside = x < 5_u64;");
+    check(&source, Some(SemanticRule::Op4));
+}
+
+#[test]
 fn condition_written_through_a_reference() {
     check(
         &condition("  let writer = &inside;\n  set writer^ = True();\n"),

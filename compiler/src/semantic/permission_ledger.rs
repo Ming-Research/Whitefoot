@@ -13,8 +13,9 @@
 //! pairs and three separate permitted pairs read identically as pairs and are
 //! completely different work, so every eligible chain gets a `run` line naming
 //! its members. What the *backend* then keeps is narrower still — one call
-//! definition per site, all members in one block, no addressed binding but the
-//! last — and that narrowing happens after this ledger is rendered, so a `run`
+//! definition per call site, all calls in one block, no addressed call binding
+//! but the last, with non-call statements left in place — and that narrowing
+//! happens after this ledger is rendered, so a `run`
 //! line states what the judgment permits and not what the emitter actualizes.
 //! Storage-conflict text is prepared here and retained on its pair; lowering
 //! emits it through the actualization ledger only when that pair ends a group.

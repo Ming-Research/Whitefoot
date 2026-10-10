@@ -935,6 +935,11 @@ pub enum SemanticIssueKind {
     },
     /// The selected operation family has no row for the written arguments.
     InvalidOperation,
+    /// [OP-16] equality has no row for this type or one of its parts.
+    InvalidEqualityType {
+        /// The first non-equality part, in declaration order, and its repair.
+        mechanical_fix: String,
+    },
     /// A contract predicate is not exactly `own Bool`.
     InvalidPredicateCondition,
     /// A conditional was written in a form GRAM-6 does not admit for its

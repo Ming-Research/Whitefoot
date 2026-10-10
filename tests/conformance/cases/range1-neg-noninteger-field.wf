@@ -2,13 +2,13 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 struct Entry {
-  flag: Bool;
+  flag: f64;
 }
 
 fn inspect(rows: &[Entry]) -> result: unit pure contract {
   requires forall held(k in 0_u64..rows^.len): rows^[k].flag == rows^[k].flag;
 } {
-  doc "The requirement compares a Bool field, which is no integer range term.";
+  doc "The requirement compares a float field, which is neither an integer nor an equality type.";
   return unit;
 }
 

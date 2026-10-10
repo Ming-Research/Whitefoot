@@ -1,4 +1,5 @@
 pub(in crate::semantic::check) mod calls;
+pub(in crate::semantic::check) mod equality;
 pub(in crate::semantic::check) mod flat_storage;
 mod places;
 
@@ -462,6 +463,13 @@ impl<'unit> Checker<'_, 'unit> {
                     .types
                     .declarations
                     .infix_operation(self.types.declarations.clause_operator_node(operator)?)?;
+                self.types.preflight_value_equality(
+                    context,
+                    node,
+                    operation,
+                    &[left, right],
+                    bindings,
+                )?;
                 let left = (
                     left,
                     self.check_clause_affine(
@@ -484,8 +492,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -560,8 +572,12 @@ impl<'unit> Checker<'_, 'unit> {
                         PlaceUseContext::Ordinary,
                     )?,
                 );
-                self.types
-                    .check_integer_operation_operands(node, operation, vec![left, right])
+                self.types.check_integer_operation_operands(
+                    context.check_context,
+                    node,
+                    operation,
+                    vec![left, right],
+                )
             }
             Production::AffineTerm => {
                 let factors = self
@@ -602,6 +618,7 @@ impl<'unit> Checker<'_, 'unit> {
                             )?,
                         );
                         self.types.check_integer_operation_operands(
+                            context.check_context,
                             node,
                             CheckedIntegerOperation::MultiplyExact,
                             vec![left, right],
@@ -1962,8 +1979,8 @@ impl<'unit> DeclarationInventory<'unit> {
     ///
     /// Bare `+ - * / %` are proof-required exact rows; `defined` names their
     /// total Bool domain queries. The remaining suffixes keep their existing
-    /// value-result policies. The six `compare_op` spellings are the total
-    /// integer comparison rows.
+    /// value-result policies. Equality shares this token mapping, then selects
+    /// the value-equality judgment; ordering keeps the integer judgment.
     pub(super) fn infix_operation(
         &self,
         operator: NodeId,

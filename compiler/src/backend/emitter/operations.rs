@@ -247,37 +247,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    pub(super) fn emit_enum_equality(
-        &mut self,
-        result: IrValueId,
-        ty: IrType,
-        equal: bool,
-        operand_type: IrType,
-        arguments: [IrValueId; 2],
-    ) -> Result<(), BackendFailure> {
-        if ty != IrType::Bool
-            || !is_tag_only_type(self.program, operand_type)?
-            || arguments
-                .iter()
-                .any(|argument| self.value_type(*argument) != Some(operand_type))
-        {
-            return Err(BackendFailure::InvalidIr);
-        }
-        {
-            let emitted_type_2 = self.output.type_name(self.program, operand_type)?;
-            writeln!(
-                self.output,
-                "  {} = icmp {} {} {}, {}",
-                self.value_name(result),
-                if equal { "eq" } else { "ne" },
-                emitted_type_2,
-                self.value_name(arguments[0]),
-                self.value_name(arguments[1])
-            )
-        }
-        .map_err(|_| BackendFailure::TextEmission)
-    }
-
     pub(super) fn emit_struct(
         &mut self,
         result: IrValueId,

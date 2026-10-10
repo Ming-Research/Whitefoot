@@ -7,7 +7,9 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
+use super::{
+    assert_rule, assert_rule_kind, with_resolved_semantics, with_semantics, with_semantics_dark,
+};
 
 #[test]
 fn wrapping_conversion_goal_identity_retains_its_operand_support() {
@@ -1846,33 +1848,27 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// The OWN-1 bare-affine rejection inside a static requirement carries the
-/// clause-specific repair because [FN-8] rejects `move` inside a contract.
+/// Equality's domain excludes capability-removing declarations, including
+/// inside a pure contract; the OP-16 repair names that exclusion.
 #[test]
-fn requires_clause_bare_affine_use_carries_the_static_repair() {
-    let expected_fix =
-        "restate the definition or clause over copy operands or non-consuming admitted reads";
-    assert_rule(
+fn requires_clause_non_equality_type_carries_its_domain_repair() {
+    assert_rule_kind(
         br#"nocopy enum Holder {
   Value();
 }
 
 fn inspect(holder: Holder) -> result: unit pure contract {
-  requires eeq(holder, holder);
+  requires holder == holder;
 } {
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let holder = Holder::Value();
-  let held = inspect(holder: move holder);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-        SemanticRule::Own1,
-        SemanticIssueKind::BareAffineUse {
-            mechanical_fix: expected_fix,
-        },
+        SemanticRule::Op1,
+        |kind| matches!(kind, SemanticIssueKind::InvalidEqualityType { mechanical_fix } if mechanical_fix.contains("removes a capability")),
     );
 }
 
@@ -1932,17 +1928,24 @@ fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
                     "only an established non-L0 ordering leaf supplies an affine image"
                 );
                 if !affine_image {
-                    assert!(function.entailment.derivations.nodes.iter().any(|node| matches!(
-                        node,
-                        super::super::entailment::DerivationNode::OriginProjection {
-                            sign: super::super::entailment::GoalSign::Positive,
-                            relation: super::super::entailment::Relation::Equal {
-                                difference: 0,
-                                ..
-                            },
-                            ..
-                        }
-                    )));
+                    assert!(
+                        function
+                            .entailment
+                            .derivations
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(
+                                node,
+                                super::super::entailment::DerivationNode::OriginProjection {
+                                    sign: super::super::entailment::GoalSign::Positive,
+                                    relation: super::super::entailment::Relation::Equal {
+                                        difference: 0,
+                                        ..
+                                    },
+                                    ..
+                                }
+                            ))
+                    );
                 }
             } else {
                 let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
