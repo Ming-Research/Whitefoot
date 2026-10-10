@@ -929,14 +929,18 @@ static void claim_yields(void) {
 }
 
 /* As another writer of claim_key that reused the cell of the key the writer
- * under test passed, removed meanwhile, and holds it a little longer: k's
- * cell, holding 7, locked there until a thread lets it go. */
+ * under test passed, removed meanwhile, and holds it until the impatient
+ * writer has closed the map's gate: k's cell, holding 7, locked there until
+ * a thread lets it go. Letting go after a fixed pause instead raced a slow
+ * (sanitized) claimer, which then found the cell free and never upgraded. */
 static pthread_t holding_thread;
 
 static void *let_go_later(void *arg) {
     cell *c = arg;
-    struct timespec pause = {0, 2000000};
-    nanosleep(&pause, NULL);
+    struct timespec pause = {0, 100000};
+    /* Bounded so a claimer that never upgrades fails its check, not the run. */
+    for (int waited = 0; waited < 100000 && atomic_load(&other_user->map->gate) == 0; waited++)
+        nanosleep(&pause, NULL);
     atomic_store(&c->key, atomic_load(&c->key) & ~LOCKED);
     return NULL;
 }

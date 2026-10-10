@@ -53,7 +53,72 @@
 # two never share a core; nothing else should run on the host meanwhile. The
 # suite runs each line both on two server CPUs (0 and 1, the client on 2 and 3)
 # and on one (0, the client on 1 to 3).
+#
+# The compare, scale and quick modes place n server CPUs with `place`: one
+# logical CPU on each of n distinct physical cores, performance cores only
+# where the host lists them (/sys/devices/cpu_core/cpus), in CPU-number order,
+# skipping the physical core of CPU 0, which the OS and the runner keep; the
+# client gets every logical CPU of the remaining such cores, up to the count
+# asked. On the native i9-14900K, whose adjacent CPU numbers are hyperthread
+# siblings and whose CPUs 16-31 are efficiency cores, n = 2 gives server 2,4
+# and client 6-15. SERVER_CPU_LIST and CLIENT_CPU_LIST, comma-separated CPU
+# numbers, override the two lists; the server list's first n CPUs are used.
+# Each placement is printed as a placement line. The rule is Firn-wf's
+# benchmark placement (its design node firn/measurement-sessions).
 set -e
+
+# Sets SERVER_CPUS, CLIENT_CPUS and CLIENT_THREADS for n servers and at most
+# the given client count; returns 2 when the host has too few cores for n.
+place() {
+    lists=$(python3 - "$1" "$2" "${SERVER_CPU_LIST:-}" "${CLIENT_CPU_LIST:-}" <<'PY'
+import sys
+from pathlib import Path
+n, wanted, server_list, client_list = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
+def parse(text):
+    cpus = []
+    for part in text.strip().split(","):
+        if part:
+            first, _, last = part.partition("-")
+            cpus.extend(range(int(first), int(last or first) + 1))
+    return cpus
+root = Path("/sys/devices")
+listed = root / "cpu_core" / "cpus"
+online = root / "system" / "cpu" / "online"
+eligible = parse(listed.read_text()) if listed.exists() else parse(online.read_text())
+def core(cpu):
+    topology = root / "system" / "cpu" / f"cpu{cpu}" / "topology"
+    try:
+        return ((topology / "physical_package_id").read_text().strip(),
+                (topology / "core_id").read_text().strip())
+    except OSError:
+        return ("cpu", str(cpu))
+cores = {}
+for cpu in sorted(eligible):
+    cores.setdefault(core(cpu), []).append(cpu)
+reserved = core(0)
+ordered = [cpus for key, cpus in cores.items() if key != reserved]
+if server_list:
+    servers = parse(server_list)[:n]
+else:
+    servers = [cpus[0] for cpus in ordered[:n]]
+if client_list:
+    clients = parse(client_list)[:wanted]
+else:
+    clients = [cpu for cpus in ordered[n:] for cpu in cpus][:wanted]
+server_cores = {core(cpu) for cpu in servers}
+if len(servers) < n or not clients:
+    sys.exit(2)
+if len(server_cores) != len(servers) or server_cores & {core(cpu) for cpu in clients}:
+    sys.exit("placement: a server CPU shares a physical core with another server or the client")
+print(",".join(map(str, servers)), ",".join(map(str, clients)), len(clients))
+PY
+    ) || return $?
+    set -- $lists
+    SERVER_CPUS=$1
+    CLIENT_CPUS=$2
+    CLIENT_THREADS=$3
+    echo "placement,$n servers,server=$SERVER_CPUS,client=$CLIENT_CPUS"
+}
 
 ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 OUT=${OUT:-/tmp/redis-bench}
@@ -559,9 +624,14 @@ if [ "$MODE" = compare ]; then
             echo "skip,$n server CPUs,only $total on this host"
             continue
         fi
-        SERVER_CPUS=$(seq -s, 0 $((n - 1)))
-        CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
-        CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
+        status=0
+        place "$n" 16 || status=$?
+        if [ "$status" -eq 2 ]; then
+            echo "skip,$n server CPUs,too few physical cores on this host"
+            continue
+        elif [ "$status" -ne 0 ]; then
+            exit "$status"
+        fi
         for name in $names; do
             verify "image-$name"
         done
@@ -643,9 +713,7 @@ if [ "$MODE" = quick ]; then
     n=${QUICK_CPUS:-4}
     total=$(nproc)
     all="set get incr lpush rpop sadd hset zadd lrange_100 mset"
-    CLIENT_THREADS=${QUICK_CLIENTS:-$((total - n < 16 ? total - n : 16))}
-    SERVER_CPUS=$(seq -s, 0 $((n - 1)))
-    CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
+    place "$n" "${QUICK_CLIENTS:-16}"
     reference="$OUT/quick-ref-$n-$CLIENT_THREADS.csv"
     if [ -n "$QUICK_REFRESH" ] || [ ! -s "$reference" ]; then
         : >"$reference.new"
@@ -678,9 +746,8 @@ if [ "$MODE" = quick ]; then
     exit 0
 fi
 
-# The scaling run: on each server CPU count n in SCALE, the servers on CPUs 0
-# to n - 1 and the client on the rest, with one client thread per client CPU
-# up to 16; every line is checked on n CPUs, a pilot sizes the runs for n,
+# The scaling run: on each server CPU count n in SCALE, the servers and the
+# client placed by `place`, with one client thread per client CPU up to 16; every line is checked on n CPUs, a pilot sizes the runs for n,
 # and then PASSES passes measure the lines interleaved.
 if [ "$MODE" = scale ]; then
     total=$(nproc)
@@ -691,11 +758,16 @@ if [ "$MODE" = scale ]; then
             echo "skip,scale $n,the host has $total CPUs"
             continue
         fi
-        SERVER_CPUS=$(seq -s, 0 $((n - 1)))
-        CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
         # quick_client starts one process per client CPU and counts
-        # CLIENT_THREADS of them, so the two must name the same CPUs.
-        CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
+        # CLIENT_THREADS of them, so place sets both from one list.
+        status=0
+        place "$n" 16 || status=$?
+        if [ "$status" -eq 2 ]; then
+            echo "skip,scale $n,too few physical cores on this host"
+            continue
+        elif [ "$status" -ne 0 ]; then
+            exit "$status"
+        fi
         lines="reference valkey-io dragonfly-$n garnet-$n firn-$n firn-base-$n"
         for line in $lines; do
             if available "$line"; then
