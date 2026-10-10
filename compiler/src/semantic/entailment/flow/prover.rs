@@ -245,13 +245,14 @@ impl Vocabulary {
     }
 
     /// Queries the strongest closed L0 image with exactly this affine vector.
-    pub(super) fn affine_l0_proof(
+    pub(super) fn affine_l0_proof<'a>(
         &mut self,
-        inequality: &AffineInequality,
+        inequality: impl Into<AffineInequalityView<'a>>,
         index: &LazyAffineL0Index,
         closed: &ClosedState,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let inequality = inequality.into();
         let Some(entry) = index.entry(inequality.terms(), closed, check) else {
             return Ok(None);
         };
@@ -2955,19 +2956,13 @@ impl Reasoning<'_, '_, '_> {
         candidates
     }
 
-    pub(super) fn affine_interval_proof(
+    pub(super) fn affine_interval_proof<'a>(
         &mut self,
-        inequality: &AffineInequality,
+        inequality: impl Into<AffineInequalityView<'a>>,
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
-        let mut requested = inequality
-            .terms()
-            .iter()
-            .map(|coefficient| coefficient.term())
-            .collect::<Vec<_>>();
-        requested.sort_unstable();
-        requested.dedup();
+        let inequality = inequality.into();
 
         if query.measures.is_none() {
             query.measures = Some(self.vocabulary.measure_terms_by_atom(query.values));
@@ -2976,7 +2971,10 @@ impl Reasoning<'_, '_, '_> {
             .measures
             .as_ref()
             .expect("measure index prepared above");
-        for atom_id in requested {
+        // Canonical inequality coefficients already have strictly ordered,
+        // unique atom identities, exactly the former sorted/deduplicated list.
+        for coefficient in inequality.terms() {
+            let atom_id = coefficient.term();
             if query.intervals.contains_key(&atom_id) {
                 continue;
             }
@@ -3073,12 +3071,13 @@ impl Reasoning<'_, '_, '_> {
         Ok(Some(parents))
     }
 
-    pub(super) fn affine_residual_proof(
+    pub(super) fn affine_residual_proof<'a>(
         &mut self,
-        inequality: &AffineInequality,
+        inequality: impl Into<AffineInequalityView<'a>>,
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let inequality = inequality.into();
         if query.closed.contradictory() {
             return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
         }
@@ -3102,23 +3101,23 @@ impl Reasoning<'_, '_, '_> {
     /// exactly as fixed by the specification. Each tightening is formed on its
     /// own: an unrepresentable one is skipped and removes neither the other
     /// tightening nor the untightened candidate.
-    pub(super) fn affine_candidate_residual_proof(
+    pub(super) fn affine_candidate_residual_proof<'a>(
         &mut self,
         target: &AffineInequality,
-        candidate: &AffineInequality,
+        candidate: impl Into<AffineInequalityView<'a>>,
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
-        let tightenings = integer_tightenings(candidate, target, check);
-        for accumulated in std::iter::once(candidate).chain(tightenings.iter()) {
-            let Ok(residual) = AffineInequality::residual_after(target, accumulated, check) else {
-                continue;
-            };
-            if let Ok(Some(parents)) = self.affine_residual_proof(&residual, query, check) {
-                return Some(parents);
-            }
-        }
-        None
+        // Move storage out while DIRECT mutates the rest of the query; put it
+        // back even after failure so later candidates retain its capacity.
+        let mut scratch = std::mem::take(&mut query.residual);
+        let proof = scratch.prove(target, candidate.into(), check, |residual, check| {
+            self.affine_residual_proof(residual, query, check)
+                .ok()
+                .flatten()
+        });
+        query.residual = scratch;
+        proof
     }
 
     /// Exhausts one coefficient-one L0 premise followed by the direct
@@ -3271,18 +3270,16 @@ impl Reasoning<'_, '_, '_> {
 pub(super) fn first_two_premise_candidate<T>(
     premises: &[AutomaticAffinePremise],
     check: &mut AffineCheckState,
-    mut prove: impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<T>,
+    mut prove: impl FnMut(AffineInequalityView<'_>, &mut AffineCheckState) -> Option<T>,
 ) -> Option<(usize, usize, T)> {
+    let mut scratch = AffineSumScratch::default();
     for first in 0..premises.len() {
         for second in first..premises.len() {
-            let pair = [
-                premises[first].inequality.clone(),
-                premises[second].inequality.clone(),
-            ];
-            let Ok(sum) = sum_explicit_inequalities(&pair, check) else {
+            let pair = [&premises[first].inequality, &premises[second].inequality];
+            let Ok(sum) = scratch.sum(&pair, check) else {
                 continue;
             };
-            if let Some(proof) = prove(&sum, check) {
+            if let Some(proof) = prove(sum, check) {
                 return Some((first, second, proof));
             }
         }

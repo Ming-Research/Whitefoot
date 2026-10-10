@@ -604,3 +604,193 @@ family cost are recorded above; performance remains unverified. D1, T1, V3 and
 new verification-stage T8 are not applicable. Design-lint counts and readiness
 are unverified. The reviewer used source/Git reads and official GitHub
 reference lookup, with no execution of builds, tests, checks or measurements.
+
+
+## Halo's profile and the first cost reductions
+
+Question: can shared syntax preparation, indexed argument provenance and one
+small allocation removal reduce package checking without changing any verdict,
+diagnostic text, diagnostic order or source attribution? The supplied analysis
+(`sol-costnext.txt`, sections 4, 1 and 3) selects these first reductions from
+[Halo-wf profile run 37893283903](https://github.com/Ming-Research/Halo-wf/actions/runs/37893283903).
+Its manifest pins Halo source `98114a4ded00351391ca092848178e68a3af768b`, compiler
+`wf-exp-1b988b826eab`, DWARF call graphs and a plain check of 8.542 s on the
+14900K. These are baseline observations, not measurements of this change.
+
+| Profile entry | Inclusive CPU share | Self share |
+|---|---:|---:|
+| Syntax view construction / path sorting / destruction | 4.88% / 1.92% / 1.18% | — |
+| Declaration reads | 6.69% | 0.06% |
+| Descendant traversal | 3.74% | 3.43% |
+| Generic template validation | 15.23% | 0.00% |
+| Generic substitution / binding-site recording | 2.79% / 2.17% | 0.06% / 2.03% |
+| Frontier join with transport | 18.31% | 0.00% |
+| Vector growth / libc realloc / memmove | 7.58% / 6.13% / 4.51% | — / — / 4.51% |
+
+The analysis transcribed declaration reads as 6.74%; the supplied
+`children-full.txt:53` says 6.69%, used here. Inclusive entries overlap and are
+not a partition of a phase or additive savings. The exports lack complete
+caller trees, particularly allocator stacks; they do not attribute the growth
+share to `BoundStore::slots_for`.
+
+- **A — syntax preparation.** `DeclarationReads` builds item adjacency,
+  module membership and module roots once for the target and its dependency
+  queries over one resolved unit. Each query keeps its own visited set.
+  `SyntaxView` constructs paths on the first path request and the sorted
+  reverse index only on its first lookup; path components reserve the known
+  tree depth. The immutable syntax is their only input. Those reductions left
+  descendant DFS unchanged: finalized node IDs are postorder, while its result
+  is preorder;
+  an indexed replacement needs an additional ordered subtree representation,
+  beyond these local setup changes. No semantic judgments are cached.
+- **B — provenance.** A nested hash index keys the complete region-free
+  substitution and parameter key, retaining exactly the smallest source-node
+  index. Binding order, argument kinds and group-member identity remain part
+  of equality. The map is never iterated to choose a diagnostic. Substitution
+  preparation and every semantic judgment still run as before.
+- **C — allocation.** The at-most-two missing terms in `BoundStore::slots_for`
+  use a stack array and populated slice, retaining sort order and duplicate
+  elimination. Bulk layout changes are deferred: copying selected cells and
+  extra candidates is wider work with no caller-level allocation attribution.
+
+The new Rust tests are implementation checks in the existing unit-test gate:
+A compares every lazy path and reverse lookup against an eager child-walk
+oracle on empty, sibling and nested syntax, including both first-request
+orders; reversed components or sorting by node ID fail it. Its four-module
+fixture asserts explicit direct and transitive read sets, repeats queries in
+reverse order, and distinguishes unused declarations and an empty module;
+sharing visited state across queries fails it. No fixture declaration is
+reached only through a provisional contract use, so that adjacency input,
+carried unchanged from the per-module construction, is not tested here.
+B repeats and reorders registrations from two call sites with equal arguments
+and different region axes, checking independent parameters and fallback for
+other arguments; keeping the first/last registration or keying regions fails
+it. C inserts both missing endpoints in reverse order on append and relayout,
+plus equal, one-missing and existing endpoints, asserting slots, ordered cells,
+selected proofs and clone independence; dropping an endpoint, failing to sort
+or failing to deduplicate fails it. Existing bound-store candidate/transition,
+generic source-order, interface-fingerprint and cold/warm driver tests remain.
+
+Validation: the gate passed on the changed compiler (run 37897424627 at
+`555a926b5`); later commits change only this record and leave
+`docs/todo.md` as the base has it. Timing used the base/twin/head protocol
+above on the 14900K with counters unset, six rotating rounds, base
+`wf-exp-5f1c70cd829a` (the tree of main `c35fffd73`) and head
+`wf-exp-555a926b5fbc`, the twin a byte copy of base:
+
+| Input | Base median | Head median | Twin/base | Head/base | Run |
+|---|---:|---:|---:|---:|---|
+| Halo `pkg::vm` (Halo-wf main source) | 8.701 s (range 1.11%) | 7.729 s (range 1.35%) | 1.001 | 0.888 | Halo-wf 37903060714 |
+| Natural wasm interpreter (v2h) | 3.460 s | 3.435 s | 0.994 | 0.993 | Whitefoot 37901726190 |
+| Plain series, 640 arms | 16.165 s | 16.175 s | 0.990 | 1.001 | same |
+| Plain series, 320 arms | 1.585 s [1.570, 1.600] | 1.620 s [1.610, 1.630] | 0.997 | 1.022 | same |
+| Plain series, 40-160 arms | 0.010-0.220 s | equal | 1.000 | 1.000 | same |
+
+Halo's check falls by 11.2%: every head round (7.70-7.80 s) lies below
+every base and twin round (8.63-8.73 s). The panel does not apportion the
+saving among the three reductions. The v2h and 640-arm
+results are within twin spread, as expected: their time is in the affine
+index and joins, which these changes do not touch, and the series still
+grows about tenfold per doubling. The 320-arm head rounds lie above every
+base round by about 2% while 160 and 640 arms show no difference; the cause
+is unexplained and no consumer of that size is known, so it is recorded
+rather than attributed. Allocation savings are not attributed separately.
+
+
+An independent read-only Codex reviewer (inherited model; exact identifier
+unavailable) inspected `c35fffd731118da889bc3c6298402f8dc470aeec` through this
+working diff, all changed files, direct consumers, relevant specification and
+design commitments, and the tests' failure conditions. It found none within
+that scope: A4, D2, C4, T4–T6, G1–G3 and DC1–DC3 passed source inspection;
+DC4 and all executable validation, design-lint counts/readiness and performance
+remain unverified. The tests' claimed mutation failures are by inspection,
+not executed results. D1, T1, T7, T8 and V3 are not applicable to this diff.
+
+## The second profile and three further reductions
+
+Question: do direct declaration lookup, indexed syntax descendants and reusable
+coefficient storage reduce Halo's package check while preserving every verdict,
+diagnostic, selected proof and source attribution? Compare unchanged Halo source
+with base/twin/head on the 14900K; reject the performance hypothesis if head does
+not improve beyond paired base/twin variation. The supplied `sol-next.txt`
+analysis of [Halo-wf run 37906684746](https://github.com/Ming-Research/Halo-wf/actions/runs/37906684746)
+uses `wf-exp-555a926b5fbc` on the 14900K; check without perf is 7.750 s.
+These profile shares overlap and must not be added or read as predicted savings.
+
+| Profile entry | Inclusive share | Self share |
+|---|---:|---:|
+| Effect projection (`effect_paths_for_place`) | 3.81% | 3.44% |
+| Syntax descendants | 4.32% | 4.04% |
+| Affine target / candidate residual proof | 12.80% / 11.77% | — |
+| Residual formation | 3.02% | 1.04% |
+| Join transport / frontier sealing | 22.09% / 21.87% | — |
+| L0 join orchestration / `join_at_once` | 5.41% / 4.68% | — / 0.48% |
+| Closure globally / predecessor closure within `join_at_once` | 9.38% / 0.45% | — |
+| Kills / pre-kill materialization / all materialization | 7.10% / 5.63% / 7.49% | — |
+| Contributing-input clone / all flow clones / all bound-store clones | 0.42% / 1.00% / 0.57% | — |
+
+At least approximately 16.68 percentage points of transport lie outside
+`join_at`; loop relation proving has a 13.04% global share, without isolated
+frontier ancestry. Global memmove (4.26%) and bulk layout (0.93% inclusive)
+do not establish join-specific savings. Kills and materialization are adjacent
+flow work, not direct join calls. These observations do not select the deferred
+A1 join redesign.
+
+1. Effect projection, captured-parameter classification and atomic-binder
+   classification use the dense declaration accessor, which returns the record
+   formerly found by equality scan. Binding search, capture validity, missing
+   records and path conversion retain their behavior.
+2. The syntax view lazily builds strict subtree intervals and production lists
+   in preorder. Queries slice those lists without walking the subtree, exclude
+   their root and retain discovery order despite postorder NodeIds. Consumers
+   keep their calls. The additional design line is proposed; the index contains
+   written syntax only.
+3. Pair formation borrows its premises and reuses two coefficient buffers.
+   Candidate residuals and their at-most-two tightenings reuse query-local
+   buffers. Interval requests read the already canonical coefficient order.
+   Checked operations, limits, candidate/tightening order and selected parents
+   remain in their former sequence; no proof-answer cache is added. Buffer
+   growth, proof-parent vectors and unchanged L0 preparation can still allocate.
+   The certificate's initial owned residual remains to preserve its diagnostic
+   formation order; automatic-premise collection and other owning arithmetic
+   consumers remain outside this change.
+
+Unit tests retain the old declaration scan for every role and absent identity;
+compare cold and warm descendants with an independent child walk over nested,
+sibling, empty and repeated-production syntax; and compare affine arithmetic,
+candidate traces, source choices and selected parents with the allocating paths.
+Wrong dense lookup or role classification, root inclusion, NodeId sorting,
+stale scratch after a failed candidate, regrouped MIN cancellation, dropped
+formation limits, reordered tightenings and later-witness selection each have
+an assertion that distinguishes them. Existing proof-family fixtures now also
+compare the old traversal, including DIRECT and the final L0 family. These
+failure conditions are established by inspection, not executed mutations.
+
+Validation: the gate passed at `a71229fea` (run 37915524732); no
+specification or conformance verdict changes. Timing used the same protocol on
+the 14900K (Hyper-V guest, before its native reinstall), six rotating rounds of
+Halo's `pkg::vm` check on Halo-wf main 638acad (Halo-wf run 37990719861): base
+`wf-exp-df58869aecb0` (the first three reductions on main 21823ee86), head
+`wf-exp-a71229fea094` (these three on top), twin a byte copy of base.
+
+| Variant | Median | Range | Ratio to base |
+|---|---:|---:|---:|
+| base | 7.165 s | 1.67% | 1.000 |
+| head | 6.358 s | 1.16% | 0.887 |
+| twin | 7.168 s | 0.74% | 1.000 |
+
+Every head round (6.35-6.42 s) lies below every base and twin round
+(7.12-7.24 s): the three reductions cut Halo's check by 11.3%. The panel does
+not apportion the saving among them, and the wasm interpreter and arm series
+were not re-timed for this round.
+
+An independent read-only completion review (inherited model; exact identifier
+unavailable) covered the complete working diff against `df58869aec` and its
+direct consumers, applicable A/D/C/T/V checks and G1–G3/DC1–DC4. It found two
+issues, both fixed and re-inspected: the declaration test now calls the actual
+checker methods, and the copied affine reference uses the correct work-counter
+module path. No findings remain within that source-inspection scope; executable
+preservation and DC4's validation evidence remain unverified. A subsequent local
+allocation repair uses `reserve_exact` in the shared merge so existing owning
+callers retain the former initial capacity request; its arithmetic and limits
+are unchanged. This repair was inspected by the implementing agent.
