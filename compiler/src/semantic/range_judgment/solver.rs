@@ -200,11 +200,12 @@ impl Inequality {
     /// which is exact over the integers: the tightening [RANGE-3] applies to
     /// each inequality a literal forms.
     fn normalized(self) -> Self {
-        let divisor = self
-            .0
-            .terms
-            .iter()
-            .fold(0_i128, |gcd, (_, value)| greatest_divisor(gcd, value.abs()));
+        let divisor = self.0.terms.iter().fold(0_u128, |gcd, (_, value)| {
+            greatest_divisor(gcd, value.unsigned_abs())
+        });
+        let Ok(divisor) = i128::try_from(divisor) else {
+            return self;
+        };
         if divisor <= 1 {
             return self;
         }
@@ -232,9 +233,14 @@ impl Inequality {
             .0
             .terms
             .iter()
-            .fold(self.0.constant.abs(), |gcd, (_, value)| {
-                greatest_divisor(gcd, value.abs())
+            .fold(self.0.constant.unsigned_abs(), |gcd, (_, value)| {
+                greatest_divisor(gcd, value.unsigned_abs())
             });
+        // A divisor beyond `i128` divides only `i128::MIN` and zero; the
+        // unreduced inequality has the same rational solutions.
+        let Ok(divisor) = i128::try_from(divisor) else {
+            return self;
+        };
         if divisor <= 1 {
             return self;
         }
@@ -258,7 +264,7 @@ impl Inequality {
     }
 }
 
-fn greatest_divisor(left: i128, right: i128) -> i128 {
+fn greatest_divisor(left: u128, right: u128) -> u128 {
     let (mut left, mut right) = (left, right);
     while right != 0 {
         (left, right) = (right, left % right);
@@ -930,10 +936,10 @@ impl Solved {
     /// otherwise solves it for one atom, renaming atoms first until one has
     /// a unit coefficient. Whether it solved an atom.
     fn equate(&mut self, difference: Linear, why: Tags) -> Result<bool, Capacity> {
-        let divisor = difference
-            .terms
-            .iter()
-            .fold(0_i128, |gcd, (_, value)| greatest_divisor(gcd, value.abs()));
+        let divisor = difference.terms.iter().fold(0_u128, |gcd, (_, value)| {
+            greatest_divisor(gcd, value.unsigned_abs())
+        });
+        let divisor = i128::try_from(divisor).map_err(|_| Capacity::Arithmetic)?;
         if divisor == 0 || difference.constant % divisor != 0 {
             if difference.constant != 0 && self.contradiction.is_none() {
                 self.contradiction = Some(why);
@@ -954,7 +960,7 @@ impl Solved {
                 .terms
                 .iter()
                 .rev()
-                .find(|(_, coefficient)| coefficient.abs() == 1)
+                .find(|(_, coefficient)| coefficient.unsigned_abs() == 1)
                 .copied()
             {
                 // atom * c + rest = 0, so atom = -rest / c with c = +-1.
@@ -974,7 +980,7 @@ impl Solved {
                 .terms
                 .iter()
                 .rev()
-                .min_by_key(|(_, coefficient)| coefficient.abs())
+                .min_by_key(|(_, coefficient)| coefficient.unsigned_abs())
                 .copied()
                 .ok_or(Capacity::Arithmetic)?;
             let renamed = self.fresh;
@@ -1073,7 +1079,7 @@ fn eliminate_counting(
     }
     let mut bounds: BTreeMap<AtomId, Bounds> = BTreeMap::new();
     current.retain(|inequality, why| match inequality.0.terms.as_slice() {
-        [(atom, weight)] if !shared.contains(atom) => {
+        [(atom, weight)] if !shared.contains(atom) && *weight != i128::MIN => {
             let entry = bounds.entry(*atom).or_default();
             let side = if *weight > 0 {
                 &mut entry.upper
@@ -1085,9 +1091,18 @@ fn eliminate_counting(
         }
         _ => true,
     });
-    for atom_bounds in bounds.values() {
-        if let Some(why) = combine_bounds(&atom_bounds.upper, &atom_bounds.lower, &mut current)? {
-            return Ok(Some(why));
+    // An atom whose bounds cannot be paired within the arithmetic returns
+    // to the loop, so the pass never stops a problem the loop would decide.
+    for atom_bounds in bounds.into_values() {
+        let mut paired = BTreeMap::new();
+        match combine_bounds(&atom_bounds.upper, &atom_bounds.lower, &mut paired) {
+            Ok(Some(why)) => return Ok(Some(why)),
+            Ok(None) => current.extend(paired),
+            Err(_) => {
+                for (_, inequality, why) in atom_bounds.upper.into_iter().chain(atom_bounds.lower) {
+                    current.entry(inequality).or_insert(why);
+                }
+            }
         }
     }
     loop {
@@ -1119,7 +1134,11 @@ fn eliminate_counting(
             if weight > 0 {
                 upper.push((weight, inequality, why));
             } else if weight < 0 {
-                lower.push((-weight, inequality, why));
+                lower.push((
+                    weight.checked_neg().ok_or(Capacity::Arithmetic)?,
+                    inequality,
+                    why,
+                ));
             } else {
                 next.entry(inequality).or_insert(why);
             }
@@ -1266,6 +1285,48 @@ mod tests {
         // One round finds no atom left; one round per atom rebuilt the set
         // 600 times.
         assert_eq!(rounds, 1);
+    }
+
+    #[test]
+    fn bound_pairs_beyond_the_arithmetic_leave_the_loop_its_refutation() {
+        let ineq = |terms: Vec<(AtomId, i128)>, constant: i128| {
+            (Inequality(Linear { terms, constant }), Tags::default())
+        };
+        // a < b and b < a refute; z's bounds cannot be paired in `i128`.
+        let refuted = vec![
+            ineq(vec![(0, 1), (1, -1)], 1),
+            ineq(vec![(0, -1), (1, 1)], 1),
+            ineq(vec![(2, 1)], -i128::MAX),
+            ineq(vec![(2, -1)], -i128::MAX),
+        ];
+        assert_eq!(eliminate(refuted), Ok(Some(Tags::default())));
+        // Pairing reaches `i128::MIN`, whose reduction must not overflow.
+        let at_minimum = vec![
+            ineq(vec![(0, 1), (1, -1)], 1),
+            ineq(vec![(0, -1), (1, 1)], 1),
+            ineq(vec![(2, 1)], -i128::MAX),
+            ineq(vec![(2, -1)], -1),
+        ];
+        assert_eq!(eliminate(at_minimum), Ok(Some(Tags::default())));
+        // Non-unit coefficients normalize before elimination: 2x <= 5 and
+        // 3x >= 7 leave no integer x.
+        let mut problem = Problem::default();
+        let x = plain(&mut problem);
+        let twice = x.scaled(2).expect("scaled");
+        let thrice = x.scaled(3).expect("scaled");
+        unit(
+            &mut problem,
+            &twice,
+            Relation::LessEqual,
+            &Linear::constant(5),
+        );
+        unit(
+            &mut problem,
+            &thrice,
+            Relation::GreaterEqual,
+            &Linear::constant(7),
+        );
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
     }
 
     #[test]
