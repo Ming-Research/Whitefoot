@@ -1093,6 +1093,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             2
@@ -1102,6 +1103,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1271,6 +1273,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .all(|function| !function.formal_hypothesis)
         );
         assert_eq!(
@@ -1290,6 +1293,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             2
@@ -1328,6 +1332,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             1
@@ -1895,6 +1900,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .all(|function| !function.formal_hypothesis)
         );
     });
@@ -1936,6 +1942,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .all(|function| !function.formal_hypothesis)
         );
     });

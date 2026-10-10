@@ -99,6 +99,7 @@ fn every_float_endpoint_pair_has_uniform_exact_checked_and_defined_interfaces() 
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1

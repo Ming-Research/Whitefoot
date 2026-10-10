@@ -50,6 +50,7 @@ fn retains_every_equal_width_reinterpret_pair() {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1

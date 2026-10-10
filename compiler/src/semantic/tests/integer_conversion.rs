@@ -47,6 +47,7 @@ fn every_integer_pair_has_uniform_conversion_interfaces() {
                 .data
                 .functions
                 .iter()
+                .filter(|function| function.module == crate::ModuleId::BUNDLE_ROOT)
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1

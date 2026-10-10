@@ -424,10 +424,16 @@ fn linked_definitions_return_their_declared_register_results() {
                 linked.push(function.name().to_owned());
             }
             // The two Instant producers, `Result<u64, Utf8Error>` and the resident
-            // reading's `Option<u64>` fit the register-result budget.
+            // and scope readings' `Option<u64>` fit the register-result budget.
             assert_eq!(
                 linked,
-                ["std.time.now", "std.time.instant_after", "std.text.host_utf8_len", "std.process.resident_bytes"]
+                [
+                    "std.time.now",
+                    "std.time.instant_after",
+                    "std.text.host_utf8_len",
+                    "std.process.resident_bytes",
+                    "std.process.scope_bytes"
+                ]
             );
             // `sleep_until`'s `Result<unit, unit>` fits the budget too, and
             // reaches its caller only through the waiting entry's destination.
