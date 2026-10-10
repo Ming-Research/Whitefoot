@@ -27,6 +27,10 @@
 
 extern int wf_fixture_main(int argc, char **argv);
 
+// [STOR-1] a capacity-0 runtime window is the shared empty header: it is
+// never allocated, so its release is not a ledger event.
+extern const unsigned char wf__empty_window[64];
+
 enum { MAX_ALLOCATIONS = 256 };
 
 typedef struct {
@@ -77,7 +81,7 @@ void *wf_observe_allocate(uint64_t bytes) {
 }
 
 void wf_observe_release(void *pointer, uint64_t bytes) {
-    if (pointer == NULL) return;
+    if (pointer == NULL || pointer == (const void *)wf__empty_window) return;
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
         Allocation *allocation = &allocations[index];
@@ -103,6 +107,12 @@ void wf_observe_release(void *pointer, uint64_t bytes) {
 // pointer identity ambiguous.
 void *wf_observe_reallocate(void *pointer, uint64_t old_bytes, uint64_t bytes) {
     if (pointer == NULL) return wf_observe_allocate(bytes);
+    if (pointer == (const void *)wf__empty_window) {
+        if (bytes <= old_bytes) return pointer;
+        void *fresh = wf_observe_allocate(bytes);
+        memcpy(fresh, pointer, (size_t)old_bytes);
+        return fresh;
+    }
     void *moved = wf_observe_allocate(bytes);
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
