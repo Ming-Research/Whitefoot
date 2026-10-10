@@ -5,6 +5,36 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Runtime-capacity contents are never exchanged in place
+
+Nodes: language/ownership/exchange
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can the contents of runtime-capacity windows (`a.inner` of type `Slots<T>` and the like) be exchanged with `swap`?" (translated).
+
+Summary: An exchange is a place its type parameter takes, so a runtime-capacity window, a run of segments or a paged window, whose only home is a heap cell's content, is exchanged by exchanging the owning cells, because an in-place exchange moves one fixed-size value and these contents vary with their capacity; exchanging the cells' pointers or whole blocks was rejected because a content reached through a reference has no cell slot to rewrite.
+
+## 2026-10-10 Rings stay out of fork children; the restricted fork capsule
+
+Nodes: compiler/completion-runtime
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item firn-gap-fork-runtime to the request "approve PR #337's two new decisions in design-tree compiler/completion-runtime: (1) every io_uring mapping gets MADV_DONTFORK at ring creation, and a refused advice refuses the ring and falls back to the existing helper adapter; (2) a snapshot child forked inside a hold runs only a restricted capsule: signals reset by raw system calls, descriptors outside an allowlist closed, one fixed native encoder, exit by exit_group, the parent reaping it through a pidfd; and record the rejected alternative 'running ordinary runtime or Whitefoot code in the child', because the child inherits locks and allocator state of threads that no longer exist" (translated).
+
+Summary: A forked child no longer inherits the parent's live io_uring mappings, so it cannot read or advance a queue the parent's ring still owns; a refused advice refuses the ring before any request uses it. A child forked for a snapshot inside a hold runs only a capsule whose every step is a raw system call or a fixed encoder over prepared memory, because it copies a multithreaded process whose locks and allocator may be held by threads absent from it; the process registers no pthread_atfork handler, and the parent keeps reaping ownership through a pidfd, or waitpid when the pidfd fails after the child exists.
+## 2026-10-10 Frozen objects
+
+Nodes: language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects, compiler/frozen-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "Should Whitefoot add a born-frozen shared type Frozen<T> with lock-free reads?" (firn-q-frozen-type): add Frozen<T>, created from a uniquely owned value, frozen from birth, transitively immutable, reclaimed by reference counting, read without an atomic statement anywhere; taking a snapshot back stays a managed-cursor protocol of the library (translated). The owner then approved, on the same board on 2026-10-10, the item request "approve the details of the Frozen<T> specification beyond card A (choosing A only set the direction): (1) the value is read through the readonly field `inner`; (2) the argument of `frozen_new` owes its struct's type invariants (TYPE-11, as for `shared_new`); (3) a `no_heap` program may use `frozen_new` as it may use `shared_new`; (4) the wording of PROV-6, STOR-3, TYPE-2 and OWN-1 becomes 'release and moves out follow only the fields an object owns; the handle does not own the frozen value'; (5) the first decision of the parent design node shared-objects narrows to 'mutable state'; (6) the new compiler design node compiler/frozen-representation: a lock-free pool block, an atomic handle count, and a frozen release class as a Box type kind" (translated).
+
+Summary: The new node frozen-objects records `Frozen<T>`: a value moved into a frozen object by `frozen_new`, shared by `frozen_share`, read through its readonly `inner` without an atomic statement anywhere, and released with its last handle, because the persistent-dataset prototype could not read a node inside an atomic statement on its registry; and its transitive immutability, since a snapshot must not see a later write. It refuses relaxing the nested-statement rule for `SharedRead`, a `freeze` conversion of a shared object, a snapshot storage domain and relaxing the reserve's service-first abort. shared-objects now states that its atomic-statement access governs mutable state, since a frozen object is read without one. compiler/frozen-representation records the lowering: a lock-free pool block with an atomic handle count, modelled as the cell kind with a frozen release class (board item `proof-bl-frozen-nominal-kind` tracks a distinct kind).
+## 2026-10-10 Symbolic validation reads summaries and renames canonical instances
+
+Nodes: compiler/generic-validation-scope
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the item request on "Halo's check still takes about 9 seconds": "approve the two changes to the design-tree node generic-validation-scope. First, symbolic validation analyzes only the callee components that publish postcondition summaries (candidate 10). Second, a renamed symbolic instance forms only its contract and copies its outcomes from the canonical instance (candidate 11)" (translated).
+
+Summary: compiler/generic-validation-scope narrows symbolic entailment to the postcondition components of canonical generic bodies and, transitively, the callee components containing a postcondition, because a component without one publishes no summary a judged body could read. It qualifies the reuse rule for renamings and has a symbolic instance that renames its declaration's canonical instance one to one, with the same bounds and interface members, form only its contract and copy the canonical instance's outcomes, ordered after it in the postcondition schedule, because FN-2 checks a generic body once at its own symbolic instance. Re-checking those bodies took 95% of the body-check time in Halo's `pkg::vm` check. The two changes took that check from 8.84 s to 3.76 s on the i9-14900K with unchanged verdicts and LLVM, as research/investigations/compile-speed/DESIGN.md measures.
+
 ## 2026-10-10 Whole-value reads of a const item
 
 Nodes: language/ownership

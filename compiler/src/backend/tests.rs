@@ -27,6 +27,7 @@ mod exhaustion;
 mod float_conversion;
 mod floating;
 mod frames;
+mod frozen;
 mod generics;
 mod heap_programs;
 mod indexed_reductions;
@@ -414,7 +415,10 @@ fn append_runtime_units_with_library_defines(
         ("completion/file_adapter.c", COMPLETION_FILE_ADAPTER_SOURCE),
         ("completion/file_posix.c", COMPLETION_FILE_POSIX_SOURCE),
         ("completion/completion_bridge.c", COMPLETION_BRIDGE_SOURCE),
-        ("completion/stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
+        (
+            "completion/stop_signals.c",
+            crate::COMPLETION_STOP_SIGNALS_SOURCE,
+        ),
         (
             "completion/linux_io_uring.c",
             COMPLETION_LINUX_IO_URING_SOURCE,

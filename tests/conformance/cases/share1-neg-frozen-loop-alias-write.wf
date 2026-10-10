@@ -1,0 +1,23 @@
+struct Wrapper {
+  ordinary: Box<u8>;
+  frozen: Frozen<Box<u8>>;
+}
+
+fn denied(wrapper: &Wrapper) -> result: unit writes(wrapper) {
+  let cursor = &wrapper^.ordinary;
+  let once = True();
+  loop {
+    if once {
+      set cursor = &wrapper^.frozen.inner;
+      set once = False();
+      continue;
+    }
+    break;
+  }
+  set cursor^.inner = 9_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

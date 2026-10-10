@@ -45,6 +45,7 @@ pub(crate) const fn lower_release_class(
 ) -> IrReleaseClass {
     match value {
         crate::semantic::CheckedReleaseClass::General => IrReleaseClass::General,
+        crate::semantic::CheckedReleaseClass::Frozen => IrReleaseClass::Frozen,
     }
 }
 
@@ -356,7 +357,8 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// The [PRE-1] records whose bodies the compiler itself emits: the
 /// construction functions [OP-13], the nine window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], the mutable/read-only shared-handle rows
-/// `shared_new`, `shared_share`, `shared_read` and `shared_read_share`,
+/// `shared_new`, `shared_share`, `shared_read`, `shared_read_share`,
+/// `frozen_new` and `frozen_share`,
 /// the map's four functions `shared_map_new`, `map_count`, `map_scan`
 /// and `map_clear`, and the key set's three [SHARE-1].
 ///
@@ -366,7 +368,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 35] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 37] = [
     // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
@@ -400,6 +402,8 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 35] = [
     "shared_share",
     "shared_read",
     "shared_read_share",
+    "frozen_new",
+    "frozen_share",
     "shared_map_new",
     "map_count",
     "map_scan",

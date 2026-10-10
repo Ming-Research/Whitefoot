@@ -334,6 +334,14 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
+**`check/runtime` on macOS, raised to 30 s.** On macOS hosted runners the
+stage overran 20 s five times on changes that touched none of its code:
+23.2 s on Whitefoot#298, 20.5 s on #311, 20.7 s on #312, 27.0 s on #333
+and 21.4 s on #340, whose same compiler code had taken 14.6 s and 12.3 s on
+earlier runs; reruns passed each time. A third overrun is no longer read as
+noise, so the owner approved a raise of 10 s, to 30 s, on the status board
+on 2026-10-10 (item gran-ci-runtime-macos); ubuntu stays at 20 s.
+
 **`check/runtime` on macOS, raised to 20 s.** The concurrent map's test
 (`compiler/src/backend/concurrent_map_test.c`, three builds) took the stage
 to 15.3 s at `2adfc64c0`; once its locked-read and narrowed-hash builds ran

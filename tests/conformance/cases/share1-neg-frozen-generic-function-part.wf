@@ -1,0 +1,9 @@
+fn mk<T: drop>(v: T) -> result: Frozen<T> pure {
+  return frozen_new::<T>(value: move v);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let state = shared_new::<u8>(value: 7_u8);
+  mk::<Shared<u8>>(v: move state);
+  return std::process::exit_status(code: 0_u8);
+}
