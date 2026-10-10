@@ -5,6 +5,7 @@ name: probe-halo-check
 on:
   push:
     branches: [claude/halo-check-cost]
+    paths: [.github/workflows/probe-halo-check.yml]
 
 jobs:
   probe:
