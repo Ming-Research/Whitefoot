@@ -617,3 +617,39 @@ monitor, the doubled map-user inventory and the changed ring flags all add
 cost; 14900K comparison pending), detection of overdue readiness and
 completions (this increment detects deadlines only), behaviour when the spare
 reserve is exhausted, and an internal-timestamp measurement of the latency.
+
+## Result: ordinary I/O cost of steps 1 and 2 (first sample)
+
+Comparison: firn built from base fe5589ec5 (the merge base with main) and
+from 8e2b14147 (step 1 and step 2), the latter twice (`handoff`,
+`handoff-twin`) as the noise control, interleaved, two passes of five
+seconds per test (`io-bench.yml` firn comparison, [run 38057973380](https://github.com/Ming-Research/Whitefoot/actions/runs/38057973380),
+native i9-14900K, 14:01–14:11 UTC; servers on CPU 2, or 2 and 4, clients on
+the remaining performance cores, as `redis-bench.sh` now places them).
+Median requests per second and p99 (ms) over the two passes:
+
+| Server CPUs | Test, depth | base rps | handoff ÷ base | twin ÷ base | p99 base / handoff / twin |
+|---|---|---:|---:|---:|---|
+| 1 | get 1 | 485,895 | 0.997 | 0.990 | 0.079 / 0.079 / 0.079 |
+| 1 | get 16 | 4,638,218 | 0.990 | 0.996 | 0.127 / 0.131 / 0.135 |
+| 1 | mset 1 | 365,235 | 1.006 | 1.005 | 0.103 / 0.103 / 0.103 |
+| 1 | mset 16 | 1,253,086 | 1.009 | 1.011 | 0.487 / 0.479 / 0.479 |
+| 1 | set 1 | 481,736 | 0.993 | 0.998 | 0.079 / 0.079 / 0.079 |
+| 1 | set 16 | 4,558,105 | 1.001 | 1.001 | 0.135 / 0.135 / 0.135 |
+| 2 | get 1 | 908,381 | 0.983 | 0.983 | 0.039 / 0.047 / 0.039 |
+| 2 | get 16 | 8,804,187 | 0.998 | 0.998 | 0.071 / 0.067 / 0.075 |
+| 2 | mset 1 | 694,143 | 0.987 | 0.988 | 0.055 / 0.055 / 0.055 |
+| 2 | mset 16 | 2,437,364 | 1.001 | 1.012 | 0.203 / 0.315 / 0.295 |
+| 2 | set 1 | 901,842 | 0.985 | 0.985 | 0.043 / 0.039 / 0.043 |
+| 2 | set 16 | 8,580,276 | 0.988 | 0.995 | 0.075 / 0.079 / 0.071 |
+
+Throughput meets the 3 percent criterion in every cell; with two drivers
+at depth 1 the handoff build and its twin are both about 1.5 percent slower
+(server CPU per request about 1.6 percent higher), consistently across both
+passes, so that cost is real and inside the bound. p99 is reported in steps
+of about 8 µs and equal within a step in ten cells. mset at depth 16 on two
+CPUs is undecided: base's two passes gave 0.143 and 0.263 ms, the handoff
+image's four (both names) 0.247 to 0.343 ms, so two passes cannot separate
+a p99 increase from that cell's spread; it is rerun with more passes before
+the 5 percent p99 criterion is judged.
+
