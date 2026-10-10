@@ -1,0 +1,45 @@
+# Temporary (claude/guard-fairness only): time firn's guard probe with the
+# base and candidate compilers on the 14900K (research/investigations/
+# guard-fairness/DESIGN.md). Removed before the branch is ready.
+name: tmp-guard-fairness
+on:
+  push:
+    branches: [claude/guard-fairness]
+    paths: [.github/workflows/tmp-guard-fairness.yml]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both compilers
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          git worktree add --detach "$RUNNER_TEMP/base" fe5589ec5f4584c6fd235faa17e2e3173a7d651e
+          make -C "$RUNNER_TEMP/base/compiler" build
+          mkdir -p "$RUNNER_TEMP/wfc/candidate" "$RUNNER_TEMP/wfc/base"
+          cp -a compiler/target/gate/whitefootc "$RUNNER_TEMP/wfc/candidate/"
+          cp -a "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" "$RUNNER_TEMP/wfc/base/"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/wfc.tar.gz" wfc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wfc
+          path: ${{ runner.temp }}/wfc.tar.gz
+  run:
+    needs: build
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wfc
+          path: ${{ runner.temp }}
+      - name: Base and candidate, interleaved
+        run: |
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/wfc.tar.gz"
+          OUT="$RUNNER_TEMP/gf" BASE_WFC="$RUNNER_TEMP/wfc/base/whitefootc" WFC="$RUNNER_TEMP/wfc/candidate/whitefootc" \
+            K=1000 PASSES=2 CPUS=2,4 sh research/experiments/guard-fairness/run.sh
