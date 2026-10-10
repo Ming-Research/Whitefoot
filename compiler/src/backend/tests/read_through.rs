@@ -1187,12 +1187,10 @@ fn read_first(v: Value) -> result: Value pure {
   return Value::Function(id: old);
 }
 
-fn write_then_read(v: Value) -> result: Value pure {
+fn write_then_read(v: Value, observed: &u64) -> result: Value writes(observed) {
   let out = Value::Function(id: 99_u64);
   let old = classify(v: move v);
-  if old != 7_u64 {
-    return Value::Empty();
-  }
+  set observed^ = old;
   return move out;
 }
 
@@ -1200,13 +1198,11 @@ fn make_result() -> result: Value pure {
   return Value::Function(id: 99_u64);
 }
 
-fn hot_cold(v: Value, cold: Bool) -> result: Value pure {
+fn hot_cold(v: Value, cold: Bool, observed: &u64) -> result: Value writes(observed) {
   if cold {
     let out = make_result();
     let old = classify(v: move v);
-    if old != 7_u64 {
-      return Value::Empty();
-    }
+    set observed^ = old;
     return move out;
   }
   match move v {
@@ -1233,21 +1229,33 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 1_u8);
   }
   let second_input = Value::Number(n: 7_u64);
-  let second = write_then_read(v: move second_input);
+  let second_observed = 0_u64;
+  let second = write_then_read(v: move second_input, observed: &second_observed);
+  if second_observed != 7_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
   let second_value = classify(v: move second);
   if second_value != 99_u64 {
     return std::process::exit_status(code: 2_u8);
   }
   let hot_input = Value::Number(n: 7_u64);
   let hot_flag = False();
-  let hot = hot_cold(v: move hot_input, cold: hot_flag);
+  let hot_observed = 0_u64;
+  let hot = hot_cold(v: move hot_input, cold: hot_flag, observed: &hot_observed);
+  if hot_observed != 0_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
   let hot_value = classify(v: move hot);
   if hot_value != 1_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   let cold_input = Value::Number(n: 7_u64);
   let cold_flag = True();
-  let cold = hot_cold(v: move cold_input, cold: cold_flag);
+  let cold_observed = 0_u64;
+  let cold = hot_cold(v: move cold_input, cold: cold_flag, observed: &cold_observed);
+  if cold_observed != 7_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
   let cold_value = classify(v: move cold);
   if cold_value != 99_u64 {
     return std::process::exit_status(code: 4_u8);
@@ -1262,6 +1270,10 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(incoming_copy_lines(first).is_empty(), "{first}");
     assert!(first.contains("@wf_classify(ptr %wf.arg.v0)"), "{first}");
 
+    // Report the observed input through a separate scalar reference. An early
+    // error return here would keep `out` live for cleanup beside that return's
+    // value, preventing their slots from sharing the caller's destination.
+    // The stores below must really target that destination before the read.
     let second = emitted_function(&module, "write_then_read");
     let copies = incoming_copy_lines(second);
     assert_eq!(copies.len(), 1, "one persistent capture: {second}");
@@ -1278,7 +1290,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(copies[0] < write && write < read, "{second}");
     assert!(!second.contains("@wf_classify(ptr %wf.arg.v0)"), "{second}");
     // Omitting the result barrier, or recopying at the later call, observes 99
-    // instead of 7 when the result aliases v and returns Empty instead of out.
+    // instead of 7 through `observed` when the result aliases v.
 
     let split = emitted_function(&module, "hot_cold");
     let copies = incoming_copy_lines(split);
