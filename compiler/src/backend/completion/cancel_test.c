@@ -232,6 +232,14 @@ static void guard_races(void) {
     CHECK(view->shared.watching == NULL);
     CHECK(((wf_shared *)ordinary)->watched == 0u);
     CHECK(((wf_shared *)ordinary)->watching == NULL);
+    /* The woken statement retries its targets, as emitted code does, which
+     * ends the turn whichever write woke it granted. */
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    wf__shared_unlock(ordinary, 1u);
+    wf__shared_unlock(view, 1u);
+    CHECK(wf_context_root.shared_turn == NULL);
+    CHECK(view->shared.turns == 0u && ((wf_shared *)ordinary)->turns == 0u);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));
