@@ -13,7 +13,7 @@ jobs:
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 30
     env:
-      CPUS: "0-15"
+      CPUS: "2-15"
       RUNS: "10"
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +26,11 @@ jobs:
         run: |
           lscpu | grep -E "Model name|^CPU\(s\)|MHz|Thread|Core"
           git rev-parse HEAD
+      - name: Put the runner's cargo on PATH
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
       - name: Build the compiler as releases are built
         run: cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
       - name: Time pkg::vm, interleaved with a twin of the same binary
