@@ -1400,10 +1400,9 @@ fn handing_a_call_out_adds_no_stack_slot() {
             }
             let symbol = format!("@wf_{}", function.name());
             let budget = format!("@wf__par_budget_{}", function.name());
-            let prelude = crate::backend::emitter::ordinary_frame_prelude_for_test(
-                program, target, function,
-            )
-            .expect("the ordinary roots must have a target layout");
+            let prelude =
+                crate::backend::emitter::ordinary_frame_prelude_for_test(program, target, function)
+                    .expect("the ordinary roots must have a target layout");
             expected.remove(&symbol);
             // A budgeted function's ordinary symbol is a slot-free wrapper;
             // the variant owns the same source roots, with an SSA budget.
@@ -1648,6 +1647,115 @@ fn a_denied_pair_emits_exactly_the_sequential_calls() {
     let body = function_body(&module, "@wf_main");
     let calls: Vec<_> = body.match_indices("call i64 @wf_twice(").collect();
     assert_eq!(calls.len(), 2, "both calls stay ordinary calls:\n{body}");
+}
+
+/// A non-call in a permitted run stays in the instruction stream: it neither
+/// ends the call group nor delays a trailing call's join. The dependent form
+/// is the control: its binding write denies the run before lowering sees it.
+#[test]
+fn noncall_members_preserve_call_windows_and_dependency_boundaries() {
+    let source = br#"fn heavy(n: u64, seed: u64) -> result: u64 pure {
+  let total = seed;
+  for (i in 0_u64..n) {
+    let rotated = irotl(i, 13_u32);
+    let mixed = rotated *wrap 6364136223846793005_u64;
+    set total = total +wrap mixed;
+  }
+  return total;
+}
+
+fn pair_adjacent(n: u64, x: u64, y: u64) -> result: u64 pure {
+  let a = heavy(n: n, seed: x);
+  let b = heavy(n: n, seed: y);
+  return a +wrap b;
+}
+
+fn pair_split(n: u64, x: u64, y: u64, m: u64) -> result: u64 pure {
+  let a = heavy(n: n, seed: x);
+  let k = m +wrap 1_u64;
+  let b = heavy(n: n, seed: y);
+  let s = a +wrap b;
+  return s +wrap k;
+}
+
+fn pair_dependent(n: u64, x: u64, m: u64) -> result: u64 pure {
+  let a = heavy(n: n, seed: x);
+  let k = m +wrap 1_u64;
+  let b = heavy(n: n, seed: k);
+  return a +wrap b;
+}
+
+fn pair_trailing(n: u64, x: u64, y: u64, m: u64) -> result: u64 pure {
+  let a = heavy(n: n, seed: x);
+  let b = heavy(n: n, seed: y);
+  let k = m +wrap 1_u64;
+  let s = a +wrap b;
+  return s +wrap k;
+}
+"#;
+    let (module, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::On,
+    )
+    .expect("non-call group members compile");
+    let module = module.into_string();
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.contains("run(heavy, a let statement, heavy)  3 members")),
+        "{ledger:?}"
+    );
+    assert!(
+        ledger.iter().any(|line| line.starts_with("PAR denied")
+            && line.contains("pair(a let statement, heavy)")
+            && line.contains("the write of s1 overlaps the operand read of s2")),
+        "the checker must deny k/b before lowering: {ledger:?}"
+    );
+    for name in ["pair_adjacent", "pair_split", "pair_trailing"] {
+        let body = function_body(&module, &format!("@wf_{name}"));
+        let publish = "call void @wf__par_publish(";
+        let join = "call void @wf__par_join(";
+        assert_eq!(body.matches(publish).count(), 1, "{name}:\n{body}");
+        assert_eq!(body.matches(join).count(), 1, "{name}:\n{body}");
+        let publish = body.find(publish).expect("one hand-out");
+        let inline = body.find("call i64 @wf_heavy(").expect("inline member");
+        let join = body.find(join).expect("one join");
+        assert!(publish < inline && inline < join, "{name}:\n{body}");
+        // This is the first source addition: k in the split/trailing forms,
+        // and the return's use of both joined values in the adjacent form.
+        let addition = body.find(" = add i64 ").expect("source addition");
+        if name == "pair_split" {
+            let one = body
+                .find("select i1 true, i64 1, i64 1")
+                .expect("k's constant operand");
+            assert!(
+                publish < one && one < addition && addition < inline,
+                "{body}"
+            );
+            let sum = body[addition + 1..]
+                .find(" = add i64 ")
+                .map(|offset| addition + 1 + offset)
+                .expect("the sum uses the joined values");
+            assert!(join < sum, "non-member code stays after the join:\n{body}");
+        } else {
+            assert!(join < addition, "{name}:\n{body}");
+            if name == "pair_trailing" {
+                let one = body
+                    .find("select i1 true, i64 1, i64 1")
+                    .expect("k's constant operand");
+                assert!(join < one && one < addition, "{body}");
+            }
+        }
+    }
+    let dependent = function_body(&module, "@wf_pair_dependent");
+    assert!(!dependent.contains("@wf__par_publish("), "{dependent}");
+    assert!(!dependent.contains("@wf__par_join("), "{dependent}");
+    assert_eq!(dependent.matches("call i64 @wf_heavy(").count(), 2);
+    let first = dependent.find("call i64 @wf_heavy(").expect("first call");
+    let addition = dependent.find(" = add i64 ").expect("k's definition");
+    let second = dependent.rfind("call i64 @wf_heavy(").expect("second call");
+    assert!(first < addition && addition < second, "{dependent}");
 }
 
 /// A permitted pair whose first member is a borrowed binding is not handed

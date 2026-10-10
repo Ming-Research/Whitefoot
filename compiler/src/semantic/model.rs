@@ -2853,6 +2853,10 @@ pub(crate) enum CheckedStatement {
         /// target shape. A read-out or revived binding displaces no old value;
         /// a reference rebinding has no owned value to release either.
         displaces_live_value: bool,
+        /// Whether that displacement may reclaim storage. The ordinary type
+        /// release graph supplies this scheduling boundary; permission keeps
+        /// borrowed storage alive across an overlapped call's entry.
+        releases_displaced_storage: bool,
     },
     /// [GRAM-4] an expression statement whose discarded result needs no
     /// release: a copy value or a borrow-mode reference.
