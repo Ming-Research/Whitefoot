@@ -2160,6 +2160,31 @@ pub(super) fn field_steps(fields: &[u32]) -> Vec<PlaceStep> {
     fields.iter().copied().map(PlaceStep::Field).collect()
 }
 
+/// A field-only projection of a binding reads the selected path, not the
+/// aggregate used to spell it. Return the leaf as well so PAR-2 retains the
+/// dereference carrier that RANGE-5 uses for a reference to an element.
+/// These leaves have no evaluated children; every other base keeps its
+/// ordinary walk, including element reads and their subscript operands.
+pub(super) fn binding_read_projection(
+    expression: &CheckedExpression,
+) -> (&CheckedExpression, Vec<PlaceStep>) {
+    let mut base = expression;
+    let mut path = Vec::new();
+    while let CheckedExpression::ProjectValue { value, field, .. } = base {
+        path.push(PlaceStep::Field(*field));
+        base = value;
+    }
+    if matches!(
+        base,
+        CheckedExpression::Binding { .. } | CheckedExpression::DerefAddressed { .. }
+    ) {
+        path.reverse();
+        (base, path)
+    } else {
+        (expression, Vec::new())
+    }
+}
+
 /// The resolved steps of one checked storage path.
 pub(super) fn container_steps(root: &super::model::CheckedContainerRoot) -> Vec<PlaceStep> {
     root.path.iter().map(CheckedPlaceStep::place_step).collect()
@@ -2376,6 +2401,7 @@ pub(super) fn collect_operand_reads(
     node: &NodePath,
     footprint: &mut Footprint,
 ) {
+    let (expression, projection) = binding_read_projection(expression);
     let read = |footprint: &mut Footprint, resolved: Vec<ResolvedPlace>| {
         if resolved.is_empty() {
             footprint.unresolved.get_or_insert(node.clone());
@@ -2416,7 +2442,10 @@ pub(super) fn collect_operand_reads(
             }
         }
         CheckedExpression::Binding { binding, .. } => {
-            read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
+            read(
+                footprint,
+                places.resolve(PlaceRoot::Binding(*binding), &projection),
+            );
         }
         CheckedExpression::Project {
             binding, fields, ..
@@ -2427,7 +2456,10 @@ pub(super) fn collect_operand_reads(
         // `p^` is the path `p` names [TYPE-7, REF-1], which is what
         // resolving its root through the reference summary produces.
         CheckedExpression::DerefAddressed { binding, .. } => {
-            read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
+            read(
+                footprint,
+                places.resolve(PlaceRoot::Binding(*binding), &projection),
+            );
         }
         CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => {

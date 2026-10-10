@@ -66,6 +66,31 @@ const PERMITTED_FOLD: &[u8] = include_bytes!("../../../../tests/programs/paralle
 const TABLE_READ_FOLD: &[u8] =
     include_bytes!("../../../../tests/programs/parallel/map_read_fold.wf");
 
+#[test]
+fn reference_sibling_field_map_splits_without_copying_its_referent() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-affine-sibling-field-read.wf");
+    let module = emit_with_overlap(source);
+    let chunks = synthesized_symbols(&module, "@wf__par_chunk_");
+    let chunk = chunks
+        .iter()
+        .find(|name| name.starts_with("@wf__par_chunk_fill."))
+        .expect("the sibling scalar read must permit fill's split");
+    let body = function_body(&module, chunk);
+    assert!(
+        body.contains("load i64, ptr"),
+        "the chunk must load the scalar: {body}"
+    );
+    assert!(
+        body.contains("store i64 "),
+        "the chunk must write the element: {body}"
+    );
+    assert!(
+        !body.contains("llvm.memcpy"),
+        "the field read must not copy the whole referent: {body}"
+    );
+}
+
 fn table_read_fold_with_sibling_writes() -> String {
     std::str::from_utf8(TABLE_READ_FOLD)
         .expect("UTF-8 map reader")
@@ -1483,7 +1508,10 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     // emitted release shape of one `Box<Array<u8>>` per return path [STOR-3].
     // If the release lowering of a boxed run changes, re-derive the counts.
     assert!(!chunk.contains("call void @wf__heap_give("), "{chunk}");
-    assert!(!splitter.contains("call void @wf__heap_give("), "{splitter}");
+    assert!(
+        !splitter.contains("call void @wf__heap_give("),
+        "{splitter}"
+    );
     for outer in ["@wf_main", "@wf__par_seq_main"] {
         let body = function_body(&split, outer);
         // The entry waits, so each source return leaves by a branch to the

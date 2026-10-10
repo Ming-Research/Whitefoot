@@ -9,9 +9,16 @@ a mechanism since retired.
 
 Nodes: language/ownership
 
-Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated).
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated). After the implementation narrowed the read to copy types, because a struct declared `nocopy` can be const-eligible, the owner approved the item request on the same board on 2026-10-10: "confirm limiting the whole-value read to consts of a copy type (a nocopy struct const keeps only partial reads)" (translated).
 
 Summary: language/ownership adds the decision that a const item of a copy type is also read as a whole value, a copy into the reader's storage, because copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
+## 2026-10-10 Statement groups end before an implicit context await
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner answered "agree" (translated) on item gran-p0-await-window to the request "approve #331's change to the design tree's parallel-lowering: a statement group also ends before a statement preceded by an implicit context await (reason: the await may suspend and resume on another driver, while the group's hand-outs and join belong to the original thread's task queue). Recommended: approve; it is required to fix a P0 defect on main, and waiting-contexts already assumes no suspension between hand-out and join" (translated).
+
+Summary: Lowering inserts the await of a bound context's result before the statement that reads it without a new IR block, so a compute group could hand out a call, suspend at that await, resume on another driver and then join and release on the first thread's compute lane, whose state only its owner may write. A site preceded by an implicit await now ends the current group before it, restoring the waiting-contexts premise that no suspension falls between a compute offer and its join.
 
 ## 2026-10-10 Value equality
 

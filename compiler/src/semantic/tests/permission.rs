@@ -32,6 +32,86 @@ use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
 #[test]
+fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
+    // PAR-1 records pairs with at least one call, so each write is a helper
+    // whose row names the place it writes.
+    let source = r#"struct Common {
+  scale: u64;
+  other: u64;
+}
+
+struct State {
+  one: u64;
+  shared: Common;
+}
+
+fn set_one(state: &State) -> result: unit writes(state.one) {
+  set state^.one = 0_u64;
+  return unit;
+}
+
+fn set_other(state: &State) -> result: unit writes(state.shared.other) {
+  set state^.shared.other = 0_u64;
+  return unit;
+}
+
+fn set_scale(state: &State) -> result: unit writes(state.shared.scale) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_shared(state: &State) -> result: unit writes(state.shared) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_all(state: &State) -> result: unit writes(state) {
+  set state^.one = 0_u64;
+  return unit;
+}
+
+fn inspect(state: &State) -> result: u64 writes(state) {
+  let s = state^.shared.scale;
+  set_one(state: state);
+  return s;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for (callee, permitted) in [
+        ("set_one", true),
+        ("set_other", true),
+        ("set_scale", false),
+        ("set_shared", false),
+        ("set_all", false),
+    ] {
+        let variant = source.replace(
+            "  set_one(state: state);\n  return s;",
+            &format!("  {callee}(state: state);\n  return s;"),
+        );
+        let table = permission_of(variant.as_bytes());
+        let pair = pair_of(&table, "inspect", "a let statement", callee);
+        if permitted {
+            assert!(pair.verdict.is_eligible(), "{callee}: {pair:?}");
+        } else {
+            assert!(
+                matches!(denial(pair, 1), Denial::Footprint { .. }),
+                "{callee}: {pair:?}"
+            );
+        }
+    }
+    let whole_read = source.replace(
+        "  let s = state^.shared.scale;\n  set_one(state: state);\n  return s;",
+        "  let s = state^;\n  set_one(state: state);\n  return s.one;",
+    );
+    let table = permission_of(whole_read.as_bytes());
+    let pair = pair_of(&table, "inspect", "a let statement", "set_one");
+    assert!(matches!(denial(pair, 1), Denial::Footprint { .. }));
+}
+
+#[test]
 fn a_set_member_carries_its_call_rhs_storage_effects() {
     let source = br#"fn replace(cell: &Box<u64>) -> result: u64 writes(cell) {
   let fresh = box_new::<u64>(value: 1_u64);
