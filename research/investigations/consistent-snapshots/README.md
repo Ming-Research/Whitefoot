@@ -94,9 +94,10 @@ Compare the current closed-log replay with (1) a frozen versioned dataset,
 (2) restricted fork over the same logical dataset, and (3) a correctly
 reconciled batched export. Redis is an external reference, not the oracle for
 Whitefoot safety. Compare no snapshot, snapshot support present but unused,
-capture, active export and reclamation. Include read-mostly traffic, repeated
-hot-key writes, uniform replacement of every key, deletes/reinsertions, large
-mutable values, multi-key transactions, and an exporter stalled on I/O.
+capture, active export and reclamation. Include read-mostly traffic both with
+and without access-time/LRU/eviction-sampling updates, repeated hot-key writes,
+uniform replacement of every key, deletes/reinsertions, large mutable values,
+multi-key transactions, and an exporter stalled on I/O.
 
 Prospective rejection criteria:
 
@@ -119,10 +120,12 @@ Prospective rejection criteria:
 Future execution belongs in CI, precise timings on the idle 14900K. Start
 with a timed small sample, then interleave same-source before/after runs and
 a base twin; record revisions, allocator, affinity, driver/worker counts,
-page/huge-page settings, dataset and update rate. Measure aggregate physical
-memory without double-counting shared pages, process heap counters, reserved
-address space and commit separately. Compare mechanisms on identical logical
-traces; do not attribute a representation change to the scheduler. Qualify
+the exact kernel release and its page-table/COW source, page/huge-page settings,
+dataset and update rate. Measure fork time separately from reaching quiescence,
+and record the target kernel's huge-page write-fault behavior. Measure aggregate
+physical memory without double-counting shared pages, process heap counters,
+reserved address space and commit separately. Compare mechanisms on identical
+logical traces; do not attribute a representation change to the scheduler. Qualify
 one named MMU-less target and its RAM/latency budget separately. Nothing in
 this protocol authorizes execution in this edit-only task.
 
@@ -133,7 +136,7 @@ a bounded pause merely because its capture is called “constant time.”
 
 | Route | Memory peak above live D + H | Latency and blocking | Complexity and cost when unused |
 | --- | --- | --- | --- |
-| **Process fork with OS copy-on-write** | Copied old/new page versions, child scratch, page tables and retained allocator pages. Little copying initially; divergence can approach a second resident image, then exceed it with scratch/growth. | Quiescence plus page-table work pauses capture; parent writes fault/copy pages. Export runs separately but competes for CPU, memory bandwidth and disk. | Broad execution/host integration burden below. No required per-entry version field, but runtime fork coordination may tax all drivers/allocators unless isolated. |
+| **Process fork with OS copy-on-write** | Page-granular V can greatly exceed changed bytes and approach a second resident image; child scratch, page tables, allocator retention and growth add more. Read-side metadata writes also cause divergence. | Quiescence plus page-table work pauses capture. Each first parent write to a still-shared private page pays a fault and copy, normally 4 KiB. Export competes for CPU, memory bandwidth and disk. | Broad execution/host integration burden below. No required per-entry version field, but runtime fork coordination may tax all drivers/allocators unless isolated. |
 | **Persistent/functional map** | Old nodes retained by a root plus paths copied on update and changed payloads; approximately V + B, with amplification from tree paths. | Root retention can be short; every writer pays path copying. Large payload cloning and final reclamation can create spikes. | Immutable sharing and lifetime discipline; updates/refcounts cost users even between snapshots. A separate opt-in representation can leave ordinary maps untouched. |
 | **ConcurrentHashMap epochs/generations** | Snapshot-era entries, old payloads and old index generations; V + B. A retained table alone does not retain mutable values. | Short cut protocol; copy before mutation, and defer reclaim. Resizes, clear/swap and large values need bounded handling. | Substantial runtime and ownership design. Global epoch publication must respect multi-object atomicity. Adding fields/barriers to every existing map charges nonusers; compare an opt-in representation. |
 | **MVCC-like entry versions** | Version chains, timestamps and tombstones; a naive implementation grows with writes during the oldest snapshot. One retained cut can discard intermediate versions only with a correct reader/reclamation protocol. | Snapshot epoch is cheap; writers publish versions and readers search/select them. Long readers retain history. | Transaction publication and garbage collection; generic in-place payload writes need interception or replacement discipline. Metadata/indirection remain even without an active reader. |
@@ -141,9 +144,36 @@ a bounded pause merely because its capture is called “constant time.”
 | **Snapshot region allocator / software page COW** | Retained region pages/blocks plus allocation metadata and scratch; page-size amplification may make V much larger than changed values. | Publish a region generation, copy on writes; exclude outside aliases and coordinate all writers. Hardware faults or software barriers delay a first write. | General storage-domain and reference/alias design, not an allocator switch. A sealed opt-in region confines ordinary-program cost; universal write barriers do not. |
 | **Full copy or stop-and-stream** | Full copy adds approximately D; streaming while mutations are stopped adds only buffers. | Copy pauses mutations for O(D); streaming pauses for the export's duration. | Simplest controls, no inactive tax; each fails one central requirement. |
 
-The fork cost model follows [Linux's COW implementation](https://man7.org/linux/man-pages/man2/fork.2.html)
-and [Redis's documented fork latency](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/).
-It supplies no Whitefoot timing estimate.
+**Deduction: page amplification.** For k independent uniformly random writes,
+each touching one of P pages still retained by the child, the expected copied
+fraction is `1 - (1 - 1/P)^k`, approximately `1 - e^(-k/P)`. A roughly 117 MB
+dataset occupies about 29,000 4 KiB pages; about 29,000 such writes copy about
+63% even if each changes only a few bytes. Allocator metadata and free-list
+writes, map tombstones and resizes, and access-time/LRU/eviction-sampling
+updates on reads dirty pages too. A read-mostly workload with that metadata
+is not read-only to the kernel. Whitefoot uses the system allocator
+(`compiler/src/backend/heap.c:8`, `:18`, `:29`), and even map read-lock release
+writes bookkeeping (`compiler/src/backend/concurrent_map.c:1356`).
+
+Huge-page amplification depends on the kernel: older Linux could copy a whole
+2 MiB transparent huge page on a write fault
+([v4.9, `mm/huge_memory.c:969`, `:1008`](https://github.com/torvalds/linux/blob/v4.9/mm/huge_memory.c#L969));
+Linux v6.6 instead splits the mapping and falls back to a base-page copy
+([v6.6, `mm/huge_memory.c:1279`](https://github.com/torvalds/linux/blob/v6.6/mm/huge_memory.c#L1279),
+[`mm/memory.c:2902`](https://github.com/torvalds/linux/blob/v6.6/mm/memory.c#L2902)).
+These versions establish the difference, not the runner's behavior: the
+comparison must identify and cite the exact kernel measured.
+
+[Redis's latency documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/optimization/latency/)
+models Linux/AMD64 page tables at about 8 bytes per 4 KiB page and reports
+roughly 10–13 ms per GB of RSS on several bare-metal and modern VM systems
+(other entries are slower). **Deduction:** scaling those entries to about
+200–240 MB RSS gives a few milliseconds, making quiescence the likely capture
+pause limit rather than a large page-table copy. This is not a Whitefoot
+measurement. The 14900K runner is a Hyper-V guest
+(`.github/workflows/io-bench.yml:32`), absent from Redis's table; measure its
+fork time. The later fault and page-copy cost remains on the parent's write
+path, as the versioned kernel source above shows.
 
 **Versioning must cover the transitive data.** An epoch for table reclamation
 prevents freeing an old table; it does not stop a `Box` below an entry from
@@ -194,17 +224,28 @@ owner, and a copied descriptor is not an independent file/socket resource.
 exec starts a clean program but discards the inherited heap: exporting the
 dataset still needs an explicit transport or frozen mapping.
 
+No current POSIX Whitefoot program is single-threaded at a point where its
+source could request fork: the launcher runs entry on a second thread while
+the original receives stop signals (`compiler/src/backend/wf_floor.c:348`,
+`:353`, `compiler/src/backend/completion/stop_signals.c:168`). Context starts
+can add Linux drivers with their own rings
+(`compiler/src/backend/completion/bridge.c:3372`, `:3402`, `:3423`); without a
+ring, file helpers grow on demand, normally up to eight (`:70`, `:167`), and
+compute lanes start on first attachment (`compiler/src/backend/sched/core.c:1254`,
+`:1280`). The runtime has no fork handling today: under `compiler/` there is
+no `pthread_atfork`, `MADV_DONTFORK` or `MADV_WIPEONFORK` integration.
+
 The following are **new obligations inferred from current Whitefoot rules**,
 not a claim that the existing runtime can discharge them.
 
 | Boundary and current rule | What a safe snapshot child requires |
 | --- | --- |
-| **Atomic cut and locks.** SHARE-3 gives whole statements one point (`spec/kernel-spec.md:2311`); the runtime locks by type/object/key and releases after the block (`design/compiler/waiting-contexts/state-locks.md:3`, `:7`). | Reach a quiescent frontier for every captured mutable object and its payloads; no half-finished statement, resize, allocator update or publication may be exported. Resetting a copied lock does not repair half-written data. Shared mappings and external writers must be excluded or coordinated. |
+| **Atomic cut and locks.** SHARE-3 gives whole statements one point (`spec/kernel-spec.md:2311`); the runtime locks by type/object/key and releases after the block (`design/compiler/waiting-contexts/state-locks.md:3`, `:7`). | Holding whole-map locks for every captured map across fork suffices for the dataset cut if they cover all transitive mutations and the child reads only frozen data without entering copied locks (`compiler/src/backend/concurrent_map.c:1363`). Unrelated drivers need not quiesce; their copied state must be unreachable. Resetting a copied lock cannot repair half-written data. Shared mappings and external writers need exclusion or coordination; allocator consistency is a separate platform assumption below. |
 | **Contexts/drivers.** WAIT-2/3 define calls, starts and joins (`spec/kernel-spec.md:2246`, `:2256`); contexts reside in resumable frames and driver-owned queues (`design/compiler/waiting-contexts.md:1`, `:3`, `:13`). | Create a fresh child root running only the designated job. Do not resume copied ready/parked frames or join missing sibling contexts. Parent contexts retain their existing joins. A rendezvous must not wait for clients to finish pending network operations. |
-| **Compute workers and --par.** PAR-1/2 hide worker identity and allow sequential execution (`spec/kernel-spec.md:2159`, `:2167`, `:2234`); workers steal/help (`design/compiler/parallel-lowering/parallel-runtime.md:1`, `:5`). | Drain relevant in-flight compute and publications before capture; copy no incomplete join. Sequential child lowering is permitted, but --par on/off cannot determine whether source is safe. One driver or no --par does not prove the process has no helper threads. |
-| **Completion, timers, cancellation.** One pending record per context, per-driver deadlines and route-owned cancellation (`design/compiler/waiting-contexts.md:7`, `design/compiler/waiting-contexts/bounded-waits.md:1`, `:3`). PRE-2 defines watches and transfer races (`spec/kernel-spec.md:2558`). | Parent alone owns pending operations and their completion buffers. Child must neither resubmit requests nor consume parent completions, inherited ring state, helper queues or timer heaps. Copying CancelWatch freezes its memory; later parent firing cannot become child cancellation without explicit IPC. Any child timers/watches need fresh state or a defined external control channel. |
-| **Linear handles and host order.** PRE-2 opaque handles, shared factory budget and Inputs (`spec/kernel-spec.md:2554`, `:2564`, `:2962`); HOST-1 orders through overlapping state (`:2241`). | No duplicated source owners for sockets, files, listeners, factories or invocation capabilities. Transfer designated output authority, or create a fresh private output; close unwanted descriptor copies through an audited child path. Shared file offsets, socket shutdown and factory credits make blind duplication wrong. No copied runtime close/finalizer pass may operate on all parent owners. |
-| **Memory and release.** Process meter (`spec/kernel-spec.md:2560`); single heap and ordinary releases (`:844`, `:855`). | Define child logical heap and snapshot accounting separately. A copied counter includes abandoned contexts and owners; COW physical copies are not new source allocations. Do not decrement parent credits or counters on child exit. Count the aggregate deployment's physical/commit pressure separately. |
+| **Compute workers and --par.** PAR-1/2 hide worker identity and allow sequential execution (`spec/kernel-spec.md:2159`, `:2167`, `:2234`); workers steal/help (`design/compiler/parallel-lowering/parallel-runtime.md:1`, `:5`). | Drain computation writing the captured dataset and its publications. A copied started pool (`wf__par_started` and lane count, `compiler/src/backend/sched/core.c:1261`, `:1280`) has no lane threads. Publishing can call `wf__par_signal`, which deadlocks if its lane wait lock was held at fork (`:765`, `:791`, `:1328`, `compiler/src/backend/sched/prim_host.c:286`). Child --par code needs a runtime reset to “no pool”; sequential lowering is permitted, but --par on/off cannot select source safety. |
+| **Completion, timers, cancellation.** One pending record per context, per-driver deadlines and route-owned cancellation (`design/compiler/waiting-contexts.md:7`, `design/compiler/waiting-contexts/bounded-waits.md:1`, `:3`). PRE-2 defines watches and transfer races (`spec/kernel-spec.md:2558`). | Parent owns pending operations and completion buffers. Linux rings are live `MAP_SHARED` mappings, not a COW snapshot (`compiler/src/backend/completion/linux_io_uring.c:258`, `:276`, `:291`, `:311`). The child retains the calling driver's adapter (`compiler/src/backend/completion/bridge.c:348`, `:3365`); submissions or completion consumption corrupt the parent's ring (`compiler/src/backend/completion/linux_io_uring.c:625`, `:1095`). Prove no child completion path is reachable, or add `MADV_DONTFORK` to the rings: stray ring access then faults instead of corrupting the parent, which still cannot count as a safe export. On macOS the stop-signal kqueue is not inherited (`compiler/src/backend/completion/stop_signals.c:214`; [kqueue contract](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html)); file helper threads are absent, so helper-dependent requests can wait forever (`compiler/src/backend/completion/file_adapter.c:279`, `:592`). Child timers/watches need fresh state or IPC; copying CancelWatch cannot convey later parent firing. |
+| **Linear handles and host order.** PRE-2 opaque handles, shared factory budget and Inputs (`spec/kernel-spec.md:2554`, `:2564`, `:2962`); HOST-1 orders through overlapping state (`:2241`). | No duplicated source owners for sockets, files, listeners, factories or invocation capabilities. The Linux epoll descriptor shares the parent's open file description (`compiler/src/backend/completion/linux_io_uring.c:121`; POSIX fork above). Transfer designated output authority, or create a fresh private output; close unwanted copies through an audited child path. Shared offsets, socket shutdown and factory credits make blind duplication wrong. No copied close/finalizer pass may operate on all parent owners. |
+| **Memory and release.** Process meter (`spec/kernel-spec.md:2560`); single heap and ordinary releases (`:844`, `:855`). | Define child logical heap and snapshot accounting separately. The copied meter retains every thread's slots, including vanished threads (`compiler/src/backend/completion/bridge.c:1357`, `:1362`, `:1383`); COW physical copies are not source allocations. Do not decrement parent credits or counters on child exit. Count aggregate physical/commit pressure separately. |
 | **Lifetime and exit.** ExitStatus is reported when entry returns (`spec/kernel-spec.md:2975`); source cleanup has defined edges (`:855`). | Parent owns a job that reports creation failure, completion, I/O error or cancellation and is always reaped. A child consumes its new output/scratch owners, reports status, then uses a minimal exit path without running parent cleanup. Failed/cancelled output is unpublished; parent publishes only after successful completion. No orphan child may indefinitely retain a snapshot. |
 
 **Hard reserve enforcement remains open.** Software versions can reserve
@@ -220,9 +261,20 @@ Quiescence is a real latency issue. WAIT-2 promises eventual progress only
 under its finite-steps-to-wait/completion premise, with no wall-clock bound
 (`spec/kernel-spec.md:2252`). Drivers are not preemptive
 (`design/compiler/waiting-contexts.md:29`). Waiting for a long atomic block or
-compute task can therefore delay capture indefinitely in elapsed time.
+computation writing the captured dataset can delay capture indefinitely in
+elapsed time; unrelated compute need not finish if its copied state is
+unreachable from the child.
 Adding safe points or restricting snapshot writers would itself need a
 design and inactive-cost comparison; it cannot be hidden in “fork is fast.”
+
+**Allocator consistency is an unproved platform assumption.** Whitefoot's
+heap calls `malloc`/`realloc`/`free` (`compiler/src/backend/heap.c:8`, `:18`,
+`:29`). [glibc 2.39's fork wrapper](https://github.com/bminor/glibc/blob/glibc-2.39/posix/fork.c#L61)
+takes malloc locks and releases them in the child;
+[macOS libmalloc's fork hooks](https://github.com/apple-oss-distributions/libmalloc/blob/c49dafa25f1efe8607701ae6014a663ad2ee437f/src/malloc.c#L3723)
+lock allocator zones and reinitialize child locks. These support platform
+qualification, not a POSIX promise that arbitrary child allocation is safe.
+Holding dataset locks alone does not prove the allocator or native call closure.
 
 **Possible surface, not valid Whitefoot syntax:**
 
@@ -233,11 +285,13 @@ start_export(FrozenView, moved-output, bounded-scratch, static-function)
 finish/cancel(SnapshotJob) -> completion status and resource disposition
 ```
 
-Capture and job waits belong to waiting functions. A waiting capture cannot
-simply be called while holding a whole-map atomic statement: SHARE-2 forbids
-waiting inside its block (`spec/kernel-spec.md:2306`). Coordinating the frozen
-cut with a log rotation therefore needs a specified capture/publication
-protocol, not an assumed call inside firn's existing atomic block.
+Capture rendezvous and job waits belong to waiting functions. SHARE-2 forbids
+a waiting call inside an atomic block (`spec/kernel-spec.md:2306`). A native
+fork host call is not itself a WAIT-1 wait: that boundary is the callable's
+`waits` declaration (`spec/kernel-spec.md:1533`). Holding the dataset locks
+across that call is therefore a capture/publication protocol question, not a
+contradiction of SHARE-2. Define how the cut and log rotation share one point;
+main supplies neither a fork callable nor that protocol today.
 
 The function reads only the frozen view, mutates only its own scratch and
 writes only its designated output. It cannot reach live Shared handles,
@@ -340,10 +394,22 @@ meter: PRE-2's heap count omits stacks, allocator reserves and executable
 mappings, and RSS is optional (`spec/kernel-spec.md:2560`), so neither is
 already a hard total-footprint limit. Second, fork does not satisfy the
 ruling by moving bytes out of the parent's counter: pages the parent dirties
-during export are copied, and that divergence (up to about D under uniform
-replacement) is part of the deployment's footprint even though the parent's
-heap count never sees it. A fork route meets the ruling only under a stated
-dirty-page budget with the failure policy of decision 1.
+during export are copied, and that page-amplified divergence is part of the
+deployment's footprint. The copies never pass through `wf__heap_take` or
+`wf__heap_change` (`compiler/src/backend/heap.c:7`,
+`compiler/src/backend/completion/bridge.c:1362`): no in-process allocation
+meter, scoped or otherwise, sees them. A fork route meets the ruling only under
+a stated dirty-page budget with the failure policy of decision 1.
+
+Only the kernel's physical-memory view can account for fork-route V. On Linux,
+collect parent and child [`Private_Dirty` in `/proc/<pid>/smaps`](https://docs.kernel.org/filesystems/proc.html)
+alongside aggregate physical memory. Redis 7.0.15 uses the same proxy
+([`src/zmalloc.c:655`, `:716`](https://github.com/redis/redis/blob/7.0.15/src/zmalloc.c#L655),
+[`src/childinfo.c:91`, `:126`, `:133`](https://github.com/redis/redis/blob/7.0.15/src/childinfo.c#L91))
+for [`current_cow_size` / `rdb_last_cow_size`](https://redis.io/docs/latest/commands/info/),
+giving the comparison a reference instrument. Private dirtiness also includes
+scratch and other private writes; sampling it is evidence, not hard reserve
+enforcement.
 
 [Whitefoot #322, scoped metering](https://github.com/Ming-Research/Whitefoot/pull/322)
 is paused for acceptance per the owner's request. Its
@@ -356,7 +422,7 @@ open. Those observations survive this broader investigation.
 
 | Chosen route | What becomes unnecessary, and what remains |
 | --- | --- |
-| Restricted fork export | Private replay keyspaces disappear, so subtracting their context scopes is unnecessary for this consumer. Parent heap accounting naturally excludes child-only allocations but misses COW/deployment pressure. A dataset-vs-total policy and physical headroom remain necessary. |
+| Restricted fork export | Replay scopes disappear, and allocation meters cannot see V at all; scoped metering has no consumer here. Kernel physical-memory accounting, a dataset-vs-total policy and reserve enforcement remain necessary. |
 | Versioned map or snapshot region | Replay disappears; old versions remain in the same process. Container/region live-versus-retained accounting can replace general context attribution for this task. A block originally allocated by a client can later become snapshot-only: origin scopes alone do not classify that transition. |
 | Batches/log or disk-backed snapshots | No full private replay heap if the protocol streams correctly; explicit buffer/log/version accounting may suffice. Spill/storage and retained-history bounds still need policy. |
 | Retain current private replay | Dataset-style admission still needs accurate exclusion, and scopes remain one candidate. A whole-deployment limit should include rewrite storage instead; excluding it defeats that policy. Neither choice fixes replay's CPU/memory costs. |
@@ -366,8 +432,10 @@ so #322 loses the consumer it was built for: no route above needs the
 rewrite's allocations excluded from admission. Its possible value for
 independent accounting consumers (per-tenant or per-request metering)
 remains, but no such consumer exists in the maintained programs today.
-Do not accept or discard scoped metering solely because fork changes which
-process reports the bytes; decision 4 asks what happens to it.
+Fork requires kernel accounting; in-process routes favor container-level
+live-versus-retained accounting because allocation origin cannot classify a
+block that later becomes snapshot-only. This strengthens decision 4's
+recommendation to keep #322 paused, rather than selecting it before a consumer.
 
 ## Decisions for the owner
 
@@ -439,6 +507,9 @@ excludable; firn needed it to keep its private replay keyspace out of
 admission. The firn-maxmem-scope ruling removes that replay, so #322 has no
 consumer in maintained programs. Its experiment release is green, its
 completion review's one finding is fixed, and its acceptance is paused.
+Fork's COW pages bypass every allocation scope; in-process snapshot retention
+changes a block's role without changing its origin. Neither route supplies
+the missing scoped-meter consumer, strengthening recommendation A.
 
 **Options.** **A, recommended:** keep #322 paused as a draft, unmerged, and
 reopen it when a real consumer (per-tenant or per-request metering, or a
