@@ -2,8 +2,9 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes complete aggregate
-//! representations, and keeps a defensive abort edge for enum discriminants.
+//! check, emits no overflow or alias promises, initializes aggregate values
+//! while leaving unoccupied window storage alone, and keeps a defensive abort
+//! edge for enum discriminants.
 
 mod array;
 mod boxes;
