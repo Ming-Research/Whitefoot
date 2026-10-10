@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Ming-Research/Halo-wf
-          ref: 9915000
+          ref: 99150005f5681780d0fe9d83f22f2b7792198ac7
           path: halo
       - name: Install perf
         run: sudo apt-get update -qq && sudo apt-get install -y -qq linux-tools-common linux-tools-generic linux-tools-$(uname -r) || sudo apt-get install -y -qq linux-tools-generic
