@@ -1,0 +1,5 @@
+fn walk(n: u64) -> result: u64 pure {
+  let source = std::time::cancel_source();
+  let held = &source;
+  return musttail walk(n: n);
+}

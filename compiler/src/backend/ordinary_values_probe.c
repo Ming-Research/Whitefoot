@@ -166,7 +166,7 @@ static void text_probe(void) {
 }
 
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
-static const wf_value wf_probe_never = {{0}};
+static wf_cancel_handle wf_probe_never;
 
 typedef void (*wf_probe_read)(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
@@ -923,10 +923,10 @@ static void time_probe(wf_inputs *inputs) {
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);
-typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_value *);
+typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_cancel_handle *);
 typedef void (*wf_probe_stop_close)(wf_close_result *, wf_value *, const wf_value *);
 extern void wf_test_public_stop_listen(wf_open_result *, wf_value *, const wf_value *);
-extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_value *);
+extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_cancel_handle *);
 extern void wf_test_public_close_stop_listener(wf_close_result *, wf_value *, const wf_value *);
 
 #if defined(__linux__)
@@ -1072,6 +1072,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     wf_inputs inputs;
     wf_close_result closed;
     assert(wf__ordinary_inputs(&inputs, 0, NULL));
+    wf__body_cancel_never(&wf_probe_never);
     assert(inputs.handles.words[2] != 0 && *(uint64_t *)(uintptr_t)inputs.handles.words[2] >= 8);
     {
         /* [PRE-2] a shared factory names the same budget: an acquisition
@@ -1127,6 +1128,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     check_close(&closed);
     assert(wf_chdir("..") == 0 && wf_rmdir(fixture) == 0);
     assert(wf_chdir(previous) == 0);
+    wf__body_close_cancel_watch(&wf_probe_never);
     return 0;
 }
 

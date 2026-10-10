@@ -49,7 +49,7 @@ static void finish_operation(int state) {
     CHECK(wf_driver_root.timer_count == 0);
 }
 
-static void end_bound(int cancelled, wf_value *source, const wf_deadline *deadline) {
+static void end_bound(int cancelled, wf_cancel_handle *source, const wf_deadline *deadline) {
     if (cancelled) {
         wf_context firing = {0};
         wf_host_operation call = {0};
@@ -120,7 +120,8 @@ static void bounded_send(int cancelled) {
     CHECK(bytes != NULL);
     memset(bytes, 0x5a, COUNT);
     wf_view buffer = {bytes, COUNT};
-    wf_value factory = {{8, 0, 0, 0}}, address, never, source, watch;
+    wf_value factory = {{8, 0, 0, 0}}, address;
+    wf_cancel_handle never, source, watch;
     wf_open_result listener;
     wf_connect_result client;
     wf_accept_result server;
@@ -150,7 +151,7 @@ static void bounded_send(int cancelled) {
     uint64_t prefill = fill_path(connection, bytes, CHUNK);
     wf__body_cancel_source(&source);
     wf__body_cancel_watch(&watch, &source);
-    const wf_value *bound_watch = cancelled ? &watch : &never;
+    const wf_cancel_handle *bound_watch = cancelled ? &watch : &never;
     wf_deadline deadline = {0};
     deadline.tag = WF_OPTION_SOME;
     deadline.value.ticks = wf_file_monotonic_ns() + UINT64_C(1000000000);

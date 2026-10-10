@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.119: cancellation handles become droppable structs over shared handles
+
+Rules: changed PRE-2, PROV-6, STOR-3
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: a cancellation source cannot be put in shared state" that asked to approve PR #319's specification text (PRE-2: CancelSource and CancelWatch become opaque structs whose private fields hold shared handles and are implicitly droppable; PROV-6 and STOR-3: the nonempty release of shared handles) and the changes to five design nodes, with "agree" (translated), after choosing option A' (A-prime) on the board card firn-wf-cancel-drop-card.
+
+Summary: `CancelSource` holds a private `Shared<CancelState>` and `CancelWatch` a private `SharedRead<CancelState>`, so both are affine and droppable by their fields' capabilities and dropping one releases its shared handle; `close_cancel_source` and `close_cancel_watch` remain explicit releases equivalent to dropping, neither firing the state, and `cancel_never` keeps a permanent private unfired state (PRE-2). PROV-6 lists `Shared` and `SharedRead` among the nonempty-release roots, which the compiler already released, so owning structs inherit their release field by field, and STOR-3 separates a value's own release action from its fields'. The selection ground is storing a cancellation source in shared state, which `Shared<T: drop>` refused while the handles were nodrop and which firn's wake generations need; keeping nodrop handles, a host-specific nonempty release and droppable sources alone were rejected.
+
 ## 2026-10-09 v0.118: releasing a map's reserve through the memory meter
 
 Rules: changed PRE-1, PRE-2, SHARE-1

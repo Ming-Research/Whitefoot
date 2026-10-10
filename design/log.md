@@ -12,6 +12,13 @@ Nodes: compiler/storage-representation
 Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner approved the request "approve the new storage-representation decision: when constructing a value containing a constant-capacity window, initialize only the header and value-bearing fields and do not zero the element slots past len?" (translated).
 
 Summary: Constructing a value with constant-capacity Slots or Ring storage writes only headers and value-bearing fields, because WIN-1 makes slots past `len` unobservable and Snowghost's profile showed the whole-value zero fill of a short-lived 64-frame window as a large share of style computation; inactive enum payload zeroing and complete Array initialization are kept, and zero-filling the whole value was the refused alternative.
+## 2026-10-09 Cancellation handles are droppable structs over shared handles
+
+Nodes: language/system-interface/context-cancellation, language/system-interface/declaration-home, language/system-interface, language/data-model/opaque-struct, compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: a cancellation source cannot be put in shared state" that asked to approve PR #319's specification text and the changes to five design nodes (context-cancellation becoming droppable structs with three rejected alternatives recorded; declaration-home, system-interface, opaque-struct and state-locks made consistent) with "agree" (translated), after choosing option A' (A-prime) on the board card firn-wf-cancel-drop-card.
+
+Summary: Cancellation sources and watches are droppable opaque structs whose private fields hold the cancellation state's shared handles, because that state is ordinary runtime memory and shared state must be droppable for a source to live in it, as wake generations need; their release is the shared handle's, through ordinary field-wise cleanup. Nodrop handles were rejected because they exposed only two forgotten-fire mistakes at compile time while keeping sources out of shared state, a host-specific nonempty release because the field-wise release needs no new rule, and droppable sources alone because a connection could still not obtain a new generation's watch. The neighbouring nodes now state that fielded opaque structs inherit their fields' release and that fieldless host handles keep an empty one.
 ## 2026-10-09 A map's reserve is released through the memory meter in std::process
 
 Nodes: language/system-interface, language/system-interface/memory-statistics, compiler/prelude-records
