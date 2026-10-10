@@ -2132,8 +2132,16 @@ impl<'unit> TypeContext<'unit> {
             // that list, so the two sides of a [TYPE-5] mismatch between
             // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
-                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominal(id)?.kind
+                {
+                    let name = if release == super::super::model::CheckedReleaseClass::Frozen {
+                        "Frozen"
+                    } else {
+                        "Box"
+                    };
+                    return Ok(format!("{name}<{}>", self.checked_type_name(referent)?));
                 }
                 let written = match self.source_nominal_instance_entry(id)? {
                     Some((template, substitution)) if substitution.len() > 0 => {

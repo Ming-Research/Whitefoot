@@ -1951,6 +1951,21 @@ impl<'unit> TypeContext<'unit> {
         &self,
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
+        use super::repairs::OpaqueStruct;
+        let template = self
+            .nominal_templates_by_declaration
+            .get(&declaration)
+            .and_then(|&index| self.nominal_templates.get(index))
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if self.declarations.tree.is_prelude_node(template.node)? {
+            return Ok(match template.name.as_str() {
+                "Frozen" => OpaqueStruct::Frozen,
+                "Shared" => OpaqueStruct::Shared,
+                "SharedRead" => OpaqueStruct::SharedRead,
+                "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            });
+        }
         if self
             .declarations
             .declaration_home(declaration)
@@ -1958,11 +1973,6 @@ impl<'unit> TypeContext<'unit> {
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }
-        let template = self
-            .nominal_templates_by_declaration
-            .get(&declaration)
-            .and_then(|&index| self.nominal_templates.get(index))
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if !self
             .declarations
             .tree

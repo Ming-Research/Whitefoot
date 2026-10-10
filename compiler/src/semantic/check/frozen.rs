@@ -127,8 +127,9 @@ impl TypeContext<'_> {
 }
 
 impl Checker<'_, '_> {
-    /// Run before indexed/ordinary ownership routing so SHARE-1 owns the error
-    /// even for copy parts, measures and slots below frozen content.
+    /// Inspect the complete selection before indexed/ordinary ownership routing.
+    /// [DIAG-1] selects the earlier [OWN-1] for copy moves and bare affine
+    /// uses; [SHARE-1] owns explicit non-copy consumes through frozen content.
     pub(super) fn reject_frozen_consume(
         &self,
         context: &CheckContext<'_>,
@@ -140,6 +141,9 @@ impl Checker<'_, '_> {
     ) -> Result<(), CheckStop> {
         use crate::syntax::views::PlaceSuffix;
         use crate::{DeclarationClass, DeferredUseRole, LexicalUseRole, ResolvedTarget};
+        if !explicit_move {
+            return Ok(());
+        }
         if !self.types.declarations.tree.children(base)?.is_empty() {
             return Ok(());
         }
@@ -157,6 +161,9 @@ impl Checker<'_, '_> {
         let Some(local) = bindings.get(&declaration) else {
             return Ok(());
         };
+        if !local.live {
+            return Ok(());
+        }
         let mut ty = local.ty;
         let mut reference = local.mode.is_reference();
         let mut frozen_content = false;
@@ -170,9 +177,6 @@ impl Checker<'_, '_> {
                                 .frozen_member_on_resolved_path(context, path, bindings)?
                                 .is_some()
                             {
-                                if explicit_move {
-                                    return self.frozen_consume_issue(place);
-                                }
                                 frozen_content = true;
                             }
                         }
@@ -186,9 +190,6 @@ impl Checker<'_, '_> {
                         .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
                         .spelling();
                     if name == "inner" && self.types.is_frozen_type(ty)? {
-                        if explicit_move {
-                            return self.frozen_consume_issue(place);
-                        }
                         frozen_content = true;
                     }
                     let Some(member) = self.types.place_member(ty, name)? else {

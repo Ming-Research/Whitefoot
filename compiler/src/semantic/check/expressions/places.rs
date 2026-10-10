@@ -130,12 +130,22 @@ impl<'unit> Checker<'_, 'unit> {
         options: PlaceUseOptions,
         place: ElaboratedPlace,
     ) -> Result<TypedExpression, CheckStop> {
+        // [MSR-1] measures select copy u64 values, rather than the measured
+        // container. [DIAG-1] gives their moves and all other copy moves to
+        // [OWN-1] before [SHARE-1] considers a frozen-content consume.
+        let copy = place.measure.is_some() || self.types.is_copy_type(check_context, place.ty)?;
+        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Own1,
+                use_node,
+                SemanticIssueKind::MoveOfCopy {
+                    mechanical_fix: "use the copy place without `move`",
+                },
+            );
+        }
         for member in &place.resolved.members {
-            if (options.explicit_move
-                || ((options.context == PlaceUseContext::Ordinary
-                    || !self.types.declarations.tree.place_has_dereference(node)?)
-                    && place.measure.is_none()
-                    && !self.types.is_copy_type(check_context, place.ty)?))
+            if options.explicit_move
+                && !copy
                 && self
                     .types
                     .frozen_member_on_resolved_path(check_context, member, bindings)?
@@ -237,7 +247,6 @@ impl<'unit> Checker<'_, 'unit> {
                 ),
             );
         }
-        let copy = self.types.is_copy_type(check_context, place.ty)?;
         let read_out = !copy
             && options.explicit_move
             && self.body.take_commit_read_out(&place.resolved.identity);
@@ -306,15 +315,6 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-        }
-        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
-            return self.types.declarations.issue_node(
-                SemanticRule::Own1,
-                use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the copy place without `move`",
-                },
-            );
         }
         let mut effects = EffectSet::NONE;
         for member in &place.resolved.members {

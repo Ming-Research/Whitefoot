@@ -66,22 +66,59 @@ fn nested_frozen_handles_admit_copy_reads_and_reading_references() {
 }
 
 #[test]
-fn frozen_content_moves_are_share1_even_for_copy_parts_and_storage_measures() {
-    for source in [
-        "fn denied(value: Frozen<u8>) -> result: u8 pure {\n  return move value.inner;\n}\n",
-        "fn denied(value: Frozen<Box<Array<u8>>>) -> result: u64 pure {\n  return move value.inner.inner.len;\n}\n",
-        "fn denied(value: Frozen<Box<u8>>) -> result: Box<u8> pure {\n  return value.inner;\n}\n",
-        "fn denied(value: Frozen<Option<Box<u8>>>) -> result: u8 pure {\n  match value.inner {\n    Some(value: part) => {\n      return part.inner;\n    }\n    None() => {\n      return 0_u8;\n    }\n  }\n}\n",
+fn frozen_content_consumes_follow_diag1_rule_definition_order() {
+    // DIAG-1 selects OWN-1 (defined before SHARE-1) for copy moves and
+    // bare affine uses. Only explicit non-copy consumes select SHARE-1.
+    for (source, expected_kind) in [
+        (
+            "fn denied(value: Frozen<u8>) -> result: u8 pure {\n  return move value.inner;\n}\n",
+            "MoveOfCopy",
+        ),
+        (
+            "fn denied(value: Frozen<Box<Array<u8>>>) -> result: u64 pure {\n  return move value.inner.inner.len;\n}\n",
+            "MoveOfCopy",
+        ),
+        (
+            "fn denied(value: Frozen<Box<u8>>) -> result: Box<u8> pure {\n  return value.inner;\n}\n",
+            "BareAffineUse",
+        ),
+        (
+            "fn denied(value: Frozen<Option<Box<u8>>>) -> result: u8 pure {\n  match value.inner {\n    Some(value: part) => {\n      return part.inner;\n    }\n    None() => {\n      return 0_u8;\n    }\n  }\n}\n",
+            "BareAffineUse",
+        ),
+        (
+            "fn denied(value: Frozen<Box<u8>>) -> result: Box<u8> pure {\n  return move value.inner;\n}\n",
+            "FrozenContentConsume",
+        ),
+        (
+            "fn denied(value: Frozen<Option<Box<u8>>>) -> result: u8 pure {\n  match move value.inner {\n    Some(value: part) => {\n      return part.inner;\n    }\n    None() => {\n      return 0_u8;\n    }\n  }\n}\n",
+            "FrozenContentConsume",
+        ),
     ] {
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {
                 panic!("{outcome:?}");
             };
-            assert_eq!(issue.rule_id(), "SHARE-1");
-            assert!(matches!(
-                issue.kind(),
-                SemanticIssueKind::FrozenContentConsume { .. }
-            ));
+            let expected_rule = if expected_kind == "FrozenContentConsume" {
+                "SHARE-1"
+            } else {
+                "OWN-1"
+            };
+            assert_eq!(issue.rule_id(), expected_rule);
+            match expected_kind {
+                "MoveOfCopy" => {
+                    assert!(matches!(issue.kind(), SemanticIssueKind::MoveOfCopy { .. }))
+                }
+                "BareAffineUse" => assert!(matches!(
+                    issue.kind(),
+                    SemanticIssueKind::BareAffineUse { .. }
+                )),
+                "FrozenContentConsume" => assert!(matches!(
+                    issue.kind(),
+                    SemanticIssueKind::FrozenContentConsume { .. }
+                )),
+                _ => unreachable!(),
+            }
         });
     }
 }
@@ -112,20 +149,28 @@ fn frozen_and_owned_box_are_distinct_types() {
 }
 
 #[test]
-fn frozen_loop_alias_move_retains_its_share1_diagnostic() {
-    with_semantics(
-        include_bytes!("../../../../tests/conformance/cases/share1-neg-frozen-loop-alias-move.wf"),
-        |outcome| {
+fn frozen_loop_alias_moves_follow_diag1_for_the_selected_type() {
+    let affine =
+        include_str!("../../../../tests/conformance/cases/share1-neg-frozen-loop-alias-move.wf");
+    let copy = affine.replace("Box<u8>", "u8");
+    for (source, rule) in [(affine, "SHARE-1"), (copy.as_str(), "OWN-1")] {
+        with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {
                 panic!("{outcome:?}");
             };
-            assert_eq!(issue.rule_id(), "SHARE-1");
-            assert!(matches!(
-                issue.kind(),
-                SemanticIssueKind::FrozenContentConsume { .. }
-            ));
-        },
-    );
+            // DIAG-1 selects OWN-1 for the joined alias's copy move; the
+            // explicit non-copy move through frozen content remains SHARE-1.
+            assert_eq!(issue.rule_id(), rule);
+            if rule == "SHARE-1" {
+                assert!(matches!(
+                    issue.kind(),
+                    SemanticIssueKind::FrozenContentConsume { .. }
+                ));
+            } else {
+                assert!(matches!(issue.kind(), SemanticIssueKind::MoveOfCopy { .. }));
+            }
+        });
+    }
 }
 
 #[test]
@@ -184,4 +229,76 @@ fn frozen_new_checks_its_written_content_argument_at_the_call() {
         assert_eq!(start, source.rfind("Shared<u8>").unwrap());
         assert_eq!(&source[start..end], "Shared<u8>");
     });
+}
+
+#[test]
+fn frozen_type_mismatches_use_source_names_including_nested_boxes() {
+    for (actual, setup, expected_name) in [
+        ("Frozen<u8>", "", "Frozen<u8>"),
+        (
+            "Frozen<u8>",
+            "  let nested = box_new::<Frozen<u8>>(value: move value);\n",
+            "Box<Frozen<u8>>",
+        ),
+    ] {
+        let operand = if setup.is_empty() { "value" } else { "nested" };
+        let source = format!(
+            "struct Holder {{\n  held: Box<u8>;\n}}\n\nfn denied(value: {actual}) -> result: Holder pure {{\n{setup}  let object = Holder(held: move {operand});\n  return move object;\n}}\n"
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue } = outcome else {
+                panic!("{outcome:?}");
+            };
+            assert_eq!(issue.rule_id(), "TYPE-5");
+            let SemanticIssueKind::TypeMismatch { expected, found } = issue.kind() else {
+                panic!("{issue:?}");
+            };
+            assert_eq!(expected, "Box<u8>");
+            assert_eq!(found, expected_name);
+        });
+    }
+}
+
+#[test]
+fn prelude_opaque_handle_repairs_name_their_forming_functions() {
+    for (ty, forming, fields) in [
+        ("Frozen<u8>", "frozen_new", "inner: 7_u8"),
+        ("Shared<u8>", "shared_new", ""),
+        ("SharedRead<u8>", "shared_read", ""),
+    ] {
+        let name = ty.split('<').next().unwrap();
+        for statement in [
+            format!("  let made = {ty}({fields});\n  return move made;\n"),
+            if fields.is_empty() {
+                format!("  let {name}() = move value;\n  return unit;\n")
+            } else {
+                format!("  let {name}(inner: part) = move value;\n  return part;\n")
+            },
+        ] {
+            let result = if statement.contains("let made") {
+                ty
+            } else if fields.is_empty() {
+                "unit"
+            } else {
+                "u8"
+            };
+            let source =
+                format!("fn denied(value: {ty}) -> result: {result} pure {{\n{statement}}}\n");
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::SourceIssue { issue } = outcome else {
+                    panic!("{outcome:?}");
+                };
+                assert_eq!(issue.rule_id(), "TYPE-2");
+                let SemanticIssueKind::ContainerConstruction { mechanical_fix, .. } = issue.kind()
+                else {
+                    panic!("{issue:?}");
+                };
+                assert!(mechanical_fix.contains(forming), "{mechanical_fix}");
+                assert!(
+                    !mechanical_fix.contains("remove `opaque`"),
+                    "{mechanical_fix}"
+                );
+            });
+        }
+    }
 }

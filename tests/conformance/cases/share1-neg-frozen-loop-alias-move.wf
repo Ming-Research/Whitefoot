@@ -1,9 +1,9 @@
 struct Wrapper {
-  ordinary: u8;
-  frozen: Frozen<u8>;
+  ordinary: Box<u8>;
+  frozen: Frozen<Box<u8>>;
 }
 
-fn denied(wrapper: &Wrapper) -> result: u8 reads(wrapper) {
+fn denied(wrapper: &Wrapper) -> result: Box<u8> reads(wrapper) {
   let cursor = &wrapper^.ordinary;
   let once = True();
   loop {
