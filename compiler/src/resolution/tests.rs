@@ -2903,7 +2903,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[225].1, "key_set_insert");
     assert_eq!(first[228].1, "key_set_read_key");
     assert_eq!(first[232].1, "free_empty");
-    // PRE-1 v0.124: 51 opaque records + 27 enum records + four built-in
+    // PRE-1 v0.125: 51 opaque records + 27 enum records + four built-in
     // records + 153 function/parameter/range records = 235. Frozen adds four
     // opaque records and frozen_new/frozen_share add three each; ScanStep
     // adds five enum records and map_scan_within seven call records. Count
