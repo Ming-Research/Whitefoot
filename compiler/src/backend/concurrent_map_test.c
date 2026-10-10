@@ -3364,6 +3364,7 @@ static void scan_within_one_long_key(void) {
     uint64_t value = bounded_step(map, 0, 1, 65535, &set, &needs);
     if (!needs || value != exact || set.len != 0 || set.store != NULL)
         fail("one long key did not report its exact Needs without insertion", value, exact);
+    const uint64_t without_spare = value;
     value = bounded_step(map, 0, 1, exact - 1, &set, &needs);
     if (!needs || value != exact || set.len != 0)
         fail("one byte below Needs was admitted", value, exact);
@@ -3377,17 +3378,103 @@ static void scan_within_one_long_key(void) {
     value = bounded_step(map, 0, 0, 0, &set, &needs);
     if (needs || value != 0 || set.len != 1)
         fail("a duplicate key needed heap growth", value, set.len);
-    /* first_store must account for the retained arena as already held. */
+    /* A refusal must remain retryable after an unrelated allocation takes
+     * the thread's spare without increasing the program's heap holding. */
+    wf__key_set_free(set.store);
+    wf_cmap_key_set_drop_spare();
+    wf_key_set unrelated;
+    wf__key_set_new(&unrelated, 1);
+    wf__key_set_insert(&unrelated, (const unsigned char *)"k", 1);
+    void *small_spare = unrelated.store;
+    wf__key_set_free(unrelated.store);
+    wf__key_set_new(&set, 0);
+    uint64_t with_spare = bounded_step(map, 0, 1, 0, &set, &needs);
+    if (!needs || set.len != 0 || set.store != NULL || wf_key_set_spare != small_spare)
+        fail("a bounded refusal changed the destination or spare", with_spare, set.len);
+    int64_t before = begin_heap_measure();
+    wf__key_set_new(&unrelated, 1);
+    uint64_t allocation_peak = end_heap_measure(before);
+    if (unrelated.store != small_spare || wf_key_set_spare != NULL || allocation_peak != 0)
+        fail("the unrelated set did not consume the spare without heap growth", allocation_peak, 0);
+    value = bounded_step(map, 0, 1, with_spare, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("consuming the spare invalidated a bounded scan's Needs", value, with_spare);
+    copied = wf_cmap_key_set_key(&set, 0, &length);
+    if (length != 65536 || memcmp(copied, key, 65536) != 0)
+        fail("retrying after spare consumption changed a key", length, 65536);
+    if (with_spare != without_spare)
+        fail("bounded scan Needs depended on the thread's spare", with_spare, without_spare);
+    wf__key_set_free(unrelated.store);
+    wf_cmap_key_set_drop_spare();
+    /* Even a spare holding the complete key cannot change admission. */
     wf__key_set_free(set.store);
     wf__key_set_new(&set, 0);
     value = bounded_step(map, 0, 1, 0, &set, &needs);
+    if (!needs || value != without_spare || set.len != 0 || set.store != NULL)
+        fail("a sufficient spare changed bounded scan admission", value, without_spare);
+    value = bounded_step(map, 0, 1, value, &set, &needs);
     if (needs || value != 0 || set.len != 1)
-        fail("reusing a sufficient spare incorrectly needed bytes", value, set.len);
+        fail("a sufficient spare prevented an admitted scan", value, set.len);
     wf__key_set_free(set.store);
     wf_cmap_key_set_drop_spare();
     wf__table_hold_release(&hold, VALUE_TAG);
     wf_cmap_destroy(map);
     free(key);
+}
+
+/* A retained 60000-byte arena doubles to a 131072-byte grant on these two
+ * keys. Fresh insertion instead grants 32768 then 65536 bytes; retaining
+ * the spare must not make an admitted scan exceed that simulated peak. */
+static void scan_within_spare_arena_growth(void) {
+    wf_cmap_key_set_drop_spare();
+    unsigned char *keys[2] = {malloc(60000), malloc(30001)};
+    if (keys[0] == NULL || keys[1] == NULL) abort();
+    memset(keys[0], 0, 60000);
+    memset(keys[1], 1, 30001);
+    uint64_t nonce = 0;
+    do {
+        memcpy(keys[1] + 30001 - sizeof nonce, &nonce, sizeof nonce);
+        nonce++;
+    } while (SHARED_HASHES && tag_of(keys[1], 30001) != tag_of(keys[0], 30000));
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    const uint64_t lengths[2] = {30000, 30001};
+    for (unsigned k = 0; k < 2; k++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(u, keys[k], lengths[k], 0, &entry);
+        *slot = 1;
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+    }
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set spare;
+    wf__key_set_new(&spare, 1);
+    wf__key_set_insert(&spare, keys[0], 60000);
+    void *retained = spare.store;
+    wf__key_set_free(spare.store);
+    wf_key_set set;
+    wf__key_set_new(&set, 0);
+    uint32_t needs;
+    const uint64_t fresh_peak = 512 + 32768 + 65536;
+    uint64_t value = bounded_step(map, 0, UINT64_MAX, fresh_peak, &set, &needs);
+    if (needs || value != 0 || set.len != 2 || wf_key_set_spare != retained)
+        fail("a retained arena changed a fresh bounded scan", value, set.len);
+    unsigned first = scan_before(keys[0], lengths[0], keys[1], lengths[1]) ? 0 : 1;
+    for (unsigned i = 0; i < 2; i++) {
+        unsigned k = i == 0 ? first : 1 - first;
+        uint64_t length;
+        const unsigned char *copied = wf_cmap_key_set_key(&set, i, &length);
+        if (length != lengths[k] || memcmp(copied, keys[k], (size_t)length) != 0)
+            fail("a fresh bounded scan changed its keys or order", length, lengths[k]);
+    }
+    wf__key_set_free(set.store);
+    wf_cmap_key_set_drop_spare();
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(keys[0]);
+    free(keys[1]);
 }
 
 /* A plain array of every inserted byte string is the completeness oracle.
@@ -4073,6 +4160,7 @@ int main(int argc, char **argv) {
         maps_swap();
         maps_clear();
         scan_within_one_long_key();
+        scan_within_spare_arena_growth();
         scans_within_resume();
         scans_resume();
         scans_sparse();

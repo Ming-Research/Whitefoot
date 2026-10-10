@@ -2759,23 +2759,14 @@ static void scan_take(scan_growth *g, uint64_t bytes) {
         g->peak = g->growth;
 }
 
-/* Simulates exactly room_for's take-before-give sequence, including a
- * first_store spare already counted in PRE-2's heap reading. */
+/* Simulates room_for's take-before-give sequence with fresh allocations,
+ * independent of the calling thread's spare. */
 static void scan_insert_growth(scan_growth *g, const wf_key_set *set, const node *n) {
     if (key_set_find(set, n->bytes, n->length, tag_of(n->bytes, n->length)) != UINT64_MAX)
         return;
     if (g->room == 0) {
-#ifdef WF_CMAP_SPARE_KEYS
-        const key_store *spare = WF_CMAP_SPARE_KEYS();
-        if (spare != NULL && spare->room >= KEY_SET_MIN_ROOM) {
-            g->room = spare->room;
-            g->bytes_room = spare->bytes_room;
-        } else
-#endif
-        {
-            g->room = KEY_SET_MIN_ROOM;
-            scan_take(g, store_bytes(g->room));
-        }
+        g->room = KEY_SET_MIN_ROOM;
+        scan_take(g, store_bytes(g->room));
     } else if (g->len == g->room) {
         scan_take(g, store_bytes(g->room * 2));
         g->growth -= (uint64_t)WF_CMAP_GRANTED(store_bytes(g->room));
@@ -2876,6 +2867,12 @@ uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint
     if (used != kept)
         abort();
     sort_scanned(keys, kept);
+    /* A spare's larger arena can double to a larger grant than the fresh
+     * simulation predicts. Start a storeless destination fresh so insertion
+     * follows the simulated store/arena take-before-give sequence exactly;
+     * the one sort buffer stays held throughout and sorting allocates none. */
+    if (set->store == NULL && kept != 0)
+        set->store = new_store(KEY_SET_MIN_ROOM);
     for (uint64_t i = 0; i < kept; i++)
         wf_cmap_key_set_insert(set, keys[i].n->bytes, keys[i].n->length);
     if (buffer)

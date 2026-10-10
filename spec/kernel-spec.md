@@ -2283,7 +2283,7 @@ Each execution gives every sequence of bytes a position, a `u64`, the same in ev
 `map_scan_within` uses `map_scan`'s cursor, extent, count hint and insertion order [SHARE-1], with a byte limit and the result type `ScanStep` [PRE-1]. Its outcomes are:
 
 - With no `Some` key at or after the cursor, it inserts nothing and returns `Next(next: 0_u64)`.
-- With a first position at or after the cursor holding a `Some` key whose complete insertion alone needs peak heap growth `n > limit`, it inserts nothing and returns `Needs(bytes: n)`, leaving the cursor unchanged. Here `n` is the increase above the heap held on entry [PRE-2] needed to insert all that position's keys, including temporary storage, so retrying that call with `limit >= n` makes progress while the map is unchanged.
+- With a first position at or after the cursor holding a `Some` key whose complete insertion alone needs peak heap growth `n > limit`, it inserts nothing and returns `Needs(bytes: n)`, leaving the cursor unchanged. Here `n` is the peak increase above the heap held on entry [PRE-2] needed to insert all that position's keys, including temporary storage, with fresh storage for every required allocation, so retrying that call with `limit >= n` makes progress while the map is unchanged.
 - With that first position's complete insertion fitting the limit, it inserts all `Some` keys of a prefix of positions starting at the cursor and returns `Next(next: e modulo two to the 64th)`. The prefix includes that first position and every included position in full. At every point in the call, its increase above the heap held on entry [PRE-2], including temporary storage, is at most `limit`.
 
 `map_clear` makes every entry of the map its argument names `None`, releasing every value they held.
