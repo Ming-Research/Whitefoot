@@ -396,12 +396,12 @@ fn recursive_component(
     let mut representatives: HashMap<DeclarationId, FunctionId> = HashMap::new();
     for function in bodies.keys() {
         let signature = &signatures[function.0 as usize];
-        let key = (!signature.substitution.is_symbolic(), *function);
+        let key = (!signature.substitution.is_symbolic(), function.0);
         representatives
             .entry(signature.declaration)
             .and_modify(|prior| {
                 let previous = &signatures[prior.0 as usize];
-                if key < (!previous.substitution.is_symbolic(), *prior) {
+                if key < (!previous.substitution.is_symbolic(), prior.0) {
                     *prior = *function;
                 }
             })
@@ -441,6 +441,6 @@ fn recursive_component(
         .iter()
         .filter_map(|declaration| representatives.get(declaration).copied())
         .collect::<Vec<_>>();
-    component.sort_unstable();
+    component.sort_unstable_by_key(|function| function.0);
     component
 }
