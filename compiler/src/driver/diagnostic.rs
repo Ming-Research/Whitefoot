@@ -831,7 +831,7 @@ impl Report for SemanticIssueKind {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         report_variants!(SemanticIssueKind, self, fields;
             InvalidIntegerLiteral;
-            InvalidFloatLiteral;
+            InvalidFloatLiteral { canonical_spelling, mechanical_fix };
             InvalidTextItem { reason, mechanical_fix };
             NonAsciiByteCharacter { mechanical_fix };
             TextLengthMismatch { declared_length, byte_length, mechanical_fix };

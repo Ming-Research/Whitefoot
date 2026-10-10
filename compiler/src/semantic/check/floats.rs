@@ -9,30 +9,38 @@ const MAX_F64_DECIMAL_DIGITS: usize = 17;
 // candidate while keeping canonicalization bounded.
 const CANDIDATE_RADIUS: i128 = 64;
 
-pub(super) fn parse_float_literal(bytes: &[u8]) -> Option<CheckedValue> {
+/// A checked canonical literal, or its finite canonical spelling (suffix
+/// included). Non-finite or unparsable candidates have no such spelling.
+pub(super) fn parse_float_literal(bytes: &[u8]) -> Result<CheckedValue, Option<String>> {
     let (number, ty) = if let Some(number) = bytes.strip_suffix(b"_f32") {
         (number, FloatType::F32)
     } else {
-        (bytes.strip_suffix(b"_f64")?, FloatType::F64)
+        (bytes.strip_suffix(b"_f64").ok_or(None)?, FloatType::F64)
     };
-    let number = std::str::from_utf8(number).ok()?;
-    let bits = match ty {
+    let number = std::str::from_utf8(number).map_err(|_| None)?;
+    let (bits, canonical) = match ty {
         FloatType::F32 => {
-            let value = number.parse::<f32>().ok()?;
-            if !value.is_finite() || canonical_f32(value)? != number {
-                return None;
+            let value = number.parse::<f32>().map_err(|_| None)?;
+            if !value.is_finite() {
+                return Err(None);
             }
-            u64::from(value.to_bits())
+            (
+                u64::from(value.to_bits()),
+                canonical_f32(value).ok_or(None)?,
+            )
         }
         FloatType::F64 => {
-            let value = number.parse::<f64>().ok()?;
-            if !value.is_finite() || canonical_f64(value)? != number {
-                return None;
+            let value = number.parse::<f64>().map_err(|_| None)?;
+            if !value.is_finite() {
+                return Err(None);
             }
-            value.to_bits()
+            (value.to_bits(), canonical_f64(value).ok_or(None)?)
         }
     };
-    Some(CheckedValue::Float { ty, bits })
+    if canonical != number {
+        return Err(Some(float_value_spelling(ty, bits)));
+    }
+    Ok(CheckedValue::Float { ty, bits })
 }
 
 /// One float value in the source spelling that denotes it [FORM-5, OP-1].
@@ -262,7 +270,7 @@ mod tests {
             b"1.2345e10_f64",
         ] {
             assert!(
-                parse_float_literal(spelling).is_some(),
+                parse_float_literal(spelling).is_ok(),
                 "{}",
                 String::from_utf8_lossy(spelling)
             );
@@ -279,7 +287,7 @@ mod tests {
             b"0.5e3_f64",
         ] {
             assert!(
-                parse_float_literal(spelling).is_none(),
+                parse_float_literal(spelling).is_err(),
                 "{}",
                 String::from_utf8_lossy(spelling)
             );
@@ -335,7 +343,7 @@ mod tests {
             assert_eq!(float_value_spelling(ty, bits), spelling);
             if spelling.ends_with("_f64") || spelling.ends_with("_f32") {
                 assert!(
-                    parse_float_literal(spelling.as_bytes()).is_some(),
+                    parse_float_literal(spelling.as_bytes()).is_ok(),
                     "{spelling} must be the admitted literal"
                 );
             }
