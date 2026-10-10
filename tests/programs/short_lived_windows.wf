@@ -77,7 +77,6 @@ fn churn(seed: u64) -> result: Bool pure {
   if again.inner != next {
     return False();
   }
-  give move again;
   let ring = ring_new::<Box<u64>, 4>();
   let front = box_new::<u64>(value: seed);
   let back = box_new::<u64>(value: next);
@@ -87,7 +86,6 @@ fn churn(seed: u64) -> result: Bool pure {
   if last.inner != next {
     return False();
   }
-  give move last;
   let after = array_filled::<u64, 3>(value: seed);
   let holder = Holder(before: seed, slots: move slots, ring: move ring, after: after);
   let held = Held::Windows(value: move holder);

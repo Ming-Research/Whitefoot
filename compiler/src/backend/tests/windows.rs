@@ -217,54 +217,68 @@ fn aggregate_construction_omits_only_copied_window_fields() {
   slots: Slots<u32, 64>;
   suffix: Array<u64, 2>;
 }
+
 struct Outer {
   value: Holder;
   marker: u64;
 }
+
 struct Many {
   values: Array<Slots<u32, 64>, 2>;
   marker: u64;
 }
+
 enum Product {
   Active(value: Holder);
   Empty();
 }
+
 enum Choice {
   Active(prefix: u64, value: Slots<u32, 64>, marker: u64);
   Other(bytes: Array<u64, 64>);
 }
+
 struct Plain {
   values: Array<u64, 2>;
   marker: u64;
 }
+
 fn holder() -> result: Holder pure {
   let slots = slots_new::<u32, 64>();
   let suffix = array_filled::<u64, 2>(value: 73_u64);
   return Holder(prefix: 11_u64, slots: move slots, suffix: suffix);
 }
+
 fn outer(value: Holder) -> result: Outer pure {
   return Outer(value: move value, marker: 17_u64);
 }
+
 fn many(values: Array<Slots<u32, 64>, 2>) -> result: Many pure {
   return Many(values: move values, marker: 19_u64);
 }
+
 fn product(value: Holder) -> result: Product pure {
   return Product::Active(value: move value);
 }
+
 fn empty_product() -> result: Product pure {
   return Product::Empty();
 }
+
 fn choice(value: Slots<u32, 64>) -> result: Choice pure {
   return Choice::Active(prefix: 23_u64, value: move value, marker: 29_u64);
 }
+
 fn other() -> result: Choice pure {
   let bytes = array_filled::<u64, 64>(value: 31_u64);
   return Choice::Other(bytes: bytes);
 }
+
 fn plain() -> result: Plain pure {
   let values = array_filled::<u64, 2>(value: 37_u64);
   return Plain(values: values, marker: 41_u64);
 }
+
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
