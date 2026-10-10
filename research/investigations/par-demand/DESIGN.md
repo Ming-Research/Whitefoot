@@ -1517,6 +1517,9 @@ optimized-code inspection, not yet done. Fails need none.
 The rejection paragraph sends each of these back to the direction card. The
 fixed points the run does give: `hot_helper` is now 1.000 against `seq` at
 both widths, `large_helper`, `records`, `fir` and `prefix` keep or improve
-on `par`, and no cell is slower than `seq` (E2-H1's upper ends are below
-1.17 everywhere, and below 1 wherever the workload has parallel work).
+on `par`, and every cell passes E2-H1 against its bound. That bound is
+not the never-slower bar: `small_split`, a loop of many cheap decisions, is
+10 to 11 percent slower than `seq` at four and eight workers (bound about
+1.90 from its decision count), so a loop whose slices are all cheap still
+pays for its polls.
 
