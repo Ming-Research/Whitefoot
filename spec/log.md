@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.121: whole-value reads of a const item
+
+Rules: changed CONST-2
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated).
+
+Summary: CONST-2 adds the whole-value read to a const item's subscript, measure, field and reference reads: it reads a copy, as a bare place of a copy type does, and every const-eligible type is copy. Before, the whole-value read was refused without a rule saying so, and the compiler cited OWN-1's affine bare use for a copy type. Selection ground: copying static read-only data into a frame changes neither the constant nor any owner, and a writer patching a copied template otherwise copied it element by element.
+
 ## 2026-10-10 v0.120: value equality
 
 Rules: added OP-16; changed DIAG-1, ENT-2, ENT-3, ENT-4, FN-2, GRAM-6, OP-1, OP-2, OP-7, OP-8, PRE-1, RANGE-1, RANGE-3, TYPE-6

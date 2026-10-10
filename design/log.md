@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Whole-value reads of a const item
+
+Nodes: language/ownership
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a constant such as `const PATTERN: Array<u8, 97>` be copied whole into a local: `let text = PATTERN;`?": allow the whole-value read, which yields a copy, structs alike (translated).
+
+Summary: language/ownership adds the decision that a const item is also read as a whole value, a copy into the reader's storage, because every const-eligible type is copy and copying static read-only data changes no owner, and refuses restricting a const to its four partial reads, which forced element-by-element copies of templates.
+
 ## 2026-10-10 Value equality
 
 Nodes: language/data-model/tag-only-equality, language/data-model/value-equality, language/checks-and-proofs/range-facts, compiler/range-judgment

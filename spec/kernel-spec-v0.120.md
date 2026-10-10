@@ -1,4 +1,4 @@
-# Kernel Specification v0.121
+# Kernel Specification v0.120
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -643,7 +643,7 @@ cvalue := literal | STRING | IDENT | "[" cvalue ("," cvalue)* "]"
 The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, or, where T is `u8`, a STRING [FORM-5] whose value is the UTF-8 encoding of its scalar values in order, one entry per byte, and whose byte length must equal N, a STRING of any other length being a hard error citing CONST-2 at that `cvalue` with a repair stating its byte length [DIAG-1]; and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
 The const-dependency graph is acyclic: consts are visible throughout their module [MOD-3], and a const whose value depends on itself through any chain of consts is a hard error citing CONST-2 at the first const in item order on that cycle. Evaluation follows the dependencies and is substitution and layout only.
 A const item is never `move`d or `set`, and no declared row may write a path rooted at one [EFF-1, EFF-5].
-It is read via a subscript, a measure member [OP-15], a field suffix, or a `&` reference [REF-1], so a const table may be passed to a consumer, and as a whole value, which reads a copy of it as a bare place of a copy type reads one [OWN-1]; every const-eligible type is copy.
+It is read via a subscript, a measure member [OP-15], a field suffix, or a `&` reference [REF-1], so a const table may be passed to a consumer.
 A struct-typed const is additionally read via its field suffixes exactly as subscript reads: a copy-scalar selection copies out, and a composite selection keeps the whole-composite read rules.
 A struct-typed const is laid out as one read-only static aggregate in the nominal's ordinary representation.
 
