@@ -524,6 +524,7 @@ impl<'program> Walker<'program> {
         let Some(formed) = facts::form(&mut self.world, clause, frame, &binders, &[]) else {
             return Ok(Some(None));
         };
+        let type_facts = frame.type_facts(&mut self.world);
         for (position, conclusion) in formed.conclusions.iter().enumerate() {
             let (units, choices) = state.premises(&self.world);
             let mut query = Query {
@@ -531,6 +532,7 @@ impl<'program> Walker<'program> {
                 choices,
                 ..Query::default()
             };
+            query.units.extend(type_facts.iter().cloned());
             query.units.extend(formed.premises.iter().cloned());
             query.units.extend(conclusion.guards.iter().cloned());
             query.rules.extend(formed.conditions.iter().cloned());

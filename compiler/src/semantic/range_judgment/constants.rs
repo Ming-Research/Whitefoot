@@ -113,8 +113,10 @@ pub(crate) fn judge(
     let Some(formed) = facts::form(&mut world, clause, &frame, &binders, &[]) else {
         return Some(failure(None, None));
     };
+    let type_facts = frame.type_facts(&mut world);
     for (position, conclusion) in formed.conclusions.iter().enumerate() {
         let (mut units, choices) = state.premises(&world);
+        units.extend(type_facts.iter().cloned());
         units.extend(formed.premises.iter().cloned());
         units.extend(conclusion.guards.iter().cloned());
         units.push(super::world::negated(&conclusion.conclusions[0]));

@@ -66,6 +66,43 @@ pub(super) struct Frame {
     pub(super) aggregates: BTreeMap<CheckedRangeRoot, VersionId>,
 }
 
+impl Frame {
+    /// [MSR-1] fixes an Array's descriptor length as well as its range terms.
+    /// Keep that equality when terms use the constant, so a copied descriptor
+    /// still connects the query to bounds on its source's element projections.
+    pub(super) fn type_facts(&self, world: &mut World) -> Vec<Literal> {
+        self.places
+            .iter()
+            .filter_map(|(place, view)| {
+                let fixed = place.fixed_length?;
+                let length = match view {
+                    PlaceView::Run { length, .. } => length.clone(),
+                    PlaceView::Element {
+                        version,
+                        indices,
+                        projection,
+                    } => {
+                        let mut path = projection.clone();
+                        path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                        world.read(
+                            *version,
+                            indices.clone(),
+                            path,
+                            Some(super::super::model::IntegerType::U64),
+                        )
+                    }
+                    PlaceView::Segments { .. } | PlaceView::Unknown => return None,
+                };
+                Some(Literal::new(
+                    length,
+                    Relation::Equal,
+                    Linear::constant(i128::from(fixed)),
+                ))
+            })
+            .collect()
+    }
+}
+
 /// One active fact.
 #[derive(Clone, Debug)]
 pub(super) struct Fact {
@@ -575,6 +612,10 @@ impl Query {
         let Some(formed) = form(world, &fact.clause, &fact.frame, binders, iterations) else {
             return;
         };
+        for literal in fact.frame.type_facts(world) {
+            collect_literal(&literal, atoms);
+            self.units.push(literal);
+        }
         for mut conclusion in formed.conclusions {
             conclusion.guards.extend(formed.premises.iter().cloned());
             for literal in
