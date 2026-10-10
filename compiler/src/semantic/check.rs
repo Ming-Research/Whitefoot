@@ -1903,6 +1903,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             checked.can_continue = false;
             checked.effects = signature.declared_effects.clone();
         }
+        // [PRE-1] the build supplies release's ordinary `return unit`
+        // definition. Derive its leaving-edge releases here, exactly as for
+        // a source function, so component paths and release graphs reach
+        // every consumer before lowering [STOR-3, DIAG-2].
+        let supplied_release = declaration_only
+            && signature.name == "release"
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?;
+        if supplied_release {
+            checked.statements.push(CheckedStatement::Return {
+                node_path: self.types.declarations.tree.path(signature.node)?.clone(),
+                value: CheckedExpression::Constant(CheckedValue::Unit),
+                drops: self.types.live_affine_drops(
+                    check_context,
+                    &bindings,
+                    &HashSet::new(),
+                    signature.node,
+                )?,
+            });
+        }
         if checked.can_continue {
             return Err(CheckStop::source_issue(SemanticIssue {
                 rule: SemanticRule::Fn1,
@@ -2062,7 +2085,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirement_places,
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
-            body: (!declaration_only).then_some(checked.statements),
+            body: (!declaration_only || supplied_release).then_some(checked.statements),
             reference_origins: std::mem::take(&mut self.body.reference_origins),
             body_disposition: super::model::CheckedBodyDisposition::Inhabited,
             call_separations: {

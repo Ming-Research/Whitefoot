@@ -13,7 +13,9 @@ fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
 }
 
 #[test]
-fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
+fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
+    // PRE-1: release returns a nonempty boxed window and its boxed element,
+    // a header-only empty window, and a struct owning two cells to the baseline.
     // PRE-2: the map's two waves distinguish newly carved and reused nodes.
     // A presized table avoids moves masking node deltas: on the unfixed
     // runtime insertion contributes zero bytes and exits with status 8.
@@ -75,7 +77,11 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
     let program = build_program(&compile_program("memory_contexts.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
     }
 }
 

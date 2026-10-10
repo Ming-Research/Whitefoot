@@ -1,4 +1,4 @@
-//! [TYPE-2, TYPE-9] storage-shape destructuring repairs and the programs
+//! [TYPE-2, TYPE-9, OWN-1] struct destructuring repairs and the programs
 //! obtained by reading the named fields instead. The normative refusals live
 //! in conformance; this family pins the compiler's concrete repair wording.
 //! Keep these pairs with the shared repair harness while this repair exists.
@@ -6,6 +6,51 @@
 use super::RepairPair;
 
 pub(super) const STORAGE_DESTRUCTURING: &[RepairPair] = &[
+    RepairPair {
+        name: "affine-struct-taken-apart-through-reference.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/own1-neg-affine-destructuring-reference-without-move.wf"
+        ),
+        rule: "OWN-1",
+        sentences: &[
+            "\n  mechanical_fix: consume a place rooted in a live own-mode binding of this function\n",
+        ],
+        repaired: &[br#"nocopy struct Parcel {
+  payload: u64;
+}
+
+fn read(input: Parcel) -> result: u64 pure {
+  let Parcel(payload: taken) = move input;
+  return taken;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "copy-struct-taken-apart-with-move.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/own1-neg-copy-destructuring-with-move.wf"
+        ),
+        rule: "OWN-1",
+        sentences: &[
+            "\n  mechanical_fix: remove `move` from the destructuring: let N(f: a, ...) = p;\n",
+        ],
+        repaired: &[br#"struct ScanResult {
+  size: u64;
+  accepted: Bool;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let rebuilt = ScanResult(size: 7_u64, accepted: True());
+  let ScanResult(size: count, accepted: built) = rebuilt;
+  let still_live = rebuilt.size;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
     RepairPair {
         name: "array-taken-apart-through-reference.wf",
         rejected: include_bytes!(

@@ -2839,9 +2839,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `swap` [OP-11],
     // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
     // `shared_read_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`,
-    // `key_set_insert` and `key_set_read_key` [SHARE-1] and `free_empty`
-    // [OP-14], each with its type, const and value parameters in declared
-    // order and then its range postconditions' names and bound variables
+    // `key_set_insert` and `key_set_read_key` [SHARE-1], `free_empty`
+    // [OP-14] and `release` [PRE-1], each with its type, const and value
+    // parameters in declared order and then its range postconditions' names and bound variables
     // [RANGE-1].
     assert_eq!(first[47].1, "Bool");
     assert_eq!(first[69].1, "Int");
@@ -2880,13 +2880,16 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[203].1, "key_set_insert");
     assert_eq!(first[206].1, "key_set_read_key");
     assert_eq!(first[210].1, "free_empty");
+    assert_eq!(first[213].1, "release");
+    assert_eq!(first[214].1, "T");
+    assert_eq!(first[215].1, "value");
     // The opaque phase holds the five storage shapes, the cell, the
     // shared-object handles, the keyed table, the key set and the keyed
     // entries, 47 records: `Array` contributes five, `Slots` six, `Ring`
     // seven, `Segments` four, `Paged` five, `Box` four, `Shared`, `SharedRead`,
     // `ConcurrentHashMap` and `KeySet` three each and `Entries` four. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 213 records where it held 397: v0.84's range
+    // inventory holds 216 records where it held 397: v0.84's range
     // postconditions of `box_array_filled` and `box_segments_filled` add
     // their fact names and bound variables, seven records [RANGE-1], v0.94's
     // `map_scan`, `map_clear` and `key_set_read_key` add thirteen [SHARE-1],
@@ -2895,10 +2898,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // adds its fact name `filled` and bound variable `k`, `SharedRead` with
     // its conversion and sharing adds nine, and v0.118 moves v0.111's
     // `shared_map_release_reserve` and its three records to `std::process`
-    // [PRE-2]. The last record is `free_empty`'s value parameter, so that
-    // removal moves no preceding ordinal. Eq adds one built-in-bound record.
-    assert_eq!(first.len(), 213);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
+    // [PRE-2]. Eq adds one built-in-bound record. v0.123 appends `release`
+    // with its type and value parameters, three records; earlier ordinals stay fixed.
+    assert_eq!(first.len(), 216);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("value"));
     assert!(
         first
             .iter()
@@ -2910,11 +2913,11 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 213, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 216, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
-    let source = b"fn free_empty() -> result: unit pure {\n  return unit;\n}\n";
+    let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
     with_resolution_sources(
         &[SourceInput::new("collision.wf", source)],
         true,
@@ -2927,9 +2930,9 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             // PRE-1: 47 opaque records + 22 enum records + Int, Float,
-            // Eq, Run + 137 preceding function/parameter/range records.
+            // Eq, Run + 140 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 210)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 213)
             );
         },
     );

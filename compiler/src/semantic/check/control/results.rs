@@ -111,11 +111,8 @@ impl<'unit> Checker<'_, 'unit> {
         ))
     }
 
-    /// Checks `let N(f1: b1, ..., fk: bk) = move v;` [GRAM-4, PROV-6].
-    ///
-    /// The value is consumed whole and every declared field of `N` is bound
-    /// in declaration order, so no residual of `v` survives the statement and
-    /// nothing here derives a release of the consumed value's own storage.
+    /// Checks struct destructuring [GRAM-4, PROV-6]. Copy operands stay
+    /// live; an explicit move consumes an affine or linear operand whole.
     pub(super) fn check_destructuring_consume(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -185,8 +182,19 @@ impl<'unit> Checker<'_, 'unit> {
                     .destructuring_shape_rejection(node, &written);
             }
         };
-        let value =
-            self.check_consumed_place(context, node, place, bindings, scope.loops.len(), true)?;
+        let explicit_move = self
+            .types
+            .declarations
+            .tree
+            .has_fixed(node, FixedTerminal::Move)?;
+        let value = self.check_consumed_place(
+            context,
+            node,
+            place,
+            bindings,
+            scope.loops.len(),
+            explicit_move,
+        )?;
         if value.mode != CheckedMode::Own {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,

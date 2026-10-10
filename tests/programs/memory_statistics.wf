@@ -3,6 +3,11 @@ alias Inputs = std::process::Inputs;
 alias MemoryMeter = std::process::MemoryMeter;
 alias exit_status = std::process::exit_status;
 
+struct ReleasePair {
+  left: Box<u64>;
+  right: Box<Slots<u8>>;
+}
+
 fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
   let cell = box_new::<u64>(value: 73_u64);
   let held = std::process::heap_in_use(meter: meter);
@@ -11,6 +16,46 @@ fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 0_u64;
   }
+}
+
+fn measure_release(meter: &MemoryMeter) -> result: u8 writes(meter) {
+  let before = std::process::heap_in_use(meter: meter);
+  let released = box_slots_new::<Box<u64>>(capacity: 4_u64);
+  let element = box_new::<u64>(value: 73_u64);
+  place_back(window: &released.inner, value: move element);
+  let held = std::process::heap_in_use(meter: meter);
+  if held <= before {
+    return 20_u8;
+  }
+  release::<Box<Slots<Box<u64>>>>(value: move released);
+  let after = std::process::heap_in_use(meter: meter);
+  if after != before {
+    return 21_u8;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  let empty_held = std::process::heap_in_use(meter: meter);
+  if empty_held <= before {
+    return 22_u8;
+  }
+  release::<Box<Slots<u8>>>(value: move empty);
+  let empty_after = std::process::heap_in_use(meter: meter);
+  if empty_after != before {
+    return 23_u8;
+  }
+  let left = box_new::<u64>(value: 73_u64);
+  let right = box_slots_new::<u8>(capacity: 4_u64);
+  place_back(window: &right.inner, value: 7_u8);
+  let pair = ReleasePair(left: move left, right: move right);
+  let pair_held = std::process::heap_in_use(meter: meter);
+  if pair_held <= before {
+    return 24_u8;
+  }
+  release::<ReleasePair>(value: move pair);
+  let pair_after = std::process::heap_in_use(meter: meter);
+  if pair_after != before {
+    return 25_u8;
+  }
+  return 0_u8;
 }
 
 fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
@@ -191,6 +236,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   if after != before {
     return exit_status(code: 3_u8);
+  }
+  let release_result = measure_release(meter: &meter);
+  if release_result != 0_u8 {
+    return exit_status(code: release_result);
   }
   let growth = measure_grow(meter: &meter);
   if growth != 0_u64 {

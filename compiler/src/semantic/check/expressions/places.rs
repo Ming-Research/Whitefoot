@@ -290,7 +290,16 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Own1,
                     use_node,
                     SemanticIssueKind::BareAffineUse {
-                        mechanical_fix: "write `move p` for the affine place",
+                        mechanical_fix: if self
+                            .types
+                            .declarations
+                            .tree
+                            .place_has_dereference(node)?
+                        {
+                            OWN1_ROOTED_CONSUME
+                        } else {
+                            "write `move p` for the affine place"
+                        },
                     },
                 );
             }
@@ -300,7 +309,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Own1,
                 use_node,
                 SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the copy place without `move`",
+                    mechanical_fix: self.copy_move_repair(use_node)?,
                 },
             );
         }
@@ -716,7 +725,11 @@ impl<'unit> TypeContext<'unit> {
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
-    pub(super) fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
+    pub(super) fn place_member(
+        &self,
+        ty: CheckedType,
+        name: &str,
+    ) -> Result<Option<PlaceMember>, CheckStop> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };

@@ -1,0 +1,12 @@
+nocopy struct Parcel {
+  payload: u64;
+}
+
+fn read(input: &Parcel) -> result: u64 reads(input) {
+  let Parcel(payload: taken) = input^;
+  return taken;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

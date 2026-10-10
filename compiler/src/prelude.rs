@@ -430,6 +430,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 };
 "#,
     ),
+    (
+        "prelude/release.wf",
+        PreludeSource::Function,
+        r#"fn release<T: drop>(value: T) -> result: unit pure;
+"#,
+    ),
 ];
 
 #[cfg(test)]
