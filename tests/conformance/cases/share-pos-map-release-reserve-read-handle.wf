@@ -11,7 +11,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   let bytes = shared_map_new::<u8>(capacity: 0_u64);
   let words = shared_map_new::<Box<u64>>(capacity: 0_u64);
-  let first = release::<u8>(store: &bytes, meter: &meter);
-  let second = release::<Box<u64>>(store: &words, meter: &meter);
+  let first = reclaim_reserve::<u8>(store: &bytes, meter: &meter);
+  let second = reclaim_reserve::<Box<u64>>(store: &words, meter: &meter);
   return std::process::exit_status(code: 42_u8);
 }
