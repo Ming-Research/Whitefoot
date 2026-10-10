@@ -7,7 +7,7 @@ a mechanism since retired.
 
 ## 2026-10-09 Aggregate equality in generic range clauses
 
-Nodes: language/checks-and-proofs/range-facts
+Nodes: language/checks-and-proofs/range-facts, compiler/range-judgment
 
 Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A on the card "should an equality in a generic range clause expand by field when the element is a struct?" (translated).
 
