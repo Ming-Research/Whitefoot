@@ -1,0 +1,42 @@
+const repetitions: u64 = 1000_u64;
+const key_bytes: Array<u8, 1> = [0_u8];
+
+fn writer(map: Shared<ConcurrentHashMap<u64>>) -> result: u64 pure waits {
+  let key = &key_bytes[0_u64..1_u64];
+  for (i in 0_u64..repetitions) {
+    atomic slot = &map[key] {
+      set slot^ = Some<u64>(value: i);
+    }
+  }
+  return repetitions;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u64>(capacity: 1_u64);
+  let key = &key_bytes[0_u64..1_u64];
+  atomic slot = &map[key] {
+    set slot^ = Some<u64>(value: 0_u64);
+  }
+  let writer_map = shared_share::<ConcurrentHashMap<u64>>(shared: &map);
+  let job = spawn writer(map: move writer_map);
+  let observed = None<u64>();
+  for (i in 0_u64..repetitions) {
+    atomic t = &map {
+      set observed = t^[key];
+    }
+  }
+  let completed = job;
+  if completed != repetitions {
+    return std::process::exit_status(code: 1_u8);
+  }
+  match observed {
+    Some(value: value) => {
+      if value < repetitions {
+        return std::process::exit_status(code: 0_u8);
+      }
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: 2_u8);
+}

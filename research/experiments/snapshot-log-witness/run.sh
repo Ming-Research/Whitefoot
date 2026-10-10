@@ -10,9 +10,13 @@ mkdir -p "$OUT"
 
 # Preserve the compiler's actual status and entire diagnostic. A timeout,
 # crash or link failure is not evidence of a source-language rejection.
-for mode in correct wrong; do
+for mode in repro repro-map-only correct wrong; do
     code=0
-    timeout 180 "$WFC" -o "$OUT/$mode" "$HERE/protocol.wf" "$HERE/$mode.wf" \
+    case "$mode" in
+        repro|repro-map-only) set -- "$HERE/$mode.wf" ;;
+        *) set -- "$HERE/protocol.wf" "$HERE/$mode.wf" ;;
+    esac
+    timeout 180 "$WFC" -o "$OUT/$mode" "$@" \
         >"$OUT/$mode.compile.log" 2>&1 || code=$?
     printf 'compile\t%s\texit=%s\n' "$mode" "$code"
     cat "$OUT/$mode.compile.log"
@@ -28,6 +32,8 @@ wrong_mismatches=0
 interleaved_correct=0
 uninterleaved_correct=0
 unexpected=0
+repro_unexpected=0
+map_only_unexpected=0
 
 sample() {
     mode=$1
@@ -41,6 +47,9 @@ sample() {
     printf '%s\t%s\t%s\t%s\n' "$mode" "$repetition" "$code" "$seconds"
     printf '%s\t%s\t%s\t%s\n' "$mode" "$repetition" "$code" "$seconds" >>"$OUT/results.tsv"
     case "$mode:$code" in
+        repro:0|repro-map-only:0) ;;
+        repro:*) repro_unexpected=$((repro_unexpected + 1)); cat "$OUT/$mode.$repetition.stderr" ;;
+        repro-map-only:*) map_only_unexpected=$((map_only_unexpected + 1)); cat "$OUT/$mode.$repetition.stderr" ;;
         correct:0) interleaved_correct=$((interleaved_correct + 1)) ;;
         correct:10) uninterleaved_correct=$((uninterleaved_correct + 1)) ;;
         correct:70) correct_mismatches=$((correct_mismatches + 1)) ;;
@@ -50,6 +59,16 @@ sample() {
     esac
 }
 
+# These fixed, small programs isolate acquisition from the export protocol.
+# Keep all 20 pairs even on timeout, and still run the witness afterward.
+# Their failures are separate from the witness's probe/extension decision.
+repetition=1
+while [ "$repetition" -le 20 ]; do
+    sample repro "$repetition"
+    sample repro-map-only "$repetition"
+    repetition=$((repetition + 1))
+done
+
 # Start with three small samples of each executable and inspect their spread
 # before extending to the pre-registered N=20 per mode. Timings size this job;
 # they are neither performance results nor source-acceptance limits.
@@ -57,7 +76,7 @@ for repetition in 1 2 3; do
     sample correct "$repetition"
     sample wrong "$repetition"
 done
-awk 'NR > 1 {
+awk 'NR > 1 && ($1 == "correct" || $1 == "wrong") {
     if (!($1 in low) || $4 < low[$1]) low[$1] = $4;
     if (!($1 in high) || $4 > high[$1]) high[$1] = $4;
 } END { for (mode in low) printf "probe %s wall_seconds min=%s max=%s\n", mode, low[mode], high[mode] }' \
@@ -72,12 +91,14 @@ if [ "$unexpected" -eq 0 ]; then
 fi
 
 {
+    printf 'repro_unexpected=%s\nmap_only_unexpected=%s\n' "$repro_unexpected" "$map_only_unexpected"
     printf 'correct_mismatches=%s\nwrong_mismatches=%s\n' "$correct_mismatches" "$wrong_mismatches"
     printf 'interleaved_correct=%s\nuninterleaved_correct=%s\nunexpected=%s\n' \
         "$interleaved_correct" "$uninterleaved_correct" "$unexpected"
 } >"$OUT/summary.txt"
 cat "$OUT/summary.txt"
-if [ "$unexpected" -ne 0 ] || [ "$correct_mismatches" -ne 0 ] || \
+if [ "$repro_unexpected" -ne 0 ] || [ "$map_only_unexpected" -ne 0 ] || \
+   [ "$unexpected" -ne 0 ] || [ "$correct_mismatches" -ne 0 ] || \
    [ "$wrong_mismatches" -eq 0 ] || [ "$interleaved_correct" -eq 0 ]; then
     printf 'FAIL or inconclusive: compare summary with the pre-registered criteria.\n'
     exit 1
