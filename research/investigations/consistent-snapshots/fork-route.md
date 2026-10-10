@@ -347,3 +347,36 @@ These are **open recommendations**, not new rulings:
    unpublished outputs, one reaper and a fork-calling thread retained through
    reap. Qualify nonblocking transport if file stalls defeat cleanup; test
    orderly shutdown and parent-death races before calling B8 complete.
+
+## Runtime owner's answers, 2026-10-10
+
+The runtime owner checked sections 1, 5, 6 and 7 against main and confirmed
+the runtime facts, including the absence of atfork, `MADV_DONTFORK` and
+`close_range` handling. Answers to section 7:
+
+1. Use glibc's `fork()`, whose internal malloc atfork lock order applies, not
+   `vfork` or `clone3`. Qualify first on x86-64 Ubuntu 24.04 with glibc 2.39
+   (the hosted runners and the native i9-14900K), recording the kernel and
+   libc pair in the witness's host record. The child takes no inherited
+   allocator path. AArch64 needs its own qualification.
+2. The first witness uses a fixed C encoder. A general Whitefoot exporter
+   needs a body-provider with a machine-checked call, data and release
+   closure; that is a specification question for the owner when reached.
+   Callback-by-convention is not acceptable.
+3. Capture inside a SHARE-2 hold is feasible on the runtime side: `fork()` is
+   a synchronous system call with no coroutine suspension. Prepare output
+   descriptors, scratch arena and result channel outside the hold, call only
+   `fork()` inside it, and release the hold when `fork()` returns in the
+   parent. The hold then includes the page-table copy, a separately measured
+   pause. `MADV_DONTFORK` on the rings is applied where the rings are mapped
+   (`compiler/src/backend/completion/linux_io_uring.c`), not at fork time.
+4. Poll-and-kill stays exploratory; strict bounded mode is rejected if the
+   bounds cannot be established.
+5. Reap the child through a pidfd (`pidfd_open`, Linux 5.3 and later)
+   registered as an ordinary readiness event in the waiting driver, with no
+   SIGCHLD handler and no change to the stop-signal masks.
+
+The runtime half is tracked on the status board as `firn-gap-fork-runtime`
+and will be planned together with the driver handoff work, since both change
+which thread owns a ring and driver; the child reset states that the child
+holds no driver role.
