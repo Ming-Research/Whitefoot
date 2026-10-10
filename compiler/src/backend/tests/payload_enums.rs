@@ -795,12 +795,16 @@ fn a_window_of_union_enums_requests_the_union_stride() {
             "  let components = box_slots_new::<Component>(capacity: 8000000_u64);\n  place_back(window: &components.inner, value: delim);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         );
     let module = compile(source.as_bytes()).replace("@wf__heap_take(", "@wf_test_allocate(");
-    let observer = r#"#include <stdio.h>
-#include <stdlib.h>
+    // The observer forwards to the shipped allocation so the shipped release
+    // finds the block's origin prefix.
+    let observer = r#"#include <stdint.h>
+#include <stdio.h>
 
-void *wf_test_allocate(size_t size) {
-    printf("%zu\n", size);
-    return malloc(size);
+void *wf__heap_take(uint64_t bytes);
+
+void *wf_test_allocate(uint64_t size) {
+    printf("%llu\n", (unsigned long long)size);
+    return wf__heap_take(size);
 }
 "#;
     let output = compile_link_and_run(&module, Some(observer), &[]);

@@ -16,50 +16,79 @@ fn release(value: Box<u64>, view: &ScopeView) -> result: unit writes(view) {
 }
 
 fn equals(view: &ScopeView, expected: u64) -> result: Bool writes(view) {
-  match std::process::scope_bytes(view: view) {
-    Some(value: bytes) => { return bytes == expected; }
-    None() => { return False(); }
+  let reading = std::process::scope_bytes(view: view);
+  match reading {
+    Some(value: bytes) => {
+      return bytes == expected;
+    }
+    None() => {
+      return False();
+    }
   }
 }
 
 fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
   loop {
-    match std::process::scope_close(meter: meter, scope: move scope) {
-      Ok(value: done) => { return done; }
-      Err(error: owner) => { set scope = move owner; }
+    let closed = std::process::scope_close(meter: meter, scope: move scope);
+    match move closed {
+      Ok(value: done) => {
+        return done;
+      }
+      Err(error: owner) => {
+        set scope = move owner;
+      }
     }
   }
 }
 
-fn main(inputs: std::process::Inputs) -> result: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter) = move inputs;
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: read, write: write) = move directory;
   std::fs::close_directory_write(factory: &handles, directory: move write);
   std::fs::close_directory(factory: &handles, directory: move read);
-  let correct = False();
-  match std::process::scope_open(meter: &meter) {
-    Err(error: full) => {}
+  let opened = std::process::scope_open(meter: &meter);
+  match move opened {
+    Err(error: full) => {
+      return std::process::exit_status(code: 2_u8);
+    }
     Ok(value: scope) => {
       let view = std::process::scope_view(scope: &scope);
       let outcome = spawn std::process::scope_run::<Build>(scope: move scope, argument: unit);
       match move outcome {
-        Refused(scope: owner, argument: original) => { close(meter: &meter, scope: move owner); }
+        Refused(scope: owner, argument: original) => {
+          close(meter: &meter, scope: move owner);
+          return std::process::exit_status(code: 3_u8);
+        }
         Ran(scope: owner, result: block) => {
           let retained = equals(view: &view, expected: 8_u64);
           let payload = block.inner == 71_u64;
-          match std::process::scope_close(meter: &meter, scope: move owner) {
-            Ok(value: premature) => { release(value: move block, view: &view); }
+          let attempt = std::process::scope_close(meter: &meter, scope: move owner);
+          match move attempt {
+            Ok(value: premature) => {
+              release(value: move block, view: &view);
+              return std::process::exit_status(code: 4_u8);
+            }
             Err(error: busy_owner) => {
               release(value: move block, view: &view);
               let empty = equals(view: &view, expected: 0_u64);
               close(meter: &meter, scope: move busy_owner);
-              set correct = band(retained, band(payload, empty));
+              let not_retained = bnot(retained);
+              if not_retained {
+                return std::process::exit_status(code: 5_u8);
+              }
+              let wrong_payload = bnot(payload);
+              if wrong_payload {
+                return std::process::exit_status(code: 6_u8);
+              }
+              let not_empty = bnot(empty);
+              if not_empty {
+                return std::process::exit_status(code: 7_u8);
+              }
+              return std::process::exit_status(code: 0_u8);
             }
           }
         }
       }
     }
   }
-  if correct { return std::process::exit_status(code: 0_u8); }
-  return std::process::exit_status(code: 1_u8);
 }

@@ -538,13 +538,17 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_empty_window_headers(&module, "ring_new", 2, 0);
     let observed = super::owned_places::retain_calls(&module)
         .replace("@wf__heap_take(", "@wf_observe_window_allocate(");
+    // The observer forwards to the shipped allocation so the shipped release
+    // finds the block's origin prefix.
     let observer = r#"
 #include <stdint.h>
 #include <stdlib.h>
 
+void *wf__heap_take(uint64_t bytes);
+
 void *wf_observe_window_allocate(uint64_t size) {
     if (size != 64) exit(6);
-    return malloc((size_t)size);
+    return wf__heap_take(size);
 }
 "#;
     let output = super::compile_link_and_run(&observed, Some(observer), &[]);

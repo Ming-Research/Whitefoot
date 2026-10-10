@@ -486,6 +486,7 @@ $(COMPLETION_TMP)/scope-test: $(SCOPE_TEST_OBJECTS)
 SCOPE_CONTEXT_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/ordinary_values.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/scope_context_probe.o
 $(COMPLETION_TMP)/scope-context-probe: $(SCOPE_CONTEXT_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
