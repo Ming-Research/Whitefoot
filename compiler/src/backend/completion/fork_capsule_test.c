@@ -84,6 +84,13 @@ static int fixed_encoder(
     uint64_t unblockable = (UINT64_C(1) << (SIGKILL - 1))
         | (UINT64_C(1) << (SIGSTOP - 1));
     if (queried != 0 || mask != (UINT64_MAX & ~unblockable)) return EPROTO;
+    /* main installed a SIGSEGV handler before this capture; the capsule's
+     * raw reset must leave SIG_DFL (kernel rt_sigaction layout, x86-64). */
+    struct { unsigned long handler, flags, restorer; uint64_t mask; } action;
+    action.handler = 1;
+    if (wf_fork_capsule_raw(SYS_rt_sigaction, SIGSEGV, 0, (long)&action,
+                            sizeof(uint64_t), 0, 0) != 0
+        || action.handler != 0) return EFAULT;
     encoded[0] = 1; /* Unrelated descriptors were all closed. */
     for (size_t i = 0; i < data->size; ++i) encoded[i + 1] = data->bytes[i];
     return child_write(outputs[0], encoded, data->size + 1u);
@@ -113,8 +120,9 @@ static int error_encoder(
     return child_write(outputs[0], &byte, 1);
 }
 
-/* An inherited SIGSEGV handler would turn the fault into exit 88. The control
- * must observe SIGSEGV, thereby also checking the raw disposition reset. */
+/* Installed before the captures. fixed_encoder checks that the child sees
+ * SIG_DFL for SIGSEGV; the mapping controls cannot, because the kernel forces
+ * SIG_DFL for a synchronous fault on a blocked signal anyway. */
 static void inherited_fault_handler(int signal) {
     (void)signal;
     _exit(88);
@@ -344,6 +352,36 @@ static void refusal_and_output_failure(void) {
 }
 
 #if defined(WF_LINUX_IO_URING_MADVISE)
+#include <dirent.h>
+
+/* Count io_uring descriptors and mappings from the kernel's own view, so a
+ * refused ring that kept its descriptor or a mapping shows up even though the
+ * adapter's fields were reset. */
+static void ring_resources(unsigned *descriptors, unsigned *mappings) {
+    *descriptors = 0;
+    *mappings = 0;
+    DIR *dir = opendir("/proc/self/fd");
+    CHECK(dir != NULL);
+    for (struct dirent *entry; (entry = readdir(dir)) != NULL;) {
+        if (entry->d_name[0] == '.') continue;
+        char path[320], target[64];
+        CHECK(snprintf(path, sizeof(path), "/proc/self/fd/%s", entry->d_name)
+              < (int)sizeof(path));
+        ssize_t length = readlink(path, target, sizeof(target) - 1);
+        if (length < 0) continue; /* the directory's own descriptor */
+        target[length] = 0;
+        if (strstr(target, "[io_uring]") != NULL) ++*descriptors;
+    }
+    CHECK(closedir(dir) == 0);
+    FILE *maps = fopen("/proc/self/maps", "r");
+    CHECK(maps != NULL);
+    char line[512];
+    while (fgets(line, sizeof(line), maps) != NULL) {
+        if (strstr(line, "[io_uring]") != NULL) ++*mappings;
+    }
+    CHECK(fclose(maps) == 0);
+}
+
 static unsigned advice_calls;
 static unsigned refuse_advice;
 int WF_LINUX_IO_URING_MADVISE(void *mapping, size_t length, int advice) {
@@ -357,6 +395,10 @@ int WF_LINUX_IO_URING_MADVISE(void *mapping, size_t length, int advice) {
 }
 
 static void advice_failure_cases(wf_completion_runtime *runtime, unsigned count) {
+    unsigned live_descriptors, live_mappings;
+    ring_resources(&live_descriptors, &live_mappings);
+    /* The live adapter must be visible, or the comparison below is blind. */
+    CHECK(live_descriptors >= 1 && live_mappings >= 2);
     for (unsigned fail = 1; fail <= count; ++fail) {
         wf_linux_io_uring_adapter adapter;
         advice_calls = 0;
@@ -367,6 +409,9 @@ static void advice_failure_cases(wf_completion_runtime *runtime, unsigned count)
         CHECK(adapter.submission_mapping == NULL && adapter.completion_mapping == NULL);
         CHECK(adapter.submission_entries == NULL);
         CHECK(adapter.wait_descriptor == -1 && adapter.wake_descriptor == -1);
+        unsigned descriptors, mappings;
+        ring_resources(&descriptors, &mappings);
+        CHECK(descriptors == live_descriptors && mappings == live_mappings);
     }
     refuse_advice = 0;
 }

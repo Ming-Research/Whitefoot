@@ -13,6 +13,10 @@
  * must be fresh unpublished descriptors, with no parent offset/flag mutation.
  * One calling thread owns prepare/start/finish and outlives the child. The
  * parent must leave children waitable and have no competing child reaper.
+ * Capture runs glibc's fork, so the process must register no pthread_atfork
+ * handler: a handler runs in the child before the capsule resets anything,
+ * and in the parent inside the hold. The runtime registers none; glibc's own
+ * fork handling takes only its internal locks, never held across a hold wait.
  * AArch64 and other libcs need separate child-closure qualification. */
 #include <stddef.h>
 #include <stdint.h>
