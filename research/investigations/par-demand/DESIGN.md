@@ -1140,3 +1140,69 @@ compares the span with a compile-time minimum (`emit_demand_split`) and calls
 the non-recursive chunk directly below it, so for the literal range `0..3`
 the comparison folds and the chunk can inline; the next experiment-1 run's
 `demand/small_constant.o.s` and its cell test that.
+
+## The paired noise rule, fixed before re-judging
+
+The owner chose (status board, card on how noise is measured, 2026-10-10) to
+replace the max/min spread with a paired confidence interval, and to re-judge
+the earlier runs with it. This section fixes the rule before any run is
+re-judged; it supersedes the "Inconclusive" and `noise` clauses of
+[Pass and fail](#pass-and-fail-fixed-before-measuring) and of the per-width
+revision, and keeps everything else, including the decision-point allowance
+and the inspection requirement.
+
+For one cell (workload, width, attempt), each round `r` gives the paired ratio
+`q_r = candidate wall_r / sequential wall_r`, from the second call of each
+process. The statistic is the median of the `q_r`; its 95 percent interval is
+the 2.5th and 97.5th percentiles of 10,000 bootstrap medians, each drawn by
+resampling the rounds with replacement, with a fixed seed so the verdict is
+reproducible. The bound is `max(1.02, 1 + decisions × 1 ns / T_seq)` at four and
+eight workers; at one worker, where the adapter runs the sequential clone, the
+band `[0.98, 1.02]` keeps the earlier rule's two sides. Noise no longer widens
+either, because the interval carries it.
+
+- Pass: the interval's upper end is at or below the bound (at one worker, the
+  whole interval lies in the band).
+- Exceeds: its lower end is above the bound (at one worker, the whole interval
+  lies outside the band); one rerun follows, and a second exceeding interval
+  fails the cell.
+- Otherwise the cell is inconclusive.
+- Machine control: the same interval over `twin wall_r / candidate wall_r`
+  must contain 1; otherwise the cell is void, because two byte-identical images
+  disagreed. The card's text named the twin against the sequential build;
+  since the twin is a copy of the candidate, only twin against candidate
+  tests the machine, and the board records this reading for the owner.
+
+The rule is applied unchanged to the fifth, sixth and seventh reruns'
+measurements as recorded; nothing is re-measured.
+
+### Re-judged under the paired rule
+
+The seventh rerun ([compute-bench 38016588285](https://github.com/Ming-Research/Whitefoot/actions/runs/38016588285),
+c893fda30, the current code, with its own inspection
+`inspection-38016588285.json`) at four and eight workers: **15 pass, 9
+inconclusive, none exceeds, none void.**
+
+- Pass: `small_constant` (the old, denied loop), `small_split` (1.106 and
+  1.159, within its 2.07 allowance), `recursion` W=4, `hot_helper`,
+  `large_helper` (1.000 [0.999, 1.002] and 0.999 [0.997, 1.001]),
+  `mandelbrot`, `records` W=4, `fir` (0.950 and 0.954), `histogram` W=8.
+- Inconclusive, interval straddling 1.02: `spine` (W=8 1.032 [1.011, 1.035]),
+  `recursion` W=8 (1.009 [1.007, 1.023]), `records` W=8, `stencil`, `prefix`,
+  `histogram` W=4.
+- One worker: five pass; `fir` exceeds the band on the fast side (0.946
+  [0.941, 0.961]: the candidate image runs its sequential clone faster than the
+  sequential build, a code-placement difference rather than a cost); `records`
+  and `histogram` are void (their twins disagree with the candidate); the rest
+  straddle.
+
+For context only, since their images are not the inspected ones: the sixth
+rerun (a111b11b1) reads 17 pass, 5 inconclusive and `records` exceeding at
+both widths (1.064 [1.054, 1.071], 1.076), the hidden `__tls_get_addr` call
+the seventh change removed; the fifth (3cc812a5a, the 5,000-unit interval)
+reads `large_helper` W=4 failing (1.037 [1.035, 1.041] in both attempts),
+which the sixth change's interval removed.
+
+So no cell of the current code exceeds its bound, and the cells still
+undecided need narrower intervals: more rounds on the next run, which also
+measures the corrected `small_constant`.
