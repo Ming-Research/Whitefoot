@@ -82,12 +82,15 @@ latency, and the compute marker includes checksum encoding and writing.
 They are not internal instruction timestamps; nearly coincident markers do
 not establish their internal order. The observer is not pinned to CPU 0.
 `WF_WORKERS=1` and `WF_SCHED_REPORT=2` are fixed in every child. The report
-setting prints the compute counters at exit and one line of per-driver
-counters for each started logical driver, including a one-driver run.
+setting prints the compute counters at exit and, when a second driver
+started or a role was handed over, one line of per-driver counters for each
+started logical driver; the `reported_drivers` column counts those lines, so
+a one-driver run without a transfer reports zero.
 Each row links a `reports/*.txt` side file; `reports/*.stderr.bin` preserves
 its full stderr, including the nine-byte compute packet. The parser separates
 that packet by length, so checksum bytes cannot be mistaken for report text,
-and requires one well-formed line per started driver. Reports also cover every
+and requires every driver line to be well formed, numbered from zero, no
+more than the drivers requested, and present whenever two or more were. Reports also cover every
 calibration run.
 
 Borrowing and stealing counters belong to the logical driver doing that work:

@@ -34,7 +34,7 @@ def report(line):
     print(line, file=table)
 
 
-report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms\tactual_drivers\treassignments\tingress_commits\treserve_misses\treport_file")
+report("phase\tpass\trequested_drivers\tcpus\titerations\ttimer_s\tcompute_s\texit_s\tchecksum\tthreads_50ms\treported_drivers\treassignments\tingress_commits\treserve_misses\treport_file")
 
 
 def sample(phase, repetition, drivers, count, cpus="0"):
@@ -94,9 +94,11 @@ def sample(phase, repetition, drivers, count, cpus="0"):
                       r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+ "
                       r"reassignments=(\d+) ingress_commits=(\d+) reserve_misses=(\d+)")
     matches = [re.fullmatch(driver_pattern, line) for line in driver_lines]
-    # Every started role reports, including the one-driver reassignment arm.
-    # These counters attribute service; timer_s remains an external first-byte
-    # observation, not an internal deadline-to-continuation measurement.
+    # Driver lines appear when a second driver started or a role was handed
+    # over, so reported_drivers counts lines, not started drivers: zero for a
+    # one-driver run without a transfer. These counters attribute service;
+    # timer_s remains an external first-byte observation, not an internal
+    # deadline-to-continuation measurement.
     if (any(match is None for match in matches)
             or [int(match[1]) for match in matches] != list(range(len(matches)))
             or len(matches) > drivers
