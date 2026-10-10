@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-09 v0.118: cancellation handles become droppable structs over shared handles
+## 2026-10-10 v0.119: cancellation handles become droppable structs over shared handles
 
 Rules: changed PRE-2, PROV-6, STOR-3
 
 Owner-approved: On the shared status board on 2026-10-09, written in Chinese, the owner approved the item request on "Whitefoot: a cancellation source cannot be put in shared state" that asked to approve PR #319's specification text (PRE-2: CancelSource and CancelWatch become opaque structs whose private fields hold shared handles and are implicitly droppable; PROV-6 and STOR-3: the nonempty release of shared handles) and the changes to five design nodes, with "agree" (translated), after choosing option A' (A-prime) on the board card firn-wf-cancel-drop-card.
 
 Summary: `CancelSource` holds a private `Shared<CancelState>` and `CancelWatch` a private `SharedRead<CancelState>`, so both are affine and droppable by their fields' capabilities and dropping one releases its shared handle; `close_cancel_source` and `close_cancel_watch` remain explicit releases equivalent to dropping, neither firing the state, and `cancel_never` keeps a permanent private unfired state (PRE-2). PROV-6 lists `Shared` and `SharedRead` among the nonempty-release roots, which the compiler already released, so owning structs inherit their release field by field, and STOR-3 separates a value's own release action from its fields'. The selection ground is storing a cancellation source in shared state, which `Shared<T: drop>` refused while the handles were nodrop and which firn's wake generations need; keeping nodrop handles, a host-specific nonempty release and droppable sources alone were rejected.
+
+## 2026-10-09 v0.118: releasing a map's reserve through the memory meter
+
+Rules: changed PRE-1, PRE-2, SHARE-1
+
+Owner-approved: On the shared status board of 2026-10-09, written in Chinese, the owner chose option A of the card "with what effect does the operation that releases a concurrent map's reserve keep out of guards without spreading a write effect to every caller": the release takes the memory meter and writes it, `reads(map), writes(meter)` ("choose A", translated); and option A of the card "where does the release that takes the memory meter live: in the prelude or in std::process": it moves to `std::process` as `release_map_reserve`, host functions may declare type parameters, and the prelude function `shared_map_release_reserve` is removed ("choose A", translated).
+
+Summary: PRE-1 removes `shared_map_release_reserve`, the last entry of the declaration preorder, so no other ordinal moves. PRE-2 adds `release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter)` to `std::process` and states that a host function may declare type parameters under the ordinary generic rules, every instantiation using the one definition the build supplies. SHARE-1 names the moved function; what it says of the release is unchanged. Selection ground: v0.111's `writes(map)` kept the call out of guards but made every caller up a server's command path write the store, while an atomic statement changes the same map under `reads`; the release's answer is a drop in the heap reading, so it writes the meter as `heap_in_use` does, which also keeps it out of guards, and the meter's type lives in `std::process`, which the prelude does not reference.
 
 ## 2026-10-09 v0.117: segment and page selectors as direct bases
 

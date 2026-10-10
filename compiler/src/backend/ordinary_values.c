@@ -7,6 +7,7 @@
 #endif
 #endif
 #include "ordinary_values.h"
+#include "concurrent_map.h"
 #include "completion/bridge.h"
 #include "completion/contract.h"
 
@@ -1248,6 +1249,16 @@ void wf__body_meter_share(wf_value *result, const wf_value *meter) {
 uint64_t wf__body_heap_in_use(wf_value *meter) {
     wf_transition(meter);
     return wf__heap_in_use();
+}
+
+/* A Shared handle stores the object pointer; its immutable state stores the
+ * map pointer. The keyed-table unit supplies the same pool-granted and host
+ * mapping accounting used by heap_in_use. No entry hold is required. */
+uint64_t wf__body_release_map_reserve(void *const *map, wf_value *meter) {
+    wf_transition(meter);
+    void *object = *map;
+    wf_cmap *table = *(wf_cmap **)((unsigned char *)object + WF_SHARED_STATE_OFFSET);
+    return wf__keyed_table_release_reserve(table);
 }
 
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter) {

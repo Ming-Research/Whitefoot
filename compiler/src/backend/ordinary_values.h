@@ -191,6 +191,7 @@ void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_v
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_meter_share(wf_value *result, const wf_value *meter);
 uint64_t wf__body_heap_in_use(wf_value *meter);
+uint64_t wf__body_release_map_reserve(void *const *map, wf_value *meter);
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);

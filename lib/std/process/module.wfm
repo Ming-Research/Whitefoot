@@ -52,3 +52,5 @@ public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) d
 public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
 
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
+
+public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
