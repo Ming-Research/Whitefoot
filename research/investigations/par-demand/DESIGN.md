@@ -845,3 +845,25 @@ which experiment 2 measures; that choice is the owner's. No cell can pass
 until the optimized-site inspection is written, and most cells stay
 undecided while the twin spread on this host exceeds 2 percent: the timed
 processes are not pinned to CPUs on a 32-vCPU Hyper-V guest.
+
+## The sixth change, fixed before it measures
+
+The owner chose (status board, 2026-10-10) to widen the slice interval from
+5,000 to 150,000 work units, one offer unit, and to pin the measured
+processes before rerunning under the same rule with the decision-point
+allowance.
+
+Change: `SLICE_NANOS` is 150,000; nothing else in the compiler or runtime
+changes from 3cc812a5a. Measurement: `measure.py` runs each timed process
+under `taskset` on the first `max(W, 1)` logical CPUs taken one per physical
+core (from Linux's thread-sibling lists), the same set for every arm of that
+width, and records the sets in `identity.json`; where the lists or `taskset`
+are missing it records that the run was not pinned. Each summary reports the
+candidate's process CPU time (all threads, user and system) beside its wall
+time, as the owner asked.
+
+Prediction at four and eight workers: `large_helper` 1.00 to 1.01; the other
+workloads as in the fifth rerun; demand CPU equal to wall in every cell, since
+nothing is handed out. Spreads lower than the fifth rerun's if pinning removes
+migration; if they do not fall below 2 percent for most cells, the noise
+measure itself goes back to the owner.

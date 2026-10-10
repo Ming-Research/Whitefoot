@@ -18,6 +18,25 @@ def run(command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
+def one_cpu_per_core():
+    """The first logical CPU of each physical core, from Linux's sibling lists.
+
+    A timed process of width W runs on the first max(W, 1) of these, the same
+    set for every arm of that width, so no two of its threads share a core's
+    hardware threads and the host cannot migrate it between rounds. Empty
+    where the lists or taskset are unavailable; the run then records that it
+    was not pinned."""
+    root = Path("/sys/devices/system/cpu")
+    if not root.exists() or subprocess.run(["sh", "-c", "command -v taskset"],
+                                           capture_output=True).returncode:
+        return []
+    firsts = set()
+    for siblings in root.glob("cpu[0-9]*/topology/thread_siblings_list"):
+        first = siblings.read_text().strip().replace("-", ",").split(",")[0]
+        firsts.add(int(first))
+    return sorted(firsts)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
@@ -38,7 +57,12 @@ def main():
         hashes[name] = {arm: digest(arm) for arm in ARMS}
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
-    identity = dict(host=platform.uname()._asdict(), sizing=args.sizing, rounds=args.rounds,
+    cores = one_cpu_per_core()
+    pinned = {width: cores[:max(width, 1)] for width in WIDTHS} if len(cores) >= max(WIDTHS) else {}
+    def pin(width, command):
+        cpus = pinned.get(width)
+        return ["taskset", "-c", ",".join(map(str, cpus))] + command if cpus else command
+    identity = dict(host=platform.uname()._asdict(), sizing=args.sizing, rounds=args.rounds, pinned=pinned,
                     revision=run(["git", "rev-parse", "HEAD"], capture_output=True).stdout.strip(),
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, setting="off-never-request", manifest=MANIFEST)
@@ -77,13 +101,17 @@ def main():
                             arms.reverse()
                         for arm in arms:
                             print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
-                            run([str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)],
+                            run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
                                 env=dict(settings, WF_WORKERS=str(width)), stdout=output)
                             output.flush()
     batch(1, {(name, width) for name in MANIFEST for width in WIDTHS})
     groups = load(path)
+    def decisions(name):
+        meta = MANIFEST[name]
+        repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if args.sizing else meta.get("repetitions", 0)
+        return meta.get("decisions_per_repetition", 0) * repetitions
     rerun = {(name, width) for (name, width, attempt), arms in groups.items()
-             if attempt_result(arms, width)["status"] == "exceeds"}
+             if attempt_result(arms, width, decisions(name))["status"] == "exceeds"}
     if rerun:
         batch(2, rerun)
     inspection_path = build / "inspection.json"

@@ -10,7 +10,10 @@ use crate::{
 
 /// Prototype price calibration, deliberately not a runtime clock sample.
 const NANOS_PER_WEIGHT_UNIT: u64 = 1;
-const SLICE_NANOS: u64 = 5_000;
+// One offer unit: the owner widened the interval from 5,000 units after the
+// fifth rerun found large_helper's remaining 3.8 percent in per-slice setup
+// every 625 iterations (research/investigations/par-demand/DESIGN.md).
+const SLICE_NANOS: u64 = 150_000;
 const SLICE_WORK: u64 = SLICE_NANOS / NANOS_PER_WEIGHT_UNIT;
 const WORK_UNIT: u64 = super::call_grain::CALL_OFFER_WORK_UNIT;
 
