@@ -165,25 +165,17 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         let mut ty = local.ty;
-        let mut reference = local.mode.is_reference();
+        // [DIAG-1] [SHARE-1] owns only a consume that no earlier rule refuses:
+        // an explicit move of a place rooted in a live own-mode binding with
+        // no `^` (OWN-1's move through a reference) and no element step
+        // (WIN-3's element take).
+        if local.mode.is_reference() {
+            return Ok(());
+        }
         let mut frozen_content = false;
         for &suffix in suffixes {
             match self.types.declarations.tree.place_suffix(suffix)? {
-                PlaceSuffix::Dereference if reference => {
-                    if let Some(info) = &local.reference {
-                        for path in &info.paths {
-                            if self
-                                .types
-                                .frozen_member_on_resolved_path(context, path, bindings)?
-                                .is_some()
-                            {
-                                frozen_content = true;
-                            }
-                        }
-                    }
-                    reference = false;
-                }
-                PlaceSuffix::Member(_) if !reference => {
+                PlaceSuffix::Member(_) => {
                     let name = self
                         .types
                         .declarations
@@ -196,15 +188,6 @@ impl Checker<'_, '_> {
                         return Ok(());
                     };
                     ty = member.ty();
-                }
-                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. } => {
-                    ty = match ty {
-                        CheckedType::Array { element, .. }
-                        | CheckedType::Window { element, .. }
-                        | CheckedType::Buffer { element }
-                        | CheckedType::Segments { element } => self.types.element_type(element)?,
-                        _ => return Ok(()),
-                    };
                 }
                 _ => return Ok(()),
             }

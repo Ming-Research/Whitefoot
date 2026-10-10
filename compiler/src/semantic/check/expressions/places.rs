@@ -120,6 +120,25 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_elaborated_place_use(check_context, use_node, node, bindings, options, place)
     }
 
+    /// Whether a written place selects an element: a subscript or range step.
+    fn place_has_element_step(&self, node: NodeId) -> Result<bool, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        for suffix in self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?
+        {
+            if matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. }
+            ) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_elaborated_place_use(
         &mut self,
@@ -133,8 +152,14 @@ impl<'unit> Checker<'_, 'unit> {
         // [MSR-1] measures select copy u64 values, rather than the measured
         // container. [DIAG-1] gives their moves and all other copy moves to
         // [OWN-1] before [SHARE-1] considers a frozen-content consume.
+        // A range referent without a measure names a run, not a value, which
+        // TYPE-5 refuses below before any copy judgment.
         let copy = place.measure.is_some() || self.types.is_copy_type(check_context, place.ty)?;
-        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
+        if copy
+            && options.explicit_move
+            && !(place.range_referent && place.measure.is_none())
+            && Checker::judges_class_spelling(check_context)
+        {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 use_node,
@@ -144,8 +169,12 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         for member in &place.resolved.members {
+            // [DIAG-1] a move through `^` is OWN-1's and an element take
+            // WIN-3's; SHARE-1 owns the remaining explicit non-copy consumes.
             if options.explicit_move
                 && !copy
+                && !self.types.declarations.tree.place_has_dereference(node)?
+                && !self.place_has_element_step(node)?
                 && self
                     .types
                     .frozen_member_on_resolved_path(check_context, member, bindings)?

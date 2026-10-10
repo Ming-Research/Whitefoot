@@ -3,7 +3,7 @@ struct Wrapper {
   frozen: Frozen<Box<u8>>;
 }
 
-fn denied(wrapper: &Wrapper) -> result: Box<u8> reads(wrapper) {
+fn denied(wrapper: &Wrapper) -> result: unit writes(wrapper) {
   let cursor = &wrapper^.ordinary;
   let once = True();
   loop {
@@ -14,7 +14,8 @@ fn denied(wrapper: &Wrapper) -> result: Box<u8> reads(wrapper) {
     }
     break;
   }
-  return move cursor^;
+  set cursor^.inner = 9_u8;
+  return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

@@ -149,26 +149,28 @@ fn frozen_and_owned_box_are_distinct_types() {
 }
 
 #[test]
-fn frozen_loop_alias_moves_follow_diag1_for_the_selected_type() {
-    let affine =
-        include_str!("../../../../tests/conformance/cases/share1-neg-frozen-loop-alias-move.wf");
-    let copy = affine.replace("Box<u8>", "u8");
-    for (source, rule) in [(affine, "SHARE-1"), (copy.as_str(), "OWN-1")] {
+fn frozen_loop_alias_writes_and_moves_follow_diag1() {
+    let write =
+        include_str!("../../../../tests/conformance/cases/share1-neg-frozen-loop-alias-write.wf");
+    // A write through the joined alias reaches a readonly path through
+    // Frozen.inner [TYPE-2]; a move through `^` is OWN-1's move through a
+    // reference, defined before SHARE-1 [DIAG-1].
+    let moved = write
+        .replace(
+            "-> result: unit writes(wrapper)",
+            "-> result: Box<u8> reads(wrapper)",
+        )
+        .replace(
+            "  set cursor^.inner = 9_u8;\n  return unit;\n",
+            "  return move cursor^;\n",
+        );
+    assert_ne!(moved, write);
+    for (source, rule) in [(write, "TYPE-2"), (moved.as_str(), "OWN-1")] {
         with_semantics(source.as_bytes(), |outcome| {
             let SemanticOutcome::SourceIssue { issue } = outcome else {
                 panic!("{outcome:?}");
             };
-            // DIAG-1 selects OWN-1 for the joined alias's copy move; the
-            // explicit non-copy move through frozen content remains SHARE-1.
             assert_eq!(issue.rule_id(), rule);
-            if rule == "SHARE-1" {
-                assert!(matches!(
-                    issue.kind(),
-                    SemanticIssueKind::FrozenContentConsume { .. }
-                ));
-            } else {
-                assert!(matches!(issue.kind(), SemanticIssueKind::MoveOfCopy { .. }));
-            }
         });
     }
 }
