@@ -19,7 +19,7 @@ binding Release : ScopeBody<Box<u64>, unit> {
   run = release;
 }
 
-fn equals(view: &ScopeView, expected: u64) -> result: Bool writes(view) {
+fn equals(view: &ScopeView, expected: u64) -> result: Bool writes(view) waits {
   let reading = std::process::scope_bytes(view: view);
   match reading {
     Some(value: bytes) => {
@@ -31,7 +31,7 @@ fn equals(view: &ScopeView, expected: u64) -> result: Bool writes(view) {
   }
 }
 
-fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
   loop {
     let closed = std::process::scope_close(meter: meter, scope: move scope);
     match move closed {

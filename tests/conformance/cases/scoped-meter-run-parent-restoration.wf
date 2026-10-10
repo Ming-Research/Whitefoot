@@ -35,7 +35,7 @@ fn refuse(scope: MeterScope) -> result: OwnedCheck pure waits {
   }
 }
 
-fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
   loop {
     let closed = std::process::scope_close(meter: meter, scope: move scope);
     match move closed {

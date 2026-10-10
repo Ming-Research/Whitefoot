@@ -2,7 +2,7 @@ alias MeterScope = std::process::MeterScope;
 alias MemoryMeter = std::process::MemoryMeter;
 alias ScopeView = std::process::ScopeView;
 
-fn empty(view: &ScopeView) -> result: Bool writes(view) {
+fn empty(view: &ScopeView) -> result: Bool writes(view) waits {
   let reading = std::process::scope_bytes(view: view);
   match reading {
     Some(value: bytes) => {
@@ -14,7 +14,7 @@ fn empty(view: &ScopeView) -> result: Bool writes(view) {
   }
 }
 
-fn stale(view: &ScopeView) -> result: Bool writes(view) {
+fn stale(view: &ScopeView) -> result: Bool writes(view) waits {
   let reading = std::process::scope_bytes(view: view);
   match reading {
     Some(value: bytes) => {
@@ -26,7 +26,7 @@ fn stale(view: &ScopeView) -> result: Bool writes(view) {
   }
 }
 
-fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
   loop {
     let closed = std::process::scope_close(meter: meter, scope: move scope);
     match move closed {

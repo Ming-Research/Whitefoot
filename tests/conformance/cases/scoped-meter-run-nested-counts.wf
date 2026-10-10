@@ -22,7 +22,11 @@ fn release(value: Box<u64>) -> result: unit pure {
   return unit;
 }
 
-fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+fn sample(view: &ScopeView) -> result: Option<u64> writes(view) waits {
+  return std::process::scope_bytes(view: view);
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
   loop {
     let closed = std::process::scope_close(meter: meter, scope: move scope);
     match move closed {
@@ -39,7 +43,7 @@ fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
 fn family(argument: Family) -> result: u8 pure waits {
   let Family(child: child_owner, parent_view: pv, child_view: cv, meter: meter) = move argument;
   let own = box_new::<u64>(value: 61_u64);
-  let before = std::process::scope_bytes(view: &pv);
+  let before = sample(view: &pv);
   let outcome = spawn std::process::scope_run::<Build>(scope: move child_owner, argument: before);
   match move outcome {
     Refused(scope: owner, argument: original) => {
@@ -47,12 +51,12 @@ fn family(argument: Family) -> result: u8 pure waits {
       return 10_u8;
     }
     Ran(scope: owner, result: block) => {
-      let child_bytes = std::process::scope_bytes(view: &cv);
-      let parent_bytes = std::process::scope_bytes(view: &pv);
+      let child_bytes = sample(view: &cv);
+      let parent_bytes = sample(view: &pv);
       let own_payload = own.inner == 61_u64;
       let block_payload = block.inner == 59_u64;
       release(value: move block);
-      let after = std::process::scope_bytes(view: &pv);
+      let after = sample(view: &pv);
       close(meter: &meter, scope: move owner);
       let wrong_own = bnot(own_payload);
       if wrong_own {

@@ -12,12 +12,12 @@ fn release(value: Box<u64>) -> result: unit pure {
 }
 
 fn inherited(argument: ScopeView) -> result: u8 pure waits {
-  let before = std::process::scope_bytes(view: &argument);
+  let before = sample(view: &argument);
   let block = spawn build(argument: before);
   let payload = block.inner == 47_u64;
-  let held = std::process::scope_bytes(view: &argument);
+  let held = sample(view: &argument);
   release(value: move block);
-  let after = std::process::scope_bytes(view: &argument);
+  let after = sample(view: &argument);
   let wrong_payload = bnot(payload);
   if wrong_payload {
     return 10_u8;
@@ -57,7 +57,11 @@ binding Inherited : ScopeBody<ScopeView, u8> {
   run = inherited;
 }
 
-fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) {
+fn sample(view: &ScopeView) -> result: Option<u64> writes(view) waits {
+  return std::process::scope_bytes(view: view);
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
   loop {
     let closed = std::process::scope_close(meter: meter, scope: move scope);
     match move closed {
