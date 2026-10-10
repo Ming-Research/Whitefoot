@@ -179,7 +179,7 @@ right reason: no check in it may pass only because the facts at that point
 contradict each other, which is how a guard around a refuted goal would pass.
 The 75 pairs cover mostly goals, effect rows and opaque struct types. Other
 rejections print fixed repair sentences that have no pair yet; the project's
-[todo list](../../docs/todo.md) records this and names several of them.
+status board records this and names several of them (item `coord-wfbl-01-25`).
 
 ## 7. For tools: JSON
 
