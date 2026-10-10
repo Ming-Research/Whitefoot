@@ -1919,7 +1919,26 @@ impl<'program> IrBuilder<'program> {
                 let constant = lower_scalar_constant(value)?;
                 self.define(ty, IrOperation::Constant(constant))
             }
-            CheckedExpression::NamedConstant { value, .. } => {
+            CheckedExpression::NamedConstant {
+                constant, value, ..
+            } => {
+                if matches!(
+                    value,
+                    CheckedValue::Array { .. } | CheckedValue::Struct { .. }
+                ) {
+                    // [CONST-2, OWN-1] load a value snapshot from the static,
+                    // so stores to its destination never target the static.
+                    let address = self.lower_place_address_access(
+                        &crate::semantic::CheckedContainerRoot {
+                            root: crate::semantic::CheckedPlaceRoot::Constant(*constant),
+                            path: Vec::new(),
+                            ty: value.ty(),
+                            proof_base: None,
+                        },
+                        false,
+                    )?;
+                    return self.load_storage_value(address);
+                }
                 let ty = lower_type(self.erasure, value.ty())?;
                 let constant = lower_scalar_constant(value)?;
                 self.define(ty, IrOperation::Constant(constant))

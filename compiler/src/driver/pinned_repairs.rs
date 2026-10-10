@@ -50,6 +50,18 @@ struct RepairPair {
 
 const REPAIRS: &[RepairPair] = &[
     RepairPair {
+        name: "const2-neg-whole-nocopy-struct.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
+        rule: "OWN-1",
+        sentences: &[
+            "]: BareAffineUse\n",
+            "\n  mechanical_fix: read the const through a field, subscript or measure supported by its type, or take a `&` reference\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/const2-pos-nocopy-struct-field-read.wf"
+        )],
+    },
+    RepairPair {
         name: "value-equality-float-field.wf",
         rejected: br#"struct EqualityReading {
   value: f64;
