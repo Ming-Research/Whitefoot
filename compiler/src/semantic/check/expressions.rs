@@ -32,7 +32,7 @@ enum AccessKind {
     Move,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::semantic::check) enum PlaceUseContext {
     Ordinary,
     /// The caller judges a referent without taking its owned value.
@@ -838,6 +838,19 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(node, Production::Psuffix)?;
+        if options.explicit_move
+            || options.context == PlaceUseContext::Ordinary
+            || !self.types.declarations.tree.place_has_dereference(node)?
+        {
+            self.reject_frozen_consume(
+                check_context,
+                node,
+                pbase,
+                &suffixes,
+                bindings,
+                options.explicit_move,
+            )?;
+        }
         if !suffixes.is_empty()
             && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {
@@ -2119,8 +2132,16 @@ impl<'unit> TypeContext<'unit> {
             // that list, so the two sides of a [TYPE-5] mismatch between
             // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
-                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominal(id)?.kind
+                {
+                    let name = if release == super::super::model::CheckedReleaseClass::Frozen {
+                        "Frozen"
+                    } else {
+                        "Box"
+                    };
+                    return Ok(format!("{name}<{}>", self.checked_type_name(referent)?));
                 }
                 let written = match self.source_nominal_instance_entry(id)? {
                     Some((template, substitution)) if substitution.len() > 0 => {

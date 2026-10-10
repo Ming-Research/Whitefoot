@@ -111,6 +111,10 @@ pub(super) struct BehaviorInventory {
     pub(super) actuals: HashMap<DeclarationId, ActualGroup>,
     references: RefCell<Vec<FunctionReference>>,
     binding_sites: RefCell<BindingSites>,
+    /// [TYPE-9, FN-2] the parameter selected by each exchange in its
+    /// canonical symbolic body. Equal concrete arguments must retain their
+    /// distinct parameter identities when a placement refusal is attributed.
+    pub(super) exchange_parameters: HashMap<NodeId, DeclarationId>,
     pub(super) declaration_arguments: Vec<FunctionArgument>,
 }
 
@@ -285,6 +289,26 @@ impl<'unit> Checker<'_, 'unit> {
                     .templates_by_declaration
                     .get(&value.declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                // A forwarded actual retains its own prelude parameter
+                // identities and written targs, independently of the formal
+                // signature used to judge a later bound call [TYPE-9, FN-2].
+                for (key, argument) in value.substitution.entries() {
+                    if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                        (key, argument)
+                    {
+                        let source = self.types.behavior_binding_site(
+                            self.types.function_templates[template].node,
+                            *key,
+                            &value.substitution,
+                        )?;
+                        self.check_type_parameter_placement(
+                            source,
+                            *parameter,
+                            *ty,
+                            &GenericSubstitution::default(),
+                        )?;
+                    }
+                }
                 self.instantiate_function_signature(check_context, template, value.substitution)
             }
             FunctionArgument::Parameter(key) => {

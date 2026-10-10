@@ -538,11 +538,13 @@ impl CheckedNumericType {
 
 /// [STOR-1, STOR-3] which release action a compiler-owned cell performs.
 ///
-/// The active language has one heap and therefore one represented action:
-/// free the cell after releasing its content. The checked class travels into
-/// the IR so lowering preserves that decision rather than rederiving it.
+/// An owned Box frees its cell after releasing its content; a frozen handle
+/// counts out one share and the last release releases its content and block.
+/// This class travels into the IR without rediscovering the action.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CheckedReleaseClass {
+    /// [SHARE-1] release a frozen handle; the last handle releases the value.
+    Frozen,
     /// Release the cell to the language's one heap.
     General,
 }
@@ -1002,17 +1004,14 @@ pub(crate) enum CheckedNominalKind {
     Enum {
         variants: Vec<CheckedVariant>,
     },
-    /// One boxed cell. `region` is `None` for the ambient-heap `box<T>`
-    /// [STOR-2] and `Some(store)` for the store-branded `Box<'s, T>` S39,
-    /// whose region is a component of its type exactly as a run's is
-    /// [PROV-1] and whose release class that region decides [PROV-6].
+    /// One pointer whose `inner` lives outside the binding: an owned Box
+    /// cell or a Frozen handle. The release class distinguishes ownership and
+    /// immutable shared storage; both use the ordinary content path support.
     Box {
         referent: CheckedType,
         region: Option<DeclarationId>,
-        /// [PROV-6] which release action this cell's own reclamation is, read
-        /// off `region` at the moment the nominal is interned. The ambient
-        /// heap's `box<T>` and a general store's cell both free; a bump
-        /// extent's cell is reclaimed by its region's own reset.
+        /// [PROV-6, STOR-3, SHARE-1] release an owned cell or count out a
+        /// frozen handle; only its last handle releases the immutable value.
         release: CheckedReleaseClass,
     },
     /// An ordinary opaque nominal has no fields or constructor.
@@ -3046,6 +3045,11 @@ pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
     pub(crate) formal_hypothesis: bool,
+    /// [FN-2] the canonical symbolic instance of this function's declaration,
+    /// when this is another symbolic instance whose arguments rename that
+    /// instance's parameters one to one: its body is neither checked nor
+    /// analyzed, and it takes that instance's outcomes. `None` otherwise.
+    pub(crate) summary_source: Option<FunctionId>,
     /// Element layout queried by paged_page_len, absent on other functions.
     pub(crate) prelude_element: Option<CheckedElement>,
     pub(crate) id: FunctionId,

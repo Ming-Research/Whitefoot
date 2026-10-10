@@ -224,6 +224,35 @@ COMPLETION_NATIVE_SOURCES := $(SCHED_SOURCES) $(COMPLETION_DIR)/runtime.c \
     $(COMPLETION_DIR)/native_adapter_probe.c
 $(eval $(call completion-image,linux-native-probe,$(COMPLETION_NATIVE_SOURCES),$(COMPLETION_BASE_CFLAGS)))
 
+# The first fork witness is a fixed native encoder, not a WF callback. Include
+# the actual compute core in the test to hold a real lane wait mutex, as the
+# scheduler probes do; do not also link a second core. Keep child code free of
+# compiler-inserted libc calls and stack-canary TLS. No sanitizer runtime is
+# admitted to the post-fork closure. Each hook image protects a named control.
+ifeq ($(shell uname -s),Linux)
+FORK_CAPSULE_SOURCES := $(SCHED_DIR)/entry.c $(SCHED_DIR)/prim_host.c \
+    $(COMPLETION_DIR)/runtime.c $(COMPLETION_DIR)/wait_host.c \
+    $(COMPLETION_DIR)/linux_io_uring.c $(COMPLETION_DIR)/fork_capsule.c \
+    $(COMPLETION_DIR)/fork_capsule_test.c
+FORK_CAPSULE_CFLAGS := $(COMPLETION_BASE_CFLAGS) -fno-builtin -fno-stack-protector
+FORK_CAPSULE_IMAGES := fork-capsule fork-capsule-no-advice fork-capsule-close-loop fork-capsule-advice-failure
+$(eval $(call completion-image,fork-capsule,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS)))
+$(eval $(call completion-image,fork-capsule-no-advice,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_LINUX_IO_URING_TEST_SKIP_DONTFORK))
+$(eval $(call completion-image,fork-capsule-close-loop,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_FORK_CAPSULE_TEST_NO_CLOSE_RANGE))
+$(eval $(call completion-image,fork-capsule-advice-failure,$(FORK_CAPSULE_SOURCES),$(FORK_CAPSULE_CFLAGS) -DWF_LINUX_IO_URING_MADVISE=wf_fork_test_madvise))
+$(foreach image,$(FORK_CAPSULE_IMAGES),$(COMPLETION_TMP)/objects/$(image)/completion/fork_capsule_test.o): $(SCHED_DIR)/core.c
+completion-fork-capsule-test: $(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
+	@set -e; for image in $(FORK_CAPSULE_IMAGES); do \
+		echo "== $$image =="; \
+		status=0; $(NO_CORE_DUMPS) "$(COMPLETION_TMP)/$$image" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ]; then \
+			echo "fork capsule: unavailable (not qualification evidence)"; \
+		else test $$status -eq 0 || exit $$status; fi; \
+	done
+else
+completion-fork-capsule-test:
+endif
+
 $(eval $(call completion-image,harness,$(COMPLETION_SOURCES),$(COMPLETION_HARNESS_CFLAGS)))
 $(eval $(call completion-image,bridge-default-probe,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_BASE_CFLAGS)))
 $(eval $(call completion-image,core-read-probe,$(COMPLETION_CORE_READ_SOURCES),$(COMPLETION_BASE_CFLAGS) $(COMPLETION_CORE_READ_DEFINES)))
@@ -233,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -473,6 +502,75 @@ cancel-test: $(COMPLETION_TMP)/cancel-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/cancel-test"
 	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/cancel-test"
 
+# The ownership probe includes the bridge for deterministic scope boundaries;
+# separate handwritten coroutine entries exercise the production resume loop.
+# Reuse compatible runtime objects from each default-route image, including
+# its sanitizer flags. The keyed-table unit exercises distinct physical map
+# users across a transfer. No native-ring availability or timing selects a result.
+DRIVER_SERVICE_TEST_SOURCES := $(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES)) \
+	src/backend/keyed_table.c $(COMPLETION_DIR)/driver_service_test.c $(COMPLETION_DIR)/driver_service_frames.c
+define driver-service-image
+$(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/$(2)/%.o,$(DRIVER_SERVICE_TEST_SOURCES))
+	$$(CC) $(3) $$^ -o "$$@"
+$(COMPLETION_TMP)/objects/$(2)/completion/driver_service_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/objects/$(2)/keyed_table.o: src/backend/concurrent_map.c
+endef
+$(eval $(call driver-service-image,driver-service-test,bridge-default-probe,$(COMPLETION_BASE_CFLAGS)))
+$(eval $(call driver-service-image,driver-service-sanitize,bridge-default-probe-sanitize,$(COMPLETION_SANITIZE_FLAGS)))
+$(eval $(call driver-service-image,driver-service-tsan,bridge-default-probe-tsan,$(COMPLETION_TSAN_FLAGS)))
+.PHONY: driver-service-test driver-service-sanitize driver-service-tsan
+driver-service-test: $(COMPLETION_TMP)/driver-service-test
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 "$(COMPLETION_TMP)/driver-service-test"
+driver-service-sanitize: $(COMPLETION_TMP)/driver-service-sanitize
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/driver-service-sanitize"
+driver-service-tsan: $(COMPLETION_TMP)/driver-service-tsan
+	$(NO_CORE_DUMPS) WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=0 TSAN_OPTIONS=halt_on_error=1 "$(COMPLETION_TMP)/driver-service-tsan"
+
+# The same ownership boundary with an outstanding native pipe read. Only
+# the fixture object differs in the no-reap control; compatible runtime and
+# handwritten coroutine objects are shared, including sanitizer flags.
+DRIVER_SERVICE_NATIVE_SUPPORT := $(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_DIR)/driver_service_frames.c
+define driver-service-native-image
+$(COMPLETION_TMP)/$(1): $(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/$(2)/%.o,$(DRIVER_SERVICE_NATIVE_SUPPORT)) $(COMPLETION_TMP)/objects/$(1)/completion/driver_service_native_test.o
+	$$(CC) $(3) $$^ -o "$$@"
+$(COMPLETION_TMP)/objects/$(1)/completion/driver_service_native_test.o: $(COMPLETION_DIR)/driver_service_native_test.c $(COMPLETION_DIR)/bridge.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
+	@mkdir -p "$$(dir $$@)"
+	$$(CC) $(3) $(4) -c "$$<" -o "$$@"
+endef
+$(eval $(call driver-service-native-image,driver-service-native-test,bridge-default-probe,$(COMPLETION_BASE_CFLAGS),))
+$(eval $(call driver-service-native-image,driver-service-native-no-reap,bridge-default-probe,$(COMPLETION_BASE_CFLAGS),-DWF_DRIVER_SERVICE_TEST_REPLACEMENT_NO_REAP))
+$(eval $(call driver-service-native-image,driver-service-native-sanitize,bridge-default-probe-sanitize,$(COMPLETION_SANITIZE_FLAGS),))
+$(eval $(call driver-service-native-image,driver-service-native-tsan,bridge-default-probe-tsan,$(COMPLETION_TSAN_FLAGS),))
+
+# As with the startup refusal control, demand both the intended exit and its
+# diagnostic. A watchdog, unavailable ring or sanitizer error is not evidence
+# that omitting replacement progress trips the terminal-publication assertion.
+define driver-service-native-run
+	$(NO_CORE_DUMPS) status=0; env -u WF_IO_NO_NATIVE_RING $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 $(2) "$(COMPLETION_TMP)/$(1)" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			echo "driver service io_uring: unavailable on this host (not native evidence)"; \
+		else exit $$status; fi
+endef
+.PHONY: driver-service-native-test driver-service-native-sanitize driver-service-native-tsan
+driver-service-native-test: $(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap
+	@$(call driver-service-native-run,driver-service-native-test,)
+	@$(NO_CORE_DUMPS) status=0; env -u WF_IO_NO_NATIVE_RING $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 \
+		"$(COMPLETION_TMP)/driver-service-native-no-reap" > "$(COMPLETION_TMP)/driver-service-native-no-reap.out" 2> "$(COMPLETION_TMP)/driver-service-native-no-reap.err" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			cat "$(COMPLETION_TMP)/driver-service-native-no-reap.err"; \
+		else \
+			cat "$(COMPLETION_TMP)/driver-service-native-no-reap.err"; \
+			test $$status = 1 && test ! -s "$(COMPLETION_TMP)/driver-service-native-no-reap.out" && \
+			grep -Ex 'driver-service-native-test:[0-9]+: wf_bridge_record_state\(record\) == WF_COMPLETION_DONE' "$(COMPLETION_TMP)/driver-service-native-no-reap.err" > /dev/null; \
+		fi
+driver-service-native-sanitize: $(COMPLETION_TMP)/driver-service-native-sanitize
+	@$(call driver-service-native-run,driver-service-native-sanitize,ASAN_OPTIONS=detect_leaks=0)
+driver-service-native-tsan: $(COMPLETION_TMP)/driver-service-native-tsan
+	@$(call driver-service-native-run,driver-service-native-tsan,TSAN_OPTIONS=halt_on_error=1)
+driver-service-sanitize: driver-service-native-sanitize
+driver-service-tsan: driver-service-native-tsan
+
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
 # one after another was about two thirds of the group's time, while several
@@ -484,8 +582,10 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
-	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test \
-	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
+	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
+	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
 completion-test-images: $(COMPLETION_TEST_IMAGES)
 
 # Manual calibration, never a correctness or automatic performance input.
@@ -525,7 +625,7 @@ completion-core-read-test: $(COMPLETION_TMP)/core-read-probe
 	"$(COMPLETION_TMP)/core-read-probe" "$(COMPLETION_TMP)"
 
 completion-sanitize: $(COMPLETION_TMP)/harness-sanitize completion-core-read-sanitize \
-		completion-default-route-sanitize
+		completion-default-route-sanitize driver-service-sanitize
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/harness-sanitize" "$(COMPLETION_TMP)"
 	@if [ "$$(uname -s)" = Linux ]; then \
@@ -540,7 +640,7 @@ completion-core-read-sanitize: $(COMPLETION_TMP)/core-read-probe-sanitize
 
 # The main image includes the deliberate ordinary-value shutdown race. Core/
 # read is single-threaded and has no TSan or repeated-stress variant.
-completion-tsan: $(COMPLETION_TMP)/harness-tsan
+completion-tsan: $(COMPLETION_TMP)/harness-tsan driver-service-tsan
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) env -u WF_REQUIRE_LINUX_IO_URING WF_IO_NO_NATIVE_RING=1 TSAN_OPTIONS=halt_on_error=1 WF_IO_HELPERS=0 \
 		"$(COMPLETION_TMP)/harness-tsan" "$(COMPLETION_TMP)" bridge
@@ -729,7 +829,7 @@ completion-windows-wine:
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
+	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

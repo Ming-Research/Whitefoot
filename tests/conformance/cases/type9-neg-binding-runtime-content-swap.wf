@@ -1,0 +1,21 @@
+interface Exchange {
+  fn exchange(first: &Slots<u64>, second: &Slots<u64>) -> result: unit writes(first), writes(second);
+}
+
+binding RuntimeExchange : Exchange {
+  exchange = swap::<Slots<u64>>;
+}
+
+fn apply<interface Exchange>(first: &Slots<u64>, second: &Slots<u64>) -> result: unit writes(first), writes(second) {
+  doc "FN-5: a member call selects the explicitly bound prelude actual.";
+  Exchange::exchange(first: first, second: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: an interface-member binding must refuse swap's runtime-capacity targ at the binding declaration.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  apply::<RuntimeExchange>(first: &small.inner, second: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}

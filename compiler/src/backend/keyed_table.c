@@ -5,9 +5,9 @@
  * this unit's functions).
  *
  * A map state is one pointer inside a reference-counted shared object.
- * The object owns the map and releases it with its last handle. Each driver thread is one user of
- * every table, numbered by its driver, since a statement holding a table's
- * entries never suspends and so ends on the driver it began on. Everything a
+ * The object owns the map and releases it with its last handle. Each physical executor is one user of
+ * every table, retaining its identity when its logical driver is reassigned:
+ * a statement holding entries never suspends and ends on its original thread. Everything a
  * statement holds lives in what its compiled code reserves in its frame: a
  * wf_table_entry for one key, a hold for several keys or the whole table,
  * and a watch for a guard. So one statement may hold entries of several

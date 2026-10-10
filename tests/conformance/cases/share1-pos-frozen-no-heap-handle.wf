@@ -1,0 +1,6 @@
+program no_heap;
+
+fn main() -> status: std::process::ExitStatus pure {
+  let root = frozen_new::<u8>(value: 7_u8);
+  return std::process::exit_status(code: root.inner);
+}

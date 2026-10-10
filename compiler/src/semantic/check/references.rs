@@ -576,12 +576,16 @@ impl<'unit> Checker<'_, 'unit> {
                 .types
                 .readonly_member_on_resolved_path(check_context, path, bindings)?
                 .is_some();
+            let frozen_content = self
+                .types
+                .frozen_member_on_resolved_path(check_context, path, bindings)?
+                .is_some();
             let path = path.loop_carried(
                 token.loop_id,
                 token.owner,
                 u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
             )?;
-            contributions.push((path, readonly));
+            contributions.push((path, readonly, frozen_content));
         }
         let summaries = &mut self.body.loop_reference_summaries;
         let summary = match summaries.entry(token) {
@@ -590,7 +594,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // leaves those shapes. Merely entering a loop must not lose
                 // a previously established sibling-field separation.
                 entry.insert(LoopReferenceSummary {
-                    paths: contributions.into_iter().map(|(path, _)| path).collect(),
+                    paths: contributions.into_iter().map(|(path, _, _)| path).collect(),
                 });
                 return Ok(true);
             }
@@ -599,7 +603,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut changed = false;
 
         let paths = &mut summary.paths;
-        for (incoming, incoming_readonly) in contributions {
+        for (incoming, incoming_readonly, incoming_frozen) in contributions {
             if !incoming.has_descendant()
                 && paths.iter().any(|current| {
                     !current.has_descendant() && path_shapes_agree(current, &incoming)
@@ -617,11 +621,16 @@ impl<'unit> Checker<'_, 'unit> {
                 continue;
             }
             let mut readonly = incoming_readonly;
+            let mut frozen_content = incoming_frozen;
             let mut prefix = incoming.cover_prefix().to_vec();
             for current in &same_root {
                 readonly |= self
                     .types
                     .readonly_member_on_resolved_path(check_context, current, bindings)?
+                    .is_some();
+                frozen_content |= self
+                    .types
+                    .frozen_member_on_resolved_path(check_context, current, bindings)?
                     .is_some();
                 let shared = prefix
                     .iter()
@@ -641,6 +650,7 @@ impl<'unit> Checker<'_, 'unit> {
                 ty,
                 range: kind == ReferenceKind::Range,
                 readonly,
+                frozen_content,
             }));
             if same_root.as_slice() != [&joined] {
                 let index = paths

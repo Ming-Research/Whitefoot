@@ -1,0 +1,19 @@
+fn apply<T: drop, fn exchange(first: &T, second: &T) -> result: unit writes(first), writes(second)>(first: &T, second: &T) -> result: unit writes(first), writes(second) {
+  doc "FN-5: the receiving generic calls its explicit function-kind actual.";
+  exchange(first: first, second: second);
+  return unit;
+}
+
+fn relay<T: drop>(first: &T, second: &T) -> result: unit writes(first), writes(second) {
+  doc "TYPE-9, FN-2: T takes the exchange place through swap's written type argument in this body.";
+  apply::<T, fn swap::<T>>(first: first, second: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: the concrete instance refuses the complete caller targ supplying T to the function-kind actual.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  relay::<Slots<u64>>(first: &small.inner, second: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}

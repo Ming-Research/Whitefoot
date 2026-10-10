@@ -16,7 +16,7 @@ typedef struct wf_cmap wf_cmap;
 typedef struct wf_cmap_user wf_cmap_user;
 
 /* Users a map can have at once. */
-#define WF_CMAP_MAX_USERS 64
+#define WF_CMAP_MAX_USERS 128
 
 /* A map sized for capacity keys, or a small default when capacity is zero. */
 wf_cmap *wf_cmap_create(uint64_t capacity);
