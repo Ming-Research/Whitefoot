@@ -147,6 +147,11 @@ static void guard_races(void) {
     CHECK(guard.used == 0u && view->shared.watched == 0u);
     CHECK(view->shared.watching == NULL);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
+    /* The early-woken statement retries at once, as emitted code does,
+     * which also ends the turn the firing's wake granted it. */
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 1u && view->shared.turns == 0u);
+    wf__shared_unlock(view, 1u);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));

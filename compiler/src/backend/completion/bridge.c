@@ -2873,7 +2873,9 @@ static void wf_shared_took_locked(wf_shared *shared, wf_context *self) {
         self->shared_holds += 1u;
         if (self->shared_turn == shared) {
             self->shared_turn = NULL;
-            atomic_fetch_sub_explicit(&shared->turns, 1u, memory_order_relaxed);
+            if (atomic_fetch_sub_explicit(&shared->turns, 1u, memory_order_relaxed) == 0u) {
+                wf_bridge_fail("a guard used a turn its object did not count");
+            }
         }
     }
 }
