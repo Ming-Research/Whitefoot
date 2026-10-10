@@ -35,6 +35,9 @@ pub(crate) enum CheckedRangeRoot {
 pub(crate) struct CheckedRangePlace {
     pub(crate) root: CheckedRangeRoot,
     pub(crate) path: Vec<CheckedRangeStep>,
+    /// A concrete fixed Array's length is its type's N [MSR-1], including
+    /// when a user function publishes no explicit length postcondition.
+    pub(crate) fixed_length: Option<u64>,
 }
 
 /// One step below a range place's root.
@@ -79,6 +82,12 @@ pub(crate) enum CheckedRangeShape {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeTerm {
     Constant(i128),
+    /// A symbolic const generic retains the supplied declaration's identity
+    /// [MSR-6]; concrete substitutions form `Constant` instead.
+    ConstGeneric {
+        declaration: DeclarationId,
+        ty: IntegerType,
+    },
     /// The clause's bound variable at this position.
     Bound(u32),
     /// One of a cross-iteration certificate's two iterations [RANGE-5].
@@ -284,6 +293,7 @@ impl CheckedRangeTerm {
     pub(crate) fn collect_places(&self, out: &mut Vec<CheckedRangePlace>) {
         match self {
             Self::Constant(_)
+            | Self::ConstGeneric { .. }
             | Self::Bound(_)
             | Self::Iteration(_)
             | Self::Value(_)
@@ -310,7 +320,8 @@ impl CheckedRangeTerm {
     /// Every root whose current value this term reads.
     pub(crate) fn collect_values(&self, out: &mut Vec<CheckedRangeRoot>) {
         match self {
-            Self::Constant(_) | Self::Bound(_) | Self::Iteration(_) => {}
+            Self::Constant(_) | Self::ConstGeneric { .. } | Self::Bound(_) | Self::Iteration(_) => {
+            }
             Self::Value(binding) | Self::ValueProjection { root: binding, .. } => {
                 out.push(*binding)
             }

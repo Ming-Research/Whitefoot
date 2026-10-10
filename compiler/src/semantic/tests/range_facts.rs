@@ -1253,11 +1253,15 @@ fn generic_noninteger_range_postcondition_owes_no_selected_exit() {
 }
 
 #[test]
-fn generic_call_range_requirement_is_owed_at_the_integer_instance() {
-    let source = |ty: &str, value: &str| {
+fn generic_call_range_requirement_is_owed_at_integer_and_copy_aggregate_instances() {
+    let source = |ty: &str, value: &str, comparison: &str| {
         format!(
-            "fn require_same<T: copy>(values: &[T], value: T) -> result: unit pure contract {{
-  requires forall same(k in 0_u64..values^.len): values^[k] == value;
+            "struct Block {{
+  entry_slot: u64;
+}}
+
+fn require_same<T: copy>(values: &[T], value: T) -> result: unit pure contract {{
+  requires forall same(k in 0_u64..values^.len): values^[k] {comparison} value;
 }} {{
   return unit;
 }}
@@ -1276,23 +1280,48 @@ fn main() -> status: std::process::ExitStatus pure {{
 "
         )
     };
-    with_semantics(source("Bool", "True()").as_bytes(), |outcome| {
-        assert!(
-            matches!(outcome, SemanticOutcome::Complete(_)),
-            "a noninteger instance owes no range requirement: {outcome:?}"
-        );
-    });
-    with_semantics(source("u64", "7_u64").as_bytes(), |outcome| {
-        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("the integer forward instance owes the requirement: {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Range3);
-        let SemanticIssueKind::UndischargedRangeFact { fact, site, .. } = issue.kind() else {
-            panic!("expected an undischarged range requirement: {issue:?}");
-        };
-        assert_eq!(fact, "same");
-        assert_eq!(*site, "a call");
-    });
+    // The forwarding body has no requirement of its own. The integer,
+    // prelude Bool enum and copy Block instances each owe the equality.
+    for (ty, value) in [
+        ("u64", "7_u64"),
+        ("Bool", "True()"),
+        ("Block", "Block(entry_slot: 7_u64)"),
+    ] {
+        let source = source(ty, value, "==");
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("the {ty} forward instance owes the requirement: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range3);
+            let SemanticIssueKind::UndischargedRangeFact { fact, site, .. } = issue.kind() else {
+                panic!("expected an undischarged range requirement: {issue:?}");
+            };
+            assert_eq!(fact, "same");
+            assert_eq!(*site, "a call");
+            let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).unwrap();
+            assert!(
+                source[start..].starts_with("require_same::<T>("),
+                "{issue:?}"
+            );
+        });
+    }
+    // A non-equality over the same copy struct still states nothing at this
+    // concrete instance; it must neither be owed nor become an active fact.
+    with_semantics(
+        source("Block", "Block(entry_slot: 7_u64)", "!=").as_bytes(),
+        |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("Block disequality owes no range requirement: {outcome:?}");
+            };
+            let instance = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "require_same")
+                .unwrap();
+            assert!(instance.range_facts.requirements.is_empty());
+        },
+    );
 }
 
 #[test]
@@ -2599,6 +2628,84 @@ fn a_state_excluded_match_continuation_discharges_its_deferred_sites() {
         "enum Route {\n  Live();\n  Dead();\n}\n\nfn probe(xs: &[u64], i: u64) -> result: unit reads(xs) contract {\n  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;\n} {\n  let route = Route::Live();\n  match route {\n    Live() => {\n      return unit;\n    }\n    Dead() => {\n    }\n  }\n  let value = xs^[i];\n  return unit;\n}\n",
     );
     field_range_verdict(&source, None);
+}
+
+#[test]
+fn range_const_generic_substitution_keeps_concrete_and_symbolic_length_facts() {
+    use super::super::model::{CheckedExpression, CheckedStatement};
+    use super::super::range_facts::CheckedRangeTerm as Term;
+    let source =
+        b"fn filled<const count: u64>(value: u32) -> result: Array<u32, count> pure contract {
+  ensures result.len == count;
+  ensures forall same(k in 0_u64..count): result[k] == value;
+} {
+  let made = array_filled::<u32, count>(value: value);
+  return made;
+}
+
+fn need(values: &[u32]) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..values^.len): values^[k] == 5_u32;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = filled::<2>(value: 5_u32);
+  need(values: &values[0_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("const-generic range terms must form in both scopes: {outcome:?}");
+        };
+        let functions = &program.data.functions;
+        let mut concrete = false;
+        let mut symbolic = false;
+        for function in functions.iter().filter(|f| f.name == "filled") {
+            let clause = &function
+                .range_facts
+                .postconditions
+                .iter()
+                .find(|post| post.clause.name == "same")
+                .unwrap()
+                .clause;
+            let end = &clause.binders[0].end;
+            match end {
+                Term::Constant(2) => concrete = true,
+                Term::ConstGeneric { .. } => symbolic = true,
+                other => panic!("unexpected count: {other:?}"),
+            }
+            let CheckedStatement::Let {
+                value:
+                    CheckedExpression::UserCall {
+                        function: callee, ..
+                    },
+                ..
+            } = &function.body.as_ref().unwrap()[0]
+            else {
+                panic!("filled calls the prelude through an ordinary call")
+            };
+            let callee = &functions[callee.0 as usize];
+            assert!(
+                callee
+                    .range_facts
+                    .postconditions
+                    .iter()
+                    .any(|post| !post.owed
+                        && post
+                            .clause
+                            .conclusions
+                            .iter()
+                            .any(|relation| &relation.right == end)),
+                "the callee's n must become the caller's count in its length fact"
+            );
+        }
+        assert!(
+            concrete && symbolic,
+            "both instantiation scopes were inspected"
+        );
+    });
 }
 
 #[test]

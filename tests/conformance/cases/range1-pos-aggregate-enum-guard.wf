@@ -10,8 +10,10 @@ fn guarded<T: copy>(targets: &[T], value: T) -> result: unit pure contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let targets = array_filled::<Flow, 1>(value: Flow::Open(block: 3_u64));
-  guarded::<Flow>(targets: &targets[0_u64..1_u64], value: Flow::Open(block: 3_u64));
-  guarded::<Flow>(targets: &targets[0_u64..1_u64], value: Flow::Close(block: 4_u64));
+  let opened = Flow::Open(block: 3_u64);
+  let targets = array_filled::<Flow, 1>(value: opened);
+  guarded::<Flow>(targets: &targets[0_u64..1_u64], value: opened);
+  let closed = Flow::Close(block: 4_u64);
+  guarded::<Flow>(targets: &targets[0_u64..1_u64], value: closed);
   return std::process::exit_status(code: 0_u8);
 }

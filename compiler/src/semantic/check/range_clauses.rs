@@ -75,6 +75,15 @@ enum Selected {
     Run(CheckedType),
 }
 
+impl Selected {
+    fn fixed_length(self) -> Option<u64> {
+        match self {
+            Self::Value(CheckedType::Array { length, .. }) => length.value(),
+            _ => None,
+        }
+    }
+}
+
 impl Checker<'_, '_> {
     /// [RANGE-1] forms one `forall NAME(binders) when guards: conclusions`,
     /// or `None` where it states nothing at this concrete instance.
@@ -1005,6 +1014,27 @@ impl Checker<'_, '_> {
             }
             return Ok(CheckedRangeTerm::Iteration(*position).into());
         }
+        // [MSR-6] const generics are admitted wherever named consts are.
+        // Keep a symbolic caller's declaration, not the callee's formal n,
+        // so its published relation and the caller's reads share one value.
+        if class == DeclarationClass::ConstGeneric && suffixes.is_empty() {
+            let ty = self.types.const_generic_type(declaration)?;
+            return Ok(
+                match context.function.substitution.const_argument(declaration) {
+                    Some(super::super::model::CheckedConst::Value(value)) => {
+                        CheckedRangeTerm::Constant(integer_value(ty, value))
+                    }
+                    Some(super::super::model::CheckedConst::Parameter(supplied)) => {
+                        CheckedRangeTerm::ConstGeneric {
+                            declaration: supplied,
+                            ty,
+                        }
+                    }
+                    _ => CheckedRangeTerm::ConstGeneric { declaration, ty },
+                }
+                .into(),
+            );
+        }
         if class == DeclarationClass::NamedConst && suffixes.is_empty() {
             let Some(constant) = self.types.constants.get(&declaration).copied() else {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -1115,6 +1145,7 @@ impl Checker<'_, '_> {
                     let base = CheckedRangePlace {
                         root,
                         path: path.clone(),
+                        fixed_length: selected.fixed_length(),
                     };
                     let element = match selected {
                         Selected::Run(element) => element,
@@ -1222,7 +1253,11 @@ impl Checker<'_, '_> {
                         && self.member_name(suffixes[index + 1])? == "len"
                     {
                         return Ok(CheckedRangeTerm::Measure {
-                            place: CheckedRangePlace { root, path },
+                            place: CheckedRangePlace {
+                                root,
+                                path,
+                                fixed_length: None,
+                            },
                             measure: CheckedMeasure::Pages,
                             shape: CheckedRangeShape::Run,
                         }
@@ -1249,7 +1284,11 @@ impl Checker<'_, '_> {
                                 _ => CheckedRangeShape::Run,
                             };
                             return Ok(CheckedRangeTerm::Measure {
-                                place: CheckedRangePlace { root, path },
+                                place: CheckedRangePlace {
+                                    root,
+                                    path,
+                                    fixed_length: selected.fixed_length(),
+                                },
                                 measure,
                                 shape,
                             }

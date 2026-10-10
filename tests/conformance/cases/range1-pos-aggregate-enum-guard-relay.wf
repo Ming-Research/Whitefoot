@@ -3,13 +3,13 @@ enum Flow {
   Close(block: u64);
 }
 
-fn relay<T: copy>(targets: &[T], markers: &[u64], value: T) -> result: unit pure contract {
+fn relay<T: copy>(targets: &[T], markers: &[u64], value: T) -> result: u64 pure contract {
   requires targets^.len == markers^.len;
   requires forall same(k in 0_u64..targets^.len): targets^[k] == value;
   requires forall guarded(k in 0_u64..targets^.len) when targets^[k] == value: markers^[k] == 0_u64;
   ensures forall zero(k in 0_u64..markers^.len): markers^[k] == 0_u64;
 } {
-  return unit;
+  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

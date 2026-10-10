@@ -3554,7 +3554,9 @@ impl<'program> Walker<'program> {
                     _ => Err(GoalFailure::Unrepresentable),
                 }
             }
-            CheckedAffineExpressionKind::ConstGeneric { .. } => Err(GoalFailure::Unrepresentable),
+            CheckedAffineExpressionKind::ConstGeneric {
+                declaration, ty, ..
+            } => Ok(self.world.const_generic(*declaration, *ty)),
         }
     }
 

@@ -3,10 +3,10 @@ struct Block {
   storage: Box<u64>;
 }
 
-fn promise<T>(targets: &[T]) -> result: unit pure contract {
+fn promise<T>(targets: &[T]) -> result: u64 pure contract {
   ensures forall same(k in 0_u64..targets^.len): targets^[k] == targets^[0_u64];
 } {
-  return unit;
+  return 0_u64;
 }
 
 fn need(targets: &[Block]) -> result: unit pure contract {

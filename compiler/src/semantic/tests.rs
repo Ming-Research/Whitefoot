@@ -136,7 +136,7 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
     max_path_components: 8_192,
 };
 
-fn with_semantics<ResultValue>(
+pub(super) fn with_semantics<ResultValue>(
     source: &[u8],
     run: impl FnOnce(SemanticOutcome) -> ResultValue,
 ) -> ResultValue {

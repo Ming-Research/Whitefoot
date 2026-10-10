@@ -5,7 +5,9 @@ fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let targets = array_filled::<Bool, 1>(value: True());
-  same::<Bool>(targets: &targets[0_u64..1_u64], value: False());
+  let enabled = True();
+  let targets = array_filled::<Bool, 1>(value: enabled);
+  let disabled = False();
+  same::<Bool>(targets: &targets[0_u64..1_u64], value: disabled);
   return std::process::exit_status(code: 0_u8);
 }

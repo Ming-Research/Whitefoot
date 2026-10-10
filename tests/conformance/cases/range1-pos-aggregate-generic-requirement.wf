@@ -9,9 +9,9 @@ fn same<T: copy>(targets: &[T], value: T) -> result: unit pure contract {
   return unit;
 }
 
-
 fn main() -> status: std::process::ExitStatus pure {
-  let targets = array_filled::<Flow, 1>(value: Flow::Open(block: 3_u64));
-  same::<Flow>(targets: &targets[0_u64..1_u64], value: Flow::Open(block: 3_u64));
+  let opened = Flow::Open(block: 3_u64);
+  let targets = array_filled::<Flow, 1>(value: opened);
+  same::<Flow>(targets: &targets[0_u64..1_u64], value: opened);
   return std::process::exit_status(code: 0_u8);
 }

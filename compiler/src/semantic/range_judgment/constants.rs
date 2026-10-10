@@ -13,6 +13,9 @@ pub(super) fn value(world: &mut World, state: &mut State, value: &CheckedValue) 
             crate::semantic::entailment::integer_value(*ty, *bits),
         )),
         CheckedValue::Bool(truth) => world.boolean(super::world::Cond::Constant(*truth)),
+        CheckedValue::ConstGeneric { declaration, ty } => {
+            Value::Int(world.const_generic(*declaration, *ty))
+        }
         CheckedValue::Struct { fields, .. } => Value::Struct(
             fields
                 .iter()

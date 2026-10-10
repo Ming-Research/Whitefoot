@@ -156,6 +156,7 @@ pub(super) struct Atom {
 #[derive(Debug, Default)]
 pub(super) struct World {
     pub(super) atoms: Vec<Atom>,
+    const_generics: HashMap<crate::DeclarationId, AtomId>,
     reads: HashMap<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>), AtomId>,
     measures: HashMap<(ContainerId, u32, CheckedMeasure), AtomId>,
     segment_lengths: HashMap<(ContainerId, u32, Linear), AtomId>,
@@ -192,6 +193,21 @@ pub(super) struct Modified {
 impl World {
     pub(super) fn opaque(&mut self, ty: Option<IntegerType>) -> Linear {
         Linear::atom(self.push(AtomDef::Opaque, ty))
+    }
+
+    /// All reads of a symbolic const generic denote the same typed integer
+    /// [MSR-6], including reads in a callee's substituted postcondition.
+    pub(super) fn const_generic(
+        &mut self,
+        declaration: crate::DeclarationId,
+        ty: IntegerType,
+    ) -> Linear {
+        if let Some(atom) = self.const_generics.get(&declaration) {
+            return Linear::atom(*atom);
+        }
+        let atom = self.push(AtomDef::Opaque, Some(ty));
+        self.const_generics.insert(declaration, atom);
+        Linear::atom(atom)
     }
 
     fn push(&mut self, def: AtomDef, ty: Option<IntegerType>) -> AtomId {
@@ -1004,10 +1020,19 @@ pub(super) fn join_values(
         })
         .collect::<Option<Vec<_>>>()
     {
-        return Value::Bool(
-            Cond::Unknown,
-            world.joined(join, tags, Some(IntegerType::U8)),
-        );
+        // Independently evaluated copies of the same comparison have distinct
+        // tags, but still carry the same condition on every incoming arm.
+        let condition = match all[0] {
+            Value::Bool(condition, _)
+                if all
+                    .iter()
+                    .all(|value| matches!(value, Value::Bool(other, _) if other == condition)) =>
+            {
+                condition.clone()
+            }
+            _ => Cond::Unknown,
+        };
+        return Value::Bool(condition, world.joined(join, tags, Some(IntegerType::U8)));
     }
     if all.iter().all(|value| {
         matches!(

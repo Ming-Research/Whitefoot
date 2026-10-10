@@ -96,6 +96,9 @@ impl Former<'_> {
     fn term(&mut self, term: &CheckedRangeTerm) -> Option<Linear> {
         match term {
             CheckedRangeTerm::Constant(value) => Some(Linear::constant(*value)),
+            CheckedRangeTerm::ConstGeneric { declaration, ty } => {
+                Some(self.world.const_generic(*declaration, *ty))
+            }
             CheckedRangeTerm::Bound(position) => self.binders.get(*position as usize).cloned(),
             CheckedRangeTerm::Iteration(position) => {
                 self.iterations.get(*position as usize).cloned()
@@ -116,6 +119,11 @@ impl Former<'_> {
                 Some(self.projected_read(version, values, projection, *element, &implicit, Some(0)))
             }
             CheckedRangeTerm::Measure { place, measure, .. } => {
+                if *measure == CheckedMeasure::Length
+                    && let Some(length) = place.fixed_length
+                {
+                    return Some(Linear::constant(i128::from(length)));
+                }
                 match (self.frame.places.get(place)?, measure) {
                     (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
                     (
@@ -206,6 +214,9 @@ impl Former<'_> {
                         CheckedRangeShape::Run,
                     ) => {
                         let index = values.first()?;
+                        let length = place
+                            .fixed_length
+                            .map_or(length, |length| Linear::constant(i128::from(length)));
                         self.within(index, &length);
                         let projection =
                             super::world::shift_projection(projection, 0, prefix.len());
@@ -268,10 +279,14 @@ impl Former<'_> {
                         }
                         let guarded = guarded_from.map(|at| at + path.len());
                         path.extend(super::world::shift_projection(projection, 0, base));
-                        let implicit: Vec<_> = implicit_indices
+                        let mut implicit: Vec<_> = implicit_indices
                             .iter()
                             .map(|index| *index + base as u32)
                             .collect();
+                        if let Some(length) = place.fixed_length {
+                            self.within(values.first()?, &Linear::constant(i128::from(length)));
+                            implicit.push(base as u32);
+                        }
                         let mut indices = prefix;
                         indices.extend(values);
                         Some(
@@ -498,6 +513,7 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
             }
         }
         CheckedRangeTerm::Constant(_)
+        | CheckedRangeTerm::ConstGeneric { .. }
         | CheckedRangeTerm::Bound(_)
         | CheckedRangeTerm::Iteration(_)
         | CheckedRangeTerm::Value(_)
@@ -1160,6 +1176,45 @@ mod aggregate_tests {
     use super::*;
     use crate::semantic::model::IntegerType;
 
+    #[test]
+    fn symbolic_const_clause_and_expression_share_one_typed_value() {
+        use super::super::world::{State, Value};
+        use crate::semantic::model::CheckedValue;
+        let declaration = crate::DeclarationId::from_index(0).unwrap();
+        let ty = IntegerType::U64;
+        let mut world = World::default();
+        let mut state = State::default();
+        let Value::Int(read) = super::super::constants::value(
+            &mut world,
+            &mut state,
+            &CheckedValue::ConstGeneric { declaration, ty },
+        ) else {
+            panic!("a const generic is an integer value")
+        };
+        let frame = Frame::default();
+        let mut former = Former {
+            world: &mut world,
+            frame: &frame,
+            binders: &[],
+            iterations: &[],
+            bounds: Vec::new(),
+            guards: Vec::new(),
+        };
+        assert_eq!(
+            former.term(&CheckedRangeTerm::ConstGeneric { declaration, ty }),
+            Some(read.clone())
+        );
+        assert_ne!(
+            former.term(&CheckedRangeTerm::ConstGeneric {
+                declaration: crate::DeclarationId::from_index(1).unwrap(),
+                ty,
+            }),
+            Some(read)
+        );
+        assert_eq!(world.atoms.len(), 2);
+        assert!(world.atoms.iter().all(|atom| atom.ty == Some(ty)));
+    }
+
     fn projected_fact(world: &mut World, count: usize) -> Fact {
         let root = CheckedRangeRoot::Result(0);
         let mut frame = Frame::default();
@@ -1246,6 +1301,7 @@ mod aggregate_tests {
         let place = CheckedRangePlace {
             root: CheckedRangeRoot::Result(0),
             path: Vec::new(),
+            fixed_length: None,
         };
         let version = world.new_version(VersionDef::Initial);
         fact.frame.places.insert(
