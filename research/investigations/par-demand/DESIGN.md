@@ -98,6 +98,14 @@ candidate twin's spread and 1 percent.
   the check compiled to; a pass whose site was optimized away entirely (so the
   check was never measured) does not count for that site.
 
+Overhead is measured at constant work (the owner, 2026-10-10): every arm of
+a cell runs the same input, repetitions and extent, and each result is checked
+against the independent oracle. For a cell at `W` workers the overhead is the
+process's total CPU time (all threads, user and system, over the timed call)
+divided by the sequential build's, minus one; the wall ratio says only
+whether the run got faster. Every summary reports both, for the candidate and
+for today's `--par`.
+
 A pass sends the work to the second experiment (does demand-driven hand-out
 keep today's speedups?). A fail goes back to the owner with the attribution
 before any further building.
@@ -867,3 +875,23 @@ workloads as in the fifth rerun; demand CPU equal to wall in every cell, since
 nothing is handed out. Spreads lower than the fifth rerun's if pinning removes
 migration; if they do not fall below 2 percent for most cells, the noise
 measure itself goes back to the owner.
+
+## Results of the sixth rerun
+
+Run: [compute-bench 38015737639](https://github.com/Ming-Research/Whitefoot/actions/runs/38015737639),
+`claude/par-demand` at a111b11b1, i9-14900K, 10 interleaved rounds,
+2026-10-10 02:11 to 02:15 UTC, processes pinned to one logical CPU per core
+(`identity.json`: {1: [0], 4: [0, 2, 4, 6], 8: [0, 2, ..., 14]}).
+
+No cell fails. `large_helper` 0.999 at four and eight workers, as predicted,
+with CPU equal to wall; `small_split` 1.105 and 1.106, within its 2.2
+allowance; `recursion`, `hot_helper`, `spine`, `mandelbrot` within 1.2
+percent; `fir` 0.95 and 0.98; `records` 1.065 and 1.078, as in the fifth
+rerun (1.068, 1.077) and above the second rerun's 1.006 and 1.021, which
+points at the poll change and is examined next. Today's `--par` at the same
+work: `large_helper` 0.525 wall at 2.10 and 4.19 times the sequential CPU,
+`spine` 3.48 and 4.25 wall at 13.9 and 34.0 times the CPU.
+
+Pinning did not bring the twin spreads under 2 percent: most cells still range
+from 3 to 36 percent, so most cells decide nothing and the noise measure
+goes back to the owner, as stated before the run.
