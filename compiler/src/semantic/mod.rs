@@ -619,7 +619,13 @@ pub enum SemanticIssueKind {
     /// A literal is not the unique in-range FORM-7 spelling.
     InvalidIntegerLiteral,
     /// A float literal is not FORM-5's unique finite canonical spelling.
-    InvalidFloatLiteral,
+    InvalidFloatLiteral {
+        /// The finite value's unique canonical literal, including its suffix;
+        /// absent when the candidate has no finite representable value.
+        canonical_spelling: Option<String>,
+        /// A source change repairing the rejected literal.
+        mechanical_fix: String,
+    },
     /// [FORM-7] a text item of a character literal or STRING is not its
     /// value's one spelling, or denotes no Unicode scalar value.
     InvalidTextItem {
