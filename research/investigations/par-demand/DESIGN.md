@@ -975,3 +975,64 @@ direct C transcription at five sizes. The next run's ledger and
 `demand/small_constant.o.s` are the evidence of record that the site is
 admitted and pruned. Earlier runs' `small_constant` cells stand as
 measurements of a denied loop.
+
+## Where today's `--par` spends its extra CPU (fixed before it measures)
+
+This is a side measurement for experiment 2, not part of experiment 1's
+verdict. In the seventh rerun, ordinary `--par` (the `par` arm) used far more
+process CPU than the sequential build for several workloads, without a
+matching wall-time gain. Dividing the CPU ratio by the wall ratio gives the
+average number of threads on a CPU: `large_helper` 4.00 and 8.00 at four and
+eight workers with a 1.9x speedup at both, `spine` 3.99 and 8.01 with wall
+3.5x and 4.4x the sequential build, `stencil` 2.75 and 4.57 with speedups 1.71
+and 2.16, `small_split` 1.00 with wall 5.4x. The seventh rerun's samples also
+show that each process's first timed call, and only the first, pays CPU above
+its wall time in the candidate: about 3.4 ms at four workers and 8.5 ms at
+eight in most workloads, 23 ms (`hot_helper`) and 16 ms (`stencil`) at eight.
+
+**Question.** Of the extra CPU, how much is (a) idle lanes spinning through
+the 1,000 us idle window (`WF_PAR_IDLE_WINDOW_US` in
+`compiler/src/backend/sched/core.c`), (b) extra instructions spent handing
+work out, and (c) the same instructions running slower on more cores, through
+memory traffic or contention?
+
+**Comparison.** Three arms at four and eight workers, pinned one CPU per core
+as in the experiment: `seq`, `par`, and `nospin`, which links `par`'s object
+against `core.c` compiled with `-DWF_PAR_IDLE_WINDOW_US=0`, so an idle lane
+parks after 1,024 spin rounds (about 12 us by the file's own probe) instead of
+spinning for up to a millisecond. Nothing else differs. Ten interleaved rounds
+time both calls of each process with the experiment's runner; the second
+call is the steady state, the first carries the pool start. A separate batch
+of three rounds runs each process under `perf stat` with whatever counters
+the host grants without changing its settings (`perf_event_paranoid` is
+recorded, not changed); counts are whole-process, so they are read only as
+differences from `seq`, whose preparation and checking are identical. One
+round runs `par` and `nospin` with `WF_SCHED_REPORT=2`, which prints the
+process's total steal count at exit.
+
+Reading, per workload and width, from second-call medians: (a) is
+`par` CPU minus `nospin` CPU, over `seq` CPU; (b) is `nospin` user
+instructions minus `seq` user instructions, over `seq`; (c) is `nospin`
+cycles per user instruction over `seq`'s. Where the host grants no hardware
+counters, (b) and (c) stay unseparated and the result says so.
+
+**Predictions that would reject the reading given to the owner.**
+- `large_helper`: the extra CPU is spinning. Rejected if `nospin`'s CPU
+  ratio exceeds 1.5 at eight workers or 1.3 at four (`par` reads 4.19 and
+  2.10), or if its wall ratio is more than 10 percent above `par`'s.
+- `spine`: the extra CPU is hand-out work with every lane busy, not
+  spinning. Rejected if `nospin` removes more than 20 percent of `par`'s CPU.
+- `small_split`: helpers sleep and the cost is the main thread's per-call
+  entry. Rejected if `nospin` differs from `par` by more than 5 percent in
+  wall or CPU, or if the process steals more than once per thousand calls.
+- `recursion`: healthy stealing. Rejected if `nospin` moves its CPU by more
+  than 5 percent.
+- Pool start: the first call's CPU above wall is the idle window. Rejected
+  if `nospin` still shows more than 1 ms of it at eight workers.
+- `stencil`, `fir`, `prefix`, `histogram`, `mandelbrot` and `records` carry
+  no prediction; the split is what this measures.
+
+The arm, driver and job are temporary: `cpu_split.py`, the `cpu-split`
+targets in the experiment's Makefile and the `par-cpu-split` job of
+`compute-bench.yml` are removed in the commit that records the result, which
+names the revision that held them.
