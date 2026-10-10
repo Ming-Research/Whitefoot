@@ -1,0 +1,23 @@
+const key_bytes: Array<u8, 1> =[0_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u64>(capacity: 1_u64);
+  let key = &key_bytes[0_u64..1_u64];
+  atomic slot = &map[key] {
+    set slot^ = Some<u64>(value: 7_u64);
+  }
+  let observed = None<u64>();
+  atomic t = &map {
+    set observed = t^[key];
+  }
+  match observed {
+    Some(value: found) => {
+      if found == 7_u64 {
+        return std::process::exit_status(code: 0_u8);
+      }
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: 2_u8);
+}
