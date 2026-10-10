@@ -734,8 +734,8 @@ value is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
-Current unresolved language and compiler questions are recorded in
-[todo.md](todo.md) and the relevant investigation directories. A missing
+Current unresolved language and compiler questions are recorded on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) and in the relevant investigation directories. A missing
 pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.

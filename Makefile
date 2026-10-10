@@ -168,27 +168,55 @@ guidance:
 	@$(PY) .github/check-guidance.py --self-test
 	@$(PY) .github/check-guidance.py
 
-# A compiler source over the limit is named in the Code structure section of
-# docs/todo.md, so its split is recorded work instead of unnoticed growth
-# (AGENTS.md, "Fix or record what you notice"). The item may defer the split;
-# it may not be missing. A mention in another section, about something else,
-# does not count. The limit sits above every source except the entailment
-# module's three, each thousands of lines past it, so it asks for no items the
-# evidence does not already call for; lower it once those are split.
+# A Rust source under compiler/src/ over the limit is listed in
+# SOURCE_SIZE_LIST with the status board item that records its split, so its
+# split is recorded work instead of unnoticed growth (AGENTS.md, "Fix or
+# record what you notice"). The item may defer the split; it may not be
+# missing. Each list line is `<repository path> <board key>`; blank lines and
+# `#` lines are ignored. A listed path must be such a tracked source still
+# over the limit, so the list stays current: a split file leaves it in the
+# change that splits it. Only `compiler/src/*.rs` is checked: the C runtime
+# units, such as the completion bridge, and Rust files elsewhere, such as
+# compiler/tests/, are not. The limit sits above every checked source except
+# the two entailment files, each thousands of lines past it, so it asks for no
+# items the evidence does not already call for; lower it once those are split.
 SOURCE_LINE_LIMIT ?= 4000
+SOURCE_SIZE_LIST ?= .github/oversized-sources.txt
 source-size:
-	@status=0; checked=0; \
-	recorded="$$(awk '/^## / { in_section = ($$0 == "## Code structure") } in_section' docs/todo.md)"; \
-	test -n "$$recorded" || { echo "source size: docs/todo.md has no Code structure section" >&2; exit 1; }; \
-	for file in $$(git ls-files -- 'compiler/src/*.rs'); do \
+	@list='$(SOURCE_SIZE_LIST)'; status=0; checked=0; listed=' '; number=0; \
+	test -f "$$list" || { echo "source size: $$list is missing" >&2; exit 1; }; \
+	sources="$$(git ls-files -- 'compiler/src/*.rs')" || exit 1; \
+	test -n "$$sources" || { echo "source size: no compiler sources found" >&2; exit 1; }; \
+	while IFS= read -r line || test -n "$$line"; do \
+		number=$$((number + 1)); \
+		set -f; set -- $$line; set +f; \
+		test "$$#" -gt 0 || continue; \
+		case "$$1" in '#'*) continue ;; esac; \
+		where="source size: $$list:$$number"; \
+		case "$$listed" in *" $$1 "*) echo "$$where: $$1 is listed twice" >&2; status=1; continue ;; esac; \
+		listed="$$listed$$1 "; \
+		if test "$$#" -ne 2 || ! printf '%s\n' "$$2" | grep -q -x -E '[a-z][a-z0-9]*(-[a-z0-9]+)+'; then \
+			echo "$$where: expected '<path> <board key>', got '$$line'" >&2; status=1; continue; \
+		fi; \
+		if ! printf '%s\n' "$$sources" | grep -q -x -F -e "$$1"; then \
+			echo "$$where: $$1 is not a tracked compiler source; remove its line" >&2; status=1; continue; \
+		fi; \
+		lines="$$(wc -l < "$$1" | tr -d ' ')"; \
+		if test "$$lines" -le $(SOURCE_LINE_LIMIT); then \
+			echo "$$where: $$1 has $$lines lines, no longer over $(SOURCE_LINE_LIMIT); remove its line and update board item $$2" >&2; status=1; \
+		fi; \
+	done < "$$list"; \
+	for file in $$sources; do \
 		checked=$$((checked + 1)); \
 		lines="$$(wc -l < "$$file" | tr -d ' ')"; \
-		if test "$$lines" -gt $(SOURCE_LINE_LIMIT) && ! printf '%s\n' "$$recorded" | grep -q -F -e "$$file"; then \
-			echo "source size: $$file has $$lines lines, over $(SOURCE_LINE_LIMIT); split it along its responsibilities, or name it in the Code structure section of docs/todo.md with the split you would make" >&2; \
-			status=1; \
+		if test "$$lines" -gt $(SOURCE_LINE_LIMIT); then \
+			case "$$listed" in *" $$file "*) ;; *) \
+				echo "source size: $$file has $$lines lines, over $(SOURCE_LINE_LIMIT); split it along its responsibilities, or list it in $$list with the key of the status board item that records the split you would make" >&2; \
+				status=1 ;; \
+			esac; \
 		fi; \
 	done; \
-	test "$$checked" -gt 0 || { echo "source size: no compiler sources found" >&2; exit 1; }; \
+	test "$$status" -ne 0 || echo "source size: $$checked compiler sources checked; every one over $(SOURCE_LINE_LIMIT) lines is listed in $$list"; \
 	exit $$status
 
 spec-append-only-staged:

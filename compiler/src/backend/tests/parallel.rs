@@ -2500,7 +2500,7 @@ fn main() -> status: std::process::ExitStatus pure {
 ///
 /// Before v0.77 this pair was offered and the test observed the I/O body
 /// running on a worker thread under a join observer. A worker that waits
-/// strands every join beneath it (`docs/todo.md` recorded that defect), and
+/// strands every join beneath it (a defect recorded before v0.77), and
 /// the language now excludes it, so what that test observed can no longer be
 /// written; this is the observation that replaces it.
 #[test]
