@@ -193,3 +193,133 @@ least 0.95 x control at both 8 and 50 connections, and p99 at 50 connections
 must be at most 1.5 x control, in each pass. Either the probe criteria or the
 engine criteria failing rejects this candidate. These criteria precede its
 implementation and measurement; no result for age-bounded turns is claimed.
+
+## Age-bounded turns' results
+
+[Run 38091930357](https://github.com/Ming-Research/Whitefoot/actions/runs/38091930357),
+job `run`, 2026-10-10 23:04:33–23:04:55 UTC, native i9-14900K;
+`WF_DRIVERS=2`, pinned by `taskset` to CPUs 2 and 4. Candidate implementation:
+[f032209e4](https://github.com/Ming-Research/Whitefoot/commit/f032209e426b7181a6d0211a345b7650c3bc1220);
+workflow revision:
+[187bce72d](https://github.com/Ming-Research/Whitefoot/commit/187bce72dab4509bdf8de8a6767b618ff0ac04b0).
+The workflow builds the base at
+[fe5589ec5](https://github.com/Ming-Research/Whitefoot/commit/fe5589ec5f4584c6fd235faa17e2e3173a7d651e).
+Numbers below are recomputed from the supplied extraction of that run's log.
+
+The output order in [probe.wf](../../experiments/guard-fairness/probe.wf)
+is N, K, count, p50, p99, maximum, mean hold, runtime, checksum.
+All five time fields are **nanoseconds**. Wait is statement start to
+successful checkout; hold is checkout to the clock sample in the returning
+statement, including work and any delay acquiring that statement's object.
+Runtime spans spawning through joining all contexts, excluding aggregation
+and sorting. K = 1,000 and count = N × K: 2,000, 8,000 and 50,000.
+Percentiles use ranks floor((count + 1)/2) and ceil(0.99 × count).
+“Ideal occupied time” is count × reported mean hold: a serialized-work
+reference without gaps, not a separately measured arm or a cost criterion;
+integer mean rounding can omit less than count ns of summed hold.
+
+Pass 1 (N order 2, 8, 50):
+
+| N | Arm | p50 wait (ns) | p99 wait (ns) | Longest wait (ns) | Mean hold (ns) | Runtime (ns) | Ideal occupied time (ns) | Runtime/base (×) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 2 | base | 20 | 23 | 7,313,079 | 6,645 | 14,090,068 | 13,290,000 | 1.000000 |
+| 2 | candidate | 20 | 26 | 1,010,188 | 6,651 | 14,711,892 | 13,302,000 | 1.044132 |
+| 8 | base | 20 | 24 | 56,616,366 | 6,645 | 63,381,741 | 53,160,000 | 1.000000 |
+| 8 | candidate | 20 | 1,087,582 | 1,248,861 | 6,624 | 79,215,191 | 52,992,000 | 1.249811 |
+| 50 | base | 9,309 | 13,712 | 501,930,556 | 6,609 | 508,735,759 | 330,450,000 | 1.000000 |
+| 50 | candidate | 4,302,411 | 17,734,108 | 40,189,036 | 6,683 | 5,261,528,440 | 334,150,000 | 10.342360 |
+
+Pass 2 (N order 50, 8, 2):
+
+| N | Arm | p50 wait (ns) | p99 wait (ns) | Longest wait (ns) | Mean hold (ns) | Runtime (ns) | Ideal occupied time (ns) | Runtime/base (×) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 50 | base | 9,261 | 11,346 | 495,085,270 | 6,613 | 501,882,503 | 330,650,000 | 1.000000 |
+| 50 | candidate | 4,202,378 | 17,920,919 | 47,835,201 | 6,678 | 5,262,993,370 | 333,900,000 | 10.486505 |
+| 8 | base | 20 | 24 | 55,969,371 | 6,624 | 62,704,067 | 52,992,000 | 1.000000 |
+| 8 | candidate | 20 | 1,086,279 | 1,215,744 | 6,629 | 80,170,300 | 53,032,000 | 1.278550 |
+| 2 | base | 20 | 24 | 7,306,578 | 6,639 | 14,079,508 | 13,278,000 | 1.000000 |
+| 2 | candidate | 20 | 30 | 1,010,617 | 6,648 | 14,757,741 | 13,296,000 | 1.048172 |
+
+- **Fairness fails both passes.** Using the candidate's mean hold and
+  T = 1,000,000 ns, pass 1's bound is
+  1,000,000 + 4 × 50 × 6,683 + 1,000,000 = **3,336,600 ns**;
+  40,189,036 ns is **12.044907×** the bound. Pass 2's bound is
+  **3,335,600 ns**; 47,835,201 ns is **14.340809×** the bound.
+  Longest waits improve **12.489241× / 10.349811×** over base.
+- **Cost fails both passes.** N = 2 passes at **1.044132× / 1.048172×**;
+  N = 8 fails at **1.249811× / 1.278550×**;
+  N = 50 fails at **10.342360× / 10.486505×**.
+  The limit is **1.10×** base at every N; satisfying N = 2 cannot offset
+  either failure.
+- Every arm reports the expected count, with equal base/candidate checksums
+  in both passes: N = 2, `17338884850046946832`; N = 8,
+  `10724673450211648456`; N = 50, `12413229600044691665`.
+  These support comparable completed work, not fairness.
+  The preliminary N = 2, K = 100 pilots each report 200 acquisitions and
+  checksum `12845862288366202069`; runtimes
+  1,474,983 / 1,466,001 ns give 0.993910×, outside the registered full passes.
+
+**Protocol limitation.** [run.sh](../../experiments/guard-fairness/run.sh)
+and the raw labels show base then candidate in both passes: only N order
+reverses. Thus the registered reversed arm order was not implemented, and
+there is no control twin in this probe. The observed failures reject the
+candidate under the fixed thresholds; they do not isolate order effects or
+supply a measured causal breakdown.
+
+**What the code establishes.**
+In [bridge.c](../../../compiler/src/backend/completion/bridge.c),
+`wf_watch_wake_locked` still unlinks and wakes every watch; it samples
+one clock per nonempty object wake and grants a turn to every watcher aged
+past T. `guard_started` survives false retries and resets on successful
+statement release, so an unsuccessful aged watcher can receive turns on
+successive writes. Age is checked at writes, not by a deadline timer.
+`wf_shared_took_locked` consumes a turn **before** guard evaluation:
+a retry can see `out == 1`, fail, and watch again. Both the checkout's
+write of `out = 1` and the return's write of `out = 0` wake watches.
+Consequently turns restrict newcomers and enable earlier attempts, explaining
+a route to the observed shorter tail, but neither order successful
+checkouts nor establish the proposed wall-time bound.
+
+`wf_shared_wake_locked` scans the acquisition queue for a parked turn
+holder or an exempt holder while turns remain; absent one, it selects the
+head. Its two-vain-wakes handoff bounds acquisition overtaking, not
+successful guard execution. Ready turn holders enter ordinary driver
+queues, and holders race rather than being ordered by age. In
+`wf_shared_acquire_as`, the optimistic hint checks holders only: with a
+free object but outstanding turns, a refused context can repeatedly take
+and drop the object lock through the 256-spin loop before parking.
+The bound's mean-hold term does not account for gaps before checkout,
+including false retries and delays scheduling or acquiring a turn.
+
+**Attribution hypotheses.** At N = 8 the unchanged 20 ns median and
+roughly 1 ms candidate p99 are consistent with mostly immediate reuse
+interrupted by aged-waiter retries. At N = 50, p50 exceeds 4 ms and runtime
+per successful checkout rises from 10,175 / 10,038 ns to
+105,231 / 105,260 ns, while mean hold rises only 1.12% / 0.98%.
+Candidate occupied time is about 0.334 s of each 5.26 s run.
+Thus increased measured hold cannot account for the loss. A plausible
+feedback is that more contexts age past T, generating batches of turns;
+losers remain aged, and their repeated wake/retry cycles keep newcomers
+parking. Wake-all already exists in base: amplification of its frequency
+and failed retries, lock traffic on turn denial, queue scans, and latency
+scheduling turn holders are competing cost explanations. Their relative
+contributions, and whether a few unusually late holders dominate the
+maximum, were **not measured**. Extra clock calls under the watch lock
+are another hypothesis; the data do not establish that they dominate.
+
+A separating CI measurement can count existing `wf__shared_seen` events
+(WOKEN, HANDED, RESUMED) and `wf__watch_seen` events (WRITTEN, EARLY),
+adding per-driver counts of watches visited, turns granted, failed guarded
+retries, turn-denied lock attempts and acquisition-queue entries scanned.
+Normalize by successful checkout: growth in visits/retries identifies herd
+amplification, and denied-lock attempts identify the optimistic-loop cost.
+Sample grant-to-acquisition and handoff-to-resume delay, with turn count and
+holder state, to distinguish queued-holder latency from retry CPU work.
+Count and sample time in `wf__guard_clock_ns`: clock cost sufficient to
+explain the excess supports that hypothesis; negligible accumulated cost
+rejects it. Compare count-only and sampled runs with the uninstrumented
+control to quantify instrumentation effects. These are proposed diagnostics,
+not results of this run.
+
+The pre-registered rule **rejects this candidate** on the probe in both
+passes. **Firn's engine run is not needed** to decide that rejection.
