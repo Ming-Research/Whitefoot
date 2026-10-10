@@ -26,6 +26,25 @@ public enum StopKind {
 public opaque nocopy struct MemoryMeter {
 }
 
+public opaque nodrop struct MeterScope {
+}
+
+public opaque nocopy struct ScopeView {
+}
+
+public enum MeterError {
+  CapacityExhausted();
+}
+
+public enum ScopeRun<A, R> {
+  Ran(public scope: MeterScope, public result: R);
+  Refused(public scope: MeterScope, public argument: A);
+}
+
+public interface ScopeBody<A, R> {
+  fn run(argument: A) -> result: R pure waits;
+}
+
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -39,18 +58,34 @@ public struct Inputs {
   public memory_meter: MemoryMeter;
 }
 
-public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+public fn exit_status(code: u8) -> result: ExitStatus pure doc "Build-provided. Returns the status that reports code when the entry returns it.";
 
-public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
+public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Build-provided. Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
 
-public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<StopKind, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<StopKind, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Build-provided. Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
 
-public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
+public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Build-provided. Closes listener, restores the host default and returns its handle credit.";
 
-public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Returns a meter that observes the same process memory as meter.";
+public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Build-provided. Returns a meter that observes the same process memory as meter.";
 
-public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
+public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Build-provided. Returns the program heap bytes counted as specified by PRE-2.";
 
-public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
+public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Build-provided. Returns Some resident bytes reported by the host, or None when unavailable.";
 
-public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Build-provided. Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
+public fn scope_open(meter: &MemoryMeter) -> result: Result<MeterScope, MeterError> writes(meter) doc "Build-provided. Opens a top-level scope with the default account as its parent, or returns CapacityExhausted when no safely reusable slot is available.";
+
+public fn scope_open_child(meter: &MemoryMeter, parent: &MeterScope) -> result: Result<MeterScope, MeterError> reads(parent), writes(meter) doc "Build-provided. Opens a scope with parent as its fixed parent, or returns CapacityExhausted. The parent account includes the child's bytes.";
+
+public fn scope_view(scope: &MeterScope) -> result: ScopeView reads(scope) doc "Build-provided. Returns a droppable observation handle for this scope generation; the view retains no slot and grants no entry or close ownership.";
+
+public fn scope_bytes(view: &ScopeView) -> bytes: Option<u64> writes(view) doc "Build-provided. Returns Some inclusive origin-attributed bytes under PRE-2's sampling bound, or None after this scope generation closes.";
+
+public fn scope_close(meter: &MemoryMeter, scope: MeterScope) -> result: Result<unit, MeterScope> writes(meter) doc "Build-provided. Retires an inactive scope with no open descendants or origin-bearing storage; otherwise returns the unchanged owner in Err for polling. A sampled zero does not establish readiness.";
+
+public fn scope_run<interface ScopeBody<A, R>>(scope: MeterScope, argument: A) -> outcome: ScopeRun<A, R> pure waits doc "Defined in scope.wf and checked as Whitefoot. Runs the supplied body when the current scope is the recorded parent, returning Ran with the owner and result after restoration; otherwise returns Refused with the owner and argument unchanged.";
+
+fn scope_enter(scope: &MeterScope) -> entered: Bool writes(scope) doc "Build-provided, private. Performs PRE-2's entry transition and returns True on entry or False without changing the current scope.";
+
+fn scope_leave(scope: &MeterScope) -> result: unit writes(scope) doc "Build-provided, private. Completes PRE-2's leave transition after the body has returned and restores the recorded parent.";

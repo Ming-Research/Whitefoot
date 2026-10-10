@@ -1,0 +1,98 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeBody = std::process::ScopeBody;
+
+struct Measured {
+  meter: MemoryMeter;
+  correct: Bool;
+}
+
+fn reading(meter: &MemoryMeter) -> result: u64 writes(meter) waits {
+  return std::process::heap_in_use(meter: meter);
+}
+
+fn release(value: Box<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn measure(argument: MemoryMeter) -> result: Measured pure waits {
+  let before = reading(meter: &argument);
+  let block = box_new::<u64>(value: 43_u64);
+  let held = reading(meter: &argument);
+  let payload = block.inner == 43_u64;
+  release(value: move block);
+  let after = reading(meter: &argument);
+  let expected = before +wrap 8_u64;
+  let grew = held == expected;
+  let restored = after == before;
+  let counted = band(grew, restored);
+  let correct = band(payload, counted);
+  return Measured(meter: move argument, correct: correct);
+}
+
+binding Measure : ScopeBody<MemoryMeter, Measured> {
+  run = measure;
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
+  loop {
+    let closed = std::process::scope_close(meter: meter, scope: move scope);
+    match move closed {
+      Ok(value: done) => {
+        return done;
+      }
+      Err(error: owner) => {
+        set scope = move owner;
+      }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, memory_meter: initial_meter, ..) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let measured = measure(argument: move initial_meter);
+  let Measured(meter: meter, correct: default_correct) = move measured;
+  let default_wrong = bnot(default_correct);
+  if default_wrong {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let before_open = reading(meter: &meter);
+  let opened = std::process::scope_open(meter: &meter);
+  match move opened {
+    Err(error: full) => {
+      return std::process::exit_status(code: 3_u8);
+    }
+    Ok(value: scope) => {
+      let after_open = reading(meter: &meter);
+      if before_open != after_open {
+        close(meter: &meter, scope: move scope);
+        return std::process::exit_status(code: 4_u8);
+      }
+      let peer = std::process::meter_share(meter: &meter);
+      let outcome = std::process::scope_run::<Measure>(scope: move scope, argument: move peer);
+      match move outcome {
+        Refused(scope: owner, argument: original) => {
+          close(meter: &meter, scope: move owner);
+          return std::process::exit_status(code: 5_u8);
+        }
+        Ran(scope: owner, result: scoped) => {
+          let Measured(meter: returned, correct: scoped_correct) = move scoped;
+          let before_close = reading(meter: &meter);
+          close(meter: &meter, scope: move owner);
+          let after_close = reading(meter: &meter);
+          let scoped_wrong = bnot(scoped_correct);
+          if scoped_wrong {
+            return std::process::exit_status(code: 6_u8);
+          }
+          if before_close != after_close {
+            return std::process::exit_status(code: 7_u8);
+          }
+          return std::process::exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+}

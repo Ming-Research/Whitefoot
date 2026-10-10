@@ -1,0 +1,95 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeView = std::process::ScopeView;
+
+fn empty(view: &ScopeView) -> result: Bool writes(view) waits {
+  let reading = std::process::scope_bytes(view: view);
+  match reading {
+    Some(value: bytes) => {
+      return bytes == 0_u64;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn stale(view: &ScopeView) -> result: Bool writes(view) waits {
+  let reading = std::process::scope_bytes(view: view);
+  match reading {
+    Some(value: bytes) => {
+      return False();
+    }
+    None() => {
+      return True();
+    }
+  }
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
+  loop {
+    let closed = std::process::scope_close(meter: meter, scope: move scope);
+    match move closed {
+      Ok(value: done) => {
+        return done;
+      }
+      Err(error: owner) => {
+        set scope = move owner;
+      }
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let first = std::process::scope_open(meter: &meter);
+  match move first {
+    Err(error: full) => {
+      return std::process::exit_status(code: 2_u8);
+    }
+    Ok(value: owner) => {
+      let old = std::process::scope_view(scope: &owner);
+      let second = std::process::scope_view(scope: &owner);
+      let live = empty(view: &old);
+      close(meter: &meter, scope: move owner);
+      let closed = stale(view: &old);
+      let reopened = std::process::scope_open(meter: &meter);
+      match move reopened {
+        Err(error: exhausted) => {
+          return std::process::exit_status(code: 3_u8);
+        }
+        Ok(value: reused) => {
+          let current = std::process::scope_view(scope: &reused);
+          let fresh = empty(view: &current);
+          let old_stale = stale(view: &old);
+          let second_stale = stale(view: &second);
+          close(meter: &meter, scope: move reused);
+          let not_live = bnot(live);
+          if not_live {
+            return std::process::exit_status(code: 4_u8);
+          }
+          let not_closed = bnot(closed);
+          if not_closed {
+            return std::process::exit_status(code: 5_u8);
+          }
+          let not_fresh = bnot(fresh);
+          if not_fresh {
+            return std::process::exit_status(code: 6_u8);
+          }
+          let old_live = bnot(old_stale);
+          if old_live {
+            return std::process::exit_status(code: 7_u8);
+          }
+          let second_live = bnot(second_stale);
+          if second_live {
+            return std::process::exit_status(code: 8_u8);
+          }
+          return std::process::exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 //! Address-stable paged windows and their noncontiguous run references.
 //!
-//! Growth replaces the header-first cell, copying its header and page pointers
-//! only. All size checks precede their allocation and use the selected target's
+//! Growth resizes the header-first cell, retaining its allocation origin and
+//! page pointers. All size checks precede allocation and use the selected target's
 //! element stride [STOR-6].
 
 use crate::IrElement;
@@ -202,24 +202,18 @@ impl FunctionEmitter<'_, '_> {
             &oom,
             &format!("{tag}.cell.allocate"),
         )?;
-        let fresh = self.paged_allocate(&bytes, &oom)?;
-        let updated = self.next_temporary()?;
-        writeln!(self.output, "  %{updated} = insertvalue {HEADER} %{header}, i64 {dircap}, 2\n  store {HEADER} %{updated}, ptr {fresh}").map_err(|_| BackendFailure::TextEmission)?;
-        let olddir = self.paged_directory(&format!("%{old}"))?;
-        let freshdir = self.paged_directory(&fresh)?;
-        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
-        self.output.symbol("llvm.memmove.p0.p0.i64");
         let old_directory_bytes = self.next_temporary()?;
         let old_bytes = self.next_temporary()?;
         writeln!(self.output,
             "  %{old_directory_bytes} = mul nuw i64 %{olddircap}, 8\n  %{old_bytes} = add nuw i64 %{old_directory_bytes}, {}",
             crate::target::PAGED_HEADER_BYTES,
         ).map_err(|_| BackendFailure::TextEmission)?;
-        self.output.symbol("wf__heap_give");
-        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @wf__heap_give(ptr %{old}, i64 %{old_bytes})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
+        let fresh = format!("%{}", self.next_temporary()?);
+        self.output.symbol("wf__heap_retake");
+        writeln!(self.output, "  {fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 %{old_bytes}, i64 {bytes})\n  %{tag}.nonnull = icmp ne ptr {fresh}, null\n  br i1 %{tag}.nonnull, label %{tag}.resized, label %{oom}").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.resized"));
-        writeln!(self.output, "  br label %{tag}.ready")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        let updated = self.next_temporary()?;
+        writeln!(self.output, "  %{updated} = insertvalue {HEADER} %{header}, i64 {dircap}, 2\n  store {HEADER} %{updated}, ptr {fresh}\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.ready").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.existing"));
         writeln!(self.output, "  br label %{tag}.ready")
             .map_err(|_| BackendFailure::TextEmission)?;

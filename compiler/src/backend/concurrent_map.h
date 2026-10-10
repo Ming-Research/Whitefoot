@@ -102,7 +102,7 @@ uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint6
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
 /* Gives the set's memory back, leaving it empty; or gives back the memory
  * of a set whose `store` alone is at hand, NULL for none. When the includer
- * keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as the
+ * keeps spares (WF_CMAP_SPARE_KEYS), a small default-origin set's memory stays as the
  * calling thread's spare instead, for its next set, until
  * wf_cmap_key_set_drop_spare gives it back. */
 void wf_cmap_key_set_release(wf_key_set *set);
@@ -159,7 +159,8 @@ typedef struct wf_cmap_holding {
     /* A merged target forwards its positions into the primary hold. */
     struct wf_cmap_holding *primary;
     uint64_t first;
-    uint64_t read;
+    uint32_t read;
+    uint32_t keys_origin;
     wf_cmap_held inline_keys[WF_CMAP_HOLD_INLINE];
 } wf_cmap_holding;
 

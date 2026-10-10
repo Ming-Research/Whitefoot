@@ -1014,6 +1014,11 @@ static unsigned char *wf_pool_cursor;
 static size_t wf_pool_remaining;
 static atomic_flag wf_pool_lock = ATOMIC_FLAG_INIT;
 static int64_t wf_pool_live_bytes;
+/* Default-account infrastructure can allocate on transient host callbacks
+ * (Windows console handlers), outside the permanent writer-row inventory.
+ * Their pool charges use its existing lock, not a permanent thread row. */
+static uint64_t wf_pool_default_bytes;
+static void wf_scope_change(unsigned slot, int64_t change);
 
 static void wf_spin_lock(atomic_flag *flag) {
     while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {
@@ -1085,12 +1090,15 @@ static void wf_pool_retire_region(void) {
 /* A block of at least `bytes`; its whole size is stored in `granted`. */
 static void *wf_pool_take_locked(size_t bytes, size_t *granted);
 
-static void *wf_pool_take(size_t bytes, size_t *granted) {
+static void *wf_pool_take_for(size_t bytes, size_t *granted, unsigned scope) {
     void *block;
+    wf__scope_retain(scope);
     wf_spin_lock(&wf_pool_lock);
     block = wf_pool_take_locked(bytes, granted);
     wf_pool_live_bytes += (int64_t)*granted;
+    if (scope == 0u) wf_pool_default_bytes += (uint64_t)*granted;
     wf_spin_unlock(&wf_pool_lock);
+    if (scope != 0u) wf_scope_change(scope, (int64_t)*granted);
     return block;
 }
 
@@ -1142,17 +1150,20 @@ static void *wf_pool_take_locked(size_t bytes, size_t *granted) {
     return block;
 }
 
-static void wf_pool_give(void *block, size_t granted) {
+static void wf_pool_give_for(void *block, size_t granted, unsigned scope) {
     wf_pool_block *released;
     unsigned index;
     if (block == NULL) {
         return;
     }
+    if (scope != 0u) wf_scope_change(scope, -(int64_t)granted);
     wf_spin_lock(&wf_pool_lock);
     wf_pool_live_bytes -= (int64_t)granted;
+    if (scope == 0u) wf_pool_default_bytes -= (uint64_t)granted;
     if (granted > WF_POOL_LARGEST) {
         wf_spin_unlock(&wf_pool_lock);
         wf_pool_host_release(block, granted);
+        wf__scope_release(scope);
         return;
     }
     index = wf_pool_class_of(granted);
@@ -1160,6 +1171,7 @@ static void wf_pool_give(void *block, size_t granted) {
     released->next = wf_pool_released[index];
     wf_pool_released[index] = released;
     wf_spin_unlock(&wf_pool_lock);
+    wf__scope_release(scope);
 }
 
 /* One chunk of a context's frame arena.  Frames are allocated and released
@@ -1171,7 +1183,7 @@ struct wf_context_chunk {
     size_t used;
     size_t capacity;
     /* Keeps the frames that follow at the alignment LLVM's frames need. */
-    uint64_t align[1];
+    uint64_t origin;
 };
 #define WF_CONTEXT_CHUNK_HEADER ((sizeof(wf_context_chunk) + 15u) / 16u * 16u)
 /* A context's first chunk holds its argument block, its outermost frame and
@@ -1205,6 +1217,7 @@ struct wf_watch_chunk {
     wf_watch_chunk *next;
     size_t pool_bytes;
     uint32_t used;
+    unsigned origin;
     wf_watch_link links[WF_WATCH_CHUNK_LINKS];
 };
 struct wf_watch {
@@ -1225,6 +1238,7 @@ typedef struct wf_shared {
      * for the hold back, which ends the borrowing. */
     _Atomic uint8_t borrowed;
     _Atomic uint8_t claimed;
+    uint8_t origin;
     uint32_t watched;
     _Atomic uint64_t holders;
     wf_context *waiting_head;
@@ -1262,6 +1276,11 @@ static wf_cancel wf_never_state = {
 #define WF_CANCEL_ONLY SIZE_MAX
 
 struct wf_context {
+    /* Updated at enter/leave, before a park can publish this context to a
+     * different driver. Never save it by touching the context after resume
+     * returns: a parked-away context may already have been freed. */
+    unsigned scope;
+    unsigned origin;
     /* The frame the driver resumes when the context is chosen. */
     void *resume;
     /* The context's outermost frame, done when the context has finished. */
@@ -1339,9 +1358,9 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 /* The most drivers a program runs, whatever WF_DRIVERS asks for. */
 #define WF_DRIVER_LIMIT 64u
 
-/* One cache line per allocation-producing thread: the entry, context
- * drivers and compute workers. Each registers once; these runtime pools
- * start at most their declared ceilings of threads during an execution.
+/* One process counter and a scope row per allocation-producing thread:
+ * the entry, context drivers and compute workers. Each registers once;
+ * these pools start at most their declared thread ceilings per execution.
  * Slots outlive threads, since a block may be freed on another driver.
  * A slot is single-writer. Relaxed atomic loads/stores permit concurrent
  * observation without an atomic read-modify-write on the allocation path.
@@ -1353,13 +1372,17 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 #define WF_HEAP_COUNTERS (1u + WF_DRIVER_LIMIT + WF_SCHED_MAX_THREADS)
 typedef struct {
     _Alignas(64) _Atomic uint64_t bytes;
+    /* Scope slots are packed in one cache-line-aligned row per thread,
+     * not padded individually. No two writers share a cache line. */
+    _Alignas(64) _Atomic uint64_t scopes[WF_SCOPE_CAPACITY];
 } wf_heap_counter;
 static wf_heap_counter wf_heap_counters[WF_HEAP_COUNTERS];
 static _Atomic unsigned wf_heap_counter_count;
 static _Thread_local wf_heap_counter *wf_heap_self;
 static _Thread_local uint64_t wf_heap_local_bytes;
+static _Thread_local uint64_t wf_scope_local_bytes[WF_SCOPE_CAPACITY];
 
-void wf__heap_change(int64_t change) {
+static void wf_heap_register(void) {
     if (wf_heap_self == NULL) {
         unsigned index = atomic_fetch_add_explicit(
             &wf_heap_counter_count, 1u, memory_order_relaxed);
@@ -1368,8 +1391,168 @@ void wf__heap_change(int64_t change) {
         }
         wf_heap_self = &wf_heap_counters[index];
     }
+}
+
+static void wf_scope_change(unsigned slot, int64_t change) {
+    wf_heap_register();
+    wf_scope_local_bytes[slot] += (uint64_t)change;
+    atomic_store_explicit(&wf_heap_self->scopes[slot], wf_scope_local_bytes[slot],
+                          memory_order_relaxed);
+}
+
+void wf__heap_change(unsigned origin, int64_t change) {
+    wf_heap_register();
     wf_heap_local_bytes += (uint64_t)change;
     atomic_store_explicit(&wf_heap_self->bytes, wf_heap_local_bytes, memory_order_relaxed);
+    wf_scope_change(origin, change);
+}
+
+/* ------------------------------------------------------- scope accounts */
+
+typedef struct {
+    uint64_t generation;
+    uint64_t parent_generation;
+    unsigned parent;
+    unsigned owner_present;
+    unsigned activity;
+    unsigned descendants;
+    uint64_t retained;
+} wf_scope_slot;
+
+static atomic_flag wf_scope_lock = ATOMIC_FLAG_INIT;
+static wf_scope_slot wf_scopes[WF_SCOPE_CAPACITY] = {
+    [0] = { .generation = 1u, .owner_present = 1u }
+};
+
+/* The lifecycle lock serializes opens, close, entry/leave and ancestry scans.
+ * A runner keeps activity until its body and structured joins finish, so no
+ * current-scope writer can remain when activity and descendants reach zero.
+ * Rows stay single-writer even across reuse: never clear another thread's
+ * cell or TLS mirror. The old generation's aggregate must already be zero.
+ * Each retained structure pins its origin even at zero bytes. Its last
+ * release follows the last counter publication, under this same lock, so
+ * close/reuse cannot pass a release or an external resize still in flight. */
+static int wf_scope_live(uint64_t slot, uint64_t generation) {
+    return slot < WF_SCOPE_CAPACITY && wf_scopes[slot].owner_present
+        && wf_scopes[slot].generation == generation;
+}
+
+void wf__scope_retain(unsigned origin) {
+    if (origin == 0u) return; /* The default account never retires. */
+    wf_spin_lock(&wf_scope_lock);
+    if (origin >= WF_SCOPE_CAPACITY || !wf_scopes[origin].owner_present
+        || wf_scopes[origin].retained == UINT64_MAX) {
+        wf_spin_unlock(&wf_scope_lock);
+        wf_bridge_fail("storage retained an unavailable scope");
+    }
+    wf_scopes[origin].retained += 1u;
+    wf_spin_unlock(&wf_scope_lock);
+}
+
+void wf__scope_release(unsigned origin) {
+    if (origin == 0u) return;
+    wf_spin_lock(&wf_scope_lock);
+    if (origin >= WF_SCOPE_CAPACITY || wf_scopes[origin].retained == 0u) {
+        wf_spin_unlock(&wf_scope_lock);
+        wf_bridge_fail("storage released an unretained scope");
+    }
+    wf_scopes[origin].retained -= 1u;
+    wf_spin_unlock(&wf_scope_lock);
+}
+
+static uint64_t wf_scope_sum(unsigned slot) {
+    uint64_t bytes = 0;
+    if (slot == 0u) {
+        wf_spin_lock(&wf_pool_lock);
+        bytes = wf_pool_default_bytes;
+        wf_spin_unlock(&wf_pool_lock);
+    }
+    unsigned count = atomic_load_explicit(&wf_heap_counter_count, memory_order_relaxed);
+    for (unsigned thread = 0; thread < count && thread < WF_HEAP_COUNTERS; ++thread) {
+        bytes += atomic_load_explicit(&wf_heap_counters[thread].scopes[slot],
+                                      memory_order_relaxed);
+    }
+    return bytes;
+}
+
+/* Called with the table locked. Check each fixed parent generation, including
+ * the queried root, before admitting a slot to the inclusive reading. */
+static int wf_scope_below(unsigned slot, unsigned ancestor, uint64_t generation) {
+    for (;;) {
+        if (!wf_scopes[slot].owner_present) return 0;
+        if (slot == ancestor) return wf_scopes[slot].generation == generation;
+        if (slot == 0u) return 0;
+        wf_scope_slot *child = &wf_scopes[slot];
+        if (!wf_scope_live(child->parent, child->parent_generation)) return 0;
+        slot = child->parent;
+    }
+}
+
+int wf__scope_open(uint64_t parent, uint64_t parent_generation,
+                    uint64_t *slot, uint64_t *generation) {
+    wf_spin_lock(&wf_scope_lock);
+    if (!wf_scope_live(parent, parent_generation)) {
+        wf_spin_unlock(&wf_scope_lock);
+        wf_bridge_fail("a scope was opened with no live parent owner");
+    }
+    for (unsigned index = 1u; index < WF_SCOPE_CAPACITY; ++index) {
+        wf_scope_slot *fresh = &wf_scopes[index];
+        if (fresh->owner_present || fresh->activity || fresh->descendants || fresh->retained
+            || fresh->generation == UINT64_MAX || wf_scope_sum(index) != 0u) continue;
+        fresh->generation += 1u;
+        fresh->parent = (unsigned)parent;
+        fresh->parent_generation = parent_generation;
+        fresh->owner_present = 1u;
+        for (unsigned at = (unsigned)parent;; at = wf_scopes[at].parent) {
+            wf_scopes[at].descendants += 1u;
+            if (at == 0u) break;
+        }
+        *slot = index;
+        *generation = fresh->generation;
+        wf_spin_unlock(&wf_scope_lock);
+        return 1;
+    }
+    wf_spin_unlock(&wf_scope_lock);
+    return 0;
+}
+
+int wf__scope_bytes(uint64_t slot, uint64_t generation, uint64_t *bytes) {
+    uint64_t sum = 0;
+    wf_spin_lock(&wf_scope_lock);
+    if (!wf_scope_live(slot, generation)) {
+        wf_spin_unlock(&wf_scope_lock);
+        return 0;
+    }
+    for (unsigned index = 0u; index < WF_SCOPE_CAPACITY; ++index) {
+        if (wf_scope_below(index, (unsigned)slot, generation)) sum += wf_scope_sum(index);
+    }
+    /* Clamp only the aggregate, never individual thread or descendant sums. */
+    *bytes = sum > (uint64_t)INT64_MAX ? 0u : sum;
+    wf_spin_unlock(&wf_scope_lock);
+    return 1;
+}
+
+int wf__scope_close(uint64_t slot, uint64_t generation) {
+    wf_spin_lock(&wf_scope_lock);
+    if (slot == 0u || !wf_scope_live(slot, generation)) {
+        wf_spin_unlock(&wf_scope_lock);
+        return 0;
+    }
+    wf_scope_slot *closing = &wf_scopes[slot];
+    /* Descendants pin all their ancestors, including their retained bytes.
+     * The raw sum is a consistency condition, never a sampled/clamped zero. */
+    if (closing->activity || closing->descendants || closing->retained
+        || wf_scope_sum((unsigned)slot) != 0u) {
+        wf_spin_unlock(&wf_scope_lock);
+        return 0;
+    }
+    closing->owner_present = 0u;
+    for (unsigned at = closing->parent;; at = wf_scopes[at].parent) {
+        wf_scopes[at].descendants -= 1u;
+        if (at == 0u) break;
+    }
+    wf_spin_unlock(&wf_scope_lock);
+    return 1;
 }
 
 uint64_t wf__heap_in_use(void) {
@@ -1529,6 +1712,35 @@ static _Thread_local wf_context *wf_context_current;
 static _Thread_local int wf_context_parked_away;
 /* The context `wf__context_prepare` made and `wf__context_launch` starts. */
 static _Thread_local wf_context *wf_context_prepared;
+
+int wf__scope_enter(uint64_t slot, uint64_t generation) {
+    wf_spin_lock(&wf_scope_lock);
+    if (slot == 0u || !wf_scope_live(slot, generation)
+        || wf_scopes[slot].parent != wf__scope_current()
+        || !wf_scope_live(wf_scopes[slot].parent, wf_scopes[slot].parent_generation)) {
+        wf_spin_unlock(&wf_scope_lock);
+        return 0;
+    }
+    wf_scopes[slot].activity += 1u;
+    (void)wf__scope_swap((unsigned)slot);
+    if (wf_context_current != NULL) wf_context_current->scope = (unsigned)slot;
+    wf_spin_unlock(&wf_scope_lock);
+    return 1;
+}
+
+void wf__scope_leave(uint64_t slot, uint64_t generation) {
+    wf_spin_lock(&wf_scope_lock);
+    if (slot == 0u || !wf_scope_live(slot, generation) || wf__scope_current() != slot
+        || wf_scopes[slot].activity == 0u) {
+        wf_spin_unlock(&wf_scope_lock);
+        wf_bridge_fail("a scope leave did not match its active entry");
+    }
+    unsigned parent = wf_scopes[slot].parent;
+    (void)wf__scope_swap(parent);
+    if (wf_context_current != NULL) wf_context_current->scope = parent;
+    wf_scopes[slot].activity -= 1u;
+    wf_spin_unlock(&wf_scope_lock);
+}
 /* Started and not finished, on every driver; the root is not counted. */
 static _Atomic uint64_t wf_context_live;
 /* Threads inside `wf_drivers_notify_others`, which a helper thread enters
@@ -1877,12 +2089,12 @@ static void wf_timer_insert(wf_driver *driver, wf_context *context, uint64_t at)
     if (driver->timer_count == driver->timer_capacity) {
         size_t capacity = driver->timer_capacity == 0 ? 64u : driver->timer_capacity * 2u;
         size_t granted;
-        wf_context **grown = (wf_context **)wf_pool_take(capacity * sizeof(*grown), &granted);
+        wf_context **grown = (wf_context **)wf_pool_take_for(capacity * sizeof(*grown), &granted, 0u);
         if (driver->timer_count != 0) {
             memcpy(grown, driver->timers, driver->timer_count * sizeof(*grown));
         }
         if (driver->timers != NULL) {
-            wf_pool_give(driver->timers, driver->timer_bytes);
+            wf_pool_give_for(driver->timers, driver->timer_bytes, 0u);
         }
         driver->timers = grown;
         driver->timer_bytes = granted;
@@ -2127,10 +2339,12 @@ static void *wf_context_allocate(wf_context *context, uint64_t bytes) {
         } else {
             size_t granted;
             if (fresh != NULL) {
-                wf_pool_give(fresh, WF_CONTEXT_CHUNK_HEADER + fresh->capacity);
+                wf_pool_give_for(fresh, WF_CONTEXT_CHUNK_HEADER + fresh->capacity, (unsigned)fresh->origin);
             }
             context->spare = NULL;
-            fresh = (wf_context_chunk *)wf_pool_take(WF_CONTEXT_CHUNK_HEADER + wanted, &granted);
+            unsigned origin = wf__scope_current();
+            fresh = (wf_context_chunk *)wf_pool_take_for(WF_CONTEXT_CHUNK_HEADER + wanted, &granted, origin);
+            fresh->origin = origin;
             fresh->capacity = granted - WF_CONTEXT_CHUNK_HEADER;
         }
         fresh->used = 0;
@@ -2157,7 +2371,8 @@ static void wf_context_release(wf_context *context, void *frame) {
     if (chunk->used == 0 && chunk->previous != NULL) {
         context->arena = chunk->previous;
         if (context->spare != NULL) {
-            wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+            wf_pool_give_for(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity,
+                             (unsigned)context->spare->origin);
         }
         context->spare = chunk;
     }
@@ -2166,11 +2381,13 @@ static void wf_context_release(wf_context *context, void *frame) {
 static void wf_context_release_arena(wf_context *context) {
     while (context->arena != NULL) {
         wf_context_chunk *previous = context->arena->previous;
-        wf_pool_give(context->arena, WF_CONTEXT_CHUNK_HEADER + context->arena->capacity);
+        wf_pool_give_for(context->arena, WF_CONTEXT_CHUNK_HEADER + context->arena->capacity,
+                         (unsigned)context->arena->origin);
         context->arena = previous;
     }
     if (context->spare != NULL) {
-        wf_pool_give(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity);
+        wf_pool_give_for(context->spare, WF_CONTEXT_CHUNK_HEADER + context->spare->capacity,
+                         (unsigned)context->spare->origin);
     }
     context->spare = NULL;
 }
@@ -2304,9 +2521,12 @@ void *wf__context_prepare(uint64_t bytes) {
     }
     {
         size_t granted;
-        context = (wf_context *)wf_pool_take(sizeof(*context), &granted);
+        unsigned origin = wf__scope_current();
+        context = (wf_context *)wf_pool_take_for(sizeof(*context), &granted, origin);
         memset(context, 0, sizeof(*context));
         context->pool_bytes = granted;
+        context->scope = wf__scope_current();
+        context->origin = origin;
     }
     wf_context_prepared = context;
     return wf_context_allocate(context, bytes);
@@ -2375,7 +2595,9 @@ void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *a
     }
     wf_context_prepared = NULL;
     wf_context_current = context;
+    unsigned previous_scope = wf__scope_swap(context->scope);
     frame = start(arguments);
+    (void)wf__scope_swap(previous_scope);
     wf_context_current = starter;
     if (frame == NULL) {
         wf_bridge_fail("a started context has no frame");
@@ -2471,13 +2693,15 @@ static void wf_context_finish(wf_context *context) {
         wf_bridge_fail("a context finished between registering a guard's watch and parking it");
     }
     wf_context_current = context;
+    unsigned previous_scope = wf__scope_swap(context->scope);
     wf__coro_destroy(context->root);
     wf_context_current = previous;
     wf_context_release_arena(context);
     /* Return all context storage before publishing the join: a starter
      * reading memory after that join must not count a finished context.
      * The group is in the starter's frame, not in the released context. */
-    wf_pool_give(context, context->pool_bytes);
+    wf_pool_give_for(context, context->pool_bytes, context->origin);
+    (void)wf__scope_swap(previous_scope);
     atomic_fetch_sub_explicit(&wf_context_live, 1u, memory_order_release);
     wf_group_finish(group);
 }
@@ -2577,7 +2801,9 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
         } else {
             size_t granted;
             wf_spin_unlock(&wf_watch_lock);
-            fresh = (wf_watch_chunk *)wf_pool_take(sizeof(*fresh), &granted);
+            unsigned origin = wf__scope_current();
+            fresh = (wf_watch_chunk *)wf_pool_take_for(sizeof(*fresh), &granted, origin);
+            fresh->origin = origin;
             fresh->pool_bytes = granted;
             continue;
         }
@@ -2597,7 +2823,7 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
         break;
     }
     if (fresh != NULL) {
-        wf_pool_give(fresh, fresh->pool_bytes);
+        wf_pool_give_for(fresh, fresh->pool_bytes, fresh->origin);
     }
 }
 
@@ -2645,7 +2871,7 @@ static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **d
 static void wf_watch_give_back(wf_watch_chunk *dead) {
     while (dead != NULL) {
         wf_watch_chunk *next = dead->next;
-        wf_pool_give(dead, dead->pool_bytes);
+        wf_pool_give_for(dead, dead->pool_bytes, dead->origin);
         dead = next;
     }
 }
@@ -2755,16 +2981,26 @@ unsigned wf__driver_index(void) {
     return wf_driver_self != NULL ? wf_driver_self->index : 0u;
 }
 
-void *wf__runtime_take(uint64_t bytes) {
+void *wf__runtime_take(uint64_t bytes, unsigned origin) {
     size_t granted;
     if (bytes > SIZE_MAX) {
         wf_context_exhausted();
     }
-    return wf_pool_take((size_t)bytes, &granted);
+    return wf_pool_take_for((size_t)bytes, &granted, origin);
 }
 
-void wf__runtime_give(void *block, uint64_t bytes) {
-    wf_pool_give(block, wf_pool_granted((size_t)bytes));
+void wf__runtime_give(void *block, uint64_t bytes, unsigned origin) {
+    wf_pool_give_for(block, wf_pool_granted((size_t)bytes), origin);
+}
+
+void *wf__runtime_take_default(uint64_t bytes) {
+    size_t granted;
+    if (bytes > SIZE_MAX) wf_context_exhausted();
+    return wf_pool_take_for((size_t)bytes, &granted, 0u);
+}
+
+void wf__runtime_give_default(void *block, uint64_t bytes) {
+    wf_pool_give_for(block, wf_pool_granted((size_t)bytes), 0u);
 }
 
 uint64_t wf__runtime_granted(uint64_t bytes) {
@@ -2788,15 +3024,17 @@ void *wf__shared_new(uint64_t state_bytes) {
     if (state_bytes > SIZE_MAX - WF_SHARED_STATE_OFFSET) {
         wf_context_exhausted();
     }
-    shared = (wf_shared *)wf_pool_take(
+    unsigned origin = wf__scope_current();
+    shared = (wf_shared *)wf_pool_take_for(
         WF_SHARED_STATE_OFFSET + (size_t)state_bytes,
-        &granted
+        &granted, origin
     );
     memset(shared, 0, sizeof(*shared));
     atomic_store_explicit(&shared->handles, 1u, memory_order_relaxed);
     atomic_store_explicit(&shared->holders, 0u, memory_order_relaxed);
     atomic_flag_clear(&shared->lock);
     shared->pool_bytes = granted;
+    shared->origin = (uint8_t)origin;
     return shared;
 }
 
@@ -2812,7 +3050,7 @@ int wf__shared_release(void *object) {
 
 void wf__shared_free(void *object) {
     wf_shared *shared = (wf_shared *)object;
-    wf_pool_give(shared, shared->pool_bytes);
+    wf_pool_give_for(shared, shared->pool_bytes, shared->origin);
 }
 
 /* Whether a statement asking to write, or to read, may hold the object now.
@@ -3271,7 +3509,11 @@ static void wf_context_drive(wf_driver *driver) {
             next->passes = 0u;
             wf_context_current = next;
             wf_context_parked_away = 0;
+            unsigned previous_scope = wf__scope_swap(next->scope);
             wf__coro_resume(frame);
+            /* Enter/leave already saved the scope before any publication.
+             * In the parked-away case, next is no longer ours to access. */
+            (void)wf__scope_swap(previous_scope);
             wf_context_current = NULL;
             if (wf_context_parked_away) {
                 continue;
@@ -3389,13 +3631,13 @@ static void wf_drivers_begin(void) {
     }
     for (index = 1u; index < wanted; index++) {
         size_t granted;
-        wf_driver *driver = (wf_driver *)wf_pool_take(sizeof(*driver), &granted);
+        wf_driver *driver = (wf_driver *)wf_pool_take_for(sizeof(*driver), &granted, 0u);
         memset(driver, 0, sizeof(*driver));
         driver->pool_bytes = granted;
         driver->index = index;
         atomic_flag_clear(&driver->run_lock);
         if (wf_completion_runtime_init(&driver->own_runtime) != 0) {
-            wf_pool_give(driver, granted);
+            wf_pool_give_for(driver, granted, 0u);
             break;
         }
         driver->runtime = &driver->own_runtime;
@@ -3406,7 +3648,7 @@ static void wf_drivers_begin(void) {
                 WF_LINUX_IO_URING_COMPLETIONS
             ) != 0) {
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
-            wf_pool_give(driver, granted);
+            wf_pool_give_for(driver, granted, 0u);
             break;
         }
         if (wf_completion_set_wake_callback(
@@ -3416,7 +3658,7 @@ static void wf_drivers_begin(void) {
             ) != 0) {
             (void)wf_linux_io_uring_destroy(&driver->own_adapter);
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
-            wf_pool_give(driver, granted);
+            wf_pool_give_for(driver, granted, 0u);
             break;
         }
         wf_drivers[index] = driver;
@@ -3465,7 +3707,7 @@ static void wf_drivers_end(void) {
         (void)wf_linux_io_uring_destroy(&driver->own_adapter);
         (void)wf_completion_runtime_destroy(&driver->own_runtime);
         wf_drivers[index] = NULL;
-        wf_pool_give(driver, driver->pool_bytes);
+        wf_pool_give_for(driver, driver->pool_bytes, 0u);
     }
 }
 
@@ -3488,6 +3730,8 @@ void wf__context_root_begin(void) {
     atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
     wf_driver_self = &wf_driver_root;
     wf_context_root.driver = &wf_driver_root;
+    wf_context_root.scope = 0u;
+    (void)wf__scope_swap(0u);
     wf_context_current = &wf_context_root;
 }
 
@@ -3505,9 +3749,11 @@ void wf__context_root_run(void *frame) {
     }
     wf_drivers_end();
     wf_context_current = &wf_context_root;
+    (void)wf__scope_swap(wf_context_root.scope);
     wf__coro_destroy(frame);
     wf_context_release_arena(&wf_context_root);
     wf_context_current = NULL;
+    (void)wf__scope_swap(0u);
 }
 
 /* ------------------------------------------------------------- the join */

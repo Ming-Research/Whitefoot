@@ -1140,10 +1140,7 @@ impl<'unit> Checker<'_, 'unit> {
         let host = self
             .types
             .declarations
-            .declaration_home(template.declaration)
-            .is_some_and(|(package, path)| {
-                *package == crate::PackageKey::Standard && crate::library::is_host_module(path)
-            });
+            .build_provides(template.declaration);
         // PRE-2 supplies one definition for every instance. Until the
         // linked ABI supports more shapes, require fixed scalars and
         // references to statically known shapes; in particular an owned

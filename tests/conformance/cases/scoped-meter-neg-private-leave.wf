@@ -1,0 +1,3 @@
+fn leave(scope: &std::process::MeterScope) -> result: unit writes(scope) {
+  return std::process::scope_leave(scope: scope);
+}

@@ -36,34 +36,31 @@ const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
 /// Allocation identities and release order are observed independently of the
 /// cell implementation. U64's 512-element pages require 17 page owners
 /// for capacity 8193; cells reserve 1, 2, 4 and 32 directory words after a
-/// 24-byte header. Growth copies only the 1, 2 and 3 initialized pointers.
+/// 24-byte header. Growth resizes that cell through the origin-preserving
+/// heap ABI; its 17 independently allocated pages must never move.
 #[test]
 fn paged_growth_preserves_page_owners_and_releases_every_allocation() {
     let llvm = compile(GROWTH);
     let growth = emitted_prelude_row(&llvm, "grow_paged");
     assert_eq!(
-        growth.matches("call void @llvm.memmove").count(),
+        growth.matches("call ptr @wf__heap_retake").count(),
         1,
         "{growth}"
     );
-    assert!(growth.contains(".copied = mul nuw i64"), "{growth}");
+    assert!(!growth.contains("call void @llvm.memmove"), "{growth}");
     assert!(!growth.contains("load i64, ptr %element"), "{growth}");
-    let mut observed = llvm
+    let observed = llvm
         .replace("@wf__heap_take(", "@wf_paged_allocate(")
         .replace("@wf__heap_give(", "@wf_paged_release(")
-        .replace(
-            "call void @llvm.memmove.p0.p0.i64(",
-            "call void @wf_paged_move(",
-        )
+        .replace("@wf__heap_retake(", "@wf_paged_reallocate(")
         .replace("@main(", "@wf_fixture_main(");
-    observed.push_str("\ndeclare void @wf_paged_move(ptr, ptr, i64, i1)\n");
     let host = r#"#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 extern int wf_fixture_main(int, char **);
 static void *owners[21];
-static size_t allocations, releases, copies;
+static size_t allocations, releases, resizes;
 static void require(int ok) { if (!ok) { fputs("paged allocation mismatch\n", stderr); exit(99); } }
 void *wf_paged_allocate(uint64_t bytes) {
   static const uint64_t first[] = {32, 4096, 40, 4096, 56, 4096, 280};
@@ -74,15 +71,6 @@ void *wf_paged_allocate(uint64_t bytes) {
   owners[allocations++] = p;
   return p;
 }
-void wf_paged_move(void *destination, const void *source, uint64_t bytes, _Bool is_volatile) {
-  static const size_t old[] = {0, 2, 4}, fresh[] = {2, 4, 6};
-  require(copies < 3 && allocations == fresh[copies] + 1 && !is_volatile);
-  require(destination == (char *)owners[fresh[copies]] + 24);
-  require(source == (char *)owners[old[copies]] + 24);
-  require(bytes == 8 * (copies + 1));
-  ++copies;
-  memmove(destination, source, (size_t)bytes);
-}
 void wf_paged_release(void *p, uint64_t bytes) {
   static const size_t order[] = {0, 2, 4, 1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 6};
   require(releases < 21 && p == owners[order[releases]]);
@@ -92,9 +80,20 @@ void wf_paged_release(void *p, uint64_t bytes) {
   ++releases;
   /* Quarantine allocations so reuse cannot conceal an identity change. */
 }
+void *wf_paged_reallocate(void *p, uint64_t old_bytes, uint64_t new_bytes) {
+  static const size_t old[] = {0, 2, 4}, fresh[] = {2, 4, 6};
+  static const uint64_t before[] = {32, 40, 56}, after[] = {40, 56, 280};
+  require(resizes < 3 && p == owners[old[resizes]] && allocations == fresh[resizes]);
+  require(old_bytes == before[resizes] && new_bytes == after[resizes]);
+  void *moved = wf_paged_allocate(new_bytes);
+  memcpy(moved, p, (size_t)old_bytes);
+  wf_paged_release(p, old_bytes);
+  ++resizes;
+  return moved;
+}
 int main(int argc, char **argv) {
   int result = wf_fixture_main(argc, argv);
-  require(result == 0 && allocations == 21 && releases == 21 && copies == 3);
+  require(result == 0 && allocations == 21 && releases == 21 && resizes == 3);
   for (size_t i = 0; i < allocations; ++i) free(owners[i]);
   return 0;
 }
@@ -355,6 +354,7 @@ fn paged_page_and_cell_size_failures_precede_their_allocator() {
         });
         let observed = module
             .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_retake(", "@wf_test_reallocate(")
             .replace("@wf__heap_give(", "@wf_test_release(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",

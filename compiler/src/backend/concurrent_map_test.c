@@ -60,11 +60,14 @@ static _Atomic uint64_t allocations;
 static _Atomic int64_t mapped_bytes_out;
 static void *test_take(size_t bytes);
 static void test_give(void *block);
-#define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
-#define WF_CMAP_GIVE(block, bytes) test_give(block)
+#define WF_CMAP_TAKE(bytes, origin) ((void)(origin), test_take((size_t)(bytes)))
+#define WF_CMAP_GIVE(block, bytes, origin) ((void)(origin), test_give(block))
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
-#define WF_CMAP_HEAP_CHANGE(delta) atomic_fetch_add_explicit(&mapped_bytes_out, (delta), memory_order_relaxed)
+#define WF_CMAP_HEAP_CHANGE(origin, delta) ((void)(origin), atomic_fetch_add_explicit(&mapped_bytes_out, (delta), memory_order_relaxed))
+#define WF_CMAP_ORIGIN() 0u
+#define WF_CMAP_RETAIN(origin) ((void)(origin))
+#define WF_CMAP_RELEASE(origin) ((void)(origin))
 struct wf_cmap;
 static void finishing(struct wf_cmap *map);
 #define WF_CMAP_FINISHING(map) finishing(map)

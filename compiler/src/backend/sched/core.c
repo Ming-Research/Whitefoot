@@ -312,6 +312,7 @@ struct wf__par_slot {
     /* First member: the emitted ABI carries only this opaque frame address. */
     _Alignas(16) unsigned char frame[WF_PAR_FRAME_BYTES];
     void (*run)(void *);
+    unsigned scope;
     int state;
     /* Atomically registered by the owner: either NULL or immutable home. */
     struct wf__par_lane *waiter;
@@ -713,6 +714,24 @@ static void wf__par_trace_dump(void) {
 
 static _Thread_local struct wf__par_lane *wf__par_self;
 
+static _Thread_local unsigned wf_scope_current;
+
+unsigned wf__scope_current(void) { return wf_scope_current; }
+
+unsigned wf__scope_swap(unsigned scope) {
+    unsigned previous = wf_scope_current;
+    wf_scope_current = scope;
+    return previous;
+}
+
+/* All three execution paths (steal/help and both owner reclaims) use this
+ * boundary. Restore before publishing DONE: the slot can be reused then. */
+static void wf__par_run(struct wf__par_slot *slot) {
+    unsigned previous = wf__scope_swap(slot->scope);
+    slot->run(slot->frame);
+    (void)wf__scope_swap(previous);
+}
+
 static _Thread_local int wf__par_attached;
 
 static unsigned wf__par_ready;
@@ -918,7 +937,7 @@ static void wf__par_execute(struct wf__par_slot *slot) {
     uint64_t trace_started = wf_prim_monotonic_ns();
     uint64_t trace_elapsed;
 #endif
-    slot->run(slot->frame);
+    wf__par_run(slot);
 #if defined(WF_PAR_TRACE)
     trace_elapsed = wf_prim_monotonic_ns() - trace_started;
 #endif
@@ -1318,6 +1337,7 @@ void *wf__par_acquire_lane(uint64_t bytes) {
 void wf__par_publish(void *frame, void (*fn)(void *)) {
     struct wf__par_slot *slot = (struct wf__par_slot *)frame;
     slot->run = fn;
+    slot->scope = wf__scope_current();
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
     wf__par_push(slot->home, slot);
 #if defined(WF_PAR_TRACE)
@@ -1339,7 +1359,7 @@ void wf__par_join(void *frame) {
 #if defined(WF_PAR_TRACE)
         uint64_t trace_started = wf_prim_monotonic_ns();
 #endif
-        target->run(target->frame);
+        wf__par_run(target);
 #if defined(WF_PAR_TRACE)
         wf__par_trace_chunk(lane, wf_prim_monotonic_ns() - trace_started);
 #endif
@@ -1356,7 +1376,7 @@ void wf__par_join(void *frame) {
 #if defined(WF_PAR_TRACE)
             uint64_t trace_started = wf_prim_monotonic_ns();
 #endif
-            target->run(target->frame);
+            wf__par_run(target);
 #if defined(WF_PAR_TRACE)
             wf__par_trace_chunk(lane, wf_prim_monotonic_ns() - trace_started);
 #endif

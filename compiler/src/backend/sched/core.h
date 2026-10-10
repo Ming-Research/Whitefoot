@@ -8,6 +8,12 @@
 #endif
 _Static_assert((WF_SCHED_LANE_SLOTS & (WF_SCHED_LANE_SLOTS - 1)) == 0, "deque size must be a power of two");
 #define WF_SCHED_MAX_THREADS 64u
+/* Logical allocation account, independent of the thread's context pointer.
+ * Drivers install it on resume; compute callbacks save/restore it even when
+ * a joining driver helps work offered by another context. Slot lifetime is
+ * protected by the runner's activity through its structured joins. */
+unsigned wf__scope_current(void);
+unsigned wf__scope_swap(unsigned scope);
 #ifndef WF_SCHED_STATS
 #define WF_SCHED_STATS 1
 #endif

@@ -425,8 +425,8 @@ fn linked_definitions_return_their_declared_register_results() {
             }
             // The two Instant producers, the four cancellation constructors, whose
             // results are one-field structs over a shared handle [PRE-2],
-            // `Result<u64, Utf8Error>` and the resident reading's `Option<u64>`
-            // fit the register-result budget.
+            // `Result<u64, Utf8Error>` and the resident and scope readings'
+            // `Option<u64>` fit the register-result budget.
             assert_eq!(
                 linked,
                 [
@@ -438,6 +438,7 @@ fn linked_definitions_return_their_declared_register_results() {
                     "std.time.cancel_never",
                     "std.text.host_utf8_len",
                     "std.process.resident_bytes",
+                    "std.process.scope_bytes",
                 ]
             );
             // `sleep_until`'s `Result<unit, unit>` fits the budget too, and

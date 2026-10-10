@@ -1,0 +1,3 @@
+fn discard(scope: std::process::MeterScope) -> result: unit pure {
+  return unit;
+}

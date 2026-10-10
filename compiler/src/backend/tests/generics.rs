@@ -2,6 +2,56 @@
 //! These are compiler implementation observations, using shared corpus sources.
 use super::{compile, compile_and_run, compile_sources};
 
+/// A host module's generic Whitefoot definition uses ordinary instance and
+/// waiting-frame lowering. Reuse the source-checking conformance witness;
+/// these assertions observe compiler structure, not runtime accounting.
+#[test]
+fn the_scoped_runner_monomorphizes_its_whitefoot_body() {
+    super::system::with_ir(
+        include_bytes!("../../../../tests/conformance/cases/scoped-meter-pos-runner.wf"),
+        |program| {
+            let runners = program
+                .functions()
+                .iter()
+                .filter(|function| {
+                    function
+                        .name()
+                        .starts_with("std.process.scope_run$instance$")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(runners.len(), 1, "one concrete KeepOwner runner");
+            assert!(runners[0].waits());
+            assert!(
+                !runners[0].blocks().is_empty(),
+                "the runner has a checked body"
+            );
+            for name in ["scope_enter", "scope_leave"] {
+                let primitive = program
+                    .functions()
+                    .iter()
+                    .find(|function| function.name() == format!("std.process.{name}"))
+                    .expect("the private primitive is an ordinary declaration");
+                assert!(primitive.blocks().is_empty());
+                assert!(!primitive.waits());
+            }
+            let llvm = crate::emit_llvm(program)
+                .expect("the concrete runner emits")
+                .into_string();
+            assert!(llvm.contains("call i1 @wf_std.process.scope_enter("));
+            assert!(llvm.contains("call i8 @wf_std.process.scope_leave("));
+            assert!(
+                llvm.contains("call void @wf_keep("),
+                "direct supplied member call"
+            );
+            assert!(
+                llvm.lines()
+                    .any(|line| { public_definition(line, "@wf_std.process.scope_run$instance$") }),
+                "the waiting runner is emitted, not a linked start/finish pair"
+            );
+        },
+    );
+}
+
 fn compile_program(name: &str) -> String {
     match name {
         "generic_instances.wf" => compile(include_bytes!(

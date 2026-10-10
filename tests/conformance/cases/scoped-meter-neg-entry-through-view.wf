@@ -1,0 +1,14 @@
+alias ScopeBody = std::process::ScopeBody;
+alias ScopeRun = std::process::ScopeRun;
+
+fn keep(argument: u64) -> result: u64 pure {
+  return argument;
+}
+
+binding KeepNumber : ScopeBody<u64, u64> {
+  run = keep;
+}
+
+fn enter(view: std::process::ScopeView) -> outcome: ScopeRun<u64, u64> pure waits {
+  return std::process::scope_run::<KeepNumber>(scope: move view, argument: 0_u64);
+}

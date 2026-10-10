@@ -24,14 +24,17 @@
 #include "completion/bridge.h"
 
 #ifndef WF_CMAP_TAKE
-#define WF_CMAP_TAKE(bytes) wf__runtime_take(bytes)
-#define WF_CMAP_GIVE(block, bytes) wf__runtime_give((block), (bytes))
+#define WF_CMAP_TAKE(bytes, origin) wf__runtime_take((bytes), (origin))
+#define WF_CMAP_GIVE(block, bytes, origin) wf__runtime_give((block), (bytes), (origin))
 #define WF_CMAP_YIELD() wf__runtime_yield()
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
 #define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
+#define WF_CMAP_ORIGIN() wf__scope_current()
+#define WF_CMAP_RETAIN(origin) wf__scope_retain(origin)
+#define WF_CMAP_RELEASE(origin) wf__scope_release(origin)
 #endif
 #ifndef WF_CMAP_HEAP_CHANGE
-#define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
+#define WF_CMAP_HEAP_CHANGE(origin, delta) wf__heap_change((origin), (delta))
 #endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;

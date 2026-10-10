@@ -1,7 +1,7 @@
 //! The standard library the toolchain supplies [MOD-10]: its graph record and
 //! its modules' records, carried from the compiler's own build so that a
 //! program is always checked against the library its compiler ships, and the
-//! host modules whose definitions the build supplies [PRE-2].
+//! host functions whose definitions the build supplies [PRE-2].
 
 /// The logical path of the standard library's graph record.
 #[cfg(test)]
@@ -41,6 +41,10 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
     (
         "std/process/module.wfm",
         include_str!("../../lib/std/process/module.wfm"),
+    ),
+    (
+        "std/process/scope.wf",
+        include_str!("../../lib/std/process/scope.wf"),
     ),
     (
         "std/collections/vector/module.wfm",
@@ -236,14 +240,120 @@ pub(crate) fn records(
         .collect()
 }
 
-/// The host modules [PRE-2], by their paths below the standard library: the
-/// modules whose functions have no Whitefoot definition, the build supplying
-/// each from the runtime units.
+/// The host modules [PRE-2], by their paths below the standard library.
+#[cfg(test)]
 pub(crate) const HOST_MODULES: &[&str] = &["time", "io", "text", "fs", "net", "process"];
 
-/// Reports whether a standard library module at `path` is a host module.
-pub(crate) fn is_host_module(path: &[String]) -> bool {
-    matches!(path, [single] if HOST_MODULES.contains(&single.as_str()))
+/// The build's definition inventory [PRE-2], keyed by the complete identity
+/// of a top-level interface function. A module may also contain checked
+/// Whitefoot definitions: those are paired by ordinary MOD-7 resolution,
+/// never supplied here merely because they belong to a host module.
+///
+/// Visibility is deliberately absent from this selection. Private support
+/// functions use the same provider and the same MOD-6 lookup as public ones.
+pub(crate) fn build_provides_function(key: &crate::DeclarationKey) -> bool {
+    let crate::DeclarationKey::Item(crate::ItemKey::Declared {
+        home:
+            crate::ItemHome::Module {
+                package: crate::PackageKey::Standard,
+                path,
+                record: crate::SourceRole::Interface,
+            },
+        role: crate::DeclarationRole::Function,
+        spelling,
+    }) = key
+    else {
+        return false;
+    };
+    let [module] = path.as_slice() else {
+        return false;
+    };
+    matches!(
+        (module.as_str(), spelling.as_str()),
+        (
+            "time",
+            "clock_share"
+                | "wall_clock_share"
+                | "now"
+                | "instant_after"
+                | "nanoseconds_from"
+                | "instant_reached"
+                | "sleep_until"
+                | "unix_nanoseconds"
+                | "cancel_state"
+                | "cancel_source"
+                | "cancel_share"
+                | "cancel_watch"
+                | "cancel_fire"
+                | "cancel_never"
+                | "close_cancel_source"
+                | "close_cancel_watch"
+        ) | ("io", "factory_share" | "write_once" | "read_next")
+            | (
+                "text",
+                "args_count"
+                    | "arg_get"
+                    | "host_bytes_len"
+                    | "host_copy_bytes"
+                    | "host_utf8_len"
+                    | "host_copy_utf8"
+            )
+            | (
+                "fs",
+                "relative_path"
+                    | "open_read"
+                    | "read_at"
+                    | "open_directory"
+                    | "open_directory_write"
+                    | "open_directory_source"
+                    | "directory_next"
+                    | "open_file"
+                    | "open_append"
+                    | "append_once"
+                    | "sync_file"
+                    | "truncate_file"
+                    | "rename_file"
+                    | "move_file"
+                    | "remove_file"
+                    | "sync_directory"
+                    | "close_read"
+                    | "close_write"
+                    | "close_directory"
+                    | "close_directory_write"
+                    | "close_directory_source"
+            )
+            | (
+                "net",
+                "socket_address_v4"
+                    | "socket_address_v6"
+                    | "tcp_listen"
+                    | "tcp_accept"
+                    | "tcp_connect"
+                    | "receive_next"
+                    | "send_once"
+                    | "close_listener"
+                    | "close_receive"
+                    | "close_send"
+            )
+            | (
+                "process",
+                "exit_status"
+                    | "stop_listen"
+                    | "stop_next"
+                    | "close_stop_listener"
+                    | "meter_share"
+                    | "heap_in_use"
+                    | "resident_bytes"
+                    | "release_map_reserve"
+                    | "scope_open"
+                    | "scope_open_child"
+                    | "scope_view"
+                    | "scope_bytes"
+                    | "scope_close"
+                    | "scope_enter"
+                    | "scope_leave"
+            )
+    )
 }
 
 /// The standard library module a record belongs to and its role: the
@@ -398,6 +508,93 @@ mod tests {
                 .and_then(|rest| rest.split("```\n").next())
                 .expect("PRE-2 states every host module's record");
             assert_eq!(stated, *text, "{path} is the PRE-2 text");
+        }
+        let marker = "the implementation record `process/scope.wf`:\n\n```\n";
+        let stated = spec
+            .split(marker)
+            .nth(1)
+            .and_then(|rest| rest.split("```\n").next())
+            .expect("PRE-2 states the scoped runner's implementation record");
+        assert_eq!(
+            stated,
+            include_str!("../../lib/std/process/scope.wf"),
+            "scope.wf is the PRE-2 text"
+        );
+    }
+
+    /// Provider selection cannot be acquired by a matching spelling in a
+    /// program, implementation record, nested module or interface member.
+    #[test]
+    fn build_providers_are_top_level_standard_interface_identities() {
+        let key = |package, path: &[&str], record, role, spelling: &str| {
+            crate::DeclarationKey::Item(crate::ItemKey::Declared {
+                home: crate::ItemHome::Module {
+                    package,
+                    path: path.iter().map(|part| (*part).to_owned()).collect(),
+                    record,
+                },
+                role,
+                spelling: spelling.to_owned(),
+            })
+        };
+        let enter = key(
+            crate::PackageKey::Standard,
+            &["process"],
+            crate::SourceRole::Interface,
+            crate::DeclarationRole::Function,
+            "scope_enter",
+        );
+        assert!(super::build_provides_function(&enter));
+        for other in [
+            key(
+                crate::PackageKey::Program,
+                &["process"],
+                crate::SourceRole::Interface,
+                crate::DeclarationRole::Function,
+                "scope_enter",
+            ),
+            key(
+                crate::PackageKey::Standard,
+                &["process"],
+                crate::SourceRole::Implementation,
+                crate::DeclarationRole::Function,
+                "scope_enter",
+            ),
+            key(
+                crate::PackageKey::Standard,
+                &["process", "child"],
+                crate::SourceRole::Interface,
+                crate::DeclarationRole::Function,
+                "scope_enter",
+            ),
+            key(
+                crate::PackageKey::Standard,
+                &["process"],
+                crate::SourceRole::Interface,
+                crate::DeclarationRole::Struct,
+                "scope_enter",
+            ),
+            key(
+                crate::PackageKey::Standard,
+                &["process"],
+                crate::SourceRole::Interface,
+                crate::DeclarationRole::Function,
+                "scope_run",
+            ),
+            key(
+                crate::PackageKey::Standard,
+                &["process"],
+                crate::SourceRole::Interface,
+                crate::DeclarationRole::Function,
+                "not_supplied",
+            ),
+            crate::DeclarationKey::Local {
+                item: enter.item().clone(),
+                path: vec![0],
+                ordinal: (0, 0),
+            },
+        ] {
+            assert!(!super::build_provides_function(&other), "{other:?}");
         }
     }
 }

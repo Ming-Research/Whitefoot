@@ -3328,6 +3328,100 @@ fn the_carried_library_table_is_the_library_graph() {
     assert!(formed.entries().is_empty());
 }
 
+/// PRE-2 selects providers per declaration. The ordinary interface/body
+/// pairing must supply scope_run; the host module alone supplies no body.
+#[test]
+fn host_composition_requires_its_whitefoot_definitions() {
+    let source = SourceInput::new(
+        "main.wf",
+        b"alias SocketAddress = std::net::SocketAddress;\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+    );
+    let (inputs, modules) = crate::library::bundle_part(&[source]).expect("host library selected");
+    let selection = super::Selection {
+        module: crate::ModuleId::BUNDLE_ROOT,
+        name: "main",
+        no_heap: false,
+        public: false,
+        written: None,
+        fragments: false,
+    };
+    super::with_checked_program(
+        &inputs,
+        Some(&modules),
+        CompilerLimits::default(),
+        |checked, resolved| {
+            for function in resolved.interface_functions() {
+                let declaration = resolved
+                    .declaration(function.declaration())
+                    .expect("the interface function exists");
+                assert_eq!(
+                    crate::library::build_provides_function(declaration.key()),
+                    function.definition().is_none(),
+                    "one provider for {}",
+                    declaration.spelling()
+                );
+            }
+            super::admit_entry(&checked, resolved, &selection)
+        },
+    )
+    .expect("the mixed host module composes");
+
+    let without_body = inputs
+        .into_iter()
+        .filter(|input| input.logical_path() != "std/process/scope.wf")
+        .collect::<Vec<_>>();
+    let failure = super::with_checked_program(
+        &without_body,
+        Some(&modules),
+        CompilerLimits::default(),
+        |checked, resolved| super::admit_entry(&checked, resolved, &selection),
+    )
+    .expect_err("a missing Whitefoot provider blocks composition");
+    assert_eq!(failure.rule_id(), Some("MOD-8"));
+    let detail = failure.to_string();
+    assert!(detail.contains("scope_run"), "{detail}");
+    assert!(detail.contains("std/process/module.wfm"), "{detail}");
+}
+
+/// This mutates the supplied library, not a source-language fixture: it
+/// detects accidentally trusting a host module's Whitefoot body as a build
+/// definition. The ordinary OP-2 proof must reject the overflowing addition
+/// even when no client instantiates the generic runner.
+#[test]
+fn a_host_whitefoot_body_gets_ordinary_symbolic_checking() {
+    let source = SourceInput::new(
+        "main.wf",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+    );
+    let (mut inputs, modules) =
+        crate::library::bundle_part(&[source]).expect("host library selected");
+    let process = modules
+        .iter()
+        .position(|module| module.is_at(crate::Package::Standard, &["process".to_owned()]))
+        .and_then(crate::ModuleId::from_index)
+        .expect("the process module is selected");
+    let invalid = include_str!("../../../lib/std/process/scope.wf").replacen(
+        " {\n",
+        " {\n  let invalid = 255_u8 + 1_u8;\n",
+        1,
+    );
+    let body = inputs
+        .iter_mut()
+        .find(|input| input.logical_path() == "std/process/scope.wf")
+        .expect("the runner body is carried");
+    *body = SourceInput::new("std/process/scope.wf", invalid.as_bytes())
+        .in_module(process, crate::SourceRole::Implementation);
+    let failure = super::with_checked_program(
+        &inputs,
+        Some(&modules),
+        CompilerLimits::default(),
+        |_, _| Ok(()),
+    )
+    .expect_err("host-module Whitefoot bodies owe ordinary proofs");
+    assert_eq!(failure.rule_id(), Some("OP-2"));
+    assert!(failure.to_string().contains("std/process/scope.wf"));
+}
+
 /// [MOD-10] inside the standard library `pkg` names the library itself, so
 /// a library graph writing `std` is refused, and so is a program graph
 /// writing a `std` path that names no library module.

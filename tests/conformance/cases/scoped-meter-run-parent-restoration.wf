@@ -1,0 +1,143 @@
+alias MeterScope = std::process::MeterScope;
+alias MemoryMeter = std::process::MemoryMeter;
+alias ScopeBody = std::process::ScopeBody;
+
+struct OwnedCheck {
+  owner: MeterScope;
+  correct: Bool;
+}
+
+struct Family {
+  child: MeterScope;
+  other: MeterScope;
+  meter: MemoryMeter;
+}
+
+fn increment(argument: u64) -> result: u64 pure {
+  return argument +wrap 1_u64;
+}
+
+binding Increment : ScopeBody<u64, u64> {
+  run = increment;
+}
+
+fn refuse(scope: MeterScope) -> result: OwnedCheck pure waits {
+  let outcome = std::process::scope_run::<Increment>(scope: move scope, argument: 29_u64);
+  match move outcome {
+    Ran(scope: owner, result: value) => {
+      let ran = False();
+      return OwnedCheck(owner: move owner, correct: ran);
+    }
+    Refused(scope: owner, argument: original) => {
+      let preserved = original == 29_u64;
+      return OwnedCheck(owner: move owner, correct: preserved);
+    }
+  }
+}
+
+fn close(meter: &MemoryMeter, scope: MeterScope) -> result: unit writes(meter) waits {
+  loop {
+    let closed = std::process::scope_close(meter: meter, scope: move scope);
+    match move closed {
+      Ok(value: done) => {
+        return done;
+      }
+      Err(error: owner) => {
+        set scope = move owner;
+      }
+    }
+  }
+}
+
+fn family(argument: Family) -> result: u8 pure waits {
+  let Family(child: child, other: other, meter: meter) = move argument;
+  let first_check = refuse(scope: move other);
+  let OwnedCheck(owner: other_first, correct: first) = move first_check;
+  let matched = False();
+  let accepted = True();
+  let outcome = std::process::scope_run::<Increment>(scope: move child, argument: 10_u64);
+  match move outcome {
+    Ran(scope: owner, result: value) => {
+      set matched = value == 11_u64;
+      close(meter: &meter, scope: move owner);
+    }
+    Refused(scope: owner, argument: original) => {
+      set accepted = False();
+      close(meter: &meter, scope: move owner);
+    }
+  }
+  let last_check = refuse(scope: move other_first);
+  let OwnedCheck(owner: other_last, correct: last) = move last_check;
+  close(meter: &meter, scope: move other_last);
+  let first_wrong = bnot(first);
+  if first_wrong {
+    return 10_u8;
+  }
+  let child_refused = bnot(accepted);
+  if child_refused {
+    return 11_u8;
+  }
+  let wrong_value = bnot(matched);
+  if wrong_value {
+    return 12_u8;
+  }
+  let last_wrong = bnot(last);
+  if last_wrong {
+    return 13_u8;
+  }
+  return 0_u8;
+}
+
+binding FamilyBody : ScopeBody<Family, u8> {
+  run = family;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: handles, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: read, write: write) = move directory;
+  std::fs::close_directory_write(factory: &handles, directory: move write);
+  std::fs::close_directory(factory: &handles, directory: move read);
+  let opened = std::process::scope_open(meter: &meter);
+  match move opened {
+    Err(error: full) => {
+      return std::process::exit_status(code: 2_u8);
+    }
+    Ok(value: parent) => {
+      let opened_child = std::process::scope_open_child(meter: &meter, parent: &parent);
+      match move opened_child {
+        Err(error: child_full) => {
+          close(meter: &meter, scope: move parent);
+          return std::process::exit_status(code: 3_u8);
+        }
+        Ok(value: child) => {
+          let opened_other = std::process::scope_open(meter: &meter);
+          match move opened_other {
+            Err(error: other_full) => {
+              close(meter: &meter, scope: move child);
+              close(meter: &meter, scope: move parent);
+              return std::process::exit_status(code: 4_u8);
+            }
+            Ok(value: other) => {
+              let peer = std::process::meter_share(meter: &meter);
+              let members = Family(child: move child, other: move other, meter: move peer);
+              let outcome = spawn std::process::scope_run::<FamilyBody>(scope: move parent, argument: move members);
+              match move outcome {
+                Ran(scope: owner, result: code) => {
+                  close(meter: &meter, scope: move owner);
+                  return std::process::exit_status(code: code);
+                }
+                Refused(scope: owner, argument: original) => {
+                  let Family(child: refused_child, other: refused_other, meter: unused) = move original;
+                  close(meter: &meter, scope: move refused_child);
+                  close(meter: &meter, scope: move refused_other);
+                  close(meter: &meter, scope: move owner);
+                  return std::process::exit_status(code: 5_u8);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

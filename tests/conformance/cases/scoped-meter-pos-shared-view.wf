@@ -1,0 +1,11 @@
+alias MeterScope = std::process::MeterScope;
+alias ScopeView = std::process::ScopeView;
+
+fn publish(scope: &MeterScope) -> result: Shared<ScopeView> reads(scope) {
+  let view = std::process::scope_view(scope: scope);
+  return shared_new::<ScopeView>(value: move view);
+}
+
+fn discard(view: ScopeView) -> result: unit pure {
+  return unit;
+}
