@@ -1052,6 +1052,36 @@ fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capa
             current.entry(inequality).or_insert(why);
         }
     }
+    // An atom that no inequality names beside another atom has only its own
+    // bounds; eliminating it pairs those bounds and leaves every other
+    // inequality as it is. Do that for all such atoms in one pass rather than
+    // rebuilding the set once per atom: the order of elimination does not
+    // change the answer [RANGE-3].
+    let mut shared = BTreeSet::new();
+    for inequality in current.keys() {
+        if inequality.0.terms.len() > 1 {
+            shared.extend(inequality.0.terms.iter().map(|(atom, _)| *atom));
+        }
+    }
+    let mut bounds: BTreeMap<AtomId, Bounds> = BTreeMap::new();
+    current.retain(|inequality, why| match inequality.0.terms.as_slice() {
+        [(atom, weight)] if !shared.contains(atom) => {
+            let entry = bounds.entry(*atom).or_default();
+            let side = if *weight > 0 {
+                &mut entry.upper
+            } else {
+                &mut entry.lower
+            };
+            side.push((weight.abs(), inequality.clone(), why.clone()));
+            false
+        }
+        _ => true,
+    });
+    for atom_bounds in bounds.values() {
+        if let Some(why) = combine_bounds(&atom_bounds.upper, &atom_bounds.lower, &mut current)? {
+            return Ok(Some(why));
+        }
+    }
     loop {
         // The atom with the fewest products, least identity first.
         let mut counts: BTreeMap<AtomId, (usize, usize)> = BTreeMap::new();
@@ -1085,23 +1115,45 @@ fn eliminate(inequalities: Vec<(Inequality, Tags)>) -> Result<Option<Tags>, Capa
                 next.entry(inequality).or_insert(why);
             }
         }
-        for (up_weight, up, up_why) in &upper {
-            for (low_weight, low, low_why) in &lower {
-                let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
-                let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
-                let combined = Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).reduced();
-                let mut why = up_why.clone();
-                why.union(low_why);
-                if combined.contradictory() {
-                    return Ok(Some(why));
-                }
-                if !combined.trivial() {
-                    next.entry(combined).or_insert(why);
-                }
-            }
+        if let Some(why) = combine_bounds(&upper, &lower, &mut next)? {
+            return Ok(Some(why));
         }
         current = next;
     }
+}
+
+/// One atom's inequalities, split by the sign of its coefficient, each with
+/// that coefficient's magnitude.
+#[derive(Default)]
+struct Bounds {
+    upper: Vec<(i128, Inequality, Tags)>,
+    lower: Vec<(i128, Inequality, Tags)>,
+}
+
+/// Fourier-Motzkin's step for one atom: every upper and lower inequality
+/// combined so the atom cancels, each result added to `next`, or the splits
+/// of the first contradictory result.
+fn combine_bounds(
+    upper: &[(i128, Inequality, Tags)],
+    lower: &[(i128, Inequality, Tags)],
+    next: &mut BTreeMap<Inequality, Tags>,
+) -> Result<Option<Tags>, Capacity> {
+    for (up_weight, up, up_why) in upper {
+        for (low_weight, low, low_why) in lower {
+            let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
+            let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
+            let combined = Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).reduced();
+            let mut why = up_why.clone();
+            why.union(low_why);
+            if combined.contradictory() {
+                return Ok(Some(why));
+            }
+            if !combined.trivial() {
+                next.entry(combined).or_insert(why);
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -1137,6 +1189,48 @@ mod tests {
     #[test]
     fn elimination_refutes_a_cycle() {
         let mut problem = Problem::default();
+        let (x, y, z) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        unit(&mut problem, &x, Relation::Less, &y);
+        unit(&mut problem, &y, Relation::Less, &z);
+        unit(&mut problem, &z, Relation::Less, &x);
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn bound_only_atoms_are_eliminated_beside_shared_ones() {
+        let bounded = |problem: &mut Problem, count: usize| -> Vec<Linear> {
+            (0..count)
+                .map(|_| {
+                    let atom = plain(problem);
+                    unit(problem, &atom, Relation::GreaterEqual, &Linear::constant(0));
+                    unit(problem, &atom, Relation::LessEqual, &Linear::constant(255));
+                    atom
+                })
+                .collect()
+        };
+        // Many atoms with only their own bounds and a consistent remainder.
+        let mut problem = Problem::default();
+        let atoms = bounded(&mut problem, 600);
+        let y = plain(&mut problem);
+        unit(&mut problem, &atoms[0], Relation::Less, &y);
+        assert_eq!(problem.judge(), Ok(Verdict::Open));
+        // One bound-only atom whose own bounds conflict.
+        let mut problem = Problem::default();
+        let atoms = bounded(&mut problem, 600);
+        unit(
+            &mut problem,
+            &atoms[599],
+            Relation::GreaterEqual,
+            &Linear::constant(256),
+        );
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+        // A cycle among shared atoms is still refuted beside them.
+        let mut problem = Problem::default();
+        bounded(&mut problem, 600);
         let (x, y, z) = (
             plain(&mut problem),
             plain(&mut problem),
