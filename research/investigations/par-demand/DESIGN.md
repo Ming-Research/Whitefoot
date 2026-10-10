@@ -1242,3 +1242,55 @@ fail.**
 - One worker: seven pass; `fir` again runs its sequential clone 5 percent
   faster than the sequential build (0.947), outside the band on the fast
   side; four straddle.
+
+## Experiment 2, fixed before it measures
+
+The owner chose (status board, 2026-10-10) to continue to experiment 2 with
+`spine`'s recursion handed to stage 4, to add H3, and to compare the chosen
+idle-wait policy against today's in this experiment.
+
+**Question.** When idle workers do ask, does demand-driven hand-out keep
+today's `--par` speedups while staying within H1 and H3, and does the
+idle-wait policy the owner chose (at most one idle worker spins, the others
+park at once, the spin length adapts to recent waits) cut wasted CPU without
+losing wall time?
+
+**Arms.** `seq`; `par` (today's `--par` with the shipped runtime); `demand`
+(the candidate with `WF_PAR_DEMAND=on`, today's 1 ms idle window); `idle1`
+(the same candidate object linked against the runtime built with the new
+idle policy, so the comparison is same-source); `twin` (a byte copy of
+`demand`). Workloads: the twelve of experiment 1. Widths 1, 4 and 8, each
+process pinned to one logical CPU per performance core (on the native
+14900K, CPUs 0, 2, ..., 14; the harness refuses to run if a chosen CPU is not
+a performance core). Thirty interleaved rounds; second call of each process,
+as before; first-call CPU above wall is reported separately as start-up.
+
+**Rules, per cell at four and eight workers, by the paired bootstrap interval
+of experiment 1** (`q_r` per round, median, 95 percent interval, fixed seed;
+a disagreeing twin voids the cell):
+
+- E2-H1: `demand / seq` wall upper end at most the experiment-1 bound
+  (`max(1.02, 1 + decisions × 1 ns / T_seq)`); the same for `idle1`.
+- E2-keep: where today's `par` is faster than `seq` (the `par / seq` wall
+  interval lies below 1), `demand / par` wall upper end at most 1.05; the
+  same for `idle1`.
+- E2-H3: per round, `m_r = (cpu_arm − 1.1 × cpu_seq − 0.1 × max(0, wall_seq −
+  wall_arm) × W) / cpu_seq`; the cell passes when the upper end of the
+  interval of the median `m_r` is at most 0, for `demand` and for `idle1`; the
+  same quantity is reported for `par` for comparison.
+- E2-idle: `idle1 / demand` wall upper end at most 1.02, with the CPU change
+  reported beside it.
+- An interval wholly above its bound exceeds; one rerun follows; a second
+  exceeding interval fails the cell. Otherwise the cell is inconclusive.
+- `spine` is measured and reported but decides nothing here (stage 4 owns
+  recursion); `small_constant` and any cell whose timed work is optimized
+  away in both builds decide nothing.
+- The optimized-code inspection of experiment 1 is repeated for the images
+  this run builds.
+
+**What would reject the direction as built.** A failing E2-keep cell on a
+workload where today's `par` speeds up means demand-driven hand-out loses
+speedup there (hand-out latency or granularity); a failing E2-H1 cell means
+the asking path costs more than its bound; a failing E2-H3 cell for `idle1`
+means waiting workers still burn CPU that buys no time. Each goes back to
+the owner with its attribution before any further building.
