@@ -27,9 +27,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
-  checks: read
 
 # A ready event and a push to the same branch share one group, so the later
 # run, which covers both platforms whenever the pull request is ready, wins.
