@@ -1580,6 +1580,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `remove_at` do, and no `ensures` is read here to show that it does
     /// not, so its call ends the bound as well. Every reference into such a
     /// window dies [REF-2, REF-4].
+    /// Only written entries identify an operated window: a by-value
+    /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
         signature: &FunctionSignature,
@@ -1599,6 +1601,9 @@ impl<'unit> DeclarationInventory<'unit> {
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
+            if !entry.write {
+                continue;
+            }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
             // whose bound the call ends is the place below that step.
@@ -1609,7 +1614,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
             let takes_back = !prelude
-                && entry.write
                 && matches!(
                     entry.place.path.get(cut),
                     Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))

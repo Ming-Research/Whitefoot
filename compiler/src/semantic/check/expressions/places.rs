@@ -20,7 +20,7 @@ use super::super::super::model::{
     CheckedOwnedTakeCleanup, CheckedPlaceStep, CheckedType, IntegerType,
 };
 use super::super::super::places::{
-    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
+    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, WindowPart,
 };
 use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
 
@@ -1382,7 +1382,7 @@ impl<'unit> TypeContext<'unit> {
             },
         )
     }
-    /// The first readonly declaration member crossed by one resolved origin
+    /// [TYPE-2, REF-1] the first readonly declaration member crossed by one resolved origin
     /// path. Every reference alias retains this path, while its referent type
     /// alone cannot say which declaration field supplied it.
     pub(in crate::semantic::check) fn readonly_member_on_resolved_path(
@@ -1414,8 +1414,12 @@ impl<'unit> TypeContext<'unit> {
         enum PathType {
             Value(CheckedType),
             Range(CheckedType),
+            // [SHARE-2, REF-1] a map selector names either its Option entry
+            // or Entries; the next resolved step determines the projection.
+            MapSelection(CheckedType),
         }
 
+        let mut prefix = 0;
         let mut ty = match path.root {
             PlaceRoot::Binding(binding) => {
                 let Some(local) = bindings.values().find(|local| local.binding == binding) else {
@@ -1424,6 +1428,49 @@ impl<'unit> TypeContext<'unit> {
                     // header validity equation. It has no live type here.
                     return Ok(None);
                 };
+                // [SHARE-2, REF-1] indexed atomic roots already carry the
+                // selected Option/Entries type. Their original self-rooted
+                // index is an identity prefix, not a second element selection.
+                let record = self
+                    .declarations
+                    .resolved
+                    .declaration(local.declaration)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                if record.role() == crate::DeclarationRole::AtomicBinder
+                    && matches!(path.path.first(), Some(PlaceStep::Index(_)))
+                {
+                    let node = self
+                        .declarations
+                        .tree
+                        .node_with_path(record.origin().node())
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let ordinal = self
+                        .declarations
+                        .declarations_at(node, crate::DeclarationRole::AtomicBinder)?
+                        .iter()
+                        .position(|candidate| candidate.id() == local.declaration)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let targets = self
+                        .declarations
+                        .tree
+                        .children_with(node, Production::Place)?;
+                    let target = *targets
+                        .get(ordinal)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let suffixes = self
+                        .declarations
+                        .tree
+                        .children_with(target, Production::Psuffix)?;
+                    if suffixes
+                        .last()
+                        .map(|suffix| self.declarations.tree.subscript_offset(*suffix))
+                        .transpose()?
+                        .flatten()
+                        .is_some()
+                    {
+                        prefix = 1;
+                    }
+                }
                 if local.mode.is_range() {
                     PathType::Range(local.ty)
                 } else {
@@ -1434,7 +1481,23 @@ impl<'unit> TypeContext<'unit> {
                 PathType::Value(self.constant(constant)?.declared_type)
             }
         };
-        for step in &path.path {
+        for step in &path.path[prefix..] {
+            if let PathType::MapSelection(entry) = ty {
+                ty = match step {
+                    PlaceStep::Payload { .. } => PathType::Value(entry),
+                    PlaceStep::Index(_) => PathType::Range(entry),
+                    // Entries.len is readonly; a checked Option entry cannot
+                    // have a measure selection [SHARE-2, OP-15].
+                    PlaceStep::Measure(_) | PlaceStep::Descendant(_) => ty,
+                    PlaceStep::Field(_)
+                    | PlaceStep::Deref
+                    | PlaceStep::Range(_)
+                    | PlaceStep::Page(_)
+                    | PlaceStep::Part(_) => {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    }
+                };
+            }
             match *step {
                 PlaceStep::Descendant(target) => {
                     if target.frozen_content {
@@ -1451,13 +1514,13 @@ impl<'unit> TypeContext<'unit> {
                 }
                 PlaceStep::Field(index) => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let field = fields
                         .get(index as usize)
@@ -1469,14 +1532,14 @@ impl<'unit> TypeContext<'unit> {
                 }
                 PlaceStep::Deref => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
                     else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     if self.is_frozen_type(current)? {
                         return Ok(Some("Frozen.inner".to_owned()));
@@ -1485,13 +1548,13 @@ impl<'unit> TypeContext<'unit> {
                 }
                 PlaceStep::Payload { variant, field } => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let field = variants
                         .get(variant as usize)
@@ -1502,42 +1565,71 @@ impl<'unit> TypeContext<'unit> {
                     }
                     ty = PathType::Value(field.ty);
                 }
-                // [TYPE-9] a segment and the run of every element are runs
-                // of T, as a range step's referent is.
-                PlaceStep::Index(_) | PlaceStep::Range(_)
-                    if matches!(ty, PathType::Value(CheckedType::Segments { .. })) =>
-                {
-                    let PathType::Value(CheckedType::Segments { element }) = ty else {
-                        return Ok(None);
+                PlaceStep::Index(_)
+                | PlaceStep::Range(_)
+                | PlaceStep::Page(_)
+                | PlaceStep::Part(_) => {
+                    // [TYPE-9, SHARE-2, REF-4] one exhaustive shape walk
+                    // preserves readonly provenance below every element and
+                    // map-entry projection; a new checked shape needs a case.
+                    let (element, run) = match ty {
+                        PathType::Range(element) => (element, false),
+                        PathType::MapSelection(_) => {
+                            return Err(SemanticCompilerFailure::InvalidResolution.into());
+                        }
+                        PathType::Value(current) => match current {
+                            CheckedType::Array { element, .. }
+                            | CheckedType::Window { element, .. }
+                            | CheckedType::Buffer { element }
+                            | CheckedType::Entries { element } => {
+                                (self.element_type(element)?, false)
+                            }
+                            CheckedType::Segments { element } => {
+                                (self.element_type(element)?, true)
+                            }
+                            CheckedType::Nominal(nominal) => match &self.nominal(nominal)?.kind {
+                                CheckedNominalKind::Shared {
+                                    shape: crate::semantic::CheckedShared::Map { entry },
+                                    ..
+                                } if matches!(step, PlaceStep::Index(_)) => {
+                                    ty = PathType::MapSelection(*entry);
+                                    continue;
+                                }
+                                CheckedNominalKind::Struct { .. }
+                                | CheckedNominalKind::Enum { .. }
+                                | CheckedNominalKind::Box { .. }
+                                | CheckedNominalKind::Opaque
+                                | CheckedNominalKind::Shared { .. } => {
+                                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                                }
+                            },
+                            CheckedType::Unit
+                            | CheckedType::Bool
+                            | CheckedType::Integer(_)
+                            | CheckedType::Float(_)
+                            | CheckedType::Generic(_)
+                            | CheckedType::GenericInt(_)
+                            | CheckedType::GenericFloat(_)
+                            | CheckedType::KeySet => {
+                                return Err(SemanticCompilerFailure::InvalidResolution.into());
+                            }
+                        },
                     };
-                    ty = PathType::Range(self.element_type(element)?);
-                }
-                PlaceStep::Index(_) => {
-                    ty = PathType::Value(match ty {
-                        PathType::Range(element) => element,
-                        PathType::Value(current) => match current {
-                            CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => self.element_type(element)?,
-                            CheckedType::Buffer { element } => self.element_type(element)?,
-                            _ => return Ok(None),
-                        },
-                    });
-                }
-                PlaceStep::Range(_) | PlaceStep::Page(_) => {
-                    ty = PathType::Range(match ty {
-                        PathType::Range(element) => element,
-                        PathType::Value(current) => match current {
-                            CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => self.element_type(element)?,
-                            CheckedType::Buffer { element } => self.element_type(element)?,
-                            _ => return Ok(None),
-                        },
-                    });
+                    ty = if run
+                        || matches!(
+                            step,
+                            PlaceStep::Range(_)
+                                | PlaceStep::Page(_)
+                                | PlaceStep::Part(WindowPart::Filled | WindowPart::Free)
+                        ) {
+                        PathType::Range(element)
+                    } else {
+                        PathType::Value(element)
+                    };
                 }
                 PlaceStep::Measure(measure) => {
                     return Ok((!frozen_only).then(|| measure.spelling().to_owned()));
                 }
-                PlaceStep::Part(_) => return Ok(None),
             }
         }
         Ok(None)
