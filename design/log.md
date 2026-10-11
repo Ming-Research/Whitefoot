@@ -12,6 +12,13 @@ Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-on
 Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card wfbl-06-01-351-approve, "approve Whitefoot#351 (head 80c1d9b06)'s enum tag width design changes: two added and four changed decisions?" (translated), whose background quoted every added and changed decision verbatim.
 
 Summary: Payload enums and tag-only enums of more than two variants use the smallest of 8, 16 and 32 bits that represents their variant ordinals, keeping the tag first and fields in declaration order, because count-sized tags reduce stored size within OP-9's unchanged ceilings; Halo's instruction Cell shrinks from 12 to 8 bytes. A union's carrier, initialization and bounded transfer combine the tag with the leading padding common to every variant into one 1-, 2- or 4-byte prefix, because exposing that gap as a separate three-byte interval slowed Halo by 5-11%, instead of widening the physical tag or moving the padding separately; with the prefix the 14900K retest ratios were 0.983-1.016. Union layout, memory-only transfer and the bounded struct transfer follow the count-sized tag and the prefix, their other content unchanged.
+## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
+
+Nodes: compiler/checker-facts, compiler/incremental-closure
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-c3-353-approve, which asked "approve Whitefoot #353 (head 640014c4c) and its three design decisions: the join shortcut, the conditions for sharing a proof, and delivery judging redundancy by derivability?" (translated) and quoted the three decisions verbatim.
+
+Summary: At a branch join the checker built, for every pair, a proof whose parents were all N predecessors, so doubling the arms multiplied checking time about tenfold. A join now first reuses a shared explicit proof every non-contradictory predecessor independently selects, and otherwise stops at the first contributing input that reaches the pair's implicit-only closed bound and records an implicit derivation, because every closed state already entails the implicit facts and their closure, so ENT-5's weakest common bound cannot exceed it. Bounded relation delivery judges a candidate redundant by exact derivability from implicit facts instead of by the ancestry of its chosen proofs. No program's verdict changes; on the 14900K the synthetic 640-arm sequence checks about 69 times faster, v2h is unchanged and Halo about 2% faster.
 
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
