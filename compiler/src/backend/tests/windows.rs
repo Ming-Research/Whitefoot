@@ -1897,15 +1897,16 @@ fn choose_join(first: &Array<u8>, second: &Array<u8>, pick: Bool) -> result: u8 
     give &first^;
   } else {
     give &second^;
-  };
-  let alias = chosen;
-  return inspect_join(array: alias);
+  }
+  let held = chosen;
+  return inspect_join(array: held);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let first_owner = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
   let second_owner = box_array_filled::<u8>(count: 6_u64, value: 9_u8);
-  let seen = choose_join(first: &first_owner.inner, second: &second_owner.inner, pick: true);
+  let pick = True();
+  let seen = choose_join(first: &first_owner.inner, second: &second_owner.inner, pick: pick);
   if seen == 7_u8 {
   } else {
     return std::process::exit_status(code: 1_u8);
