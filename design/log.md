@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-11, written in Chinese, th
 
 Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
 
+## 2026-10-11 Goal data admit integer terms by the place as written
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#358 (head 11fa213a5) adding this decision to the design tree node compiler/checker-facts?" (translated).
+
+Summary: The checker admitted writable fields below a subscript as ENT-2 terms when a constructor or call result was placed into indexed storage, accepting eight programs the specification rejects. Carried values are now published only when their target place as written is admissible, and a goal datum carries its written place as an admission annotation outside its typed identity: one canonical goal per identity keeps whole-goal truth, so a `+defined` guard or Boolean fact still crosses spellings, while integer projection and normalization belong to one admission view per spelling, so a numeric relation admitted through one spelling cannot reach an inadmissible one. Refusing the goal datum of an inadmissible indexed field was rejected because it removes the value identity that a guard on a writable indexed field and a readonly field reached by struct-equality projection need.
 ## 2026-10-11 Freeing moved map tables once their statements end
 
 Nodes: compiler/waiting-contexts/concurrent-map
