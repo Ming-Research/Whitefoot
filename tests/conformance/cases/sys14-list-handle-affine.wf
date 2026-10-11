@@ -118,21 +118,21 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   let window = &entries[0_u64..1024_u64];
   match open_directory_source(factory: files, directory: cwd) {
     Ok(value: list) => {
-      let held = move list;
+      let observed = move list;
       let (list_result_1, bytes, reported) = directory_next(source: &list, destination: window, start: 0_u64, end: 1024_u64);
       match list_result_1 {
         Ok(value: done) => {
-          close_directory_source(factory: files, source: move held);
+          close_directory_source(factory: files, source: move observed);
           return exit_status(code: 0_u8);
         }
         Err(error: list_stop_1) => {
           match list_stop_1 {
             ListEnd() => {
-              close_directory_source(factory: files, source: move held);
+              close_directory_source(factory: files, source: move observed);
               return exit_status(code: 0_u8);
             }
             ListFailed(error: problem) => {
-              close_directory_source(factory: files, source: move held);
+              close_directory_source(factory: files, source: move observed);
               return exit_status(code: 3_u8);
             }
           }

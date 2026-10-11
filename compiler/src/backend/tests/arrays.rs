@@ -786,8 +786,8 @@ fn relay(values: Array<Record, 1>) -> result: Array<Record, 1> pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 17_u64);
-  let held = make(owner: move owner, tag: 17_u64);
-  let returned = relay(values: move held);
+  let observed_state = make(owner: move owner, tag: 17_u64);
+  let returned = relay(values: move observed_state);
   let tag = returned[0_u64].tag;
   if tag != 17_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -1122,7 +1122,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
   let total = 0_u64;
   for @outer (
     batch in 0_u64..25000_u64,
-    invariant held: built.len >= 8_u64
+    invariant observed_state: built.len >= 8_u64
   ) {
     for @inner (
       cursor in 0_u64..8_u64,

@@ -308,11 +308,11 @@ const ALL_HEAP_FORMS: &[u8] = br#"fn shapes(n: u64) -> result: u64 pure {
   let vacant = box_slots_new::<u32>(capacity: 4_u64);
   let cycle = box_ring_new::<u32>(capacity: 3_u64);
   let boxed = box_new::<u64>(value: 7_u64);
-  let held = boxed.inner;
+  let observed_state = boxed.inner;
   let packed_len = packed.inner.len;
   let vacant_cap = vacant.inner.cap;
   let cycle_cap = cycle.inner.cap;
-  let total = held +wrap packed_len;
+  let total = observed_state +wrap packed_len;
   set total = total +wrap vacant_cap;
   set total = total +wrap cycle_cap;
   return total;
@@ -1163,13 +1163,13 @@ fn boxed_branch(left: Box<Tree>, right: Box<Tree>) -> result: Box<Tree> pure {{
 
 fn main() -> status: std::process::ExitStatus pure {{
   let seed = boxed_leaf();
-  let held = Holder(node: move seed);
+  let observed_state = Holder(node: move seed);
   for @grow (i in 0_u64..{depth}_u64) {{
     let sibling = boxed_leaf();
     let placeholder = boxed_leaf();
-    swap(first: &held.node, second: &placeholder);
+    swap(first: &observed_state.node, second: &placeholder);
     let taller = boxed_branch(left: move placeholder, right: move sibling);
-    swap(first: &held.node, second: &taller);
+    swap(first: &observed_state.node, second: &taller);
   }}
   return std::process::exit_status(code: 0_u8);
 }}
@@ -1207,9 +1207,9 @@ fn buffer_chain_source(depth: u64) -> Vec<u8> {
 }}
 
 fn nest(inner: Chain) -> result: Chain pure {{
-  let held = box_slots_new::<Chain>(capacity: 1_u64);
-  place_back(window: &held.inner, value: move inner);
-  return Chain::Cons(kids: move held);
+  let observed_state = box_slots_new::<Chain>(capacity: 1_u64);
+  place_back(window: &observed_state.inner, value: move inner);
+  return Chain::Cons(kids: move observed_state);
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{
@@ -1400,8 +1400,8 @@ const WIDE_BUFFER_CYCLE: &[u8] = br#"enum Chain {
 }
 
 fn leafy() -> result: Chain pure {
-  let held = box_slots_new::<Chain>(capacity: 1_u64);
-  return Chain::Cons(kids: move held);
+  let observed_state = box_slots_new::<Chain>(capacity: 1_u64);
+  return Chain::Cons(kids: move observed_state);
 }
 
 fn main() -> status: std::process::ExitStatus pure {

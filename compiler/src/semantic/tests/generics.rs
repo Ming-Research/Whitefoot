@@ -975,7 +975,7 @@ fn transfer<T: drop>(value: T) -> result: T pure {
 fn main() -> status: std::process::ExitStatus pure {
   let copied = transfer::<u8>(value: 7_u8);
   let payload = Payload(value: 3_u8);
-  let held = transfer::<Payload>(value: move payload);
+  let observed_state = transfer::<Payload>(value: move payload);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1010,7 +1010,7 @@ fn forward<T: drop>(value: T) -> result: T pure {
 fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<u64>(value: 7_u64);
   let payload = Payload(value: 3_u64);
-  let held = forward::<Payload>(value: move payload);
+  let observed_state = forward::<Payload>(value: move payload);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1498,7 +1498,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let short = Packet<2>(bytes: move short_bytes);
   let long_bytes = slots_new::<u8, 5>();
   let long = Packet<5>(bytes: move long_bytes);
-  let held = Holder<Packet<2>>(value: move short);
+  let observed_state = Holder<Packet<2>>(value: move short);
   return std::process::exit_status(code: 0_u8);
 }
 "#;

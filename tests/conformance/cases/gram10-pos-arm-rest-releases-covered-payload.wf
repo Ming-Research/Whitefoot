@@ -9,8 +9,8 @@ enum Held {
 fn main() -> status: ExitStatus pure {
   doc "The arm binds `code` and a final `..` covers `cell`; the match consumes `held`, so the covered Box takes its release on entry to the arm.";
   let cell = box_new::<u8>(value: 9_u8);
-  let held = Held::Full(code: 7_u8, cell: move cell);
-  match move held {
+  let observed = Held::Full(code: 7_u8, cell: move cell);
+  match move observed {
     Full(code: found, ..) => {
       return exit_status(code: found);
     }

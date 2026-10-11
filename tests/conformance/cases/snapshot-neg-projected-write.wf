@@ -10,6 +10,6 @@ fn clear(map: &ConcurrentHashMap<u8>) -> result: unit writes(map) {
 fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<u8>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
   atomic held_map = &table^, held_cut = &sequence^ {
     clear(map: held_map);
-    return std::snapshot::capture_export::<u8>(reserve: move reserve, map: held_map, cut: held_cut^);
+    return std::snapshot::capture_export::<u8>(reserve: move reserve, map: held_map, cut: held_cut);
   }
 }

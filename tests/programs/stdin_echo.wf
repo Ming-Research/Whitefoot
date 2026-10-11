@@ -49,7 +49,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   ) {
     place_back(window: &chunk, value: 0_u8);
   }
-  let held = 4096_u64;
+  let observed_state = 4096_u64;
   let sink = &chunk[0_u64..4096_u64];
   let outcome = 0_u8;
   loop @chunks {
@@ -57,7 +57,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     let ended = 0_u8;
     let no_deadline = None<std::time::Instant>();
     let wait_cancel_2 = std::time::cancel_never();
-    let wait_outcome_2 = read_next(factory: &entry_factory, input: &input, destination: sink, start: 0_u64, end: held, deadline: no_deadline, cancel: &wait_cancel_2);
+    let wait_outcome_2 = read_next(factory: &entry_factory, input: &input, destination: sink, start: 0_u64, end: observed_state, deadline: no_deadline, cancel: &wait_cancel_2);
     std::time::close_cancel_watch(watch: move wait_cancel_2);
     match wait_outcome_2 {
       Ok(value: endpoint) => {

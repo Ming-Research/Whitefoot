@@ -244,7 +244,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     place_back(window: &payload, value: letter);
   }
   let room = 16_u64;
-  let held = 4096_u64;
+  let observed = 4096_u64;
   let window = &digits[0_u64..16_u64];
   let sink = &chunk[0_u64..4096_u64];
   let greeting = &payload[0_u64..8_u64];
@@ -296,7 +296,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           let available = 0_u64;
           let ended = 0_u8;
           let wait_cancel_4 = std::time::cancel_never();
-          let wait_outcome_4 = receive_next(receive: &link.receive, destination: sink, start: 0_u64, end: held, deadline: no_deadline, cancel: &wait_cancel_4);
+          let wait_outcome_4 = receive_next(receive: &link.receive, destination: sink, start: 0_u64, end: observed, deadline: no_deadline, cancel: &wait_cancel_4);
           std::time::close_cancel_watch(watch: move wait_cancel_4);
           match wait_outcome_4 {
             Ok(value: endpoint) => {

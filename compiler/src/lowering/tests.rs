@@ -780,9 +780,9 @@ fn physical_call_inventory_closes_a_recursive_edge_on_its_own_variant() {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let held = box_new::<u64>(value: 1_u64);
+  let observed_state = box_new::<u64>(value: 1_u64);
   let start = True();
-  descend(cell: &held, again: start);
+  descend(cell: &observed_state, again: start);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1208,8 +1208,8 @@ fn counted_range_carries_one_stable_binder_address_for_body_local_shared_borrows
   let total = 0_u64;
   let upper = 2_u64;
   for @items (i in 0_u64..upper) {
-    let held = &i;
-    let seen = held^;
+    let observed_state = &i;
+    let seen = observed_state^;
     set total = total +wrap seen;
     set upper = 0_u64;
   }

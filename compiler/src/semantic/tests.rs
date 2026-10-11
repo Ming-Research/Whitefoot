@@ -461,7 +461,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_local_invariant_equality_is_an_inv1_target() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  invariant held: 0_u64 == 0_u64;
+  invariant observed: 0_u64 == 0_u64;
   return std::process::exit_status(code: 0_u8);
 }
 "#;

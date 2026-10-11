@@ -304,8 +304,8 @@ fn loop_owner_sources_cover_later_iterations_and_counted_exhaustion() {
   for (iteration in 0_u64..count) {
     swap(first: &first, second: &second);
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
@@ -319,8 +319,8 @@ fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
       break;
     }
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -598,18 +598,18 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64);
   let second_input = Row(value: 31_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -668,18 +668,18 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered, b: 1_u64, c: 2_u64, d: 3_u64);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64, b: 4_u64, c: 5_u64, d: 6_u64);
   let second_input = Row(value: 31_u64, b: 7_u64, c: 8_u64, d: 9_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -1341,8 +1341,8 @@ fn choose(left: Cell, right: Cell, flag: Bool) -> result: u64 pure {
     let second = move right;
     give move second;
   }
-  let held = selected.value.inner;
-  return held;
+  let observed_state = selected.value.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1479,8 +1479,8 @@ fn hold_triple() -> result: u8 pure {
   let tail = box_new::<u64>(value: 66_u64);
   let triple = Triple(first: move first, selected: move selected, tail: move tail);
   let retained = move triple.selected;
-  let held = retained.inner;
-  if held != 55_u64 {
+  let observed_state = retained.inner;
+  if observed_state != 55_u64 {
     return 1_u8;
   }
   return 0_u8;
@@ -1934,8 +1934,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if owner.inner.left != 37_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  let held = &owner.inner.right;
-  write(value: held, fresh: 43_u64);
+  let observed_state = &owner.inner.right;
+  write(value: observed_state, fresh: 43_u64);
   if owner.inner.right != 43_u64 {
     return std::process::exit_status(code: 3_u8);
   }
@@ -1970,8 +1970,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<Slots<u64, 2>>(value: move values);
   let size = owner.inner.len;
   if size > 0_u64 {
-    let held = &owner.inner;
-    let observed = first(values: held);
+    let observed_state = &owner.inner;
+    let observed = first(values: observed_state);
     if observed == 29_u64 {
       return std::process::exit_status(code: 0_u8);
     }

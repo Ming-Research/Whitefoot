@@ -634,7 +634,7 @@ o: Box<u8>; p: Slots<u8, 4>; public readonly q: Ring<u8, 2 * n>;
 r: pkg::library::Imported; s: library::nested::Pair<u8>;
 }
 enum Choice<T: copy> { doc "choice"; None(); Some(public value: T); }
-nodrop struct Lease { doc "lease"; slot: u8; invariant held(lease): lease.slot <= 4_u8; }
+nodrop struct Lease { doc "lease"; slot: u8; invariant observed(lease): lease.slot <= 4_u8; }
 nodrop enum Ticket { doc "ticket"; Open(value: u8); }
 interface Behavior<T: drop> {
 doc "interface";
@@ -809,7 +809,7 @@ const RETIRED_TRAPS_EFFECT_ROW: &[u8] = b"fn probe() -> result: unit traps {\n  
 const FREED_SPELLINGS_AS_IDENTIFIERS: &[u8] =
     b"fn external(blocks: unit) -> result: unit pure {\n  return blocks;\n}\n";
 
-const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim held: flag because \"retired\";\n  return unit;\n}\n";
+const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim observed: flag because \"retired\";\n  return unit;\n}\n";
 
 const RETIRED_SPELLINGS_AS_IDENTIFIERS: &[u8] = b"fn probe(claim: i32, because: i32, deny_claims: i32, traps: i32, trap: i32) -> result: i32 pure {\n  let total = claim +wrap because;\n  let staged = total +wrap deny_claims;\n  let finished = staged +wrap traps;\n  return finished +wrap trap;\n}\n";
 

@@ -2,6 +2,6 @@ alias Reserve = std::snapshot::Reserve;
 alias Job = std::snapshot::Job;
 alias CreateError = std::snapshot::CreateError;
 
-fn capture(reserve: Reserve, map: &ConcurrentHashMap<u8>, cut: u64) -> result: Result<Job, CreateError> reads(map) {
+fn capture(reserve: Reserve, map: &ConcurrentHashMap<u8>, cut: &u64) -> result: Result<Job, CreateError> reads(map), reads(cut) {
   return std::snapshot::capture_export::<u8>(reserve: move reserve, map: map, cut: cut);
 }

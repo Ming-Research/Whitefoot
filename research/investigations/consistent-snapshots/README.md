@@ -33,7 +33,8 @@ a claim that the current compiler already targets them
 (`docs/constitution.md:16`, `:28`, `:48`, `:56`).
 
 The [typed capture-export draft](capture-export.md) records the proposed
-source interface, remaining contract gaps and phase-2 implementation plan.
+source interface, proposed ordinary held-observation contract, memory-promise
+comparison and phase-2 implementation plan.
 The survey's runtime observations are historical: the merged
 [`fork_capsule`](../../../compiler/src/backend/completion/fork_capsule.h)
 now supplies the restricted native witness surface, superseding observations
