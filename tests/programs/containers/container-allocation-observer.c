@@ -117,7 +117,6 @@ void *wf_observe_reallocate(void *pointer, uint64_t old_bytes, uint64_t bytes) {
     if (pointer == NULL) return wf_observe_allocate(bytes);
     if (pointer == (const void *)wf__empty_window) {
         atomic_fetch_add(&shared_header_events, 1);
-        if (bytes <= old_bytes) return pointer;
         void *fresh = wf_observe_allocate(bytes);
         memcpy(fresh, pointer, (size_t)old_bytes);
         return fresh;

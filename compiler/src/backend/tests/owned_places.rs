@@ -1654,7 +1654,6 @@ void wf_test_release(void *allocation, uint64_t bytes) {{
    the request returns NULL with the old block still held. */
 void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
     if (allocation == (const void *)&wf__empty_window) {{
-        if (size <= old_bytes) return allocation;
         void *fresh = wf_test_allocate(size);
         if (fresh != NULL) memcpy(fresh, allocation, (size_t)old_bytes);
         return fresh;

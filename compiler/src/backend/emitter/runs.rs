@@ -1222,56 +1222,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         let bytes =
             self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-        let zero_stride = crate::target::element_has_zero_stride(
-            self.target,
-            self.program,
-            shape.element_type(self.program)?,
-        )
-        .map_err(BackendFailure::TargetLayout)?;
-        let old_length = if zero_stride {
-            // A positive cap of zero-byte elements still needs a writable
-            // header. Equal byte extents would make retake retain the static
-            // header, so growing that empty owner uses take instead.
-            let length_address =
-                self.aggregate_field_pointer(block_type, &format!("%{old}"), 0)?;
-            let length = self.next_temporary()?;
-            writeln!(self.output, "  %{length} = load i64, ptr {length_address}")?;
-            let empty_old = self.next_temporary()?;
-            let taken = self.next_temporary()?;
-            let retaken = self.next_temporary()?;
-            let take = format!("{allocate}.take");
-            let retake = format!("{allocate}.retake");
-            let acquired = format!("{allocate}.acquired");
-            writeln!(
-                self.output,
-                "  %{empty_old} = icmp eq i64 %{old_capacity}, 0\n  br i1 %{empty_old}, label %{take}, label %{retake}"
-            )?;
-            self.output.open_block(take.clone());
-            self.output.symbol("wf__heap_take");
-            writeln!(
-                self.output,
-                "  %{taken} = call ptr @wf__heap_take(i64 {bytes})\n  br label %{acquired}"
-            )?;
-            self.output.open_block(retake.clone());
-            self.output.symbol("wf__heap_retake");
-            writeln!(
-                self.output,
-                "  %{retaken} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})\n  br label %{acquired}"
-            )?;
-            self.output.open_block(acquired);
-            writeln!(
-                self.output,
-                "  %{fresh} = phi ptr [ %{taken}, %{take} ], [ %{retaken}, %{retake} ]"
-            )?;
-            Some(length)
-        } else {
-            self.output.symbol("wf__heap_retake");
-            writeln!(
-                self.output,
-                "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})"
-            )?;
-            None
-        };
+        // Every positive growth retakes: from the shared empty header the
+        // runtime always takes a writable block and copies the header.
+        self.output.symbol("wf__heap_retake");
+        writeln!(
+            self.output,
+            "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})"
+        )?;
         writeln!(
             self.output,
             "  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
@@ -1281,10 +1238,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
         self.output.open_block(init);
         let fresh_block = format!("%{fresh}");
-        if let Some(length) = old_length {
-            let length_address = self.aggregate_field_pointer(block_type, &fresh_block, 0)?;
-            writeln!(self.output, "  store i64 %{length}, ptr {length_address}")?;
-        }
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(

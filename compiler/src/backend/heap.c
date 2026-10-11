@@ -30,12 +30,12 @@ void *wf__heap_take(uint64_t bytes) {
 }
 
 /* Like take, refusal returns NULL to the emitted heap-record abort edge.
- * Both extents have been checked against the target's signed size domain. */
+ * Both extents have been checked against the target's signed size domain.
+ * Emitted growth calls this only for a positive new capacity, so growth from
+ * the shared empty header always takes a writable block, even when a
+ * zero-stride element leaves the byte extent unchanged. */
 void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {
     if (block == (const void *)&wf__empty_window) {
-        if (new_bytes <= old_bytes) {
-            return block;
-        }
         void *fresh = wf__heap_take(new_bytes);
         if (fresh != NULL) {
             memcpy(fresh, block, (size_t)old_bytes);

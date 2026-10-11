@@ -179,7 +179,7 @@ fn execute_container_program(
             assert!(concurrent.stderr.is_empty(), "{concurrent:?}");
             assert_eq!(
                 concurrent.stdout,
-                b"container allocation observer: 32 allocations, each released exactly once\n"
+                b"container allocation observer: 32 allocations or shared empty headers, each released exactly once\n"
             );
             for (argument, message) in [
                 ("double-release", "allocation released twice"),
