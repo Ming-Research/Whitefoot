@@ -1186,8 +1186,8 @@ before 56ad8 / after 58088: mov QWORD PTR [rbx],r9
 ```
 
 Thus this pair disproves a hoisting/unrolling loss at the #345 boundary.
-The loop loss reported against the older `wf-78223721f77d` comparison must
-be investigated separately; its originating revision is not supplied here.
+The loop loss reported against the older `wf-78223721f77d` comparison is
+attributed to a separate boundary below, in the PR #344 investigation.
 No new in-place byte-loop input, destination parameter or removed alias
 attribute appears in the raw loop. Changing alias promises to repair this
 purported #345 loop regression has no supporting evidence.
@@ -1235,5 +1235,193 @@ conservatively excluded.
 Review is inspection only. Fixture admission, baseline failure, candidate
 IR, native outcomes, existing store-forwarding checks, full-LTO recovery and
 performance remain unverified. No local build, test, formatter, lint, gate,
-optimizer or measurement ran. The changes are uncommitted for the owner's
-CI and timing work; no approval record or status board was written.
+optimizer or measurement ran. The owner committed this four-file fix as
+`7a76c286c` and opened draft Whitefoot PR #357. No approval record or status
+board was written.
+
+## Runtime storage alias facts after PR #344
+
+### Question and falsifier
+
+The owner's ten-release disassembly comparison places the concat byte-loop
+change between `wf-bae97fdcf890` and `wf-179dc9cf1345`, the latter built from
+PR #344, which makes an empty contiguous runtime window allocate nothing.
+The question is whether exposing disjoint storage roles restores hoisting
+without changing that behavior. Compare the same Halo source and full-LTO
+settings before #344, after #344 and with these facts; inspect optimized IR
+and the loop before timing. Failure to remove the repeated source-owner,
+source-length and destination-capacity loads rejects the proposed repair
+for this loop. Interleaved timings with a base twin remain necessary for
+any performance attribution. No such candidate observation has run yet.
+
+### Boundary and emitted shape
+
+The supplied full-LTO `concat_step` disassembly before #344 loads the source
+pointer and length at `5a074` and `5a078`, outside a loop with two byte-copy
+instructions at `5a0ae` and `5a0c4`. After #344 its loop instead contains:
+
+```text
+56ab8: mov r8,QWORD PTR [rdx+0x28]
+56abc: cmp rdi,QWORD PTR [r8]
+56ac1: mov r9,QWORD PTR [rbx]
+56ac4: cmp r9,QWORD PTR [rbx+0x8]
+```
+
+The source diff `bae97fdcf..179dc9cf1 -- compiler/` changes construction
+from an allocator-derived result to a join of fresh storage and a global:
+
+```llvm
+%v1 = phi ptr [ @wf__empty_window, %window.block.allocate.v1.empty ], [ %t1, %window.block.allocate.v1.init ]
+```
+
+This is the saved Halo byte-Slots constructor (`wf-9497f0a54fec.ll:129999`),
+emitted by `emitter/runs.rs::emit_window_block_new`; the Array constructor
+makes the same choice. The runtime adds:
+
+```c
+_Alignas(64) const unsigned char wf__empty_window[64] = {0};
+```
+
+The saved later pre-#345 Halo IR confirms the external immutable header
+(`wf-9497f0a54fec.ll:179596`), and the concat path creates its destination
+through the changed constructor (`56776–56780`):
+
+```llvm
+%v267 = call ptr @wf_box_slots_new$instance$d0714e30cb3ae434(i64 %v264)
+store ptr %v267, ptr %v268
+%v271 = call i8 @wf_package.halo.vm.concat_batch_copy(ptr %v249, ptr %v250, ptr %v268, i64 %v251, i64 %v265, i64 %v270)
+```
+
+The byte placement helper (`177414–177429`) expresses element and header
+accesses without alias metadata, including:
+
+```llvm
+%t0 = load i64, ptr %t1
+store i8 %v1, ptr %t2
+%t3 = load i64, ptr %t4
+store i64 %t5, ptr %t6
+```
+
+The first and third loads read the Slots length; the byte store addresses
+its element storage. Their disjointness is absent from these instructions.
+Header-first layout alone is insufficient when the optimizer lacks
+provenance for the constructor's mixed result. Reference `noalias` applies
+to the referenced owner word, and does not grant freshness to the backing
+pointer loaded from that word.
+
+The precise regression mechanism supported by the diff is loss of an
+always-allocator-derived constructor result, with no replacement access
+facts. `wf__heap_take` still returns malloc storage; `wf__heap_retake` adds
+a fresh-allocation branch when given the shared header, and otherwise still
+uses fresh allocation or realloc. No allocator return changes to a global.
+The evidence does not include optimized LLVM at the exact #344 boundary,
+so which inferred LLVM attribute or alias query first changes is unverified.
+The empty-result branch is the causal hypothesis tied to the observed
+boundary; the proposed facts directly address the missing distinctions.
+
+### Proposed mapping and soundness
+
+Use classic scalar-access TBAA with a common ancestor and sibling roles:
+explicit numeric source writes, typed Box-owner accesses, runtime Array,
+Slots, Ring and Paged lengths, runtime capacity, Ring head, and Paged
+directory entries and directory capacity. Same-role accesses may alias;
+there is no per-owner promise. Numeric source reads remain untagged:
+`read_u64(&window.len)` is admitted and can read a generated measure.
+Only runtime-capacity window headers receive these roles. Fixed-capacity
+windows can be inline elements or enum payloads and are deliberately
+untagged. Source constructor, whole-value, aggregate and transfer accesses
+remain untagged, including payload storage reused by a variant change;
+generated initialization of fresh runtime headers may use their known roles.
+
+The specification grounds are TYPE-2 and TYPE-10 (opaque readonly measures
+and inaccessible directory storage), TYPE-9 (runtime storage only as Box
+contents), STOR-1 (backing and the immutable shared empty header), TYPE-5
+and OP-4 (declared selected types), REF-1 and REF-2 (typed live selections,
+readonly restrictions and invalidation on replacement), and OP-6's
+primitive-only `reinterpret` row with OP-8's lowering. TYPE-8's prohibition
+on stored references helps lifetime reasoning but alone proves no type
+punning rule. Physical overlap on enum replacement remains possible,
+which is why construction and whole-value writes carry no sibling tag.
+Different shapes may read the same shared empty bytes: those bytes are
+immutable and never written through a role. Positive growth obtains
+writable backing before updating measures.
+
+The [LLVM TBAA contract](https://llvm.org/docs/LangRef.html#tbaa-metadata)
+allows sibling scalar access tags to communicate disjointness; an incorrect
+overlap promise makes optimization unsound. Therefore classification is
+by the checked source access or compiler-owned storage role, never merely
+by LLVM integer/pointer width. Unknown accesses retain ordinary aliasing.
+
+Alternatives: constructor return `noalias` is invalid for shared accessible
+empty backing; allocator-only return facts cannot describe the mixed
+constructor or separate Paged directory and element accesses; the header
+is already emitted `constant`, which by itself did not preserve this loop;
+per-access scoped noalias requires activation/provenance tracking across
+inlining, whereas the selected roles need no owner exclusivity. No
+allocation, representation, source spelling or acceptance change is needed.
+
+### Paged scope and evidence limits
+
+The same directory-versus-source-write distinction targets Snowghost's
+reported `sg-paged-elem-dir-alias` symptom: scalar element field stores
+cannot change a directory entry. The Paged representation places directory
+entries in the cell and elements in separately allocated pages. Typed
+Box-valued elements use the Box-owner role, never the directory role.
+This gives one general lowering scheme for both storage families. No
+Snowghost optimized IR or timing accompanies this report; removal of its
+inter-field page-pointer reload and any speedup remain unverified.
+
+An independent `gpt-6-astra` high-effort architectural audit found the
+narrowed mapping sound under these emission restrictions and identified
+no specification gap. Its audit does not validate the implementation or
+establish candidate optimization. Five backend cases in
+`compiler/src/backend/tests/storage_alias.rs` inspect the runtime byte-copy
+loop's Box/Array/Slots roles and explicit capacity and Ring measures,
+conservative numeric readers and nested inline header reads and mutations,
+Paged's two-field element writes versus directory reads, conservative enum construction and
+whole-value transfers, and metadata preservation through encoded modules
+and both fragment granularities. The byte-copy and Paged cases also include
+native result checks for CI. Baseline IR has no TBAA, so their positive
+metadata assertions detect the original missing information; the conservative
+and roundtrip assertions protect boundaries of the new implementation.
+Fixture admission, executed baseline failure and candidate results await
+the owner's CI. No local build, test, formatter, lint or optimizer ran.
+
+A fresh read-only `gpt-6.1-sol` high-effort completion review inspected
+`7a76c286c..working tree`, including both new alias source/test files,
+affected emitters, fragment/cache transport, specification grounds and
+design ancestors. It reported no remaining finding after corrections to
+an unused format argument, the missing typed Box projection tag, the
+constructor test's ABI-body selection and the design node's source
+construction qualifier. Applicable repository, documentation, case and
+design correspondence checks passed inspection; complete optimizer
+soundness, fixture admission, LLVM verification, native behavior and
+performance remain unverified. No metadata-withholding switch is required
+for acceptance: these annotations change no operation, and LLVM may ignore
+them; empirical facts-off equivalence has not been demonstrated.
+
+### Found along the way: readonly measure reference formation
+
+A separate implementation gap was found while preparing the conservative
+numeric-reader case. The specified witness is a nonwriting function
+`read_u64(value: &u64) -> u64` called with `&source^.inner.len`, where
+`source` is a runtime Array Box. TYPE-2 permits a readonly path at a
+nonwriting reference parameter, TYPE-10 defines the measure as a readonly
+field and REF-1 admits field-reference formation. Static inspection instead
+finds reference formation calling `resolve_storage_path`
+(`semantic/check/references.rs:1349`); non-index suffixes go to
+`elaborate_place_member` (`expressions/flat_storage.rs:1616`), whose
+`PlaceMember` supports only ordinary fields and Box contents
+(`expressions/places.rs:35`), and whose nominal-only selection rejects a
+runtime descriptor field (`places.rs:894`). An executed rejection is not
+available under the no-local-test rule.
+
+Disposition: deferred from this alias-emission change. Reopen with that
+minimal witness, implement ordinary measure reference formation and cover
+its readonly restriction and live-reference invalidation through CI; no
+workaround or acceptance change is added here. Generic numeric reference
+loads remain conservative now so this future source support requires no
+change to the alias contract. The backend case observes an ordinary numeric
+reference reader instead of claiming that this measure witness already
+reaches the backend. This gap is recorded here because the task forbids
+status-board writes.

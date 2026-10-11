@@ -44,10 +44,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(address)
+                self.value_name(address),
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)
@@ -65,7 +66,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let destination = self.value_name(address);
-        self.store_value_at(value, &destination)
+        self.store_source_value_at(value, &destination)
     }
 
     fn referent_is_stored(&self, referent: IrAddressed) -> Result<bool, BackendFailure> {

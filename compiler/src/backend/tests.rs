@@ -74,6 +74,7 @@ mod resource_enums;
 mod result_abi;
 mod shared_maps;
 mod stack_ledger;
+mod storage_alias;
 mod system;
 mod tail_calls;
 mod target_frame;

@@ -2,9 +2,8 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes aggregate values
-//! while leaving unoccupied window storage alone, and keeps a defensive abort
-//! edge for enum discriminants.
+//! check, emits only checked storage alias promises, and initializes aggregate
+//! values while leaving unoccupied window storage alone.
 
 mod array;
 mod boxes;
@@ -30,6 +29,7 @@ mod runs;
 mod segments;
 mod shared;
 mod slice;
+mod storage_alias;
 mod union_enums;
 mod value_equality;
 
@@ -414,6 +414,7 @@ fn emit_module(
     text.header("source_filename = \"whitefoot\"".to_owned());
     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
     text.header(format!("target triple = \"{}\"", target.triple()));
+    storage_alias::emit_definitions(&mut text);
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
