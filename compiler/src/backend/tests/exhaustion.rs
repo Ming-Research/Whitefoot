@@ -983,8 +983,7 @@ fn expose_large_frame_spine(module: &str) -> String {
         .lines()
         .map(|line| {
             if line.starts_with("define i64 @wf_read_pad(") {
-                super::owned_places::without_optional_inline(line)
-                    .replace(" #0 align 64 {", " noinline #0 align 64 {")
+                line.replace(" #0 align 64 {", " noinline #0 align 64 {")
             } else {
                 line.to_owned()
             }
@@ -1071,12 +1070,7 @@ fn ablate_large_frame_probe(module: &str) -> String {
             if line.starts_with("define void @wf_array_filled$instance$") {
                 fills += 1;
                 line.strip_suffix(" #0 align 64 {")
-                    .map(|head| {
-                        format!(
-                            "{} noinline #0 align 64 {{",
-                            super::owned_places::without_optional_inline(head)
-                        )
-                    })
+                    .map(|head| format!("{head} noinline #0 align 64 {{"))
                     .unwrap_or_else(|| line.to_owned())
             } else {
                 line.to_owned()

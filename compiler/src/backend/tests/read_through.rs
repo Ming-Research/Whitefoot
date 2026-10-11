@@ -378,9 +378,7 @@ fn retain_classifier(module: &str) -> String {
             if line.starts_with("define ") && line.contains(" @wf_classify(") {
                 format!(
                     "{} noinline {{\n",
-                    super::owned_places::without_optional_inline(
-                        line.strip_suffix(" {").expect("classifier header")
-                    )
+                    line.strip_suffix(" {").expect("classifier header")
                 )
             } else {
                 format!("{line}\n")
@@ -750,15 +748,6 @@ fn main() -> status: std::process::ExitStatus pure {
     let module = retain_classifier(&emit(source.as_bytes()));
     // These assertions prevent an accidentally unsplit fixture from passing.
     for name in ["local", "crossing"] {
-        let enclosing = emitted_function(&module, name);
-        assert!(
-            !enclosing
-                .lines()
-                .next()
-                .expect("header")
-                .contains("alwaysinline"),
-            "a potentially split function keeps ordinary inline policy: {enclosing}"
-        );
         assert!(
             module.contains(&format!("; dispatch: wf_{name}: split:")),
             "{module}"

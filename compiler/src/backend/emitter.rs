@@ -20,7 +20,6 @@ mod frontier;
 mod handler_words;
 mod indexed;
 mod indexed_blocks;
-pub(super) mod inlining;
 mod integer;
 mod operations;
 mod paged;
@@ -268,7 +267,6 @@ fn emit_module(
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
     let owner_scopes = storage_alias::OwnerScopePlan::new(program);
-    let inline_plan = inlining::InlinePlan::build(program)?;
     let mut thunks = ParallelThunks::default();
     let refusal_clones = if program.sequential_compute_refusal() {
         sequential_clone_set(program)
@@ -306,7 +304,6 @@ fn emit_module(
             ModuleState {
                 intrinsics: &mut intrinsics,
                 owner_scopes: &owner_scopes,
-                force_inline: inline_plan.contains(ordinal),
                 parallel: &mut thunks,
                 sequential_clones: None,
                 refusal_clones: &refusal_clones,
@@ -347,7 +344,6 @@ fn emit_module(
                 ModuleState {
                     intrinsics: &mut intrinsics,
                     owner_scopes: &owner_scopes,
-                    force_inline: inline_plan.contains(ordinal),
                     parallel: &mut thunks,
                     sequential_clones: None,
                     refusal_clones: &refusal_clones,
@@ -374,11 +370,6 @@ fn emit_module(
     } else {
         HashSet::new()
     };
-    let sequential_inline_plan = if clones.is_empty() {
-        None
-    } else {
-        Some(inlining::InlinePlan::build_sequential(program)?)
-    };
     for (ordinal, function) in program.functions().iter().enumerate() {
         if u32::try_from(ordinal).is_ok_and(|ordinal| clones.contains(&ordinal)) {
             functions.append(
@@ -389,9 +380,6 @@ fn emit_module(
                     ModuleState {
                         intrinsics: &mut intrinsics,
                         owner_scopes: &owner_scopes,
-                        force_inline: sequential_inline_plan
-                            .as_ref()
-                            .is_some_and(|plan| plan.contains(ordinal)),
                         parallel: &mut thunks,
                         sequential_clones: Some(&clones),
                         refusal_clones: &refusal_clones,
@@ -1489,7 +1477,6 @@ struct FunctionEmitter<'program, 'state> {
     owner_alias: storage_alias::OwnerAliases,
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
     owner_scopes: &'state storage_alias::OwnerScopePlan,
-    force_inline: bool,
     incoming: Vec<Vec<Incoming>>,
     output: FunctionBody,
     /// Stack slot declarations hoisted to the top of the function's entry block.
@@ -1582,7 +1569,6 @@ struct FunctionEmitter<'program, 'state> {
 struct ModuleState<'state> {
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
     owner_scopes: &'state storage_alias::OwnerScopePlan,
-    force_inline: bool,
     parallel: &'state mut ParallelThunks,
     /// `None` emits the ordinary lowering; `Some` emits the sequential clone.
     sequential_clones: Option<&'state HashSet<u32>>,
@@ -1604,7 +1590,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ModuleState {
             intrinsics,
             owner_scopes,
-            force_inline,
             parallel,
             sequential_clones,
             refusal_clones,
@@ -1661,7 +1646,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             window_address_facts,
             intrinsics,
             owner_scopes,
-            force_inline,
             owner_alias: storage_alias::OwnerAliases::default(),
             incoming: Vec::new(),
             output: FunctionBody::default(),
@@ -2016,9 +2000,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
-        if self.inline_selected() {
-            signature.suffix.push_str(inlining::ATTRIBUTE);
-        }
         if entry {
             signature.linkage = Linkage::Internal;
         }
@@ -2204,17 +2185,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok((parameters, references))
     }
 
-    fn inline_selected(&self) -> bool {
-        self.grain.is_none() && self.dispatch.is_none() && self.force_inline
-    }
-
     /// A register-returned definition's public entry: the slot its body
     /// constructs the result in, the call, and the loaded value.
     ///
-    /// The body is internal, so the entry is its one caller. A body with
-    /// a loop, including one from a selected callee expansion, must simplify
-    /// in destination form before joining this entry. The bounded IR policy
-    /// may inline a loop-free body and entry.
+    /// The body is internal, so the entry is its one caller, and it is
+    /// never marked always-inline. The host therefore simplifies the body
+    /// in its destination form before it inlines the body here. An
+    /// always-inline body would be merged before that simplification and
+    /// would lose the loop shapes the destination form gives it.
     fn public_entry(
         &self,
         symbol: &str,
@@ -2237,9 +2215,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
-        if self.inline_selected() {
-            signature.suffix.push_str(inlining::ATTRIBUTE);
-        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);

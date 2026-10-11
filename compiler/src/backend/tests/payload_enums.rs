@@ -1137,12 +1137,7 @@ pub(super) fn retain_step_producers(module: &str) -> String {
                     .iter()
                     .any(|name| line.contains(&format!(" @wf_{name}(")))
             {
-                format!(
-                    "{} noinline {{\n",
-                    super::owned_places::without_optional_inline(
-                        line.strip_suffix(" {").expect("header")
-                    )
-                )
+                format!("{} noinline {{\n", line.strip_suffix(" {").expect("header"))
             } else {
                 format!("{line}\n")
             }

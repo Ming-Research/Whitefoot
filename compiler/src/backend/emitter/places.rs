@@ -1019,7 +1019,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         // Producer fields can have been stored separately in another function.
         // Retain the same layout boundaries for incoming and heap values as
-        // for local values; inline profitability is a separate decision.
+        // for local values. The host's inline cost charges this expansion;
+        // the in-place-parameters research record tracks its consequences.
         if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
             .map_err(BackendFailure::TargetLayout)?
         {

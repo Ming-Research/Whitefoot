@@ -241,8 +241,7 @@ fn stored_results_return_in_registers_exactly_when_their_leaves_fit() {
             assert_eq!(entry.matches("\n  ret ").count(), 1, "{entry}");
             // The body is the destination-form definition, internal and
             // called only by its entry, so the host simplifies it on its
-            // own before inlining if its expansion has loops; the bounded
-            // policy can inline a loop-free body early.
+            // own before it inlines it there. Nothing marks it always-inline.
             let body = emitted_body(&module, name);
             assert!(
                 body.starts_with(&format!(
@@ -262,6 +261,7 @@ fn stored_results_return_in_registers_exactly_when_their_leaves_fit() {
                 "{name}: {main}"
             );
         }
+        assert!(!module.contains("alwaysinline"), "{module}");
     });
 }
 

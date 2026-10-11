@@ -166,9 +166,7 @@ fn retained_priority_helpers_do_not_copy_the_inline_run() {
                         })
                     {
                         names.push(name.to_owned());
-                        return super::owned_places::without_optional_inline(
-                            line.strip_suffix(" {").unwrap(),
-                        ) + " noinline {\n";
+                        return line.strip_suffix(" {").unwrap().to_owned() + " noinline {\n";
                     }
                 }
                 line.to_owned() + "\n"
@@ -351,8 +349,7 @@ fn main() -> status: std::process::ExitStatus pure {
             if line.starts_with("define ")
                 && (line.contains("@wf_transfer(") || line.contains("@wf_accept("))
             {
-                super::owned_places::without_optional_inline(line.strip_suffix(" {").unwrap())
-                    + " noinline {\n"
+                line.strip_suffix(" {").unwrap().to_owned() + " noinline {\n"
             } else {
                 line.to_owned() + "\n"
             }

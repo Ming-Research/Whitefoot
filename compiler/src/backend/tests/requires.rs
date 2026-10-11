@@ -59,10 +59,7 @@ fn main() -> status: std::process::ExitStatus pure {
                     .strip_prefix("define ")
                     .and_then(|line| line.strip_suffix(" {"))
                 {
-                    format!(
-                        "define {} noinline {{\n",
-                        super::owned_places::without_optional_inline(header)
-                    )
+                    format!("define {header} noinline {{\n")
                 } else {
                     format!("{line}\n")
                 }

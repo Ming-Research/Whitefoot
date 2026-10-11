@@ -21,10 +21,9 @@
 //! emitted under an internal symbol ([`FunctionAbi::body`]). The
 //! definition's public symbol is a small entry that gives that body a frame
 //! slot, calls it, and returns the loaded value. The host optimizer
-//! simplifies bodies with loops on their own before inlining them into the
-//! entry; bounded bodies whose selected expansion is loop-free may be forced
-//! inline. Bodies with loops keep the loop and exit shape the destination
-//! form gives them. If the returns instead joined one block, or each loaded and
+//! simplifies the body on its own before it inlines the body into the
+//! entry, so the body's loops and exits keep the shape the destination form
+//! gives them. If the returns instead joined one block, or each loaded and
 //! returned the slot, the host would fold their exit tests into selects
 //! before that point. The caller stores the returned value into the storage
 //! its plan selected, and SROA removes that copy. A bound in bytes would not

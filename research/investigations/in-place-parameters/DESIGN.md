@@ -2081,6 +2081,8 @@ union-only test policy as historical; it changes no additional decision.
 
 ## Restoring granules with bounded inlining
 
+This historical proposal was withdrawn after the [measured outcome](#bounded-inlining-measured-outcome-and-withdrawal).
+
 ### Question, rejected round and evidence boundary
 
 Can source-independent layout granules retain #345's forwarding gains while
@@ -2418,3 +2420,112 @@ is unchanged, the loop target follows the emitted world, and neither repaired
 witness weakens its expectations. The reviewer ran no commands that build,
 test or check the candidate and treated the local suite result as supplied
 validation evidence; broader gates, readiness and performance remain pending.
+
+
+## Bounded inlining: measured outcome and withdrawal
+
+The experiment release `wf-exp-a92354b8c160` contains the bounded-IR policy
+from `6e04d33dc`; `a92354b8c` moved read-only global emission into
+`emitter/constants.rs` and formatted branch modules, without changing their
+behavior. Fable's read-only analysis (`<scratch-root>/fable357.reply.md`,
+with probes in `halo-probe` and `probe-result.txt` and emitted IR/disassembly
+in `a92354` from the [hosted structural comparison](https://github.com/Ming-Research/Whitefoot/actions/runs/38168380716)) found
+74 out-of-line Halo `heap.table_get` sites, failing the proposal's first
+structural criterion. Snowghost's `set_links`, `next_glyphs`,
+`set_glyph_class` and `add_scalar_piece` each had zero out-of-line sites.
+These are structural observations, not timing results.
+
+### Pre-expansion budget probe
+
+Fable used the released compiler on throwaway copies of Halo, replacing
+`table_get` with its shared handle/bounds path, its array path, or its node
+path and padding each with a chain of total `iand` operations and a guard.
+The presence of the policy attribute at the 64-unit selection boundary
+provided a black-box bisection oracle. A guarded shared path calibrated the
+guard's six-unit overhead; the chain added one unit per definition and one
+for its first constant. The measured costs were:
+
+| Body retained | Whitefoot IR units |
+| --- | ---: |
+| Shared handle match, bounds test and Nil return | 14 |
+| Shared path plus array lookup | 41 |
+| Shared path plus node lookup | 44 |
+| Original, combining both paths | 71 (approximately one-unit join uncertainty) |
+
+The original's emitted IR cross-check counted 49 named non-phi definitions,
+two unnamed definitions and 19 terminators, consistent within one unit.
+The original failed the local limit alone: the ABI, operation repertoire,
+callee selection and dispatch partition were eligible, and its selected
+expansion remained below 256 units. Raising an arbitrary budget to recover
+this function would not establish a structural reason for that budget.
+
+### Code growth and LLVM accounting
+
+Fable counted 498 of 1,127 Halo definitions (44 %) carrying
+`alwaysinline "wf-inline-policy"="bounded-ir"`, including 42 register-result
+`.body` definitions. The saved native binaries' text sizes were 560,055 bytes
+for `wf-78223721f77d`, 561,679 for `wf-7062f3ac4ac7`, and 706,151 for
+`wf-exp-a92354b8c160`: growth of 25.7 % against 7062. The saved
+`concat_step` disassembly grew from 653 to 1,369 lines and contained three
+`memmove@plt`, four `wf_grow` and three `vm.finish` calls after grow/finish
+paths were fused into the hot body. Line counts describe those disassemblies,
+not an instruction count or execution cost. Mandatory inlining merges bodies
+before their independent simplification, the mechanism already rejected for
+register-result bodies in the result-register investigation.
+
+Fable inspected LLVM's [release/22.x InlineCost.cpp](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp).
+Its cost accounting charges a memcpy/memmove/memset intrinsic one instruction
+cost of 5 regardless of width, but each granule load and store costs 5,
+giving 10n for n granules (constant-index GEPs are free). A three-granule
+Value copy therefore costs 30 rather than 5; ten u32 Links fields cost
+100 rather than 5. Real calls add a 25-unit call penalty, five per argument
+and five for the instruction: 40 for two arguments and 45 for three.
+The actual build uses `clang -O2 -flto=full`, with an ordinary threshold of
+225 and a statically cold-callsite threshold of 45. `inlinehint` raises the
+ordinary threshold to at least 325, but the cold cap is applied afterwards
+for sites below 2 % of entry frequency and is not rescued by the hint.
+These constants describe that LLVM release's accounting, not Whitefoot IR
+units or measured call hotness.
+
+The old structural outcomes sat at this accounting boundary: `table_get`
+was near 220–230 before expanded transfers, while Snowghost's small wrapper
+was near the 45 cold-site threshold. Charging the old intrinsic as one
+instruction supplied the margin. The measurements do not support a claim
+that an uncoupled pre-expansion Whitefoot budget can reproduce those outcomes.
+Nor did recovering Snowghost's structure establish its timing acceptance.
+
+LLVM's DAG combiner can also re-merge consecutive same-typed load/store
+pairs in a pure copy (`tryStoreMergeOfLoads`). Saved 7062 disassembly already
+shows wide `movupd` result transfers in `table_get` and 16-byte loads at
+Frame offsets 0, 16 and 56 in `push_frame`, crossing separately stored
+fields. Granules retain observed forwarding gains where boundaries survive,
+but emission does not guarantee final machine widths; the inline charge is
+paid even where the machine later merges the accesses. A future experiment
+on surviving load widths or register returns for suitable union layouts
+would require its own evidence and decision; neither is implemented here.
+
+### Corrected alias comparison and withdrawn proposal
+
+`wf-exp-4753d28fb4ae` contained the looping-callee read-through fix and
+storage-role TBAA, but not the owner alias scopes from `4260c8688` and
+`d9abe90b3`. Its concat byte loop still reloaded source length, destination
+length and destination capacity per byte, as recorded in the
+[remaining alias evidence](#remaining-alias-evidence). On `e9d765cd6`, which
+contains those scopes without forced inlining, these metadata loads were
+hoisted. Thus 4753d timing is not evidence for the complete alias repair,
+and a claim that the no-override candidate is identical to 4753d would be
+incorrect. The retained candidate includes the scopes and whole-root effect
+coverage as well as TBAA, read-through and source-independent granules.
+
+The proposed withdrawal is tracked on decision card `lm-357-inline-override`;
+the owner's ruling remains pending. The bounded-IR inlining mechanism and
+its policy-only witnesses are removed, while mandatory dispatch-header
+inlining, granule transfers, both cause-level fixes and the constants code
+move remain. Acceptance is by downstream timing and forwarding counters;
+call counts, text size and loop shape are diagnostics for attribution.
+No new timing is established by the withdrawal. Halo must retain 7062's
+kernel and forwarding gains and meet the pre-344/345 concat comparison;
+Snowghost's edit/style/layout cells require their own paired comparison
+against `wf-78223721f77d`. The earlier successful library run validates the
+historical policy candidate, not this withdrawal. CI and fresh downstream
+measurements are still required.
