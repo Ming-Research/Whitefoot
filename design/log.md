@@ -12,6 +12,13 @@ Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-on
 Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card wfbl-06-01-351-approve, "approve Whitefoot#351 (head 80c1d9b06)'s enum tag width design changes: two added and four changed decisions?" (translated), whose background quoted every added and changed decision verbatim.
 
 Summary: Payload enums and tag-only enums of more than two variants use the smallest of 8, 16 and 32 bits that represents their variant ordinals, keeping the tag first and fields in declaration order, because count-sized tags reduce stored size within OP-9's unchanged ceilings; Halo's instruction Cell shrinks from 12 to 8 bytes. A union's carrier, initialization and bounded transfer combine the tag with the leading padding common to every variant into one 1-, 2- or 4-byte prefix, because exposing that gap as a separate three-byte interval slowed Halo by 5-11%, instead of widening the physical tag or moving the padding separately; with the prefix the 14900K retest ratios were 0.983-1.016. Union layout, memory-only transfer and the bounded struct transfer follow the count-sized tag and the prefix, their other content unchanged.
+## 2026-10-11 References to compile-time measures point at shared constants
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#359 (head f03ba8de1) adding this decision to the design tree node compiler/storage-representation?" (translated).
+
+Summary: The specification admits a readonly reference to a prelude-declared measure such as `&source^.inner.len`, but a constant-capacity container keeps its compile-time measures out of memory, so the reference had no address. Such a reference now lowers to a private unnamed_addr read-only constant holding the u64 value, one per distinct value in each emitted module, because the measure never changes for the owner's lifetime and the language observes no reference address. Adding the word to every constant-capacity header was rejected because it enlarges every fixed container, which matters most on weak embedded targets, and refusing the borrow would narrow what the specification admits.
 ## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
 
 Nodes: compiler/checker-facts, compiler/incremental-closure

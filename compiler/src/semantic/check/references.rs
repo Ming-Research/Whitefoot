@@ -745,6 +745,7 @@ impl<'unit> Checker<'_, 'unit> {
     pub(super) fn invalidate_window_references(
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         window: &ResolvedPlace,
+        shifts_origin: bool,
     ) {
         for local in bindings.values_mut() {
             let Some(reference) = &mut local.reference else {
@@ -756,11 +757,15 @@ impl<'unit> Checker<'_, 'unit> {
             // window itself names the window whatever its boundary is, and a
             // callee that received one and moved that boundary still holds
             // it.
-            if reference
-                .paths
-                .iter()
-                .any(|path| window.may_be_prefix_of(&UnprovedSeparations, path, false))
-            {
+            if reference.paths.iter().any(|path| {
+                // [MSR-2, REF-2] a descriptor field names no element
+                // selected under a bound. A boundary move writes its
+                // contents and preserves its selected storage.
+                let descriptor = !shifts_origin
+                    && path.path.len() == window.path.len() + 1
+                    && matches!(path.path.last(), Some(PlaceStep::Measure(_)));
+                !descriptor && window.may_be_prefix_of(&UnprovedSeparations, path, false)
+            }) {
                 reference.invalidate(InvalidationEvent::WindowBoundaryMoved);
             }
         }
@@ -1025,6 +1030,87 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::MissingDereference {
                     mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
                 },
+            );
+        }
+        // [TYPE-10] `pages` is admitted in a page-count read, not in a
+        // borrow of that derived observation. Judge its containing type so
+        // an ordinary source struct's fields named `pages` and `len` keep
+        // their ordinary [REF-1] meaning.
+        if suffixes.len() >= 2
+            && self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[suffixes.len() - 2])?
+                == ".pages"
+            && self
+                .types
+                .declarations
+                .tree
+                .source_spelling(suffixes[suffixes.len() - 1])?
+                == ".len"
+        {
+            let (_, selected, _) = self.resolve_storage_path(
+                context,
+                &suffixes[..suffixes.len() - 2],
+                root_type,
+                bindings,
+                loop_depth,
+                true,
+            )?;
+            if matches!(
+                selected,
+                CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    ..
+                }
+            ) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Type10, place_node,
+                    SemanticIssueKind::ReservedPseudoField {
+                        spelling: "pages".to_owned(),
+                        mechanical_fix: "read the page count as `p.pages.len`; borrow a declared field or an initialized page",
+                    },
+                );
+            }
+        }
+        // [REF-4, OP-15] a range holder's length is a captured observation,
+        // not a declared field of its element type. Keep that observation
+        // outside the storage-member walk even when the element is itself
+        // measured, so `&part^.len`, `.cap`, or `.head` cannot select an
+        // element's descriptor; [MSR-1] gives a range no cap or head.
+        if written_deref
+            && root_binding
+                .as_ref()
+                .is_some_and(|local| local.mode.is_range())
+            && let Some(first) = suffixes.first()
+            && let Some(measure) = self
+                .types
+                .declarations
+                .tree
+                .source_spelling(*first)?
+                .strip_prefix('.')
+                .and_then(super::types::measure_named)
+        {
+            let (expected, found) = if measure == CheckedMeasure::Length {
+                (
+                    "a source struct, whose declared field this suffix selects".to_owned(),
+                    "a range reference's captured length, which is not a declared storage field"
+                        .to_owned(),
+                )
+            } else {
+                (
+                    "a measured place whose measure table has this row".to_owned(),
+                    format!(
+                        "a range reference, which has no `{}` measure",
+                        measure.spelling()
+                    ),
+                )
+            };
+            return self.types.declarations.issue_node(
+                SemanticRule::Type5,
+                *first,
+                SemanticIssueKind::type_mismatch(expected, found),
             );
         }
         // [REF-4] `&x[lo..hi]` forms a range reference. The range step is the
@@ -2686,6 +2772,74 @@ mod tests {
             ReferenceKind::Single,
             ResolvedPlace::binding(BindingId(binding)),
         )
+    }
+
+    /// [OP-10, MSR-2, REF-2] ending an element-selection bound preserves
+    /// descriptor storage, while an origin shift retains its stated broad
+    /// invalidation and a nested element's measure follows that element.
+    #[test]
+    fn boundary_invalidation_preserves_direct_descriptor_references() {
+        let window = ResolvedPlace::binding(BindingId(0));
+        let declaration = DeclarationId::from_index(0).unwrap();
+        let local = |path: Vec<PlaceStep>| LocalBinding {
+            binding: BindingId(1),
+            declaration,
+            mode: CheckedMode::Reference,
+            ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
+            live: true,
+            loop_depth: 0,
+            compiler_updated: false,
+            reference: Some(ReferenceInfo::formed(
+                ReferenceKind::Single,
+                ResolvedPlace {
+                    atomic_aliases: Vec::new(),
+                    root: window.root,
+                    path,
+                },
+            )),
+            refinement_witnesses: Vec::new(),
+            call_value: false,
+            read_only_state: false,
+        };
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            let mut bindings =
+                HashMap::from([(declaration, local(vec![PlaceStep::Measure(measure)]))]);
+            Checker::invalidate_window_references(&mut bindings, &window, false);
+            assert!(
+                bindings[&declaration]
+                    .reference
+                    .as_ref()
+                    .unwrap()
+                    .is_valid()
+            );
+            Checker::invalidate_window_references(&mut bindings, &window, true);
+            assert!(
+                !bindings[&declaration]
+                    .reference
+                    .as_ref()
+                    .unwrap()
+                    .is_valid()
+            );
+        }
+        let mut bindings = HashMap::from([(
+            declaration,
+            local(vec![
+                PlaceStep::Index(CapturedValue::unknown()),
+                PlaceStep::Measure(CheckedMeasure::Length),
+            ]),
+        )]);
+        Checker::invalidate_window_references(&mut bindings, &window, false);
+        assert!(
+            !bindings[&declaration]
+                .reference
+                .as_ref()
+                .unwrap()
+                .is_valid()
+        );
     }
 
     /// [REF-2] a freshly formed reference is valid, and validity is
