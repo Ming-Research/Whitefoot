@@ -1,0 +1,55 @@
+# Temporary, inspection-only workflow for halo-req-concat-codegen (status
+# board): which main merge between wf-78223721f77d and wf-7062f3ac4ac7 stops
+# inlining Halo's table_get and makes concat's copy loop reload metadata per
+# byte. It builds one Halo source (Halo-wf claude/halo-pin-7062f3a) with each
+# existing release on main's first-parent path and uploads symbols and the
+# disassembly of the functions involved. No timing runs here. This file and
+# its branch are deleted after the run.
+name: concat-bisect
+
+on:
+  push:
+    branches: [claude/concat-bisect]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Halo-wf
+          ref: claude/halo-pin-7062f3a
+          submodules: true
+          path: halo
+      - name: Build the bench program with each release and disassemble
+        working-directory: halo
+        run: |
+          set -euo pipefail
+          git log --oneline -1
+          make toolchain
+          out="$PWD/build/bisect-out"; mkdir -p "$out"
+          for release in wf-78223721f77d wf-fe5589ec5f45 wf-fd49ea518e16 wf-0c0a2eda83ae wf-a3205af0bbea wf-bae97fdcf890 wf-179dc9cf1345 wf-9497f0a54fec wf-exp-b8cf83108946 wf-7062f3ac4ac7; do
+            echo "release = $release" > whitefoot.pin
+            make compiler
+            make toolchain-check
+            bin="$out/halo-$release"
+            if ! build/whitefoot/$release/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o "$bin" > "$out/build-$release.log" 2>&1; then
+              echo "$release: build failed"; tail -5 "$out/build-$release.log"; continue
+            fi
+            nm -C "$bin" | grep -E 'table_get|concat' > "$out/syms-$release.txt" || true
+            calls=$(objdump -d --no-show-raw-insn -M intel "$bin" | grep -cE 'call +[0-9a-f]+ <[^>]*table_get' || true)
+            echo "$release: table_get symbols $(grep -c table_get "$out/syms-$release.txt" || true), call sites $calls"
+            for f in $(nm "$bin" | awk '/concat_step|table_get/ {print $3}' | sort -u); do
+              objdump -d --no-show-raw-insn -M intel --disassemble="$f" "$bin" > "$out/disasm-$release-$(echo "$f" | tr '$/' '__' | cut -c1-120).txt" 2>/dev/null || true
+            done
+          done
+          git checkout -- whitefoot.pin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: concat-bisect
+          path: halo/build/bisect-out
