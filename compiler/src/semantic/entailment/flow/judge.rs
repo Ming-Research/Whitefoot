@@ -1166,6 +1166,7 @@ impl Analyzer<'_, '_> {
         if let Some(carrier) = expression.carrier() {
             judgment.reached &= self.judging().judge_call_separations(carrier, states);
         }
+        self.capture_operation_intervals(expression, &states.facts);
         judgment
     }
 

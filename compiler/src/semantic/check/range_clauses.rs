@@ -15,7 +15,7 @@ mod aggregate;
 use aggregate::RangeOperand;
 
 use crate::syntax::NodeId;
-use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
+use crate::syntax::terminal::FixedTerminal;
 use crate::syntax::views::PlaceSuffix;
 use crate::{
     DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production, ResolvedTarget,
@@ -143,16 +143,15 @@ impl Checker<'_, '_> {
                 "state the fact over at most two bound variables, or split it into facts over fewer",
             );
         }
-        let colon = self
+        let mut guards = Vec::new();
+        for guard in self
             .types
             .declarations
             .tree
-            .direct_tokens_matching(clause, &[TerminalPredicate::Fixed(FixedTerminal::Colon)])?;
-        let [colon] = colon.as_slice() else {
-            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-        };
-        let colon = u64::try_from(*colon).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-        let mut guards = Vec::new();
+            .children_with(clause, Production::RangeGuard)?
+        {
+            guards.extend(self.range_guard(context, guard, bindings, &names)?);
+        }
         let mut conclusions = Vec::new();
         for relation in self
             .types
@@ -160,18 +159,7 @@ impl Checker<'_, '_> {
             .tree
             .children_with(clause, Production::RangeRelation)?
         {
-            let checked = self.range_relation(context, relation, bindings, &names)?;
-            if self
-                .types
-                .declarations
-                .tree
-                .first_terminal_position(relation)?
-                < colon
-            {
-                guards.extend(checked);
-            } else {
-                conclusions.extend(checked);
-            }
+            conclusions.extend(self.range_relation(context, relation, bindings, &names)?);
         }
         if names.unformed.get() {
             self.body.unformed_range_facts.insert(declaration);
@@ -710,6 +698,34 @@ impl Checker<'_, '_> {
                 mechanical_fix,
             },
         )
+    }
+
+    /// [RANGE-1] a comparison guard is a relation; a bare Bool datum holds
+    /// where its versioned declaration-order tag is True's tag.
+    fn range_guard(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::CompareOp)?
+            .is_some()
+        {
+            return self.range_comparison(context, node, node, bindings, names);
+        }
+        let expression = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::AffineExpr)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let operand = self.range_expression(context, expression, bindings, names)?;
+        operand.bool_guard(self, expression)
     }
 
     fn range_relation(

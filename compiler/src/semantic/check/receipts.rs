@@ -758,6 +758,17 @@ impl Checker<'_, '_> {
         published: &[Vec<&CheckedPostcondition>],
         const_parameter_types: &HashMap<DeclarationId, IntegerType>,
     ) -> Option<FunctionEntailment> {
+        let function = &functions.get(index)?.function;
+        // [RANGE-2, MOD-8] receipts retain an accepted verdict, not the
+        // ordinary closed operand intervals the range walk reads. Keep both
+        // judgments on their ordinary fresh path for range participants.
+        if crate::semantic::range_judgment::takes_part(function, |callee| {
+            callees
+                .get(callee.0 as usize)
+                .is_some_and(|callee| callee.range_boundary)
+        }) {
+            return None;
+        }
         let key = self.proof_receipt_key(
             functions,
             index,

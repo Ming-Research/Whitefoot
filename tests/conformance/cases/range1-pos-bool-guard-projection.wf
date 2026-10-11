@@ -1,0 +1,14 @@
+struct Node {
+  live: Bool;
+  slot: u64;
+}
+
+fn preserve(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+  requires forall inverse(k in 0_u64..nodes^.len) when nodes^[k].live: nodes^[k].slot == k;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
