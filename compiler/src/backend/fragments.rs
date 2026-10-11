@@ -15,7 +15,10 @@
 //! linkage. A local definition that more than one group reaches is owned by
 //! a fragment of its own, together with the local definitions it alone
 //! reaches, and becomes `hidden`: it is defined once in the link, and every
-//! user names it across the boundary, as the
+//! user names it across the boundary. Dependency-free immutable constants
+//! marked for private replication instead appear in every using fragment;
+//! [STOR-7] gives them no observable address identity. Ordinary shared data
+//! follows the single-definition policy, as the
 //! [modular compilation design](../../../research/investigations/modular-compilation/DESIGN.md#llvm-fragments-and-optimization-regions)
 //! requires of constants, release helpers, clones, variants and thunks.
 //!
@@ -148,6 +151,9 @@ fn split_emission(
     let mut members = vec![Vec::new(); groups.len()];
     let mut roots: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, owner) in owners.iter().enumerate() {
+        if module.entities[index].fragment_local {
+            continue;
+        }
         match *owner {
             Owner::Group(group) => members[group].push(index),
             Owner::Root(root) => roots
@@ -349,7 +355,18 @@ fn fragment(
     references: &[(BTreeSet<usize>, BTreeSet<String>)],
     members: &[usize],
 ) -> Result<String, SplitFailure> {
-    let inside = members.iter().copied().collect::<BTreeSet<_>>();
+    let mut inside = members.iter().copied().collect::<BTreeSet<_>>();
+    // [STOR-7] immutable dependency-free constants retain private linkage in
+    // each emitted module. They are never declarations to another fragment.
+    for &member in members {
+        inside.extend(
+            references[member]
+                .0
+                .iter()
+                .copied()
+                .filter(|named| module.entities[*named].fragment_local),
+        );
+    }
     let mut globals = BTreeMap::new();
     let mut declarations = BTreeMap::new();
     let mut definitions = BTreeMap::new();
@@ -358,7 +375,9 @@ fn fragment(
         let entity = &module.entities[member];
         dependencies.extend(&entity.references);
         // A local definition that owns its fragment is named from others.
-        let shared = entity.linkage.is_local() && owners[member] == Owner::Root(member);
+        let shared = !entity.fragment_local
+            && entity.linkage.is_local()
+            && owners[member] == Owner::Root(member);
         let header = if shared {
             entity.hidden_header.clone()
         } else {

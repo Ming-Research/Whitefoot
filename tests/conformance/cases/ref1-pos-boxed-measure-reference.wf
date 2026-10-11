@@ -1,0 +1,23 @@
+fn peek(n: &u64) -> result: u64 reads(n) contract {
+  ensures result == n^;
+} {
+  return n^;
+}
+
+fn length_of(source: &Box<Slots<u8>>) -> result: u64 reads(source.inner.len) contract {
+  ensures result == source^.inner.len;
+} {
+  let n = peek(n: &source^.inner.len);
+  return n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = box_slots_new::<u8>(capacity: 4_u64);
+  place_back(window: &slots.inner, value: 7_u8);
+  place_back(window: &slots.inner, value: 9_u8);
+  let length = length_of(source: &slots);
+  if length == 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

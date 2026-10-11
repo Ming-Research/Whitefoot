@@ -1942,7 +1942,9 @@ impl CheckedRangeElementPlace {
             .chain(std::iter::once(&self.offset))
             .chain(self.path.iter().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+                CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Measure(_) => None,
             }))
     }
 
@@ -1954,7 +1956,9 @@ impl CheckedRangeElementPlace {
             .chain(std::iter::once(&mut self.offset))
             .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+                CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Measure(_) => None,
             }))
     }
 
@@ -2063,6 +2067,8 @@ pub(crate) struct CheckedContainerRoot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
+    /// A declared readonly descriptor field [TYPE-2, OP-15, MSR-2].
+    Measure(CheckedMeasure),
     /// One `Box.inner` selection [TYPE-9]. It is an ordinary path step
     /// whose position is preserved in the resolved place [REF-1].
     BoxReferent(NominalId),
@@ -2116,14 +2122,18 @@ impl CheckedContainerRoot {
     /// terminal operation only takes an address or reads a measure.
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
         self.path.iter().filter_map(|step| match step {
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&index.offset),
         })
     }
 
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
         self.path.iter_mut().filter_map(|step| match step {
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
         })
     }
@@ -2197,7 +2207,9 @@ fn subscript_offsets(
 ) -> impl Iterator<Item = (&CheckedExpression, super::places::CapturedValue)> {
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
-        CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
     })
 }
 
@@ -2252,13 +2264,14 @@ fn selects_readonly_fragment_field(
         };
         fields.get(field as usize)
     };
-    let Some((CheckedPlaceStep::Field(last), prefix)) = steps.split_last() else {
+    let Some((last, prefix)) = steps.split_last() else {
         return false;
     };
     let mut ty = start;
     for step in prefix {
         ty = match step {
             CheckedPlaceStep::Subscript(index) => index.element_type,
+            CheckedPlaceStep::Measure(_) => return false,
             CheckedPlaceStep::Field(field) => match struct_field(ty, *field) {
                 Some(field) => field.ty,
                 None => return false,
@@ -2274,8 +2287,14 @@ fn selects_readonly_fragment_field(
             }
         };
     }
-    struct_field(ty, *last)
-        .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_)))
+    match last {
+        CheckedPlaceStep::Field(field) => struct_field(ty, *field)
+            .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_))),
+        CheckedPlaceStep::Measure(measure) => ty
+            .measured()
+            .is_some_and(|measured| !matches!(measure.cell(measured), MeasureCell::Absent)),
+        _ => false,
+    }
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
@@ -2308,6 +2327,7 @@ impl CheckedPlaceStep {
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
         match self {
             Self::Field(field) => super::goal::GoalProjection::Field(*field),
+            Self::Measure(measure) => super::goal::GoalProjection::Measure(*measure),
             Self::BoxReferent(_) => super::goal::GoalProjection::Deref,
             Self::Subscript(index) => {
                 super::goal::GoalProjection::Subscript(index.captured.goal_identity())
@@ -2318,6 +2338,7 @@ impl CheckedPlaceStep {
     pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         match self {
             Self::Field(field) => super::places::PlaceStep::Field(*field),
+            Self::Measure(measure) => super::places::PlaceStep::Measure(*measure),
             Self::BoxReferent(_) => super::places::PlaceStep::Deref,
             Self::Subscript(index) => super::places::PlaceStep::Index(index.captured),
         }
@@ -3697,7 +3718,7 @@ impl FunctionMentions {
     fn steps(&mut self, steps: &[CheckedPlaceStep]) {
         for step in steps {
             match step {
-                CheckedPlaceStep::Field(_) => {}
+                CheckedPlaceStep::Field(_) | CheckedPlaceStep::Measure(_) => {}
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     self.types.push(CheckedType::Nominal(*nominal));
                 }

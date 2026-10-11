@@ -1415,6 +1415,7 @@ impl<'unit> TypeContext<'unit> {
                     projections.push(GoalProjection::Payload { variant, field });
                 }
                 PlaceStep::Deref => projections.push(GoalProjection::Deref),
+                PlaceStep::Measure(measure) => projections.push(GoalProjection::Measure(measure)),
                 PlaceStep::Index(index) => {
                     projections.push(GoalProjection::Subscript(index.goal_identity()));
                 }
@@ -1434,7 +1435,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
-                PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
+                PlaceStep::Part(_) | PlaceStep::Descendant(_) => {
                     return self.declarations.unsupported(
                         super::super::super::super::UnsupportedSemanticFeature::CompositeValues,
                         node,
@@ -1611,6 +1612,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `remove_at` do, and no `ensures` is read here to show that it does
     /// not, so its call ends the bound as well. Every reference into such a
     /// window dies [REF-2, REF-4].
+    /// Only written entries identify an operated window: a by-value
+    /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
         signature: &FunctionSignature,
@@ -1630,6 +1633,9 @@ impl<'unit> DeclarationInventory<'unit> {
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
+            if !entry.write {
+                continue;
+            }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
             // whose bound the call ends is the place below that step.
@@ -1640,7 +1646,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
             let takes_back = !prelude
-                && entry.write
                 && matches!(
                     entry.place.path.get(cut),
                     Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
@@ -1653,7 +1658,9 @@ impl<'unit> DeclarationInventory<'unit> {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
-            Checker::invalidate_window_references(bindings, &window);
+            let shifts_origin =
+                prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
+            Checker::invalidate_window_references(bindings, &window, shifts_origin);
         }
         Ok(())
     }
