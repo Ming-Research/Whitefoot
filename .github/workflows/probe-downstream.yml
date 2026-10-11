@@ -1,0 +1,46 @@
+# Temporary: check downstream projects with base and head compilers (board
+# item proof-bl-match-tag-read). Removed before the branch is ready.
+name: probe-downstream
+
+on:
+  push:
+    branches: [claude/match-tag-read]
+    paths: [.github/workflows/probe-downstream.yml]
+
+jobs:
+  downstream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Halo-wf
+          path: ds/halo
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Firn-wf
+          path: ds/firn
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Snowghost-wf
+          path: ds/snowghost
+      - name: Build base and head
+        run: |
+          base=$(git merge-base HEAD origin/main)
+          git worktree add -q $RUNNER_TEMP/base $base
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+          cargo build --manifest-path $RUNNER_TEMP/base/compiler/Cargo.toml --profile gate --bin whitefootc --locked
+      - name: Check every module graph with both compilers
+        run: |
+          set +e
+          head=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
+          base=$RUNNER_TEMP/base/compiler/target/gate/whitefootc
+          for g in $(find ds -name modules.wfg -not -path "*/whitefoot-kit/*" | sort); do
+            d=$(dirname $g)
+            (cd $d && timeout 600 $base --check --graph modules.wfg --check-modules > $RUNNER_TEMP/b.txt 2>&1; echo "exit $?" >> $RUNNER_TEMP/b.txt)
+            (cd $d && timeout 600 $head --check --graph modules.wfg --check-modules > $RUNNER_TEMP/h.txt 2>&1; echo "exit $?" >> $RUNNER_TEMP/h.txt)
+            if cmp -s $RUNNER_TEMP/b.txt $RUNNER_TEMP/h.txt; then echo "SAME $g ($(tail -1 $RUNNER_TEMP/h.txt))"; else echo "DIFF $g"; diff $RUNNER_TEMP/b.txt $RUNNER_TEMP/h.txt | head -40; fi
+          done
