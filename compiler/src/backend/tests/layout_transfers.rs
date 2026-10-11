@@ -142,6 +142,23 @@ fn copy_overlay(target: &Overlay, value: Overlay) -> result: unit writes(target)
   return unit;
 }
 
+fn return_frame(value: &Frame) -> result: Frame reads(value) {
+  return value^;
+}
+
+fn return_value(value: &Value) -> result: Value reads(value) {
+  return value^;
+}
+
+struct Wrapped {
+  prefix: u64;
+  value: Value;
+}
+
+fn return_wrapped(value: &Wrapped) -> result: Wrapped reads(value) {
+  return value^;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -253,6 +270,132 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
         assert!(body.contains("call void @llvm.memmove."), "{body}");
         assert!(!body.contains("; layout-bounded transfer "), "{body}");
     }
+}
+
+#[test]
+fn whole_union_results_keep_one_intrinsic_without_changing_internal_transfers() {
+    let module = emit(SOURCE);
+    let value = emitted_function(&module, "return_value");
+    assert_eq!(value.matches("call void @llvm.memmove.").count(), 1, "{value}");
+    assert!(
+        value.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result, ptr %v0,"),
+        "copy directly from the source into the public destination: {value}"
+    );
+    assert!(!value.contains("; layout-bounded transfer "), "{value}");
+    assert!(!value.contains("alloca"), "{value}");
+
+    // The ABI destination alone does not suppress struct leaf transfers,
+    // including a stored struct whose fields contain a union enum.
+    let frame = emitted_function(&module, "return_frame");
+    assert_typed_transfer(
+        frame,
+        &[
+            (0, "i64"),
+            (8, "i64"),
+            (16, "i32"),
+            (24, "i64"),
+            (32, "i32"),
+            (36, "i8"),
+            (40, "i64"),
+            (48, "i64"),
+        ],
+    );
+    let wrapped = emitted_function(&module, "return_wrapped");
+    assert_typed_transfer(
+        wrapped,
+        &[(0, "i64"), (8, "i32"), (12, "i32"), (16, "i64")],
+    );
+    for body in [frame, wrapped] {
+        assert!(!body.contains("@llvm.memmove"), "{body}");
+        assert_eq!(transfer_region(body).2, "%wf.result", "{body}");
+    }
+    // An internal union store retains the original interval oracle.
+    assert_typed_transfer(
+        emitted_function(&module, "copy_value"),
+        &[(0, "i32"), (4, "i32"), (8, "i64")],
+    );
+}
+
+#[test]
+fn heap_union_snapshot_and_unchanged_call_result_use_the_public_destination() {
+    let source = br#"enum Snapshot {
+  Number(n: u64);
+  Function(id: u64);
+  Native(id: u64);
+  Empty();
+}
+
+fn pick(values: &Box<Array<Snapshot>>, index: u64) -> result: Snapshot reads(values) contract {
+  requires index < values^.inner.len;
+} {
+  return values^.inner[index];
+}
+
+fn relay(values: &Box<Array<Snapshot>>, index: u64) -> result: Snapshot reads(values) contract {
+  requires index < values^.inner.len;
+} {
+  return pick(values: values, index: index);
+}
+
+fn classify(value: Snapshot) -> result: u64 pure {
+  match value {
+    Number(n: number) => {
+      return number;
+    }
+    Function(id: function_id) => {
+      return function_id +wrap 1_u64;
+    }
+    Native(id: native_id) => {
+      return native_id +wrap 2_u64;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let seed = Snapshot::Number(n: 17_u64);
+  let values = box_array_filled::<Snapshot>(count: 2_u64, value: seed);
+  if 1_u64 < values.inner.len {
+    let first = relay(values: &values, index: 0_u64);
+    set values.inner[0_u64] = Snapshot::Function(id: 29_u64);
+    let second = relay(values: &values, index: 0_u64);
+    let first_observed = classify(value: first);
+    let second_observed = classify(value: second);
+    let untouched = relay(values: &values, index: 1_u64);
+    let untouched_observed = classify(value: untouched);
+    if first_observed != 17_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if second_observed != 30_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if untouched_observed != 17_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 4_u8);
+}
+"#;
+    let module = emit(source);
+    let pick = emitted_function(&module, "pick");
+    assert_eq!(pick.matches("call void @llvm.memmove.").count(), 1, "{pick}");
+    assert!(
+        pick.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"),
+        "the unavoidable heap snapshot writes directly into the result: {pick}"
+    );
+    assert!(!pick.contains("; layout-bounded transfer "), "{pick}");
+    assert!(!pick.contains("alloca"), "{pick}");
+    let relay = emitted_function(&module, "relay");
+    assert!(relay.contains("@wf_pick(ptr %wf.result,"), "{relay}");
+    assert!(!relay.contains("alloca"), "{relay}");
+    assert!(!relay.contains("@llvm.memmove"), "{relay}");
+    assert!(!relay.contains("; layout-bounded transfer "), "{relay}");
+    let retained = super::owned_places::retain_calls(&module);
+    let output = super::compile_and_run(&retained);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
 #[test]

@@ -1017,8 +1017,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
-        if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
-            .map_err(BackendFailure::TargetLayout)?
+        // A whole union result still needs a snapshot when its source belongs
+        // to another owner. Keep that ABI transfer as one memory intrinsic:
+        // expanding it before inlining charges each union interval separately
+        // to the caller's inline cost. Internal union transfers and stored
+        // structs retain the typed leaves which expose field store forwarding.
+        let whole_union_result = destination == RESULT_POINTER
+            && match ty {
+                IrType::Nominal(nominal) => union_enums::is_union_enum(self.program, nominal)?,
+                _ => false,
+            };
+        if !whole_union_result
+            && let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
+                .map_err(BackendFailure::TargetLayout)?
         {
             return self.copy_granules(&granules, source, destination);
         }

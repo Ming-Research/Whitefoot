@@ -265,6 +265,7 @@ fn emit_module(
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
+    let owner_scopes = storage_alias::OwnerScopePlan::new(program);
     let mut thunks = ParallelThunks::default();
     let refusal_clones = if program.sequential_compute_refusal() {
         sequential_clone_set(program)
@@ -301,6 +302,7 @@ fn emit_module(
             function,
             ModuleState {
                 intrinsics: &mut intrinsics,
+                owner_scopes: &owner_scopes,
                 parallel: &mut thunks,
                 sequential_clones: None,
                 refusal_clones: &refusal_clones,
@@ -340,6 +342,7 @@ fn emit_module(
                 function,
                 ModuleState {
                     intrinsics: &mut intrinsics,
+                    owner_scopes: &owner_scopes,
                     parallel: &mut thunks,
                     sequential_clones: None,
                     refusal_clones: &refusal_clones,
@@ -375,6 +378,7 @@ fn emit_module(
                     function,
                     ModuleState {
                         intrinsics: &mut intrinsics,
+                        owner_scopes: &owner_scopes,
                         parallel: &mut thunks,
                         sequential_clones: Some(&clones),
                         refusal_clones: &refusal_clones,
@@ -415,6 +419,7 @@ fn emit_module(
     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
     text.header(format!("target triple = \"{}\"", target.triple()));
     storage_alias::emit_definitions(&mut text);
+    owner_scopes.emit_definitions(&mut text);
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
@@ -493,6 +498,11 @@ fn emit_module(
     text.append(drop_helpers);
     for intrinsic in intrinsics {
         let (name, result, parameters) = match intrinsic {
+            IntrinsicDeclaration::OwnerScope => (
+                "llvm.experimental.noalias.scope.decl".to_owned(),
+                "void".to_owned(),
+                vec!["metadata".to_owned()],
+            ),
             IntrinsicDeclaration::Assume => (
                 "llvm.assume".to_owned(),
                 "void".to_owned(),
@@ -1096,6 +1106,7 @@ struct Incoming {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum IntrinsicDeclaration {
+    OwnerScope,
     Assume,
     MemoryCopy,
     MemoryMove,
@@ -1579,7 +1590,9 @@ struct FunctionEmitter<'program, 'state> {
     /// (compiler/backend-facts).
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
+    owner_alias: storage_alias::OwnerAliases,
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
+    owner_scopes: &'state storage_alias::OwnerScopePlan,
     incoming: Vec<Vec<Incoming>>,
     output: FunctionBody,
     /// Stack slot declarations hoisted to the top of the function's entry block.
@@ -1671,6 +1684,7 @@ struct FunctionEmitter<'program, 'state> {
 /// think about.
 struct ModuleState<'state> {
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
+    owner_scopes: &'state storage_alias::OwnerScopePlan,
     parallel: &'state mut ParallelThunks,
     /// `None` emits the ordinary lowering; `Some` emits the sequential clone.
     sequential_clones: Option<&'state HashSet<u32>>,
@@ -1691,6 +1705,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<Self, BackendFailure> {
         let ModuleState {
             intrinsics,
+            owner_scopes,
             parallel,
             sequential_clones,
             refusal_clones,
@@ -1746,6 +1761,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             target,
             window_address_facts,
             intrinsics,
+            owner_scopes,
+            owner_alias: storage_alias::OwnerAliases::default(),
             incoming: Vec::new(),
             output: FunctionBody::default(),
             entry_prelude: String::new(),
@@ -2065,6 +2082,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        if !declaration && !waiting && self.dispatch.is_none() {
+            self.owner_alias =
+                storage_alias::OwnerAliases::build(self.owner_scopes, self.function, &self.incoming);
+            for scope in self.owner_alias.scopes() {
+                self.intrinsics.insert(IntrinsicDeclaration::OwnerScope);
+                self.output.symbol("llvm.experimental.noalias.scope.decl");
+                writeln!(
+                    self.entry_prelude,
+                    "  call void @llvm.experimental.noalias.scope.decl(metadata !{scope})"
+                )?;
+            }
+        }
         if !declaration {
             self.select_incoming_places(&public, &abi, waiting)?;
         }

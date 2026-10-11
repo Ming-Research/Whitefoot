@@ -125,3 +125,207 @@ pub(super) fn runtime_word(ty: IrType, field: u32) -> &'static str {
     };
     role.attachment()
 }
+
+/// Each readonly formal has a scope, but only writes through another formal
+/// exclude it. Read/read aliasing (including the shared empty header) remains
+/// possible. EFF-2 supplies readonly roots; EFF-5 separates another argument's
+/// writes. Result destinations and by-value inputs make no such promise.
+#[derive(Default)]
+pub(super) struct OwnerAliases {
+    roots: HashMap<IrValueId, BTreeSet<usize>>,
+    reads: BTreeMap<usize, usize>,
+    writes: Option<usize>,
+}
+
+fn readonly_formals(function: &IrFunction) -> Vec<usize> {
+    if function.waits() || !function.overlaps().is_empty() || aliasing_admitted_row(function.name()) {
+        return Vec::new();
+    }
+    let Some(signature) = function.source_signature() else {
+        return Vec::new();
+    };
+    if !function
+        .parameters()
+        .iter()
+        .enumerate()
+        .any(|(index, (value, ty))| {
+            matches!(ty, IrType::Address(_))
+                && signature.parameters().get(index) == Some(&crate::IrSourceMode::Reference)
+                && !function.readonly_reference_parameters.contains(value)
+        })
+    {
+        return Vec::new();
+    }
+    function
+        .parameters()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (value, ty))| {
+            (matches!(ty, IrType::Address(_))
+                && signature.parameters().get(index) == Some(&crate::IrSourceMode::Reference)
+                && function.readonly_reference_parameters.contains(value))
+            .then_some(index)
+        })
+        .collect()
+}
+
+/// Numbered metadata is one module-wide namespace, shared with the fixed TBAA
+/// definitions above. Headers accompany every fragment and cached roundtrip.
+pub(super) struct OwnerScopePlan {
+    definitions: Vec<(usize, Vec<(usize, usize)>, usize)>,
+    functions: BTreeMap<String, (BTreeMap<usize, usize>, usize)>,
+}
+
+impl OwnerScopePlan {
+    pub(super) fn new(program: &IrProgram) -> Self {
+        let mut plan = Self {
+            definitions: Vec::new(),
+            functions: BTreeMap::new(),
+        };
+        let mut next = 22;
+        for function in program.functions() {
+            let readonly = readonly_formals(function);
+            if readonly.is_empty() {
+                continue;
+            }
+            let domain = next;
+            next += 1;
+            let reads: Vec<_> = readonly
+                .into_iter()
+                .map(|formal| {
+                    let list = next + 1;
+                    next += 2;
+                    (formal, list)
+                })
+                .collect();
+            let writes = next;
+            next += 1;
+            plan.functions.insert(
+                function.name().to_owned(),
+                (reads.iter().copied().collect(), writes),
+            );
+            plan.definitions.push((domain, reads, writes));
+        }
+        plan
+    }
+
+    pub(super) fn emit_definitions(&self, module: &mut Module) {
+        for (domain, reads, writes) in &self.definitions {
+            module.header(format!("!{domain} = distinct !{{!{domain}}}"));
+            for (_, list) in reads {
+                let scope = list - 1;
+                module.header(format!("!{scope} = distinct !{{!{scope}, !{domain}}}"));
+                module.header(format!("!{list} = !{{!{scope}}}"));
+            }
+            let scopes = reads
+                .iter()
+                .map(|(_, list)| format!("!{}", list - 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            module.header(format!("!{writes} = !{{{scopes}}}"));
+        }
+    }
+}
+
+impl OwnerAliases {
+    pub(super) fn build(
+        plan: &OwnerScopePlan,
+        function: &IrFunction,
+        incoming: &[Vec<Incoming>],
+    ) -> Self {
+        let Some((reads, writes)) = plan.functions.get(function.name()) else {
+            return Self::default();
+        };
+        let mut result = Self {
+            reads: reads.clone(),
+            writes: Some(*writes),
+            ..Self::default()
+        };
+        // Unknown provenance is an explicit member, so a phi cannot acquire a
+        // formal's promise by silently dropping an unknown incoming edge.
+        const UNKNOWN: usize = usize::MAX;
+        for (index, (value, ty)) in function.parameters().iter().enumerate() {
+            let root = if matches!(ty, IrType::Address(_))
+                && function.source_signature().and_then(|s| s.parameters().get(index))
+                    == Some(&crate::IrSourceMode::Reference)
+            {
+                index
+            } else {
+                UNKNOWN
+            };
+            result.roots.insert(*value, BTreeSet::from([root]));
+        }
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                if let IrInstruction::Define {
+                    result: value,
+                    operation,
+                    ..
+                } = instruction
+                {
+                    if !matches!(operation, IrOperation::ProjectAddress { .. }) {
+                        result.roots.insert(*value, BTreeSet::from([UNKNOWN]));
+                    }
+                }
+            }
+        }
+        loop {
+            let mut changed = false;
+            for (block_index, block) in function.blocks().iter().enumerate() {
+                for (position, (value, _)) in block.parameters().iter().enumerate() {
+                    let roots: BTreeSet<_> = incoming[block_index]
+                        .iter()
+                        .filter_map(|edge| edge.arguments.get(position))
+                        .flat_map(|argument| {
+                            result.roots.get(argument).into_iter().flatten().copied()
+                        })
+                        .collect();
+                    let before = result.roots.entry(*value).or_default().len();
+                    result.roots.entry(*value).or_default().extend(roots);
+                    changed |= result.roots[value].len() != before;
+                }
+                for instruction in block.instructions() {
+                    if let IrInstruction::Define {
+                        result: value,
+                        operation: IrOperation::ProjectAddress { address, .. },
+                        ..
+                    } = instruction
+                    {
+                        let roots = result.roots.get(address).cloned().unwrap_or_default();
+                        let before = result.roots.entry(*value).or_default().len();
+                        result.roots.entry(*value).or_default().extend(roots);
+                        changed |= result.roots[value].len() != before;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        result
+    }
+
+    pub(super) fn scopes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.reads.values().copied()
+    }
+
+    fn root(&self, value: IrValueId) -> Option<usize> {
+        let roots = self.roots.get(&value)?;
+        (roots.len() == 1).then(|| *roots.first().expect("one root"))
+    }
+
+    pub(super) fn read(&self, value: IrValueId) -> String {
+        self.root(value)
+            .and_then(|root| self.reads.get(&root))
+            .map_or_else(String::new, |scope| format!(", !alias.scope !{scope}"))
+    }
+
+    pub(super) fn write(&self, value: IrValueId) -> String {
+        match self.root(value) {
+            Some(root) if root != usize::MAX && !self.reads.contains_key(&root) => self
+                .writes
+                .map_or_else(String::new, |scope| format!(", !noalias !{scope}")),
+            _ => String::new(),
+        }
+    }
+}

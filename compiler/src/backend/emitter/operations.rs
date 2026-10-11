@@ -44,11 +44,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}{}",
+                "  {} = load {}, ptr {}{}{}",
                 self.value_name(result),
                 emitted_type_1,
                 self.value_name(address),
-                storage_alias::source_read(self.program, ty)
+                storage_alias::source_read(self.program, ty),
+                self.owner_alias.read(address)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)
@@ -126,6 +127,53 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // transfer or a host operation's start and finish (`frames`).
         if target.waits() {
             return self.emit_waiting_call(result, ty, function, arguments);
+        }
+        // Expose an exact primitive body in this activation so access facts
+        // apply to its writes, rather than promising all reads of a call
+        // disjoint (two empty owners can read the same static header).
+        if self.owner_alias.scopes().next().is_some()
+            && let [block] = target.blocks()
+            && block.parameters().is_empty()
+            && let [IrInstruction::Define {
+                result: returned,
+                ty: IrType::Unit,
+                operation:
+                    IrOperation::RunBoundary {
+                        row,
+                        run,
+                        value: Some(value),
+                    },
+            }] = block.instructions()
+            && row.places()
+            && let IrTerminator::Return {
+                value: actual_return,
+                drops,
+            } = block.terminator()
+            && actual_return == returned
+            && drops.is_empty()
+            && target.result() == ty
+            && target.parameters().len() == arguments.len()
+            && target
+                .parameters()
+                .iter()
+                .zip(arguments)
+                .all(|((_, formal), actual)| self.value_type(*actual) == Some(*formal))
+            && let Some(run_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == run)
+            && let Some(value_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == value)
+        {
+            return self.emit_run_boundary(
+                result,
+                ty,
+                *row,
+                arguments[run_index],
+                Some(arguments[value_index]),
+            );
         }
         let abi = FunctionAbi::build(self.program, target)?;
         if abi.result().ty() != ty || abi.parameters().len() != arguments.len() {

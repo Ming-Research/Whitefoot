@@ -1539,6 +1539,11 @@ fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
   return cell^;
 }
 
+fn copy_cell_into(cell: &Cell, target: &Cell) -> result: unit reads(cell), writes(target) {
+  set target^ = cell^;
+  return unit;
+}
+
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
     Add(value: v, extra: e) => {
@@ -1564,7 +1569,9 @@ fn main() -> status: ExitStatus pure {
   let code = box_slots_new::<Cell>(capacity: 3_u64);
   let first = make_add();
   let copied = copy_cell(cell: &first);
-  push(code: &code, cell: copied);
+  let internal_copy = Cell::Halt(value: 0_u32, extra: 0_u8);
+  copy_cell_into(cell: &copied, target: &internal_copy);
+  push(code: &code, cell: internal_copy);
   push(code: &code, cell: first);
   let third = Cell::Halt(value: 10_u32, extra: 3_u8);
   push(code: &code, cell: third);
@@ -1660,11 +1667,15 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     assert_handler_load(&module, "wf_run", 12, 4);
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
+    // Whole result copies keep one intrinsic before inlining; the ordinary
+    // source-to-target copy still checks every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("; layout-bounded transfer "), "{copied}");
-    assert!(!copied.contains("@llvm.memmove."), "{copied}");
+    assert_eq!(copied.matches("@llvm.memmove.").count(), 1, "{copied}");
+    assert!(copied.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"), "{copied}");
+    assert!(!copied.contains("; layout-bounded transfer "), "{copied}");
+    let copied_into = emitted_body(&module, "copy_cell_into");
     super::layout_transfers::assert_typed_transfer(
-        copied,
+        copied_into,
         &[(0, "i32"), (4, "i32"), (8, "i8"), (9, "i24"), (12, "ptr")],
     );
     let main = emitted_body(&module, "main");
@@ -1701,7 +1712,7 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         assert_handler_load(&module, "wf_run", 12, 4);
         assert_handler_load(&module, "wf_other_run", 20, 4);
         super::layout_transfers::assert_typed_transfer(
-            emitted_body(&module, "copy_cell"),
+            emitted_body(&module, "copy_cell_into"),
             &[
                 (0, "i32"),
                 (4, "i32"),

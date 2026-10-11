@@ -263,9 +263,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let pointer = self.aggregate_field_pointer(container_type, &address, 0)?;
                     writeln!(
                         self.output,
-                        "  {} = load i64, ptr {pointer}{}",
+                        "  {} = load i64, ptr {pointer}{}{}",
                         self.value_name(result),
-                        storage_alias::Role::ArrayLen.attachment()
+                        storage_alias::Role::ArrayLen.attachment(),
+                        self.owner_alias.read(container)
                     )
                     .map_err(|_| BackendFailure::TextEmission)
                 }
@@ -488,12 +489,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             head
         };
         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let owner_alias = if shape.capacity.is_none() {
+            self.owner_alias.write(run)
+        } else {
+            String::new()
+        };
         let length_address =
             self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
         writeln!(
             self.output,
-            "  store i64 %{new_length}, ptr {length_address}{}",
-            storage_alias::runtime_word(run_type, shape.length_field())
+            "  store i64 %{new_length}, ptr {length_address}{}{}",
+            storage_alias::runtime_word(run_type, shape.length_field()),
+            owner_alias
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         // Only a `Ring` stores a window origin [WIN-1]; a `Slots` window
@@ -504,8 +511,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.aggregate_field_pointer(run_type, &destination, field as usize)?;
             writeln!(
                 self.output,
-                "  store i64 {new_head}, ptr {head_address}{}",
-                storage_alias::runtime_word(run_type, field)
+                "  store i64 {new_head}, ptr {head_address}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
             )
         .map_err(|_| BackendFailure::TextEmission)?;
         } else if row.front() {
@@ -598,10 +606,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let word = self.next_temporary()?;
         if let Some(address) = self.run_storage(run)? {
             let pointer = self.aggregate_field_pointer(run_type, &address, field as usize)?;
+            let owner_alias = if storage_alias::runtime_word(run_type, field).is_empty() {
+                String::new()
+            } else {
+                self.owner_alias.read(run)
+            };
             writeln!(
                 self.output,
-                "  %{word} = load i64, ptr {pointer}{}",
-                storage_alias::runtime_word(run_type, field)
+                "  %{word} = load i64, ptr {pointer}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
             )
         .map_err(|_| BackendFailure::TextEmission)?;
             return Ok(format!("%{word}"));

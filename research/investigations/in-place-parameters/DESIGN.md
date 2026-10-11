@@ -1480,3 +1480,287 @@ change to the alias contract. The backend case observes an ordinary numeric
 reference reader instead of claiming that this measure witness already
 reaches the backend. This gap is recorded here because the task forbids
 status-board writes.
+
+
+## Unavoidable union result transfers
+
+Question: after removing the key materialization, does retaining a whole-value
+union transfer at the public result boundary restore Halo's `table_get`
+inlining in the actual `clang -O2 -flto=full` build? Compare the unchanged
+Halo source with `wf-exp-4753d28fb4ae` and the candidate, inspecting emitted
+IR, full-LTO call sites and remarks before paired timing. An interval-expanded
+public union transfer rejects the emission claim; unchanged full-LTO call
+sites reject the inlining claim. No new timing or optimizer run was performed
+in this round.
+
+The owner supplied experiment-release results for `4753d28fb` (Whitefoot
+runs 38153853900 and 38155407651): 74 out-of-line `table_get` call sites,
+versus one in `wf-78223721f77d`; the saved O3 remarks show cost 230 at
+`embed.install` with threshold 250, and cost 260 at `embed.table_get` and
+`vm.metamethod`. These were read in the supplied artifacts, not regenerated.
+The compiler driver uses `HOST_OPTIMIZATION_ARGUMENTS` (`-O2`) and
+`compile_executable` adds `-flto=full`. LLVM's
+[inline-cost source](https://llvm.org/doxygen/InlineCost_8cpp_source.html)
+sets the default threshold to 225 and chooses the aggressive threshold only
+above optimization level two. This explains why an O3 inlining observation
+at cost 230 is insufficient evidence for the real build. Per-call bonuses,
+simplification and full-LTO sequencing still require actual build remarks;
+230 is an O3 observation, not a newly measured O2 cost.
+
+`tg.ll` shows that the candidate has removed both entry captures and the
+key transfer. Its only `node_find` call returns a register-sized index option:
+
+```llvm
+%v53 = call %wf.t.612fba5367897926 @wf_package.halo.heap.node_find(ptr %v19, ptr %v52, ptr %wf.arg.v2)
+```
+
+The two Value result paths are snapshots of a heap array element and a
+node's Value field, respectively, already copied directly into `%wf.result`:
+
+```llvm
+%t29 = getelementptr inbounds { i64, i64, [0 x %wf.t.90128e7f982cc38a] }, ptr %v45, i64 0, i32 2, i64 %v25
+%v46 = getelementptr i8, ptr %t29, i64 0
+; layout-bounded transfer from %v46 to %wf.result
+%t30 = load i32, ptr %v46, align 1
+%t31 = getelementptr inbounds i8, ptr %v46, i64 4
+%t32 = load i32, ptr %t31, align 1
+%t33 = getelementptr inbounds i8, ptr %v46, i64 8
+%t34 = load i64, ptr %t33, align 1
+store i32 %t30, ptr %wf.result, align 1
+%t35 = getelementptr inbounds i8, ptr %wf.result, i64 4
+store i32 %t32, ptr %t35, align 1
+%t36 = getelementptr inbounds i8, ptr %wf.result, i64 8
+store i64 %t34, ptr %t36, align 1
+```
+
+The other path has `%t53 = getelementptr ... ptr %t50, i32 0, i32 2`,
+`%v81 = getelementptr i8, ptr %t53, i64 0`, followed by the same three
+loads and three stores into `%wf.result`. Before PR #345, each path was
+one intrinsic, for example:
+
+```llvm
+call void @llvm.memmove.p0.p0.i64(ptr %wf.result, ptr %v46, i64 ptrtoint (ptr getelementptr (%wf.t.90128e7f982cc38a, ptr null, i32 1) to i64), i1 false)
+```
+
+Thus destination forwarding cannot remove these copies: there is no callee
+Value result or local intermediate to redirect, and the heap value must
+remain independently observable after the call. Existing return-group
+coalescing and `value_place(result)` already pass unchanged callee results
+into the caller's public destination. A relay witness now asserts that
+behavior without changing its implementation.
+
+The proposed policy keeps one whole-value memory intrinsic for a top-level
+union enum transferred into the public result destination. LLVM can lower
+that intrinsic after its inlining decision in caller context. Internal
+union transfers and every stored struct transfer, including structs with
+union fields, retain the typed granules that motivated PR #345. The choice
+is provisional: the supplied cost difference motivates the boundary, but
+the candidate's cost and inlining have not been measured. It changes no
+layout, snapshot, effect or result/input alias contract; `memmove` preserves
+partial overlap, and captures still precede potentially invalidating result
+writes.
+
+Alternatives: general call-result forwarding already applies and cannot
+remove a heap snapshot; reverting all small transfers would discard the
+independent struct store-forwarding experiment; reverting all union
+transfers would unnecessarily change internal transfer behavior without
+corresponding cost evidence; inline hints or thresholds would tune a
+consumer instead of addressing the emitted transfer.
+
+`backend/tests/layout_transfers.rs` requires one direct intrinsic and no
+interval expansion for public union snapshots, while checking the exact
+original intervals for internal unions, public structs and structs containing
+unions. Its executed heap-array/relay case checks an old snapshot of 17,
+a replacement observed as 30, and an untouched element of 17, with call
+boundaries retained. A stale snapshot would observe the replacement; a
+missing transfer would leave the result incorrect. The old compiler fails
+the positive intrinsic assertions. The handler-word tests in
+`backend/tests/match_dispatch.rs` move their unchanged typed-interval
+oracles to an executed internal source-to-target copy, and separately
+require the public union intrinsic. Omitting that internal copy leaves
+`Halt(0)` and returns 0 instead of 18. No native or IR test was run locally;
+fixture admission and emitted results await CI.
+
+
+## Readonly-owner access scopes
+
+Question: after storage-role TBAA hoists Halo's source pointer, do access
+scopes separating readonly reference roots from another reference root's
+runtime-header writes let LLVM promote source length and destination
+length/capacity across the byte loop? Compare the same Halo source with
+`wf-exp-4753d28fb4ae` and the candidate through CI, inspecting full-LTO
+IR/disassembly before paired timing. Metadata present without header
+promotion rejects the optimization prediction; promotion without a timing
+improvement rejects a claim that this accounts for the remaining slowdown.
+Snowghost requires its own hot-loop and timing observations.
+
+### Remaining alias evidence
+
+The supplied `concat_step-wf-exp-4753d28fb4ae.txt` still contains:
+
+```asm
+cmp    rdi,QWORD PTR [rdx]
+mov    r8,QWORD PTR [rbx]
+cmp    r8,QWORD PTR [rbx+0x8]
+movzx  r9d,BYTE PTR [rdx+rdi*1+0x10]
+mov    BYTE PTR [rbx+r8*1+0x10],r9b
+inc    r8
+mov    QWORD PTR [rbx],r8
+```
+
+The saved O3 module retains `concat_batch_copy` separately (so it is
+supporting evidence, not the final full-LTO inlined `concat_step`). Its
+inner loop has source and destination lengths in the same TBAA class:
+
+```llvm
+%t34 = load i64, ptr %t24, align 8, !tbaa !4
+%t36 = load ptr, ptr %v2, align 8, !tbaa !0
+%t37 = load i64, ptr %t36, align 8, !tbaa !4
+%t40 = load i64, ptr %t41, align 8, !tbaa !6
+store i8 %v167, ptr %t2.i, align 1, !tbaa !11, !alias.scope !6899
+store i64 %t5.i, ptr %t36, align 8, !tbaa !4, !alias.scope !6899
+```
+
+`!4` names the optimized module's runtime Slots length role. The scope on
+the stores comes from the inlined `place_back` parameter, while the source
+loads have no matching `!noalias` fact. Even the destination's owner-cell
+parameter `%v2` is inferred `readonly`: loading its pointer does not modify
+the cell, while the pointed-to header is modified. Ordinary reference
+parameters already have `noalias`; adding that attribute again cannot
+separate these loaded pointers. LLVM's
+[pointer based-on rules](https://llvm.org/docs/LangRef.html#pointer-aliasing-rules)
+do not make a loaded pointer based on the address of its owner slot.
+
+GitHub API access to the requested pinned Halo source failed in this round.
+A saved read-only source copy has the matching `concat_batch_copy` loop:
+`reads(vm), reads(stack), writes(bytes)`; it reads
+`vm^.heap.strings.inner[si].payload.bytes.inner` and appends into
+`bytes^.inner`. The exact saved copy's correspondence to the pinned branch
+was not independently established; its pattern agrees with the supplied
+LLVM. Source row coverage is EFF-2, inter-argument write separation is
+EFF-5 (with OWN-7's path comparison), and REF-1/REF-2 govern the reached
+paths and their validity. OWN-1 and STOR-1 give live nonempty Box contents
+one allocation owner. STOR-1 explicitly permits distinct empty owners to
+share an immutable header; allocation freshness is therefore unavailable.
+
+LLVM's [scoped metadata contract](https://llvm.org/docs/LangRef.html#noalias-and-alias-scope-metadata)
+has no read/read exception: accesses in the two separated collections must
+not alias. Blanket per-owner disjoint scopes or `!noalias` on a generic
+call would be too strong, because the call may read the same shared empty
+header as a readonly source. The parameter `noalias` contract has a
+modified-memory qualification that scoped access metadata lacks. A
+readonly attribute alone also describes owner bytes, not every reachable
+Box allocation. `invariant.load` would promise a longer immutability than
+a checked call duration; balanced invariant regions would require an
+additional lifetime mapping and matching exits.
+
+
+### Proposed access mapping and implementation
+
+The narrow mapping uses the checked `readonly_reference_parameters` already
+retained from EFF-2's declared rows. Eligible functions are ordinary,
+synchronous and unsplit, with at least one readonly ordinary reference and
+one other ordinary reference that may write. Ranges, runs, waiting and
+overlapping functions, alias-permitting rows and missing source signatures
+receive no scopes. A module-wide plan assigns collision-free numbered
+metadata nodes after the fixed TBAA nodes; each activation declares its
+readonly scopes with `llvm.experimental.noalias.scope.decl`, so LLVM has
+the scope lifetime when inlining or duplicating a loop.
+
+A finite provenance propagation carries formal roots through typed
+`ProjectAddress` operations and incoming block arguments. A use gets a fact
+only when its origins are exactly one formal; unknown definitions explicitly
+contribute an unknown origin, and mixed joins keep their uncertainty.
+Scalar loads and runtime header reads through a readonly root receive
+`!alias.scope`. Runtime window boundary-header stores through a different,
+writing root receive `!noalias` listing the readonly scopes. Reads never
+receive that exclusion. This states EFF-5's actual read/write separation,
+not allocation identity: read/read sharing of empty headers is allowed,
+and the shared empty header is never written [STOR-1, OP-10]. Source typed
+paths and reference validity [REF-1, REF-2], exact row coverage [EFF-2],
+and OWN-7's effect-path separation remain the premises. Scalar read scopes
+are needed as well as header scopes: otherwise a source byte load could
+still alias a delayed destination-length store.
+
+Only the selected runtime header stores carry exclusions. Whole-value
+construction/replacement/transfers, public result writes, owned by-value
+arguments, unknown provenance, inline window descriptor writes and generic
+calls remain unannotated. In particular this grants no `noalias` to a
+read-through own input and makes no change to the result/input overlap and
+capture contract introduced with destination-result placement. Withholding
+these optional facts retains the ordinary operations and acceptance; no
+source proof or runtime alias check is introduced.
+
+The byte copy writes its destination header through `place_back`. Tagging
+the call would also tag its header reads after inlining, which is too strong
+for shared empty headers. Instead, a call whose complete lowered body is
+one placing `RunBoundary` definition and a return of that unit definition,
+with no extra blocks, block parameters or cleanup, expands by substituting actual
+operands into the existing primitive emitter. Matching checks the complete
+body, operand types and returned value; it uses no source function name,
+marker or inline attribute. Every other callee keeps the ordinary ABI path.
+Caller operand preparation and the same primitive implementation preserve
+snapshot semantics and store ordering. This gives the access mapper actual
+caller roots at the header stores without a general IR inliner.
+
+This complements storage-role TBAA rather than replacing it. The existing
+Paged directory/element-role separation concerns different physical roles
+under one owner; readonly-root scopes concern reads versus another
+reference root's boundary-header writes. The latter does not add scopes to
+Paged directory entries or general element writes, so no additional claim
+about Snowghost's same-owner Paged field-store reload is established here.
+
+The scope definitions currently travel through the shared module header,
+which the existing fragment splitter and cache serialize. The scope plan
+is computed once per module rather than rescanning all functions for each
+emitter. A limitation is that adding an eligible function/formal changes
+shared metadata text and can invalidate otherwise unchanged fragment cache
+entries. Selective metadata ownership is deferred from this performance
+fix; reopen with an incremental-build comparison if that invalidation is
+material. It is a cache reuse cost, not an alias or linking contract gap.
+
+
+### Backend witnesses and remaining evidence
+
+The same-role backend witness copies from a nested struct's `Box<Slots<u8>>`
+into another `Box<Slots<u8>>`. It requires a source-length load and source-byte
+load in the same scope, a destination-length store excluding that exact
+scope-node collection, the matching activation declaration and no write-side
+metadata on loads or calls. Its positive metadata assertions fail on the
+base compiler. An existing Array-to-Slots assertion now matches the exact
+TBAA attachment independently of following scope attachments; it still
+requires the same load kind and the same Array length tag.
+
+The executed witness checks destination length 16 and every byte equal to
+7, in ordinary optimized and retained-call forms, plus a zero-trip copy
+between distinct capacity-zero owners and two readonly empty-owner reads.
+A lost header update leaves length below 16 (exit 1), and a missing or
+incorrect byte transfer fails exit 2. This provides a result oracle for
+primitive expansion and the annotations; it does not prove that every
+incorrect metadata assignment necessarily changes this program's output.
+Replacing the empty destination argument with the source owner's own Box
+must be rejected as EFF-5, independently of the zero-trip runtime behavior.
+The existing cached-module and function/module-fragment roundtrip witness
+also checks the scope definitions and intrinsic declaration. None of these
+fixtures or checks was run locally.
+
+Remaining uncertainties are fixture admission, LLVM verification on both
+native toolchains, final full-LTO cost and inlining, header promotion and
+unrolling, and same-source Halo/Snowghost timing. No inference here treats
+O3 IR as the actual full-LTO optimization result, or attributes Snowghost's
+slowdown without its own evidence. No language/specification contract was
+changed. The scoped mapping deliberately covers only known readonly roots
+and runtime boundary stores; provenance across opaque calls or general
+writes remains a compiler information gap rather than a source restriction.
+
+
+A fresh read-only completion review inspected all eleven changed files from
+`4753d28fb` through this working tree, including emitters and their retained
+checker facts, primitive expansion, fixtures, cache/fragment transport,
+specification premises, design ancestors and the research additions. It
+found no remaining issue after a local indentation repair. Applicable
+repository, citation, case and design-correspondence checks passed inspection;
+fixture admission/native outputs, target LLVM verification and activation
+handling, the complete alias argument beyond local inspection, and actual
+optimization/performance remain unverified. No build, test, check, formatter
+or optimizer was run locally, and no board or approval log was changed.

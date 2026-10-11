@@ -1,6 +1,135 @@
 //! Checked access roles preserve conservative reads and storage transitions.
 
-use super::{compile, compile_and_run, emitted_body, emitted_function, emitted_prelude_row};
+use super::{
+    compile, compile_and_run, compile_rejection, emitted_body, emitted_function, emitted_prelude_row,
+};
+
+#[test]
+fn readonly_owner_accesses_are_separate_from_another_windows_header_writes() {
+    let source = br#"struct ByteOwner {
+  bytes: Box<Slots<u8>>;
+}
+
+fn copy_owners(source: &ByteOwner, destination: &Box<Slots<u8>>) -> result: unit reads(source), writes(destination) contract {
+  requires destination^.inner.len == 0_u64;
+  requires source^.bytes.inner.len <= destination^.inner.cap;
+} {
+  let count = source^.bytes.inner.len;
+  for (
+    i in 0_u64..count,
+    invariant length: destination^.inner.len == i
+  ) {
+    place_back(window: &destination^.inner, value: source^.bytes.inner[i]);
+  }
+  return unit;
+}
+
+fn read_empty_owners(first: &Box<Slots<u8>>, second: &Box<Slots<u8>>) -> result: u64 reads(first), reads(second) {
+  return first^.inner.len +wrap second^.inner.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let input = box_slots_new::<u8>(capacity: 16_u64);
+  for (
+    i in 0_u64..16_u64,
+    invariant length: input.inner.len == i
+  ) {
+    place_back(window: &input.inner, value: 7_u8);
+  }
+  let owner = ByteOwner(bytes: move input);
+  let destination = box_slots_new::<u8>(capacity: 16_u64);
+  copy_owners(source: &owner, destination: &destination);
+  if destination.inner.len != 16_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  for (i in 0_u64..destination.inner.len) {
+    if destination.inner[i] != 7_u8 {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  let empty_bytes = box_slots_new::<u8>(capacity: 0_u64);
+  let empty = ByteOwner(bytes: move empty_bytes);
+  let empty_destination = box_slots_new::<u8>(capacity: 0_u64);
+  copy_owners(source: &empty, destination: &empty_destination);
+  if read_empty_owners(first: &empty.bytes, second: &empty_destination) != 0_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let copy = emitted_function(&llvm, "copy_owners");
+    let load = copy
+        .lines()
+        .find(|line| line.contains("load i64, ptr ") && line.contains(", !alias.scope !"))
+        .expect("nested readonly Slots header load carries its owner scope");
+    let scope = load
+        .split(", !alias.scope ")
+        .nth(1)
+        .expect("scope attachment");
+    assert!(
+        copy.lines().any(|line| {
+            line.contains("load i8, ptr ")
+                && line.ends_with(&format!(", !alias.scope {scope}"))
+        }),
+        "the source byte read must be separated from header writes too: {copy}"
+    );
+    let write = copy
+        .lines()
+        .find(|line| line.contains("store i64 ") && line.contains(", !tbaa !15, !noalias !"))
+        .expect("the expanded primitive writes the other Slots header");
+    let write_scope = write
+        .split(", !noalias ")
+        .nth(1)
+        .expect("write scope attachment");
+    let definition = |node: &str| {
+        llvm.lines()
+            .find_map(|line| line.strip_prefix(&format!("{node} = ")))
+            .expect("scope list definition")
+    };
+    assert_eq!(
+        definition(scope),
+        definition(write_scope),
+        "the write excludes the actual source scope"
+    );
+    assert!(
+        !copy.lines().any(|line| line.contains("call ") && line.contains("@wf_place_back")),
+        "the access fact belongs to writes, not to a whole call: {copy}"
+    );
+    assert!(
+        copy.contains(&format!(
+            "call void @llvm.experimental.noalias.scope.decl(metadata {scope})"
+        )),
+        "each activation declares its actual load scope: {copy}"
+    );
+    assert!(
+        !copy.lines().any(|line| {
+            (line.contains("load ") || line.contains("call ")) && line.contains(", !noalias ")
+        }),
+        "read/read and whole-call aliasing remain conservative: {copy}"
+    );
+    let reads = emitted_function(&llvm, "read_empty_owners");
+    assert!(
+        !reads.contains("!alias.scope") && !reads.contains("!noalias"),
+        "two readonly owners may share the static empty header: {reads}"
+    );
+    let overlapping = std::str::from_utf8(source).expect("test source").replace(
+        "copy_owners(source: &empty, destination: &empty_destination)",
+        "copy_owners(source: &empty, destination: &empty.bytes)",
+    );
+    assert_eq!(
+        compile_rejection(overlapping.as_bytes()).rule_id(),
+        Some("EFF-5"),
+        "the scope exclusion rests on checked argument disjointness"
+    );
+    // Incorrect exclusions or primitive expansion can leave the destination
+    // length below 16 (code 1) or corrupt a copied byte (code 2). Zero-trip
+    // calls exercise two owners of the shared empty header too.
+    for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
+        let output = compile_and_run(module);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
 
 const COPY: &[u8] = br#"fn copy_windows(source: &Box<Array<u8>>, destination: &Box<Slots<u8>>) -> result: unit reads(source), writes(destination) contract {
   requires destination^.inner.len == 0_u64;
@@ -63,7 +192,8 @@ fn runtime_copy_accesses_distinguish_control_words_from_source_stores() {
     );
     assert!(
         copy.lines().any(|line| {
-            line.contains("load i64, ptr ") && line.ends_with("!tbaa !14")
+            line.contains("load i64, ptr ")
+                && line.split(", ").any(|attachment| attachment == "!tbaa !14")
         }),
         "runtime Array length is distinct from mutable Slots length: {copy}"
     );
@@ -476,6 +606,17 @@ fn storage_alias_definitions_survive_cached_fragment_roundtrips() {
     .0;
     let cached = crate::LlvmModule::decode(&whole.encode()).expect("structured module roundtrip");
     assert_eq!(whole.as_str(), cached.as_str());
+    let owner_definitions: Vec<_> = whole
+        .as_str()
+        .lines()
+        .filter(|line| {
+            line.strip_prefix('!')
+                .and_then(|line| line.split_once(" = "))
+                .and_then(|(index, _)| index.parse::<usize>().ok())
+                .is_some_and(|index| index >= 22)
+        })
+        .collect();
+    assert!(!owner_definitions.is_empty(), "the fixture emits owner scopes");
     for granularity in [
         crate::FragmentGranularity::Function,
         crate::FragmentGranularity::Module,
@@ -489,6 +630,18 @@ fn storage_alias_definitions_survive_cached_fragment_roundtrips() {
                 assert!(
                     fragment.contains(&format!("!{index} = !{{")),
                     "missing definition !{index}: {fragment}"
+                );
+            }
+            for definition in &owner_definitions {
+                assert!(
+                    fragment.contains(*definition),
+                    "missing owner scope definition {definition}: {fragment}"
+                );
+            }
+            if fragment.contains("call void @llvm.experimental.noalias.scope.decl(") {
+                assert!(
+                    fragment.contains("declare void @llvm.experimental.noalias.scope.decl(metadata)"),
+                    "a scoped function's fragment must retain the intrinsic declaration: {fragment}"
                 );
             }
         }
