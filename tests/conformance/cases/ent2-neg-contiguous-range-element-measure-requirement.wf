@@ -1,0 +1,16 @@
+fn exactly_seven(word: &u64) -> result: u64 reads(word) contract {
+  requires word^ == 7_u64;
+} {
+  return word^;
+}
+
+fn observe_contiguous(rows: &[Array<Array<u8, 7>, 4>]) -> result: u64 reads(rows) contract {
+  requires 0_u64 < rows^.len;
+} {
+  doc "FN-8, MSR-1, REF-4: the first selected range element is an Array of length four, not its inner Array of length seven. Its borrowed length cannot satisfy the callee's requirement.";
+  return exactly_seven(word: &rows^[0_u64].len);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
