@@ -1006,8 +1006,12 @@ enum ResultDestination {
     /// result is this place projected by the datum's projection.
     Place(PlaceRoot, Vec<GoalProjection>),
     /// An ordinary set retains its written target for ENT-2 admission and
-    /// its occurrence-specific resolved proof place for term identity.
-    SetTarget(CheckedSetTarget),
+    /// its evaluated proof place, with RHS-written offsets superseded, for
+    /// term identity.
+    SetTarget {
+        target: CheckedSetTarget,
+        place: ResolvedPlace,
+    },
     /// The private payload root of the returned value's conditional success
     /// context [ENT-5], typed by the success payload.
     PayloadRoot(CheckedType),

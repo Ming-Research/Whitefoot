@@ -2073,12 +2073,12 @@ impl Reasoning<'_, '_, '_> {
                 };
                 self.projected_destination_term(place, projections, measure, ty)
             }
-            ResultDestination::SetTarget(target) => {
+            ResultDestination::SetTarget { target, place } => {
                 if measure.is_none() && !self.input.set_result_integer_admitted(target, projections)
                 {
                     return None;
                 }
-                self.projected_destination_term(set_target_place(target)?, projections, measure, ty)
+                self.projected_destination_term(place.clone(), projections, measure, ty)
             }
             ResultDestination::PayloadRoot(payload) => {
                 let path = projections
