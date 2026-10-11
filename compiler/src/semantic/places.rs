@@ -2136,6 +2136,17 @@ mod tests {
             &place(0, &[PlaceStep::Part(WindowPart::Filled)]),
         ));
         assert!(map.overlaps(&denied, &length, &length));
+        assert!(!map.overlaps(
+            &denied,
+            &length,
+            &place(0, &[PlaceStep::Measure(CheckedMeasure::Capacity)]),
+        ));
+        assert!(!map.overlaps(
+            &denied,
+            &length,
+            &place(0, &[PlaceStep::Measure(CheckedMeasure::Head)]),
+        ));
+        assert!(map.overlaps(&denied, &length, &place(0, &[])));
     }
 
     /// [REF-2] writing the storage at a reference's path or below it is a

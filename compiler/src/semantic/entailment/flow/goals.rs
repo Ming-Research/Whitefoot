@@ -1494,11 +1494,7 @@ impl Reasoning<'_, '_, '_> {
                     return None;
                 }
                 let path = self.input.goal_place_path(datum)?;
-                Some(
-                    self.vocabulary
-                        .terms
-                        .intern(TermKind::Place(path, fragment)),
-                )
+                self.place_operand(path, fragment)
             }
             GoalExpression::Operation { row, arguments, .. }
                 if matches!(
@@ -1752,6 +1748,7 @@ impl Judging<'_, '_, '_> {
 pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection> {
     match step {
         PlaceStep::Deref => Some(GoalProjection::Deref),
+        PlaceStep::Measure(measure) => Some(GoalProjection::Measure(*measure)),
         PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
         PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
             variant: *variant,
@@ -1766,7 +1763,7 @@ pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection
         // Canonicalizing those captures by endpoint spelling would merge two
         // formations that read the same binding at different times.
         PlaceStep::Range(range) => Some(GoalProjection::Range(*range)),
-        PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => None,
+        PlaceStep::Part(_) | PlaceStep::Descendant(_) => None,
     }
 }
 

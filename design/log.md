@@ -12,6 +12,13 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#358 (head 11fa213a5) adding this decision to the design tree node compiler/checker-facts?" (translated).
 
 Summary: The checker admitted writable fields below a subscript as ENT-2 terms when a constructor or call result was placed into indexed storage, accepting eight programs the specification rejects. Carried values are now published only when their target place as written is admissible, and a goal datum carries its written place as an admission annotation outside its typed identity: one canonical goal per identity keeps whole-goal truth, so a `+defined` guard or Boolean fact still crosses spellings, while integer projection and normalization belong to one admission view per spelling, so a numeric relation admitted through one spelling cannot reach an inadmissible one. Refusing the goal datum of an inadmissible indexed field was rejected because it removes the value identity that a guard on a writable indexed field and a readonly field reached by struct-equality projection need.
+## 2026-10-11 References to compile-time measures point at shared constants
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#359 (head f03ba8de1) adding this decision to the design tree node compiler/storage-representation?" (translated).
+
+Summary: The specification admits a readonly reference to a prelude-declared measure such as `&source^.inner.len`, but a constant-capacity container keeps its compile-time measures out of memory, so the reference had no address. Such a reference now lowers to a private unnamed_addr read-only constant holding the u64 value, one per distinct value in each emitted module, because the measure never changes for the owner's lifetime and the language observes no reference address. Adding the word to every constant-capacity header was rejected because it enlarges every fixed container, which matters most on weak embedded targets, and refusing the borrow would narrow what the specification admits.
 ## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
 
 Nodes: compiler/checker-facts, compiler/incremental-closure

@@ -290,7 +290,8 @@ fn collect_steps(
             crate::semantic::CheckedPlaceStep::Subscript(subscript) => {
                 collect_expression(&subscript.offset, bindings);
             }
-            crate::semantic::CheckedPlaceStep::Field(_) => {}
+            crate::semantic::CheckedPlaceStep::Field(_)
+            | crate::semantic::CheckedPlaceStep::Measure(_) => {}
         }
     }
 }
@@ -627,6 +628,21 @@ impl IrBuilder<'_> {
                             field: *field,
                         },
                         ty,
+                    )
+                }
+                crate::semantic::CheckedPlaceStep::Measure(measure) => {
+                    let measure = super::runs::lower_measure(*measure);
+                    if measure.descriptor_field(base.ty()).is_none()
+                        && measure.type_constant(base.ty()).is_none()
+                    {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    }
+                    (
+                        IrPlaceStep::Measure { measure },
+                        IrType::Integer {
+                            width: 64,
+                            signed: false,
+                        },
                     )
                 }
                 crate::semantic::CheckedPlaceStep::BoxReferent(checked_nominal) => {
