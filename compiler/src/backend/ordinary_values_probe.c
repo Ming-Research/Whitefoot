@@ -2,7 +2,11 @@
  * launcher values as a native caller would, then exercises ownership transfer,
  * refusal, ranges and explicit close. View operations enter their private
  * pointer-parameter C bodies; separate WF executions check the LLVM ABI. */
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32)
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -291,12 +295,24 @@ static void description_probe(wf_probe_description copy) {
     locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
     assert(locale != (locale_t)0);
     for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
+#if defined(__APPLE__)
+        /* Darwin has no strerror_l symbol. Snapshot its ordinary strerror
+         * text under the private C locale, independently of the runtime's
+         * grow-and-retry strerror_r implementation. */
+        locale_t previous = uselocale(locale);
+        assert(previous != (locale_t)0);
+        const char *oracle = strerror(host[index].code);
+#else
         const char *oracle = strerror_l(host[index].code, locale);
+#endif
         assert(oracle != NULL);
         size_t length = strlen(oracle);
         char *text = malloc(length + 1);
         assert(text != NULL);
         memcpy(text, oracle, length + 1);
+#if defined(__APPLE__)
+        assert(uselocale(previous) != (locale_t)0);
+#endif
         wf_io_error error = {host[index].tag, (uint32_t)host[index].code, 3};
         description_window_probe(copy, &error, text);
         error.origin = 9;

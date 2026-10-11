@@ -1,7 +1,11 @@
 /* Ordinary prelude implementations, linked using the same symbols and ABI as
  * Whitefoot function definitions. No compiler operation identity reaches this
  * unit. Opaque contents are this library's private representation. */
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32)
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -140,70 +144,117 @@ void wf__body_error_copy_description(wf_copy_result *result,
         return;
     }
 #if defined(_WIN32)
-    WCHAR *wide = NULL;
-    DWORD units = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                                FORMAT_MESSAGE_FROM_SYSTEM |
-                                FORMAT_MESSAGE_IGNORE_INSERTS,
-                                NULL, code, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
-                                (LPWSTR)&wide, 0, NULL);
-    if (units == 0) return;
+    WCHAR local_wide[128];
+    WCHAR *wide = local_wide;
+    DWORD capacity = (DWORD)(sizeof(local_wide) / sizeof(local_wide[0]));
+    DWORD units;
+    for (;;) {
+        units = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM |
+                               FORMAT_MESSAGE_IGNORE_INSERTS,
+                               NULL, code, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                               wide, capacity, NULL);
+        if (units != 0) break;
+        const DWORD status = GetLastError();
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+        if (status != ERROR_INSUFFICIENT_BUFFER || capacity == (DWORD)INT_MAX)
+            return;
+        /* Format into caller-owned storage so the runtime pool charges every
+         * temporary block. Discard each refused buffer before growing it. The
+         * conversion API's signed length is the largest useful wide extent. */
+        capacity = capacity <= (DWORD)INT_MAX / 2
+            ? capacity * 2 : (DWORD)INT_MAX;
+        wide = wf__runtime_take((uint64_t)capacity * sizeof(*wide));
+    }
     while (units != 0 && (wide[units - 1] == L'\r' || wide[units - 1] == L'\n'))
         units--;
     if (units > INT_MAX) {
-        LocalFree(wide);
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
         return;
     }
     if (units == 0) {
-        LocalFree(wide);
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
         wf_description_copy(result, "", 0, destination, start, end);
         return;
     }
     int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
                                    (int)units, NULL, 0, NULL, NULL);
     if (bytes <= 0) {
-        LocalFree(wide);
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
         return;
     }
-    char *text = malloc((size_t)bytes);
-    if (text != NULL) {
+    if ((uint64_t)bytes > end - start) {
+        result->err.error.tag = 0;
+        result->err.error.required = (uint64_t)bytes;
+    } else {
+        char *text = wf__runtime_take((uint64_t)bytes);
         /* Convert privately: even an unexpected conversion failure must not
          * write part of the description into the caller's destination. */
         if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
                                 (int)units, text, bytes, NULL, NULL) == bytes)
             wf_description_copy(result, text, (size_t)bytes, destination, start, end);
-        free(text);
+        wf__runtime_give(text, (uint64_t)bytes);
     }
-    LocalFree(wide);
+    if (wide != local_wide)
+        wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
 #else
     if (code > INT_MAX) return;
     /* One private immutable locale per call avoids global initialization or
      * mutation, and keeps all description lookup independent of setlocale. */
     locale_t c_locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
     if (c_locale == (locale_t)0) return;
+#if defined(__APPLE__)
+    /* Darwin exports strerror_r, not strerror_l. Select the private C
+     * locale for this thread and measure only a complete scratch result;
+     * ERANGE may have written a truncated string, never a usable prefix. */
+    char local[128];
+    char *text = local;
+    size_t capacity = sizeof(local);
+    locale_t previous = uselocale(c_locale);
+    if (previous != (locale_t)0) {
+        int status;
+        for (;;) {
+            status = strerror_r((int)code, text, capacity);
+            if (status != ERANGE) break;
+            if (capacity > SIZE_MAX / 2) wf__runtime_exhausted();
+            size_t next_capacity = capacity * 2;
+            char *expanded = wf__runtime_take(next_capacity);
+            if (text != local) wf__runtime_give(text, capacity);
+            text = expanded;
+            capacity = next_capacity;
+        }
+        (void)uselocale(previous);
+        if (status == 0)
+            wf_description_copy(result, text, strlen(text), destination, start, end);
+        if (text != local) wf__runtime_give(text, capacity);
+    }
+#else
     const char *text = strerror_l((int)code, c_locale);
     if (text != NULL) {
         const size_t length = strlen(text);
         char local[128];
-        /* Measure before validation: macOS strerror_r may write a truncated
-         * string and return ERANGE when its buffer is too short. Neither that
-         * scratch string nor an unknown-code string ever reaches destination. */
+        /* Measure before validation. Neither a truncated scratch string nor
+         * an unknown-code string ever reaches destination. */
+        if (length == SIZE_MAX) wf__runtime_exhausted();
         char *validation = length < sizeof(local) ? local
-            : length < SIZE_MAX ? malloc(length + 1) : NULL;
-        if (validation != NULL) {
-            locale_t previous = uselocale(c_locale);
-            if (previous != (locale_t)0) {
+            : wf__runtime_take(length + 1);
+        locale_t previous = uselocale(c_locale);
+        if (previous != (locale_t)0) {
 #if defined(__GLIBC__)
-                const int status = __xpg_strerror_r((int)code, validation, length + 1);
+            const int status = __xpg_strerror_r((int)code, validation, length + 1);
 #else
-                const int status = strerror_r((int)code, validation, length + 1);
+            const int status = strerror_r((int)code, validation, length + 1);
 #endif
-                (void)uselocale(previous);
-                if (status == 0)
-                    wf_description_copy(result, text, length, destination, start, end);
-            }
-            if (validation != local) free(validation);
+            (void)uselocale(previous);
+            if (status == 0)
+                wf_description_copy(result, text, length, destination, start, end);
         }
+        if (validation != local) wf__runtime_give(validation, length + 1);
     }
+#endif
     freelocale(c_locale);
 #endif
 }
