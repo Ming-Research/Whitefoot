@@ -62,6 +62,29 @@ def readonly_local_fixture():
 
 
 class ImageIdentityTests(unittest.TestCase):
+    def test_retained_cleanup_helper_bounds_and_canonical_namespace_agree(self):
+        def image_at(name, address):
+            image = ElfImage.__new__(ElfImage)
+            image.symbols = {'wf_caller': (0x80, 6, 2), name: (address, 5, 2)}
+            table = image.bound(parse_disassembly(f'''80 <wf_caller>:
+ 80: call {address:x} <{name}>
+ 85: ret
+{address:x} <{name}>:
+ {address:x}: mov $7,%eax
+ {address + 4:x}: ret
+'''))
+            return image, table
+        seq_image, seq = image_at('.Lwf.drop.t.cell', 0x100)
+        clone_image, clone = image_at('.Lwf__par_seq.wf.drop.t.cell', 0x200)
+        self.assertIn('wf.drop.t.cell', seq)
+        self.assertIn('wf__par_seq.wf.drop.t.cell', clone)
+        self.assertEqual(direct_calls(seq['wf_caller'], functions=seq), {'wf.drop.t.cell'})
+        self.assertEqual(direct_calls(clone['wf_caller'], functions=clone), {'wf__par_seq.wf.drop.t.cell'})
+        self.assertIsNone(first_difference(normalized(seq['wf_caller'], image=seq_image),
+                                          normalized(clone['wf_caller'], image=clone_image)))
+        self.assertIsNone(first_difference(normalized(seq['wf.drop.t.cell']),
+                                          normalized(clone['wf__par_seq.wf.drop.t.cell'])))
+
     def test_nearest_label_call_resolves_exact_private_function_and_checks_body(self):
         def image_at(address, value):
             image = ElfImage.__new__(ElfImage)

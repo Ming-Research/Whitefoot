@@ -289,6 +289,25 @@ fn a_module_that_writes_a_resource_record_and_hands_a_call_out_is_latched() {
         "a module that writes a record on more than one thread must take the \
          shared latch: {module}"
     );
+    for overlap in [crate::OverlapLowering::On, crate::OverlapLowering::Demand {
+        ablation: crate::DemandAblation::None,
+        budget: crate::RecursionBudget::RuntimeDerived,
+        call_grain: crate::CallGrain::Every,
+        sequential_refusal: false,
+    }] {
+        let combined = super::emit_lowered(HEAP_RECORD_LANE, overlap);
+        let clone = super::parallel::function_body(&combined, "@wf__par_seq_build");
+        assert!(clone.contains("call void @wf_resource_abort()"),
+            "the worker-reachable canonical allocator must keep the shared abort boundary: {clone}");
+        assert!(!clone.contains("@wf__par_seq_resource_abort"), "{clone}");
+        let abort = super::parallel::function_body(&combined, "@wf_resource_abort");
+        assert!(abort.contains("call void @wf_resource_record_abort("), "{abort}");
+        let writer = super::parallel::function_body(&combined, "@wf_resource_record_abort");
+        assert!(writer.contains("%latch = call ptr @wf__floor_record_latch()")
+            && writer.contains("cmpxchg ptr %latch"),
+            "the entire clone refusal chain must arbitrate with the parallel writer: {writer}");
+        assert!(!combined.contains("define private void @wf__par_seq_resource_record_abort("));
+    }
 }
 
 /// One program reaching every allocation form the emitter lowers: a filled

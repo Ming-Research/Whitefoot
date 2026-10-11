@@ -2,7 +2,7 @@
 import unittest
 from identity import (IdentityError, Instruction, normalized, first_difference,
                       parse_disassembly, project_pool, entry_shell, computation_root,
-                      dispatch_proof, parse_ir, ElfImage)
+                      dispatch_proof, parse_ir, ElfImage, canonical_symbol)
 
 
 def insns(rows):
@@ -10,6 +10,16 @@ def insns(rows):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_canonical_helper_namespace_restores_the_complete_original_symbol(self):
+        self.assertEqual(canonical_symbol('wf__par_seq.wf.drop.run.cell'), 'wf.drop.run.cell')
+        self.assertEqual(canonical_symbol('.Lwf__par_seq.wf.drop.run.cell'), 'wf.drop.run.cell')
+        self.assertEqual(canonical_symbol('.Lwf.drop.run.cell'), 'wf.drop.run.cell')
+        original = insns([('call', '200 <wf.drop.run.cell>')])
+        clone = insns([('call', '300 <wf__par_seq.wf.drop.run.cell>')])
+        unrelated = insns([('call', '300 <wf__par_seq.wf.drop.run.cell_long>')])
+        self.assertIsNone(first_difference(normalized(original), normalized(clone)))
+        self.assertIsNotNone(first_difference(normalized(original), normalized(unrelated)))
+
     def test_consistent_saved_register_renaming_and_local_addresses(self):
         a = insns([('push', '%rbx'), ('mov', '%rdi,%rbx'), ('add', '$0x7,%rbx'), ('mov', '%rbx,%rax'), ('pop', '%rbx'), ('ret', '')])
         b = insns([('push', '%r12'), ('mov', '%rdi,%r12'), ('add', '$0x7,%r12'), ('mov', '%r12,%rax'), ('pop', '%r12'), ('ret', '')])

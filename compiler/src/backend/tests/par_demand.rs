@@ -446,7 +446,13 @@ fn invariant_demand_region_selects_the_sequential_walker_once() {
         let sequential = function_body(&module, "@wf__par_seq_walk");
         assert!(sequential.contains("@wf__par_seq_paint("), "{sequential}");
         let paint = function_body(&module, "@wf__par_seq_paint");
-        assert!(paint.contains("@wf__par_seq__par_chunk_"), "{paint}");
+        let ordinary = emit_lowered(source.as_bytes(), OverlapLowering::Off);
+        for (name, body) in [("walk", sequential), ("paint", paint)] {
+            assert_eq!(body.replace("@wf__par_seq_", "@wf_"),
+                function_body(&ordinary, &format!("@wf_{name}")),
+                "{name}'s cheap computation must be the ordinary in-place loop");
+        }
+        assert!(!paint.contains("@wf__par_seq__par_chunk_"), "{paint}");
         for body in [sequential, paint] {
             for forbidden in [
                 "par.region",

@@ -13,6 +13,7 @@
 mod arithmetic_obligations;
 mod arrays;
 mod base64;
+mod canonical_compute;
 mod checked_division;
 mod completion;
 mod containers;

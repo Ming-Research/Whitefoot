@@ -43,6 +43,7 @@ impl DispatchLayoutPlan {
 pub(crate) struct PreparedDispatch<'program> {
     pub(crate) program: Cow<'program, IrProgram>,
     pub(super) plan: DispatchLayoutPlan,
+    pub(super) fragments: bool,
 }
 
 /// Select all families before laying out any construction site. An enum either
@@ -58,6 +59,7 @@ pub(crate) fn prepare_dispatch_layout(
     let empty = || PreparedDispatch {
         program: Cow::Borrowed(program),
         plan: DispatchLayoutPlan::default(),
+        fragments,
     };
     if fragments {
         return Ok(empty());
@@ -120,6 +122,7 @@ pub(crate) fn prepare_dispatch_layout(
             return Ok(PreparedDispatch {
                 program: Cow::Owned(selected),
                 plan,
+                fragments,
             });
         }
         // Each retry removes at least one enum; no layout can retain an

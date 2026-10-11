@@ -25,13 +25,15 @@ class IdentityError(ValueError):
 def canonical_symbol(name):
     name = retained_function_name(name)
     name = name.removesuffix('@plt')
+    if name.startswith('wf__par_seq.'):
+        return name[len('wf__par_seq.'):]
     return 'wf_' + name[len('wf__par_seq_'):] if name.startswith('wf__par_seq_') else name
 
 
 def retained_function_name(name):
     # LLVM's private machine functions use temporary assembler labels. E6
     # retains them as evidence; their language-level names remain unchanged.
-    return name[2:] if name.startswith('.Lwf_') else name
+    return name[2:] if name.startswith(('.Lwf_', '.Lwf.')) else name
 
 
 @dataclass(frozen=True)
@@ -1024,7 +1026,7 @@ def check_workload(name, build):
                 continue
             seen.add(function)
             original = canonical_symbol(function)
-            if not function.startswith('wf_') or function == 'wf__par_pool_active':
+            if not function.startswith(('wf_', 'wf.')) or function == 'wf__par_pool_active':
                 continue  # identical external symbols are retained in the caller
             if function not in demand or original not in seq:
                 failure(function, 'missing corresponding sequential disassembly function')

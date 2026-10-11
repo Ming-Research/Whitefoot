@@ -8,6 +8,7 @@
 mod array;
 mod boxes;
 mod buffer;
+mod canonical_world;
 mod cleanup;
 mod contexts;
 mod conversion;
@@ -49,6 +50,7 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrShared, IrTargetDomainObligation, IrTerminator, IrType,
     IrValueId, IrWindowShape,
 };
+use canonical_world::{canonical_clone_roots, validate_crossovers};
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
 use floor::floor_runtime_fallback;
@@ -226,6 +228,7 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
+        prepared.fragments,
     )
 }
 
@@ -251,6 +254,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
+        selected.fragments,
     )
 }
 
@@ -259,6 +263,7 @@ fn emit_module(
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
+    fragments: bool,
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
@@ -342,22 +347,47 @@ fn emit_module(
             .emit()?,
         );
     }
-    // The second world. It exists only where the first one actualizes
-    // something, so a build that hands nothing out — every default build among
-    // them — emits exactly the module it emitted before this path existed.
-    //
-    // A build launcher can select the sequential clone of its ordinary entry.
-    // The clone set is closed upwards through the module's call graph and
-    // does not depend on the presence or spelling of a selected entry.
-    let clones = if thunks.is_used() {
+    // A source function's sequential world is emitted independently from the
+    // ordinary graph retained before compute lowering. Synthesized chunks still
+    // need their captured-ABI sequential variants for worker fallback.
+    let mut clones = if thunks.is_used() {
         sequential_clone_set(program)
     } else if frontiers.is_used() {
         frontier_clones
     } else {
         HashSet::new()
     };
+    let canonical = program.canonical_sequential.as_deref();
+    if !thunks.is_used()
+        && !frontiers.is_used()
+        && !thunks.queries_demand
+        && !thunks.queries_split_budget()
+        && !thunks.queries_recursion_budget
+    {
+        if let Some(canonical) = canonical {
+            let selected = prepare_dispatch_layout(canonical, target, fragments)?;
+            let mut module = emit_module(
+                &selected.program,
+                target,
+                window_address_facts,
+                &selected.plan,
+                selected.fragments,
+            )?;
+            module.ledger.extend(frontiers.ledger().iter().cloned());
+            module.ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
+            return Ok(module);
+        }
+    }
+    let (canonical_roots, crossovers) = if let Some(canonical) = canonical {
+        canonical_clone_roots(program, canonical, &mut clones)?
+    } else {
+        (BTreeSet::new(), BTreeSet::new())
+    };
     for (ordinal, function) in program.functions().iter().enumerate() {
         if u32::try_from(ordinal).is_ok_and(|ordinal| clones.contains(&ordinal)) {
+            if canonical_roots.contains(&source_symbol(function.name())) {
+                continue;
+            }
             functions.append(
                 FunctionEmitter::new(
                     program,
@@ -629,15 +659,31 @@ fn emit_module(
         }
     }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    let mut threaded_layout = program.nominals().iter()
+        .any(|nominal| nominal.handler_words != 0);
+    if let Some(canonical) = canonical.filter(|_| !canonical_roots.is_empty()) {
+        let selected = prepare_dispatch_layout(canonical, target, fragments)?;
+        validate_crossovers(program, &selected.program, &crossovers)?;
+        let module = emit_module(
+            &selected.program,
+            target,
+            window_address_facts,
+            &selected.plan,
+            selected.fragments,
+        )?;
+        // A clone can execute on workers after a cut or a refused acquisition.
+        // Its cold exhaustion edge must arbitrate with the parallel world, not
+        // reach the ordinary module's unlatched writer.
+        let shared = BTreeSet::from(["wf_resource_abort".to_owned()]);
+        text.import_canonical_closure(&module.model, &canonical_roots, &shared)?;
+        threaded_layout |= module.threaded_layout;
+    }
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     Ok(LlvmModule {
         text: text.render(),
         model: text,
-        threaded_layout: program
-            .nominals()
-            .iter()
-            .any(|nominal| nominal.handler_words != 0),
+        threaded_layout,
         ledger,
     })
 }

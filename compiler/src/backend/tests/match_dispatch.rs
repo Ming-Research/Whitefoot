@@ -1579,6 +1579,118 @@ fn main() -> status: ExitStatus pure {
 }
 "#;
 
+#[test]
+fn canonical_world_rejects_a_handler_layout_crossing_an_opaque_pointer() {
+    let source = format!("{}{}", std::str::from_utf8(HANDLER_CELLS).unwrap(), r#"
+fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
+  let first = tag(cell: cell);
+  let second = tag(cell: cell);
+  return first +wrap second;
+}
+"#);
+    super::system::with_mutated_ir_lowering(source.as_bytes(), crate::OverlapLowering::On, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(), target, false).unwrap();
+        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        assert_eq!(parallel.program.nominal(cell).unwrap().handler_words, 0);
+        assert_eq!(ordinary.program.nominal(cell).unwrap().handler_words, 1);
+        assert_eq!(crate::backend::emitter::emit_prepared_llvm(&parallel, target),
+            Err(crate::backend::BackendFailure::InvalidIr),
+            "ptr ABI equality cannot authorize different Cell content representations");
+    });
+}
+
+#[test]
+fn canonical_world_rejects_handler_addresses_even_with_equal_word_counts() {
+    let source = format!("{}{}", std::str::from_utf8(HANDLER_CELLS).unwrap(), r#"
+fn number(seed: u32) -> result: u32 pure {
+  return seed +wrap 1_u32;
+}
+
+fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
+  let first = number(seed: 0_u32);
+  let second = number(seed: 1_u32);
+  let combined = first +wrap second;
+  let value = tag(cell: cell);
+  return combined +wrap value;
+}
+"#);
+    super::system::with_mutated_ir_lowering(source.as_bytes(), crate::OverlapLowering::On, |program| {
+        // The original fixture's main also offers Cell-valued work. Remove
+        // those unrelated offers so this witness transfers only the u32 pair.
+        for function in &mut program.functions {
+            if function.name() != "paired_cell" {
+                function.overlaps.clear();
+            }
+        }
+        let target = crate::target::TargetLayout::host().unwrap();
+        let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(), target, false).unwrap();
+        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        assert_eq!(parallel.program.nominal(cell).unwrap().handler_words, 1);
+        assert_eq!(ordinary.program.nominal(cell).unwrap().handler_words, 1);
+        assert_eq!(crate::backend::emitter::emit_prepared_llvm(&parallel, target),
+            Err(crate::backend::BackendFailure::InvalidIr),
+            "equal counts do not make parallel handler addresses canonical handlers");
+    });
+}
+
+#[test]
+fn canonical_private_handler_layout_does_not_disable_parallel_computation() {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(), target, false).unwrap();
+        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        assert_eq!(parallel.program.nominal(cell).unwrap().handler_words, 0);
+        assert_eq!(ordinary.program.nominal(cell).unwrap().handler_words, 1);
+        let module = crate::backend::emitter::emit_prepared_llvm(&parallel, target)
+            .expect("Cell is private to the canonical computation, not an entrance value");
+        assert!(module.threaded_layout, "canonical handler layouts also prohibit whole-module splitting");
+        assert!(crate::split_module(&module, crate::FragmentGranularity::Function).is_err());
+        assert!(module.contains("call void @wf__par_publish("), "{module}");
+        assert!(module.contains("wf__par_seq_run.dispatch"),
+            "the canonical world must retain Off dispatch splitting: {module}");
+        let ordinary_module = crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
+        let restored = definition(&module, "wf__par_seq_run.dispatch")
+            .replace("@wf__par_seq_", "@wf_")
+            .replace("%wf__par_seq_type.", "%");
+        assert_eq!(restored, definition(&ordinary_module, "wf_run.dispatch"),
+            "dispatch computation must be ordinary Off emission");
+    });
+}
+
+#[test]
+fn canonical_world_keeps_the_explicit_fragment_dispatch_mode() {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+        let target = crate::target::TargetLayout::host().unwrap();
+        let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, true).unwrap();
+        let ordinary = crate::backend::emitter::prepare_dispatch_layout(
+            program.canonical_sequential.as_deref().unwrap(), target, true).unwrap();
+        let module = crate::backend::emitter::emit_prepared_llvm(&parallel, target).unwrap();
+        let ordinary_module = crate::backend::emitter::emit_prepared_llvm(&ordinary, target).unwrap();
+        assert!(module.contains("@.wf__par_seq_global.wf_run.dispatch.table = "),
+            "fragment-mode canonical dispatch must retain its table: {module}");
+        let table = module.lines().find(|line|
+            line.starts_with("@.wf__par_seq_global.wf_run.dispatch.table = ")).unwrap();
+        for arm in 0..3 {
+            assert!(table.contains(&format!("ptr @wf__par_seq_run.arm.{arm}")),
+                "the canonical table must bind canonical handlers: {table}");
+        }
+        assert!(!module.threaded_layout, "both worlds use fragment-safe ordinary layouts");
+        assert!(!module.contains("dispatches through the handler word"), "{module}");
+        assert_eq!(definition(&module, "wf__par_seq_run.dispatch")
+            .replace("@wf__par_seq_", "@wf_")
+            .replace("@.wf__par_seq_global.", "@"),
+            definition(&ordinary_module, "wf_run.dispatch"),
+            "an empty parallel plan cannot select canonical whole-program layout");
+    });
+}
+
 /// Follow the loaded target from the cursor parameter through the word GEP
 /// to the indirect call. A tag/table implementation cannot satisfy this.
 fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {

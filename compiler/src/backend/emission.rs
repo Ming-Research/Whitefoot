@@ -10,6 +10,8 @@ use crate::IrBlockId;
 
 use super::emitter::BackendFailure;
 
+mod canonical;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BodyPart {
     Text(String),

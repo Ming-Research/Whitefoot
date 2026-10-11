@@ -424,12 +424,11 @@ pub(super) fn retained_demand_splitters(program: &IrProgram) -> HashSet<u32> {
 /// preserves [PAR-1] operations, arguments and the same-ABI result; the call
 /// still executes at the original join.
 ///
-/// **Why this set and not another.** A function outside it has the same body
-/// in both worlds — no hand-out is reachable from it, so nothing about its
-/// lowering depends on which world called it — and both worlds call the one
-/// copy. Cloning it would be bytes with no reader. The set is a property of
-/// the call graph and the permission judgment, never of a name or a source
-/// shape.
+/// This is the set of world entrances and captured-ABI worker fallbacks.
+/// Emission extends it forwards through independently lowered ordinary source
+/// calls: a helper with no retained offer may still have been transformed by
+/// optional loop synthesis and cannot be shared with the canonical world.
+/// Both sets depend on graph edges, never function names or workload shapes.
 ///
 /// Empty when no hand-out is reachable from any definition, including every
 /// default compilation: the default build carries no overlap group at all, so
@@ -518,14 +517,10 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
         }
     }
 
-    // A chunk reaches no hand-out of its own, and still needs a clone: it is
-    // what the sequential world calls at a split site, and giving that world
-    // its own copy leaves each copy with exactly one caller, which is what lets
-    // the loop be inlined back into it and makes the sequential world free.
-    //
-    // A splitter is the other way round. It exists only in the overlapped
-    // world, so its clone would be unreachable — and would be a second caller
-    // of the chunk's clone, costing exactly the inlining above.
+    // A chunk needs its captured-ABI sequential variant for workers' budget
+    // and refusal fallbacks. Canonical source functions retain their original
+    // in-place loops and never call this synthesized variant. A splitter only
+    // schedules work, so a sequential splitter has no caller.
     reachable
         .iter()
         .copied()

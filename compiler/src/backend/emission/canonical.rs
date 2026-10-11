@@ -1,0 +1,987 @@
+//! Import an independently lowered sequential world from its recorded graph.
+//!
+//! LLVM text is only rewritten at symbol tokens. It never supplies graph edges.
+
+use super::{Declaration, Entity, Linkage, Module, ModulePart, References};
+use crate::backend::emitter::BackendFailure;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Dependency {
+    Symbol(String),
+    Type(String),
+    Attributes(u64),
+}
+
+#[derive(Default)]
+struct Closure {
+    entities: BTreeSet<String>,
+    declarations: BTreeSet<String>,
+    types: BTreeSet<String>,
+    attributes: BTreeSet<u64>,
+}
+
+fn dependencies(pending: &mut BTreeSet<Dependency>, references: &References) {
+    pending.extend(references.symbols.iter().cloned().map(Dependency::Symbol));
+    pending.extend(references.types.iter().cloned().map(Dependency::Type));
+    pending.extend(
+        references
+            .attributes
+            .iter()
+            .copied()
+            .map(Dependency::Attributes),
+    );
+}
+
+fn entities(module: &Module) -> Result<BTreeMap<String, &Entity>, BackendFailure> {
+    if module.repeated_declaration().is_some() {
+        return Err(BackendFailure::InvalidIr);
+    }
+    let mut entities = BTreeMap::new();
+    for entity in &module.entities {
+        if module.declarations.contains_key(&entity.name)
+            || entities.insert(entity.name.clone(), entity).is_some()
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+    }
+    Ok(entities)
+}
+
+fn compatible_declaration(entity: &Entity, declaration: &Declaration) -> bool {
+    entity.declaration == declaration.text
+        && entity.declaration_references == declaration.references
+}
+
+fn closure(
+    canonical: &Module,
+    destination: &Module,
+    roots: &BTreeSet<String>,
+    shared: &BTreeSet<String>,
+    source: &BTreeMap<String, &Entity>,
+    existing: &BTreeMap<String, &Entity>,
+) -> Result<Closure, BackendFailure> {
+    let mut closure = Closure::default();
+    let mut pending = roots
+        .iter()
+        .cloned()
+        .map(Dependency::Symbol)
+        .collect::<BTreeSet<_>>();
+    let mut visited = BTreeSet::new();
+    while let Some(dependency) = pending.pop_first() {
+        if !visited.insert(dependency.clone()) {
+            continue;
+        }
+        match dependency {
+            Dependency::Symbol(name) => {
+                let entity = source.get(&name).copied();
+                let declaration = canonical.declarations.get(&name);
+                if entity.is_none() && declaration.is_none() {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                if shared.contains(&name) {
+                    // The caller owns intentional differences in shared safety
+                    // support; importing its Off implementation would erase them.
+                    if !existing.contains_key(&name)
+                        && !destination.declarations.contains_key(&name)
+                    {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    continue;
+                }
+                if let Some(entity) = entity {
+                    if entity.linkage == Linkage::Weak {
+                        // A strong native definition overrides this name.
+                        // Cloning a weak fallback would break that contract.
+                        let declaration = Declaration {
+                            text: entity.declaration.clone(),
+                            references: entity.declaration_references.clone(),
+                        };
+                        let compatible = existing
+                            .get(&name)
+                            .is_some_and(|other| compatible_declaration(other, &declaration))
+                            || destination.declarations.get(&name) == Some(&declaration);
+                        if !compatible {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                        continue;
+                    }
+                    closure.entities.insert(name);
+                    dependencies(&mut pending, &entity.references);
+                    dependencies(&mut pending, &entity.declaration_references);
+                } else if let Some(declaration) = declaration {
+                    closure.declarations.insert(name);
+                    dependencies(&mut pending, &declaration.references);
+                }
+            }
+            Dependency::Type(name) => {
+                let declaration = canonical
+                    .types
+                    .get(&name)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                closure.types.insert(name);
+                dependencies(&mut pending, &declaration.references);
+            }
+            Dependency::Attributes(id) => {
+                if !canonical.attributes.contains_key(&id) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                closure.attributes.insert(id);
+            }
+        }
+    }
+    Ok(closure)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum GlobalKind {
+    Constant,
+    Mutable,
+    Alias,
+}
+
+fn global_kind(entity: &Entity) -> Result<GlobalKind, BackendFailure> {
+    // Module::global retains its kind in the generated header prefix. This
+    // narrow printing classification discovers no symbols or dependencies.
+    let (_, prefix) = entity
+        .header
+        .split_once(" = ")
+        .ok_or(BackendFailure::InvalidIr)?;
+    for token in prefix.split_whitespace() {
+        match token {
+            "constant" => return Ok(GlobalKind::Constant),
+            "global" => return Ok(GlobalKind::Mutable),
+            "alias" => return Ok(GlobalKind::Alias),
+            "private" | "internal" | "hidden" | "unnamed_addr" | "local_unnamed_addr" => {}
+            token if token.starts_with("thread_local") => {}
+            _ => return Err(BackendFailure::InvalidIr),
+        }
+    }
+    Err(BackendFailure::InvalidIr)
+}
+
+fn renamed_dependencies(
+    entity: &Entity,
+    renaming: &BTreeMap<String, String>,
+    types: &BTreeMap<String, String>,
+) -> bool {
+    entity
+        .references
+        .symbols
+        .iter()
+        .chain(&entity.declaration_references.symbols)
+        .any(|name| renaming.get(name).is_some_and(|replacement| replacement != name))
+        || entity
+            .references
+            .types
+            .iter()
+            .chain(&entity.declaration_references.types)
+            .any(|name| types.get(name).is_some_and(|replacement| replacement != name))
+}
+
+fn type_renaming(
+    selected: &Closure,
+    canonical: &Module,
+    destination: &Module,
+) -> Result<BTreeMap<String, String>, BackendFailure> {
+    let mut renaming = BTreeMap::new();
+    loop {
+        let mut changed = false;
+        for name in &selected.types {
+            let declaration = &canonical.types[name];
+            let conflict = destination
+                .types
+                .get(name)
+                .is_some_and(|other| other != declaration);
+            let dependency_changed = declaration
+                .references
+                .types
+                .iter()
+                .any(|name| renaming.contains_key(name));
+            if (conflict || dependency_changed) && !renaming.contains_key(name) {
+                // The emitter reserves this namespace for named types; SSA
+                // values/parameters/labels use vN, tN, wf.arg., wf.slot., etc.
+                // Without that producer contract `%name` is ambiguous in text.
+                if !name.starts_with("wf.t.") {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                renaming.insert(name.clone(), format!("wf__par_seq_type.{name}"));
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(renaming);
+        }
+    }
+}
+
+fn renaming(
+    selected: &Closure,
+    source: &BTreeMap<String, &Entity>,
+    existing: &BTreeMap<String, &Entity>,
+    destination: &Module,
+    types: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, BackendFailure> {
+    let mut renaming = BTreeMap::new();
+    for name in &selected.entities {
+        let entity = source[name];
+        if !entity.global {
+            if let Some(suffix) = name.strip_prefix("wf_") {
+                renaming.insert(name.clone(), format!("wf__par_seq_{suffix}"));
+            } else if entity.linkage.is_local() {
+                if existing.get(name).copied() != Some(entity) {
+                    renaming.insert(name.clone(), format!("wf__par_seq.{name}"));
+                }
+            } else {
+                return Err(BackendFailure::InvalidIr);
+            }
+        }
+    }
+    // Propagate changed addresses through helpers, globals and alias cycles.
+    // Once a dependency needs a new identity it never reverts to the old one.
+    loop {
+        let mut changed = false;
+        for name in &selected.entities {
+            let entity = source[name];
+            if !entity.global {
+                if !renaming.contains_key(name)
+                    && renamed_dependencies(entity, &renaming, types)
+                {
+                    renaming.insert(name.clone(), format!("wf__par_seq.{name}"));
+                    changed = true;
+                }
+                continue;
+            }
+            let dependencies_changed = renamed_dependencies(entity, &renaming, types);
+            let same = existing.get(name).copied() == Some(entity);
+            let collision =
+                existing.contains_key(name) || destination.declarations.contains_key(name);
+            let kind = global_kind(entity)?;
+            if kind == GlobalKind::Mutable {
+                if collision && (!same || dependencies_changed) {
+                    // Two worlds must not silently acquire separate instances
+                    // of a mutable program global with the same source identity.
+                    return Err(BackendFailure::InvalidIr);
+                }
+                if !collision && dependencies_changed && !entity.linkage.is_local() {
+                    return Err(BackendFailure::InvalidIr);
+                }
+            }
+            if (dependencies_changed || collision && !same) && !renaming.contains_key(name) {
+                renaming.insert(name.clone(), format!(".wf__par_seq_global.{name}"));
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(renaming);
+        }
+    }
+}
+
+fn references(
+    references: &References,
+    renaming: &BTreeMap<String, String>,
+    types: &BTreeMap<String, String>,
+) -> References {
+    References {
+        symbols: references
+            .symbols
+            .iter()
+            .map(|name| renaming.get(name).unwrap_or(name).clone())
+            .collect(),
+        types: references
+            .types
+            .iter()
+            .map(|name| types.get(name).unwrap_or(name).clone())
+            .collect(),
+        attributes: references.attributes.clone(),
+    }
+}
+
+fn quoted_end(bytes: &[u8], start: usize) -> Result<usize, BackendFailure> {
+    let mut at = start + 1;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'"' => return Ok(at + 1),
+            b'\\' => at += 2,
+            _ => at += 1,
+        }
+    }
+    Err(BackendFailure::InvalidIr)
+}
+
+fn quoted_name(bytes: &[u8]) -> Result<String, BackendFailure> {
+    let mut name = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'\\' {
+            let digits = bytes.get(at + 1..at + 3).ok_or(BackendFailure::InvalidIr)?;
+            let digits = std::str::from_utf8(digits).map_err(|_| BackendFailure::InvalidIr)?;
+            name.push(u8::from_str_radix(digits, 16).map_err(|_| BackendFailure::InvalidIr)?);
+            at += 3;
+        } else {
+            name.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(name).map_err(|_| BackendFailure::InvalidIr)
+}
+
+fn identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"-.$_".contains(&byte)
+}
+
+fn symbol_text(
+    text: &str,
+    renaming: &BTreeMap<String, String>,
+    types: &BTreeMap<String, String>,
+) -> Result<String, BackendFailure> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b';' {
+            let end = bytes[at..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |end| at + end);
+            out.extend_from_slice(&bytes[at..end]);
+            at = end;
+        } else if bytes[at] == b'"' {
+            let end = quoted_end(bytes, at)?;
+            out.extend_from_slice(&bytes[at..end]);
+            at = end;
+        } else if bytes[at] == b'@' || bytes[at] == b'%' {
+            let start = at;
+            let sigil = bytes[at];
+            at += 1;
+            let quoted = bytes.get(at) == Some(&b'"');
+            let name = if quoted {
+                let end = quoted_end(bytes, at)?;
+                let name = quoted_name(&bytes[at + 1..end - 1])?;
+                at = end;
+                name
+            } else {
+                let begin = at;
+                while at < bytes.len() && identifier_byte(bytes[at]) {
+                    at += 1;
+                }
+                if begin == at {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                text[begin..at].to_owned()
+            };
+            let mapping = if sigil == b'@' { renaming } else { types };
+            if let Some(replacement) = mapping.get(&name) {
+                out.push(sigil);
+                if quoted || !replacement.bytes().all(identifier_byte) {
+                    out.push(b'"');
+                    for byte in replacement.bytes() {
+                        if byte == b'"' || byte == b'\\' || !byte.is_ascii_graphic() {
+                            out.extend_from_slice(format!("\\{byte:02X}").as_bytes());
+                        } else {
+                            out.push(byte);
+                        }
+                    }
+                    out.push(b'"');
+                } else {
+                    out.extend_from_slice(replacement.as_bytes());
+                }
+            } else {
+                out.extend_from_slice(&bytes[start..at]);
+            }
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| BackendFailure::InvalidIr)
+}
+
+fn declaration(
+    value: &Declaration,
+    renaming: &BTreeMap<String, String>,
+    types: &BTreeMap<String, String>,
+) -> Result<Declaration, BackendFailure> {
+    Ok(Declaration {
+        text: symbol_text(&value.text, renaming, types)?,
+        references: references(&value.references, renaming, types),
+    })
+}
+
+fn entity(
+    value: &Entity,
+    renaming: &BTreeMap<String, String>,
+    types: &BTreeMap<String, String>,
+) -> Result<Entity, BackendFailure> {
+    Ok(Entity {
+        name: renaming.get(&value.name).unwrap_or(&value.name).clone(),
+        header: symbol_text(&value.header, renaming, types)?,
+        hidden_header: symbol_text(&value.hidden_header, renaming, types)?,
+        declaration: symbol_text(&value.declaration, renaming, types)?,
+        body: symbol_text(&value.body, renaming, types)?,
+        declaration_references: references(&value.declaration_references, renaming, types),
+        linkage: value.linkage,
+        global: value.global,
+        references: references(&value.references, renaming, types),
+    })
+}
+
+impl Module {
+    /// Imports only the recorded closure of independently emitted Off roots.
+    /// Validation finishes before append, so an error leaves this module intact.
+    /// The emitter must validate every actual cross-world argument/result
+    /// representation before calling this: a private type namespace preserves
+    /// two layouts, and cannot make a crossing between those layouts valid.
+    pub(crate) fn import_canonical_closure(
+        &mut self,
+        canonical: &Module,
+        roots: &BTreeSet<String>,
+        shared: &BTreeSet<String>,
+    ) -> Result<(), BackendFailure> {
+        let source = entities(canonical)?;
+        let existing = entities(self)?;
+        let selected = closure(canonical, self, roots, shared, &source, &existing)?;
+        let types = type_renaming(&selected, canonical, self)?;
+        let renaming = renaming(&selected, &source, &existing, self, &types)?;
+        let mut imported = Module::default();
+        for part in &canonical.parts {
+            match part {
+                ModulePart::Entity(index)
+                    if selected
+                        .entities
+                        .contains(&canonical.entities[*index].name) =>
+                {
+                    let value = entity(&canonical.entities[*index], &renaming, &types)?;
+                    if let Some(previous) = existing.get(&value.name) {
+                        if **previous != value {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                    } else {
+                        if self.declarations.contains_key(&value.name)
+                            || imported
+                                .entities
+                                .iter()
+                                .any(|previous| previous.name == value.name)
+                        {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                        imported.define(value);
+                    }
+                }
+                ModulePart::Declaration(name) if selected.declarations.contains(name) => {
+                    let value = declaration(&canonical.declarations[name], &renaming, &types)?;
+                    if let Some(previous) = self.declarations.get(name) {
+                        if previous != &value {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                    } else if let Some(previous) = existing.get(name) {
+                        if !compatible_declaration(previous, &value) {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                    } else {
+                        imported.parts.push(ModulePart::Declaration(name.clone()));
+                        imported.declarations.insert(name.clone(), value);
+                    }
+                }
+                ModulePart::Type(name) if selected.types.contains(name) => {
+                    let value = declaration(&canonical.types[name], &renaming, &types)?;
+                    let imported_name = types.get(name).unwrap_or(name);
+                    if let Some(previous) = self.types.get(imported_name) {
+                        if previous != &value {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                    } else {
+                        imported.parts.push(ModulePart::Type(imported_name.clone()));
+                        imported.types.insert(imported_name.clone(), value);
+                    }
+                }
+                ModulePart::Attributes(id) if selected.attributes.contains(id) => {
+                    let value = &canonical.attributes[id];
+                    if let Some(previous) = self.attributes.get(id) {
+                        if previous != value {
+                            return Err(BackendFailure::InvalidIr);
+                        }
+                    } else {
+                        imported.parts.push(ModulePart::Attributes(*id));
+                        imported.attributes.insert(*id, value.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.append(imported);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::symbol_text;
+    use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, References, Signature};
+    use crate::backend::emitter::BackendFailure;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn module() -> Module {
+        let mut module = Module::default();
+        module.attribute_group(0, "nounwind".to_owned());
+        module
+    }
+
+    fn function(module: &mut Module, name: &str, calls: &[&str], linkage: Linkage) {
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        for call in calls {
+            body.instructions(&format!("  call void @{call}()\n"), &[*call]);
+        }
+        body.instructions("  ret void\n", &[]);
+        let mut signature = Signature::new(name, "void", Vec::new());
+        signature.linkage = linkage;
+        module.define(signature.define(body, "").unwrap());
+    }
+
+    fn roots(name: &str) -> BTreeSet<String> {
+        [name.to_owned()].into()
+    }
+
+    fn import(destination: &mut Module, canonical: &Module) {
+        destination
+            .import_canonical_closure(canonical, &roots("wf_root"), &BTreeSet::new())
+            .unwrap();
+    }
+
+    #[test]
+    fn imports_only_recorded_closure_with_mutual_recursion_and_metadata() {
+        let mut canonical = module();
+        canonical.header("source_filename = \"canonical bootstrap\"".to_owned());
+        canonical.named_type("T".to_owned(), "{ i64 }".to_owned(), References::default());
+        canonical.named_type("unused".to_owned(), "{ i8 }".to_owned(), References::default());
+        canonical.attribute_group(9, "cold".to_owned());
+        canonical.declare(Signature::new("native", "void", Vec::new()));
+        function(
+            &mut canonical,
+            "wf_root",
+            &["wf_helper", "native"],
+            Linkage::External,
+        );
+        function(&mut canonical, "wf_helper", &["wf_root"], Linkage::Private);
+        function(&mut canonical, "wf_unused", &[], Linkage::External);
+        canonical.entities[0].references.types.insert("T".to_owned());
+        canonical.entities[0]
+            .declaration_references
+            .types
+            .insert("T".to_owned());
+        let mut destination = module();
+        import(&mut destination, &canonical);
+        let text = destination.render();
+        assert!(text.contains("@wf__par_seq_root"));
+        assert!(text.contains("call void @wf__par_seq_helper()"));
+        assert!(text.contains("call void @wf__par_seq_root()"));
+        assert!(text.contains("declare void @native()"));
+        assert!(text.contains("%T = type { i64 }"));
+        assert!(!text.contains("bootstrap"));
+        assert!(!text.contains("unused"));
+        assert!(!text.contains("attributes #9"));
+        let root = destination
+            .entities
+            .iter()
+            .find(|entity| entity.name == "wf__par_seq_root")
+            .unwrap();
+        assert_eq!(
+            root.references.symbols,
+            ["native".to_owned(), "wf__par_seq_helper".to_owned()].into()
+        );
+        assert!(root.declaration.contains("@wf__par_seq_root("));
+        assert!(root.hidden_header.contains("@wf__par_seq_root("));
+        assert_eq!(root.declaration_references.types, roots("T"));
+    }
+
+    #[test]
+    fn private_named_types_keep_both_layouts_and_remap_dependent_types() {
+        let mut canonical = module();
+        canonical.named_type(
+            "wf.t.Cell".to_owned(),
+            "{ i64 }".to_owned(),
+            References::default(),
+        );
+        canonical.named_type(
+            "wf.t.Cell_long".to_owned(),
+            "{ i8 }".to_owned(),
+            References::default(),
+        );
+        canonical.named_type(
+            "wf.t.Pair".to_owned(),
+            "{ %wf.t.Cell }".to_owned(),
+            References {
+                types: roots("wf.t.Cell"),
+                ..References::default()
+            },
+        );
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions(
+            "  %v0 = alloca %wf.t.Cell\n  %v1 = alloca %wf.t.Cell_long\n  ret void\n",
+            &[],
+        );
+        body.references
+            .types
+            .extend(["wf.t.Pair".to_owned(), "wf.t.Cell_long".to_owned()]);
+        canonical.define(
+            Signature::new("wf_root", "void", Vec::new())
+                .define(body, "")
+                .unwrap(),
+        );
+        let mut destination = module();
+        destination.named_type(
+            "wf.t.Cell".to_owned(),
+            "{ i32 }".to_owned(),
+            References::default(),
+        );
+        destination.named_type(
+            "wf.t.Cell_long".to_owned(),
+            "{ i8 }".to_owned(),
+            References::default(),
+        );
+        import(&mut destination, &canonical);
+        assert_eq!(destination.types["wf.t.Cell"].text, "%wf.t.Cell = type { i32 }");
+        assert_eq!(
+            destination.types["wf__par_seq_type.wf.t.Cell"].text,
+            "%wf__par_seq_type.wf.t.Cell = type { i64 }"
+        );
+        assert_eq!(
+            destination.types["wf__par_seq_type.wf.t.Pair"].references.types,
+            roots("wf__par_seq_type.wf.t.Cell")
+        );
+        let body = &destination.entities[0].body;
+        assert!(body.contains("%v0 = alloca %wf__par_seq_type.wf.t.Cell"));
+        assert!(body.contains("%v1 = alloca %wf.t.Cell_long"));
+        assert_eq!(
+            destination.entities[0].references.types,
+            [
+                "wf.t.Cell_long".to_owned(),
+                "wf__par_seq_type.wf.t.Pair".to_owned()
+            ]
+            .into()
+        );
+    }
+
+    #[test]
+    fn remaps_exact_symbol_tokens_and_quoted_identifiers_not_constant_text() {
+        let renaming = BTreeMap::from([("wf_leaf".to_owned(), "wf__par_seq_leaf".to_owned())]);
+        let text = "call @wf_leaf(), @wf_leaf_long(), @\"wf_leaf\"(), @\"wf\\5Fleaf\"()\nc\"@wf_leaf \\22 @wf_leaf_long\" ; @wf_leaf\n";
+        assert_eq!(
+            symbol_text(text, &renaming, &BTreeMap::new()).unwrap(),
+            "call @wf__par_seq_leaf(), @wf_leaf_long(), @\"wf__par_seq_leaf\"(), @\"wf__par_seq_leaf\"()\nc\"@wf_leaf \\22 @wf_leaf_long\" ; @wf_leaf\n"
+        );
+    }
+
+    #[test]
+    fn header_and_declaration_dependency_metadata_follow_callee_remapping() {
+        let mut canonical = module();
+        function(&mut canonical, "wf_personality", &[], Linkage::Private);
+        let mut signature = Signature::new("wf_root", "void", Vec::new());
+        signature.suffix = " personality ptr @wf_personality".to_owned();
+        signature.references.symbols = roots("wf_personality");
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        body.instructions("  ret void\n", &[]);
+        canonical.define(signature.define(body, "").unwrap());
+        let mut destination = module();
+        import(&mut destination, &canonical);
+        let root = destination
+            .entities
+            .iter()
+            .find(|entity| entity.name == "wf__par_seq_root")
+            .unwrap();
+        assert!(root.header.contains("personality ptr @wf__par_seq_personality"));
+        assert!(root.declaration.contains("personality ptr @wf__par_seq_personality"));
+        assert_eq!(root.declaration_references.symbols, roots("wf__par_seq_personality"));
+    }
+
+    #[test]
+    fn globals_keep_identity_or_remap_aliases_to_the_canonical_function() {
+        let mut canonical = module();
+        canonical.global(
+            "constant".to_owned(),
+            "constant",
+            "i64".to_owned(),
+            "7".to_owned(),
+            Some(8),
+            References::default(),
+        );
+        canonical.global(
+            "callback".to_owned(),
+            "constant",
+            "ptr".to_owned(),
+            "@wf_leaf".to_owned(),
+            None,
+            References {
+                symbols: roots("wf_leaf"),
+                ..References::default()
+            },
+        );
+        canonical.global(
+            "alias".to_owned(),
+            "alias",
+            "ptr,".to_owned(),
+            "ptr @callback".to_owned(),
+            None,
+            References {
+                symbols: roots("callback"),
+                ..References::default()
+            },
+        );
+        function(&mut canonical, "wf_leaf", &[], Linkage::Private);
+        function(&mut canonical, "wf_root", &[], Linkage::External);
+        canonical
+            .entities
+            .last_mut()
+            .unwrap()
+            .references
+            .symbols
+            .extend(["constant".to_owned(), "alias".to_owned()]);
+        let mut destination = module();
+        destination.define(canonical.entities[0].clone());
+        destination.define(canonical.entities[1].clone());
+        destination.define(canonical.entities[2].clone());
+        import(&mut destination, &canonical);
+        assert_eq!(
+            destination
+                .entities
+                .iter()
+                .filter(|entity| entity.name == "constant")
+                .count(),
+            1
+        );
+        let callback = destination
+            .entities
+            .iter()
+            .find(|entity| entity.name == ".wf__par_seq_global.callback")
+            .unwrap();
+        assert!(callback.header.contains("@wf__par_seq_leaf"));
+        let alias = destination
+            .entities
+            .iter()
+            .find(|entity| entity.name == ".wf__par_seq_global.alias")
+            .unwrap();
+        assert!(alias.header.contains("@.wf__par_seq_global.callback"));
+        assert_eq!(alias.references.symbols, roots(".wf__par_seq_global.callback"));
+    }
+
+    #[test]
+    fn shared_safety_support_stops_before_different_body_dependencies() {
+        let mut canonical = module();
+        function(
+            &mut canonical,
+            "wf_root",
+            &["wf_resource_abort"],
+            Linkage::External,
+        );
+        function(
+            &mut canonical,
+            "wf_resource_abort",
+            &["wf_off_diagnostic"],
+            Linkage::Private,
+        );
+        function(&mut canonical, "wf_off_diagnostic", &[], Linkage::Private);
+        let mut destination = module();
+        function(&mut destination, "wf_resource_abort", &[], Linkage::Private);
+        let shared_body = destination.entities[0].clone();
+        destination
+            .import_canonical_closure(&canonical, &roots("wf_root"), &roots("wf_resource_abort"))
+            .unwrap();
+        assert_eq!(destination.entities[0], shared_body);
+        assert!(!destination.render().contains("off_diagnostic"));
+        assert_eq!(destination.entities[1].references.symbols, roots("wf_resource_abort"));
+    }
+
+    #[test]
+    fn weak_runtime_hooks_keep_the_native_override_name() {
+        let mut canonical = module();
+        function(
+            &mut canonical,
+            "wf_root",
+            &["wf__floor_hook"],
+            Linkage::External,
+        );
+        function(
+            &mut canonical,
+            "wf__floor_hook",
+            &["wf_off_unreachable"],
+            Linkage::Weak,
+        );
+        let mut destination = module();
+        function(&mut destination, "wf__floor_hook", &[], Linkage::Weak);
+        import(&mut destination, &canonical);
+        assert_eq!(destination.entities[1].references.symbols, roots("wf__floor_hook"));
+        assert!(!destination.render().contains("off_unreachable"));
+        let mut absent = module();
+        assert_eq!(
+            absent.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+            Err(BackendFailure::InvalidIr)
+        );
+    }
+
+    #[test]
+    fn cleanup_helpers_reuse_unchanged_or_get_complete_symbol_namespace() {
+        let mut canonical = module();
+        function(&mut canonical, "wf.drop.t.cell", &[], Linkage::Private);
+        function(&mut canonical, "wf.drop.run.cell", &["wf_leaf"], Linkage::Private);
+        function(&mut canonical, "wf_leaf", &[], Linkage::External);
+        function(
+            &mut canonical,
+            "wf_root",
+            &["wf.drop.t.cell", "wf.drop.run.cell"],
+            Linkage::External,
+        );
+        let mut destination = module();
+        destination.define(canonical.entities[0].clone());
+        destination.define(canonical.entities[1].clone());
+        import(&mut destination, &canonical);
+        assert_eq!(
+            destination
+                .entities
+                .iter()
+                .filter(|entity| entity.name == "wf.drop.t.cell")
+                .count(),
+            1
+        );
+        let helper = destination
+            .entities
+            .iter()
+            .find(|entity| entity.name == "wf__par_seq.wf.drop.run.cell")
+            .unwrap();
+        assert_eq!(helper.references.symbols, roots("wf__par_seq_leaf"));
+        assert!(destination.render().contains("call void @wf__par_seq.wf.drop.run.cell()"));
+    }
+
+    #[test]
+    fn mutable_program_globals_are_shared_and_conflicts_do_not_duplicate_state() {
+        let mut canonical = module();
+        canonical.global(
+            "state".to_owned(),
+            "global",
+            "i64".to_owned(),
+            "0".to_owned(),
+            Some(8),
+            References::default(),
+        );
+        function(&mut canonical, "wf_root", &[], Linkage::External);
+        canonical.entities[1].references.symbols.insert("state".to_owned());
+        let mut destination = module();
+        destination.define(canonical.entities[0].clone());
+        import(&mut destination, &canonical);
+        assert_eq!(destination.entities.iter().filter(|entity| entity.name == "state").count(), 1);
+        let mut conflicting = module();
+        conflicting.global(
+            "state".to_owned(),
+            "global",
+            "i64".to_owned(),
+            "9".to_owned(),
+            Some(8),
+            References::default(),
+        );
+        let before = conflicting.clone();
+        assert_eq!(
+            conflicting.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+            Err(BackendFailure::InvalidIr)
+        );
+        assert_eq!(conflicting, before);
+    }
+
+    #[test]
+    fn missing_dependencies_and_collision_conflicts_fail_without_partial_import() {
+        let mut canonical = module();
+        function(&mut canonical, "wf_root", &["missing"], Linkage::External);
+        let mut destination = module();
+        let before = destination.clone();
+        assert_eq!(
+            destination.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+            Err(BackendFailure::InvalidIr)
+        );
+        assert_eq!(destination, before);
+        for dependency in ["type", "attributes"] {
+            let mut canonical = module();
+            function(&mut canonical, "wf_root", &[], Linkage::External);
+            match dependency {
+                "type" => {
+                    canonical.entities[0]
+                        .references
+                        .types
+                        .insert("missing".to_owned());
+                }
+                "attributes" => {
+                    canonical.entities[0].references.attributes.insert(99);
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                destination.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+                Err(BackendFailure::InvalidIr),
+                "{dependency}"
+            );
+            assert_eq!(destination, before);
+        }
+        for conflict in ["type", "attributes", "declaration", "definition"] {
+            let mut canonical = module();
+            canonical.named_type("T".to_owned(), "{ i64 }".to_owned(), References::default());
+            canonical.declare(Signature::new("native", "void", Vec::new()));
+            function(&mut canonical, "wf_root", &["native"], Linkage::External);
+            canonical.entities[0].references.types.insert("T".to_owned());
+            let mut destination = module();
+            match conflict {
+                "type" => destination.named_type(
+                    "T".to_owned(),
+                    "{ i32 }".to_owned(),
+                    References::default(),
+                ),
+                "attributes" => destination.attribute_group(0, "cold".to_owned()),
+                "declaration" => destination.declare(Signature::new(
+                    "native",
+                    "i32",
+                    vec![Parameter::unnamed("i64")],
+                )),
+                "definition" => {
+                    function(&mut destination, "wf__par_seq_root", &[], Linkage::External);
+                }
+                _ => unreachable!(),
+            }
+            let before = destination.clone();
+            assert_eq!(
+                destination.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+                Err(BackendFailure::InvalidIr),
+                "{conflict}"
+            );
+            assert_eq!(destination, before, "{conflict}");
+        }
+    }
+
+    #[test]
+    fn conflicting_reserved_type_namespace_is_not_overwritten() {
+        let mut canonical = module();
+        canonical.named_type(
+            "wf.t.Cell".to_owned(),
+            "{ i64 }".to_owned(),
+            References::default(),
+        );
+        function(&mut canonical, "wf_root", &[], Linkage::External);
+        canonical.entities[0]
+            .references
+            .types
+            .insert("wf.t.Cell".to_owned());
+        let mut destination = module();
+        for name in ["wf.t.Cell", "wf__par_seq_type.wf.t.Cell"] {
+            destination.named_type(
+                name.to_owned(),
+                "{ i8 }".to_owned(),
+                References::default(),
+            );
+        }
+        let before = destination.clone();
+        assert_eq!(
+            destination.import_canonical_closure(&canonical, &roots("wf_root"), &BTreeSet::new()),
+            Err(BackendFailure::InvalidIr)
+        );
+        assert_eq!(destination, before);
+    }
+}

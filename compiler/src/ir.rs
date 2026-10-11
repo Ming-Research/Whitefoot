@@ -1957,6 +1957,11 @@ impl IrFunction {
 
 #[derive(Clone, Debug)]
 pub struct IrProgram {
+    /// The ordinary lowering from the same checked input, before any optional
+    /// loop extraction or call outlining. Compute worlds retain this graph
+    /// for their sequential source-function closure; the ordinary graph has
+    /// no second world of its own.
+    pub(crate) canonical_sequential: Option<Box<Self>>,
     /// Function-entry cheap-region predicates: every (span, iteration price)
     /// must be below the demand work floor before entering the existing
     /// sequential clone. Leaves are immutable u64 entry parameters only.

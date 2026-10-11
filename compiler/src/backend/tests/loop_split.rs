@@ -788,17 +788,9 @@ fn the_default_compilation_of_a_permitted_loop_splits_nothing() {
 
 /// The sequential world of a split loop is the loop.
 ///
-/// Two things carry that. The enclosing function's clone calls the chunk's
-/// clone and reaches no runtime entry point — no lane acquisition, no allowance query, no
-/// join — so nothing about a split is executed there. And the chunk's clone is
-/// the chunk, byte for byte once its own symbols are restored, so the loop the
-/// sequential world runs is not merely similar to the one the overlapped world
-/// runs at its leaf: it is the same lowering.
-///
-/// The clone exists at all so that each copy has exactly one caller and the
-/// loop is inlined back into it. Sharing one chunk between the worlds would
-/// give it two callers and cost the sequential world that inlining, which is
-/// the whole reason the second copy is cheap.
+/// The source clone is the ordinary in-place loop and reaches no scheduling
+/// entry point. A separate captured-ABI chunk clone remains available for
+/// workers' budget and refusal fallbacks; it cannot replace the source body.
 #[test]
 fn the_sequential_world_of_a_split_loop_is_the_loop() {
     let module = fold_module(true);
@@ -809,21 +801,18 @@ fn the_sequential_world_of_a_split_loop_is_the_loop() {
 
     let mut cloned = clone_symbols(&module);
     cloned.sort_unstable();
-    assert_eq!(
-        cloned,
-        [
-            chunk_clone_symbol.as_str(),
-            "@wf__par_seq_folded",
-            "@wf__par_seq_main"
-        ],
-        "the clone set must be the enclosing closure plus the chunk, and never the splitter:\n{module}"
-    );
+    for expected in [chunk_clone_symbol.as_str(), "@wf__par_seq_folded", "@wf__par_seq_main",
+        "@wf__par_seq_mix", "@wf__par_seq_spell", "@wf__par_seq_low_byte"] {
+        assert!(cloned.iter().any(|name| name == expected),
+            "the canonical source closure and captured-ABI chunk must define {expected}:\n{module}");
+    }
+    assert!(!cloned.iter().any(|name| name.contains("_par_split_")));
 
     let clone = function_body(&module, "@wf__par_seq_folded");
-    assert!(
-        clone.contains(&format!("call i64 {chunk_clone_symbol}(")),
-        "the sequential world must call the chunk's own clone:\n{clone}"
-    );
+    assert_eq!(clone.replace("@wf__par_seq_", "@wf_"),
+        function_body(&fold_module(false), "@wf_folded"),
+        "the sequential source function must retain the original in-place loop");
+    assert!(!clone.contains(&chunk_clone_symbol), "source loops must not call synthesized chunks: {clone}");
     for absent in [
         "@wf__par_acquire_lane",
         "@wf__par_publish",
@@ -837,9 +826,8 @@ fn the_sequential_world_of_a_split_loop_is_the_loop() {
         );
     }
 
-    // The clone renaming is the whole difference between the two copies. After
-    // undoing it there must be nothing left, or the sequential world runs a
-    // second lowering of the loop that nobody audited.
+    // Worker fallback still needs the captured-ABI chunk. Its canonical source
+    // callees differ only in naming, while the chunk's captured loop is intact.
     let chunk = function_body(&module, &chunk_symbol);
     let chunk_clone = function_body(&module, &chunk_clone_symbol);
     assert_eq!(
@@ -2332,6 +2320,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(body.contains("call void @wf__par_publish("));
     assert!(body.contains(" = phi i64 "));
     let sequential = function_body(&module, "@wf__par_seq_composed");
+    assert_eq!(sequential.replace("@wf__par_seq_", "@wf_"),
+        function_body(&emit(source), "@wf_composed"),
+        "the complete sequential CFG must precede both optional extractions");
     assert!(!sequential.contains("@wf__par_split_budget("));
     assert!(!sequential.contains("@wf__par_publish("));
 

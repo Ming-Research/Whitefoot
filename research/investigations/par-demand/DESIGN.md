@@ -2979,3 +2979,75 @@ relative to the existing seq baseline. The common-object option can satisfy
 normalized disassembly identity for the computation; it cannot make that
 extra entry work disappear. Preserve the present failing criterion until
 the owner chooses that boundary and the acceptable dispatch cost.
+
+### Canonical sequential lowering before loop synthesis
+
+The common first step for the construction alternatives is to preserve the
+non-parallel lowering before any parallel synthesis. The question is whether
+each sequential computation reached by W1 dispatch, cheap-region selection,
+budget exhaustion or sequential refusal has the same pre-optimization LLVM
+as the corresponding non-parallel build, including its ordinary helpers,
+attributes and constants. Compare the complete recorded computation closure
+after restoring only variant symbol names, and independently compare the
+parallel computation before and after canonical emission. A surviving
+synthesized chunk call in an original sequential function, a changed parallel
+body, a lost dependency or a changed ordinary callable ABI rejects this step.
+The compiler cases run in CI; no local build or execution qualifies it.
+
+The proposed implementation retains a separately lowered `Off` program made
+from the same checked program, selected entry roots and target before the
+existing parallel builder runs. It emits that program with the ordinary
+sequential emitter, then imports the computation's recorded definition,
+declaration, type and attribute dependencies under canonical variant names.
+Using the ordinary emitter matters: the old sequential-clone emission flag
+also refused an ordinary dispatch optimization, so restoring the graph alone
+would not restore the non-parallel LLVM input. Constant identity, references
+and link-selected weak runtime contracts must survive the import. Original
+source helpers reached below a selected root belong to this closure even if
+their offers were pruned. Synthesized variants required only for captured-ABI
+worker fallback remain separate from it.
+
+This replaces two former assumptions in the proposed design tree: that
+upward hand-out reachability alone found every body requiring a sequential
+variant, and that an outlined sequential chunk would inline back to the
+non-parallel input. The parallel leaf still loops over a subrange; this step
+does not select a common native object or an LLVM inlining boundary.
+
+**Resource-support boundary.** The resource-record latch exists because
+parallel callers can fail concurrently. A canonical sequential function can
+run on a worker while other tasks remain live: budget exhaustion, refused
+offers and cheap-region selection all transfer on the current thread. For
+example, worker A can enter a sequential clone and exhaust the heap while
+worker B is already writing the heap or stack record. Letting A use the
+direct single-thread writer would permit a second/interleaved record or
+abort before B completes. The existing process-wide latch is shared with
+the stack-fault handler, and losing writers park. Preserve that support and
+its native override binding; no per-world latch or unlatched canonical
+failure path is safe.
+
+Consequently canonical *computation* does not by itself make the entire
+resource-support closure match seq's current direct writer. Full support
+identity would need one canonical latched writer in the non-parallel baseline
+too, or an explicitly shared cold support boundary. The former adds only
+cold failure code/state and layout changes, but changes the baseline; the
+latter needs an interface/scope decision. This step preserves the latch and
+reports that remaining identity gap rather than removing concurrency safety.
+
+Whole-program handler-word planning exposes another boundary: sequential and
+parallel emission can choose different layouts for an enum, and even equal
+word counts can store different worlds' handler addresses. For example, an
+enum `Cell` used by an ordinary dispatch loop can carry one private handler
+word in `Off`, while handing `Cell` to parallel calls makes it runtime-visible
+and removes that word. A canonical entrance taking `&Cell` still has a thin
+pointer signature, but reads incompatible storage. With one word in both
+worlds, an incoming parallel handler pointer can instead enter a parallel
+handler from canonical dispatch.
+
+Preserve the parallel plan. Check actual canonical entrances, including
+worker-fallback calls, transitively through parameters, results and owner
+payloads; reject differing representations and every nonzero handler-word
+crossover. Canonical-only private types and handler families can retain their
+ordinary plan under isolated names. This is an unsupported backend boundary,
+not a source-language rejection. A common handler binding or representation
+conversion needs a separate decision; returning to the synthesized sequential
+body would hide the gap.
