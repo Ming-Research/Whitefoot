@@ -121,12 +121,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     // A key set [SHARE-1] and the entries an entry binding names over one
-    // [SHARE-2]: each declares its one measure, `len` [MSR-1].
+    // [SHARE-2]: their readonly fields declare the measures [MSR-1].
     (
         "prelude/KeySet.wf",
         PreludeSource::Opaque,
         r#"opaque nocopy struct KeySet {
   readonly len: u64;
+  readonly bytes: u64;
 }
 "#,
     ),
@@ -415,6 +416,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn map_scan_within<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, limit: u64, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
+  ensures entry(keys^.bytes) <= keys^.bytes;
+  ensures keys^.bytes <= entry(keys^.bytes) + limit;
 };
 "#,
     ),
@@ -445,7 +448,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/key_set_bytes.wf",
         PreludeSource::Function,
-        r#"fn key_set_bytes(keys: &KeySet) -> bytes: u64 reads(keys);
+        r#"fn key_set_bytes(keys: &KeySet) -> bytes: u64 reads(keys) contract {
+  ensures bytes == keys^.bytes;
+};
 "#,
     ),
     (

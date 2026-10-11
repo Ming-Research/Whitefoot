@@ -363,3 +363,27 @@ fn key_set_bytes_calls_the_retained_storage_bridge() {
         "{llvm}"
     );
 }
+
+/// The logical byte measure reads the store account without enlarging the
+/// physical KeySet ABI. Before the measure exists this source is refused;
+/// lowering it as the second declared field would load the store pointer as
+/// a number instead of invoking the retained-storage bridge.
+#[test]
+fn key_set_byte_measure_uses_the_runtime_account() {
+    let source = br#"fn retained(keys: &KeySet) -> result: u64 reads(keys) {
+  doc "Reads retained storage through the measure.";
+  return keys^.bytes;
+}
+
+fn held(keys: KeySet) -> result: u64 pure {
+  doc "An owned descriptor reads the same retained storage account.";
+  return keys.bytes;
+}
+"#;
+    let llvm = super::emit(source);
+    assert_eq!(
+        llvm.matches("call i64 @wf__key_set_bytes(ptr ").count(),
+        2,
+        "{llvm}"
+    );
+}

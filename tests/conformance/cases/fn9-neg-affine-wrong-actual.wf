@@ -1,0 +1,23 @@
+fn advance(base: u64, limit: u64) -> after: u64 pure contract {
+  requires base < 18446744073709551615_u64;
+  requires limit >= 1_u64;
+  ensures base <= after;
+  ensures after <= base + limit;
+} {
+  return base + 1_u64;
+}
+
+fn account(before: u64, limit: u64, left: u64) -> remaining: u64 pure contract {
+  requires before < 18446744073709551615_u64;
+  requires limit >= 1_u64;
+} {
+  doc "The ordinary affine contract bounds the increase by limit, so subtracting it from an unrelated left is rejected by OP-2 after the helper's contract is verified.";
+  let after = advance(base: before, limit: limit);
+  let used = after - before;
+  set left = left - used;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

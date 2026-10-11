@@ -143,6 +143,7 @@ enum OperandKey {
     /// descendant projection below it. Distinct ordinals or projections are
     /// distinct destination datums even when their value types agree.
     Result(u32, ProjectionKey),
+    Sum(usize, usize),
     /// One parameter datum; its entry and exit denotations are distinct
     /// terms even over one place [MSR-3].
     Parameter(u32, ProjectionKey, bool),
@@ -184,7 +185,15 @@ impl DeclaredSystem {
     /// One relation term: its datum's abstract term, displaced by the
     /// constant the clause side writes [FN-9].
     fn relation_term(&mut self, term: &RelationTerm) -> Option<Operand> {
-        let operand = self.operand(&term.datum)?;
+        let mut operand = self.operand(&term.datum)?;
+        if let Some(parameter) = &term.parameter {
+            let extra = self.operand(parameter)?;
+            operand.offset = operand.offset.checked_add(extra.offset)?;
+            operand.term = match (operand.term, extra.term) {
+                (0, term) | (term, 0) => term,
+                (left, right) => self.term(OperandKey::Sum(left.min(right), left.max(right))),
+            };
+        }
         Some(Operand {
             term: operand.term,
             offset: operand.offset.checked_add(term.displacement)?,

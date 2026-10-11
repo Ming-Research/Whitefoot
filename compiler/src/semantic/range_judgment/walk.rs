@@ -1920,6 +1920,7 @@ impl<'program> Walker<'program> {
                     CheckedMeasure::Length,
                     CheckedMeasure::Capacity,
                     CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
                 ] {
                     let old = self.world.measure(container, generation, measure);
                     let new = self.world.measure(copy, 0, measure);

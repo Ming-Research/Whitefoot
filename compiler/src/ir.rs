@@ -767,6 +767,8 @@ impl IrRuntimeTargetObligations {
 /// The [MSR-1] measure one reader row loads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrMeasure {
+    /// Heap bytes retained by a KeySet.
+    Bytes,
     /// Number of pages holding initialized elements.
     Pages,
     Length,

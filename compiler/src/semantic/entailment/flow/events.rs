@@ -157,9 +157,13 @@ impl Input<'_, '_> {
         {
             descriptor.path.pop();
         }
-        descriptor
-            .path
-            .push(PlaceStep::Measure(measure.support_word()));
+        // KeySet bytes is derived from the allocations its descriptor
+        // names; it has no independent measure word [MSR-2].
+        if measure != CheckedMeasure::Bytes {
+            descriptor
+                .path
+                .push(PlaceStep::Measure(measure.support_word()));
+        }
         // The fact's own place goes first: [WIN-2]'s liveness is a question
         // about the window above its index [`Reasoning::event_live_bounds`].
         self.resolved_places_overlap(separations, &descriptor, written)
@@ -630,6 +634,9 @@ impl Vocabulary {
     /// every holder read through, which is the spelling root here.
     pub(super) fn scope_kills_term(&self, term: TermId, exited: &HashSet<BindingId>) -> bool {
         match self.terms.kind(term) {
+            TermKind::Sum(left, right) => {
+                self.scope_kills_term(*left, exited) || self.scope_kills_term(*right, exited)
+            }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::TargetMeasure { .. }
             | TermKind::CountedCapture { .. }
@@ -681,10 +688,12 @@ impl Vocabulary {
         range_path: &[u32],
     ) {
         state.kill(|term| {
-            matches!(
-                self.terms.kind(term),
-                TermKind::CountedCapture { range_path: path, .. } if path == range_path
-            )
+            self.terms.any_leaf(term, &|leaf| {
+                matches!(
+                    self.terms.kind(leaf),
+                    TermKind::CountedCapture { range_path: path, .. } if path == range_path
+                )
+            })
         });
     }
 
@@ -717,6 +726,10 @@ impl Reasoning<'_, '_, '_> {
         event: &KillEvent,
     ) -> bool {
         match self.vocabulary.terms.kind(term) {
+            TermKind::Sum(left, right) => {
+                self.event_kills_term(separations, *left, event)
+                    || self.event_kills_term(separations, *right, event)
+            }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             // Counted captures and commit values are immutable. A counted
             // capture dies with its construct-scope exit, handled separately

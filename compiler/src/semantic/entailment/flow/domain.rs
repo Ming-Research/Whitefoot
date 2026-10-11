@@ -324,6 +324,11 @@ impl Vocabulary {
         state: &AffineFlowState,
     ) -> Option<AffineForm> {
         match self.terms.kind(term).clone() {
+            TermKind::Sum(left, right) => {
+                let left = self.affine_term_value(left, state)?;
+                let right = self.affine_term_value(right, state)?;
+                left.add(&right, &mut AffineCheckState::new()).ok()
+            }
             TermKind::Zero => Some(AffineForm::constant(0)),
             TermKind::Constant(value) => Some(AffineForm::constant(value)),
             TermKind::Place(place, _) if place.path.is_empty() => match place.root {
@@ -337,23 +342,14 @@ impl Vocabulary {
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
             | TermKind::TargetMeasure { .. }
-            | TermKind::EntryDatum {
-                measure: Some(_), ..
-            }
-            | TermKind::MeasureDatum {
-                measure: Some(_), ..
-            }
-            | TermKind::CallDatum {
-                measure: Some(_), ..
-            } => Some(self.measure_atom(term, state)),
+            | TermKind::EntryDatum { .. }
+            | TermKind::MeasureDatum { .. }
+            | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
-            | TermKind::CommitValue { .. }
-            | TermKind::EntryDatum { .. }
-            | TermKind::MeasureDatum { .. }
-            | TermKind::CallDatum { .. } => None,
+            | TermKind::CommitValue { .. } => None,
         }
     }
 

@@ -194,15 +194,15 @@ set's storage, including unused capacity, and exactly the holding its release
 returns. The v0.128 amendment states the operation in [SHARE-1] and [PRE-1]
 of the [active specification](../../../spec/kernel-spec.md), and states
 that a successful bounded scan increases this quantity by at most its limit.
-`ScanStep` keeps its existing fields. This is a runtime guarantee; the
-amendment does not yet supply a callable proof of the bound.
+`ScanStep` keeps its existing fields. The owner's subsequent option A ruling
+closes the contract-language gap through the ordinary callable boundary.
 
 The minimal semantic witness is one map containing a key and one destination
 set. Save its retained holding B, call `map_scan_within` with limit L, and
 on `Next` observe holding A. The needed mathematical proposition is
 `A - B <= L`. A caller needs to carry that fact into reservation accounting
-without testing the inequality again. Inspection of the contract rules finds
-four independent restrictions:
+without testing the inequality again. Inspection of v0.127 found four
+independent restrictions:
 
 - [FN-9] admits routed postconditions only for `Result.Ok` and
   `Option.Some`, each with the field `value`. Neither `when Next(next: r)`
@@ -223,21 +223,41 @@ four independent restrictions:
   [RANGE-1] also excludes calls and entry images, and requires a bound
   variable; it does not supply this missing state relation.
 
-The smallest proposed semantic route keeps `ScanStep` and avoids adding a
-general enum route solely for this operation: a `Needs` outcome leaves the
-set unchanged, so the byte bound can hold unconditionally. Two capabilities
-still need specification and implementation decisions: a retained-byte
-observation admitted as a state datum, with ordinary entry/exit capture and
-effect invalidation, and publication of an affine relation over those two
-datums and the limit. A derived `KeySet` byte measure with an ordinary
-equality postcondition on `key_set_bytes` is the narrowest candidate for the
-first; it would add a source observation alongside the selected operation
-and needs the owner's agreement. The second must define finite formation,
-verification, caller transport and explicit proof use for general affine
-postconditions, preserving deterministic acceptance without adding a solver
-or a scan-specific fact. Extending general read-only calls into stable
-contract observations is a broader alternative. This record proposes
-capabilities, not new accepted syntax, and none is implemented here.
+The selected option A keeps `ScanStep` and adds no general enum route solely
+for this operation: a `Needs` outcome leaves the set unchanged, so the bound
+holds unconditionally. [MSR-1] adds the readonly KeySet `bytes` measure,
+and `key_set_bytes` declares its result equal to that measure. [MSR-3]'s
+entry former names its call-entry value, with the projected spelling
+`entry(keys^.bytes)` and the existing `entry(keys)^.bytes` denoting the same
+quantity. [FN-9] admits one additional own integer parameter term with
+coefficient one on one side of a relation. The bounded scan declares:
+
+```whitefoot
+ensures entry(keys^.bytes) <= keys^.bytes;
+ensures keys^.bytes <= entry(keys^.bytes) + limit;
+```
+
+Formation, selected-return proof, caller publication, effect invalidation and
+the existing fixed affine residual families apply generally to user functions
+as well as prelude declarations. An internal mathematical sum retains the
+ordinary relation and evidence path; it does not execute an addition and need
+not fit u64. The query result preserves the byte measure's immutable image,
+so a prior observation survives a scan while a subsequent observation reads
+the new state. An intervening KeySet write kills the scan's exit-byte fact.
+Conformance cases require both reservation subtractions to be admitted and
+reject a missing entry observation, an unrelated reservation value and a
+post-scan write. Their verdicts remain unverified until CI runs them.
+
+Option B, the runtime keeping the reservation account, was rejected because
+it only solves this one interface and reverses the shape just chosen. Option C,
+a runtime check in firn, was rejected because it routes around a language gap
+with a runtime check. Calls remain excluded from contract expressions; the
+measure and ordinary result equality supply the needed state observation.
+
+A caller writes the account as two subtractions bound by `let`
+(`let used = after - before;` then `left - used`), the composition
+[GRAM-6] prescribes for every expression; the conformance witness uses
+that form.
 
 The comparison that decides the proposal is the same witness through an
 ordinary wrapper: the caller must prove the reservation relation from the

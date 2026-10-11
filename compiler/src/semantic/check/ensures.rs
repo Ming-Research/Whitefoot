@@ -616,7 +616,7 @@ impl<'unit> Checker<'_, 'unit> {
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         self.types
             .declarations
-            .postcondition_relation(expression, expanded)
+            .postcondition_relation(expression, expanded, context.function)
     }
 
     pub(super) fn expand_postcondition_clause(
@@ -801,21 +801,37 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// One relation term [FN-9]: the datum one clause side names, displaced
-    /// by the constant the rest of that side reduces to.
-    ///
-    /// A side carrying two datums, or a datum with any coefficient other than
-    /// one, is outside the difference-bound fragment [ENT-4] and yields
-    /// `None`, which is the ordinary FN-9 rejection at the clause.
+    /// One FN-9 side: a datum and constant displacement, optionally adding
+    /// one bare integer parameter. The declaration checks that parameter's
+    /// own mode and that only one side uses the extension.
     pub(super) fn postcondition_relation_term(
         expanded: &ExpandedClauseExpression,
         operand_type: CheckedType,
     ) -> Option<RelationTerm> {
-        let (datum, displacement) = Checker::postcondition_relation_operand(expanded)?;
+        let (mut datums, displacement) = Checker::postcondition_relation_operand(expanded)?;
+        let parameter = if datums.len() == 2 {
+            let index = datums.iter().rposition(|datum| {
+                matches!(datum, RelationDatum::Parameter {
+                    projections,
+                    ty: CheckedType::Integer(_),
+                    denotation: ParameterDenotation::EntryImage,
+                    ..
+                } if projections.is_empty())
+            })?;
+            let parameter = datums.remove(index);
+            if datums.first() == Some(&parameter) {
+                return None;
+            }
+            Some(parameter)
+        } else {
+            None
+        };
+        let datum = datums.pop();
         match datum {
             Some(datum) => Some(RelationTerm {
                 datum,
                 displacement,
+                parameter,
             }),
             // A side with no datum reduced to one constant; it is a literal
             // operand exactly as a written one is, and the fragment holds it
@@ -833,11 +849,11 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// One clause side's affine expression, as at most one datum with
-    /// coefficient one plus a constant [MSR-5].
+    /// Collect at most two coefficient-one datums and the folded constant.
+    /// The caller selects the optional additional parameter [FN-9].
     fn postcondition_relation_operand(
         expanded: &ExpandedClauseExpression,
-    ) -> Option<(Option<RelationDatum>, i128)> {
+    ) -> Option<(Vec<RelationDatum>, i128)> {
         if let ExpandedClauseExpression::Operation {
             row:
                 GoalOperation::Integer {
@@ -854,22 +870,20 @@ impl<'unit> Checker<'_, 'unit> {
             let [left, right] = arguments.as_slice() else {
                 return None;
             };
-            let (left_datum, left_value) = Checker::postcondition_relation_operand(left)?;
+            let (mut left_datum, left_value) = Checker::postcondition_relation_operand(left)?;
             let (right_datum, right_value) = Checker::postcondition_relation_operand(right)?;
             return match operation {
                 CheckedIntegerOperation::AddExact => {
-                    if left_datum.is_some() && right_datum.is_some() {
+                    if left_datum.len() + right_datum.len() > 2 {
                         return None;
                     }
-                    Some((
-                        left_datum.or(right_datum),
-                        left_value.checked_add(right_value)?,
-                    ))
+                    left_datum.extend(right_datum);
+                    Some((left_datum, left_value.checked_add(right_value)?))
                 }
                 // Subtracting a datum gives it coefficient minus one, which
                 // no difference-bound term carries.
                 CheckedIntegerOperation::SubtractExact => {
-                    if right_datum.is_some() {
+                    if !right_datum.is_empty() {
                         return None;
                     }
                     Some((left_datum, left_value.checked_sub(right_value)?))
@@ -877,10 +891,10 @@ impl<'unit> Checker<'_, 'unit> {
                 // A multiplication of two constants is one constant; any
                 // other coefficient leaves the fragment.
                 _ => {
-                    if left_datum.is_some() || right_datum.is_some() {
+                    if !left_datum.is_empty() || !right_datum.is_empty() {
                         return None;
                     }
-                    Some((None, left_value.checked_mul(right_value)?))
+                    Some((Vec::new(), left_value.checked_mul(right_value)?))
                 }
             };
         }
@@ -893,9 +907,9 @@ impl<'unit> Checker<'_, 'unit> {
             origin: PostconditionConstantOrigin::Literal,
         } = &datum
         {
-            return Some((None, integer_value(*ty, *bits)));
+            return Some((Vec::new(), integer_value(*ty, *bits)));
         }
-        Some((Some(datum), 0))
+        Some((vec![datum], 0))
     }
 
     fn postcondition_relation_datum(expanded: &ExpandedClauseExpression) -> Option<RelationDatum> {
@@ -1363,6 +1377,24 @@ impl<'unit> DeclarationInventory<'unit> {
             if nested {
                 continue;
             }
+            // entry names only a declaration-boundary place: projection
+            // reads are checked by the ordinary FN-9 fragment judgment, and
+            // indexed selections are not part of its projection language.
+            for suffix in self.tree.children_with(base, Production::Psuffix)? {
+                if matches!(
+                    self.tree.place_suffix(suffix)?,
+                    crate::syntax::views::PlaceSuffix::Index { .. }
+                        | crate::syntax::views::PlaceSuffix::Range { .. }
+                ) {
+                    return self.issue_node(
+                        SemanticRule::Msr3,
+                        base,
+                        SemanticIssueKind::InvalidEntryFormer {
+                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
+                        },
+                    );
+                }
+            }
             // Clause uses remain provisional until selector admission. This
             // whole-function position check runs outside an active clause.
             let path = self.tree.path(base)?;
@@ -1478,6 +1510,7 @@ impl<'unit> DeclarationInventory<'unit> {
         &self,
         final_expression: NodeId,
         expanded: ExpandedClauseExpression,
+        function: &FunctionSignature,
     ) -> Result<RelationTemplate, CheckStop> {
         let ExpandedClauseExpression::Operation {
             row:
@@ -1500,6 +1533,22 @@ impl<'unit> DeclarationInventory<'unit> {
         let Some(right) = Checker::postcondition_relation_term(right, operand_type) else {
             return self.invalid_postcondition_relation(final_expression);
         };
+        if left.parameter.is_some() && right.parameter.is_some()
+            || [&left, &right]
+                .iter()
+                .filter_map(|term| term.parameter.as_ref())
+                .any(|datum| {
+                    let RelationDatum::Parameter { ordinal, .. } = datum else {
+                        return true;
+                    };
+                    function
+                        .parameters
+                        .get(*ordinal as usize)
+                        .is_none_or(|parameter| parameter.mode != CheckedMode::Own)
+                })
+        {
+            return self.invalid_postcondition_relation(final_expression);
+        }
         // [ENT-2] a widening conversion's operand keeps its own type: the
         // relation is over mathematical values, and the conversion's pair is
         // whole-type total, so no other operand type reaches here.

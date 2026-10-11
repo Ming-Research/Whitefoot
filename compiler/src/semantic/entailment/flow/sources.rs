@@ -625,7 +625,9 @@ impl Reasoning<'_, '_, '_> {
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
             let mut datums = Vec::with_capacity(4);
-            for measure in MEASURES {
+            for measure in MEASURES.into_iter().filter(|measure| {
+                *measure != CheckedMeasure::Bytes || measured == MeasuredKind::KeySet
+            }) {
                 let live = self.place_measure_term(measure, place.clone(), measured, constant);
                 let datum = self.vocabulary.terms.intern(TermKind::MeasureDatum {
                     statement: node_path.components().to_vec(),
@@ -1020,7 +1022,13 @@ impl Reasoning<'_, '_, '_> {
         for carried in &carry.carried {
             let mut place = destination.clone();
             place.path.extend(carried.path.iter().copied());
-            for (measure, datum) in MEASURES.into_iter().zip(&carried.datums) {
+            for (measure, datum) in MEASURES
+                .into_iter()
+                .filter(|measure| {
+                    *measure != CheckedMeasure::Bytes || carried.measured == MeasuredKind::KeySet
+                })
+                .zip(&carried.datums)
+            {
                 let left = self.place_measure_term(
                     measure,
                     place.clone(),
@@ -1638,11 +1646,12 @@ pub(super) fn comparison_relation(
     })
 }
 
-/// The three [MSR-1] measures, in the order every former reads them.
-const MEASURES: [CheckedMeasure; 3] = [
+/// The [MSR-1] measures, in the order every placement reads them.
+const MEASURES: [CheckedMeasure; 4] = [
     CheckedMeasure::Length,
     CheckedMeasure::Capacity,
     CheckedMeasure::Head,
+    CheckedMeasure::Bytes,
 ];
 
 /// [MSR-3] one placement's datums, held between the mint before the
@@ -1799,8 +1808,11 @@ impl Vocabulary {
                 // [ENT-5]: its only relations in the edge's state are implicit.
                 // A self-bound `c - c` says nothing about x, whichever proof
                 // the closure keeps for it.
-                relation.terms().contains(&context.carrier)
-                    && !relation.terms().contains(&context.receiver)
+                relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.carrier)
+                }) && !relation.terms().iter().any(|term| {
+                    self.terms.any_leaf(*term, &|leaf| leaf == context.receiver)
+                })
                     && !matches!(relation, Relation::Bound { left, right, .. } if left == right)
                     && self
                         .derivations
@@ -1824,6 +1836,9 @@ impl Vocabulary {
         };
         let upper = zero_bound(context.carrier, ZERO);
         let lower = zero_bound(ZERO, context.carrier);
+        let substitutions = self
+            .terms
+            .expand_substitutions(&[(context.carrier, context.receiver)]);
         for (source_relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = source_relation {
                 let through_zero = if left == context.carrier && right != ZERO {
@@ -1839,8 +1854,10 @@ impl Vocabulary {
                     continue;
                 }
             }
-            let relation =
-                substitute_delivery_relation(&source_relation, context.carrier, context.receiver);
+            let mut relation = source_relation.clone();
+            for (from, to) in &substitutions {
+                relation = substitute_delivery_relation(&relation, *from, *to);
+            }
             let proof = self.derivations.intern(DerivationNode::PostconditionGive {
                 statement: context.statement.clone(),
                 carrier: context.carrier,
@@ -2487,6 +2504,15 @@ impl Vocabulary {
             .map(|image| image.facts.clone())
             .collect::<Vec<_>>();
         self.establish_delivery_join(&facts, &context, &mut target.facts);
+        for (relation, parent) in target.facts.l0_candidates() {
+            if matches!(
+                &self.derivations.nodes[parent.0 as usize],
+                DerivationNode::PostconditionDeliveryJoin { detail }
+                    if detail.statement == frame.node_path
+            ) {
+                self.establish_postcondition_affine(&relation, parent, &mut target.affine);
+            }
+        }
     }
 
     /// Captures one unsigned division for the fixed product consequence and

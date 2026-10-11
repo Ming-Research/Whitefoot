@@ -917,6 +917,9 @@ impl Reasoning<'_, '_, '_> {
             TermKind::TargetMeasure { source, .. } => {
                 format!("next-header {}", self.render_term(*source))
             }
+            TermKind::Sum(left, right) => {
+                format!("({} + {})", self.render_term(*left), self.render_term(*right))
+            }
             TermKind::Zero => "0".to_owned(),
             TermKind::Constant(value) => value.to_string(),
             TermKind::ConstParameter(..) => "<const parameter>".to_owned(),
