@@ -1,0 +1,4 @@
+fn forbidden(keys: &KeySet) -> bytes: u64 pure {
+  doc "A pure caller supplies no read effect for its borrowed key set.";
+  return key_set_bytes(keys: keys);
+}

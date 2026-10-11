@@ -1402,6 +1402,11 @@ pub enum IrOperation {
         set: IrValueId,
         key: IrValueId,
     },
+    /// [SHARE-1] reads the heap bytes held by the set's storage, including
+    /// unused allocated capacity. Defines `u64`, an execution input [WAIT-2].
+    KeySetBytes {
+        set: IrValueId,
+    },
     /// [SHARE-1] copies the first bytes of the key at `index` of the set
     /// `set` addresses into the range `out`, as many as both lengths allow.
     /// Defines `u64`, the key's length.

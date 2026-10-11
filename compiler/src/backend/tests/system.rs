@@ -345,3 +345,21 @@ fn generic_host_instances_call_one_host_symbol() {
     assert!(!llvm.contains("@wf_std.process.release_map_reserve$instance$"));
     assert!(!llvm.contains("@wf_shared_map_release_reserve"));
 }
+
+/// The ordinary read-only prelude row must call the one-pointer runtime bridge.
+/// The prior compiler refuses the source's unknown key_set_bytes name; a row
+/// that silently omits its runtime call fails the ABI assertions.
+#[test]
+fn key_set_bytes_calls_the_retained_storage_bridge() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/share-pos-key-set-bytes-read.wf");
+    let llvm = super::emit(source);
+    assert!(llvm.contains("call i64 @wf__key_set_bytes(ptr "), "{llvm}");
+    assert_eq!(
+        llvm.lines()
+            .filter(|line| line.starts_with("declare i64 @wf__key_set_bytes(ptr)"))
+            .count(),
+        1,
+        "{llvm}"
+    );
+}

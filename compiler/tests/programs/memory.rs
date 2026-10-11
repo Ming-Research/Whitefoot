@@ -13,7 +13,7 @@ fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
 }
 
 #[test]
-fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
+fn heap_reading_tracks_boxes_release_grown_cells_maps_and_key_set_storage() {
     // PRE-1: release returns a nonempty boxed window and its boxed element,
     // an empty window (whose header STOR-1 does not count), and a struct
     // owning two cells to the baseline.
@@ -25,6 +25,10 @@ fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
     // runtime insertion contributes zero bytes and exits with status 8.
     // Status 9 independently catches missing host-mapped cell accounting;
     // 11 catches retained free nodes, and 14 catches drain/drop imbalance.
+    // SHARE-1: key_set_bytes includes unused capacity, insertion and scan
+    // growth, and answers exactly the bytes explicit release returns. The
+    // prior compiler refuses that operation; omitting growth from its answer
+    // yields 29 or 33, and retaining a released grant yields 40 or 42.
     let program = build_program(&compile_program("memory_statistics.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");

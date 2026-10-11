@@ -438,6 +438,14 @@ concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/co
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v" selection; \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v"; \
 	done
+	@set +e; result=$$("$(COMPLETION_TMP)/concurrent-map-test-copy-out" key-set-bytes-omit-store-growth 2>&1); status=$$?; set -e; \
+	if [ "$$status" != 1 ]; then \
+		printf '%s\n' "retained-byte oracle did not reject omitted storage growth (exit $$status)" "$$result"; exit 1; \
+	fi; \
+	case "$$result" in \
+		"concurrent-map-test: key_set_bytes disagreed with the heap meter after insertion "*) ;; \
+		*) printf '%s\n' "retained-byte negative variant failed for the wrong reason" "$$result"; exit 1 ;; \
+	esac
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"

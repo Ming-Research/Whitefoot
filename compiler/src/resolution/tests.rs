@@ -2898,7 +2898,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
     // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
-    // `key_set_insert` and `key_set_read_key` [SHARE-1] and `free_empty`
+    // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and `free_empty`
     // [OP-14] and `release` [PRE-1], each with its type, const and value
     // parameters in declared order and then its range postconditions' names and bound variables
     // [RANGE-1].
@@ -2950,18 +2950,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[220].1, "map_clear");
     assert_eq!(first[223].1, "key_set_new");
     assert_eq!(first[225].1, "key_set_insert");
-    assert_eq!(first[228].1, "key_set_read_key");
-    assert_eq!(first[232].1, "free_empty");
-    assert_eq!(first[235].1, "release");
-    assert_eq!(first[236].1, "T");
-    assert_eq!(first[237].1, "value");
-    // PRE-1 v0.127: 51 opaque records + 27 enum records + four built-in
-    // records + 156 function/parameter/range records = 238. Frozen adds four
+    assert_eq!(first[228].1, "key_set_bytes");
+    assert_eq!(first[229].1, "keys");
+    assert_eq!(first[230].1, "key_set_read_key");
+    assert_eq!(first[234].1, "free_empty");
+    assert_eq!(first[237].1, "release");
+    assert_eq!(first[238].1, "T");
+    assert_eq!(first[239].1, "value");
+    // PRE-1 v0.128: 51 opaque records + 27 enum records + four built-in
+    // records + 158 function/parameter/range records = 240. Frozen adds four
     // opaque records and frozen_new/frozen_share add three each; ScanStep
     // adds five enum records and map_scan_within seven call records; release
-    // adds its function, T and value, three records. Count every declaration
+    // adds its function, T and value, three records; key_set_bytes adds its
+    // function and value parameter, two records. Count every declaration
     // in the preorder, including owner-local ones.
-    assert_eq!(first.len(), 238);
+    assert_eq!(first.len(), 240);
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("value"));
     assert!(
         first
@@ -2974,7 +2977,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 238, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 240, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2991,9 +2994,9 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             // PRE-1: 51 opaque records + 27 enum records + Int, Float,
-            // Eq, Run + 153 preceding function/parameter/range records.
+            // Eq, Run + 155 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 235)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 237)
             );
         },
     );

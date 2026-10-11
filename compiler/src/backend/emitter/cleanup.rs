@@ -285,6 +285,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__key_set_new", "void", &["ptr", "i64"]),
         ("wf__key_set_insert", "i64", &["ptr", "ptr", "i64"]),
+        ("wf__key_set_bytes", "i64", &["ptr"]),
         ("wf__key_set_free", "void", &["ptr"]),
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),

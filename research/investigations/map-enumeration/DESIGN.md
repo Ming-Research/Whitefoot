@@ -186,6 +186,77 @@ A reference result (`-> &[u8]`) is refused by [REF-3] today, and appending to a
 `Box<Slots<u8>>` would fix a growth policy in the prelude. Firn-wf copies
 each key into its reply buffer anyway.
 
+## Retained bytes and the contract-language gap
+
+The owner's option B for firn's reservation accounting selects
+`key_set_bytes(keys: &KeySet) -> u64`: the heap holding attributable to the
+set's storage, including unused capacity, and exactly the holding its release
+returns. The v0.128 amendment states the operation in [SHARE-1] and [PRE-1]
+of the [active specification](../../../spec/kernel-spec.md), and states
+that a successful bounded scan increases this quantity by at most its limit.
+`ScanStep` keeps its existing fields. This is a runtime guarantee; the
+amendment does not yet supply a callable proof of the bound.
+
+The minimal semantic witness is one map containing a key and one destination
+set. Save its retained holding B, call `map_scan_within` with limit L, and
+on `Next` observe holding A. The needed mathematical proposition is
+`A - B <= L`. A caller needs to carry that fact into reservation accounting
+without testing the inequality again. Inspection of the contract rules finds
+four independent restrictions:
+
+- [FN-9] admits routed postconditions only for `Result.Ok` and
+  `Option.Some`, each with the field `value`. Neither `when Next(next: r)`
+  nor a `Next` route with a renamed field is admitted for `ScanStep`.
+- [FN-8] excludes ordinary function calls from clauses. Calling
+  `key_set_bytes` in a clause is therefore unavailable even though the
+  operation only reads its parameter. [MSR-1] gives `KeySet` only a `len`
+  measure, which cannot name retained bytes or establish that a byte query
+  observes the same state datum.
+- [MSR-3] already supplies `entry(parameter)` for a written reference's
+  entry-state measure or fragment-integer place. No `old` former is needed,
+  but the existing former has no byte measure to project and cannot name
+  the value of a call.
+- [FN-9] publishes only difference-bound relations: one datum with
+  coefficient one plus a constant on each side. `A - B <= L` has three
+  varying datums. A contract `define` expands inline, so it neither makes
+  the difference one datum nor captures B. The affine range-clause route
+  [RANGE-1] also excludes calls and entry images, and requires a bound
+  variable; it does not supply this missing state relation.
+
+The smallest proposed semantic route keeps `ScanStep` and avoids adding a
+general enum route solely for this operation: a `Needs` outcome leaves the
+set unchanged, so the byte bound can hold unconditionally. Two capabilities
+still need specification and implementation decisions: a retained-byte
+observation admitted as a state datum, with ordinary entry/exit capture and
+effect invalidation, and publication of an affine relation over those two
+datums and the limit. A derived `KeySet` byte measure with an ordinary
+equality postcondition on `key_set_bytes` is the narrowest candidate for the
+first; it would add a source observation alongside the selected operation
+and needs the owner's agreement. The second must define finite formation,
+verification, caller transport and explicit proof use for general affine
+postconditions, preserving deterministic acceptance without adding a solver
+or a scan-specific fact. Extending general read-only calls into stable
+contract observations is a broader alternative. This record proposes
+capabilities, not new accepted syntax, and none is implemented here.
+
+The comparison that decides the proposal is the same witness through an
+ordinary wrapper: the caller must prove the reservation relation from the
+wrapper's declared boundary alone. It must lose the current-state relation
+after a write to the set while preserving the saved entry observation.
+Reject a route that needs a runtime inequality check, changes `ScanStep`,
+publishes a fact only for the prelude's symbol, or admits a stale observation
+after a write. No experiment or proof-checking run has been performed for
+this proposal.
+
+The runtime byte query sums the host-granted item/index store and byte arena
+capacities; live key lengths alone omit unused capacity. Public KeySet
+release must return both allocations to the runtime pool. Its previous
+thread-local spare path kept those allocations in the metered heap after
+release, so it could not meet the selected meaning. No production caller
+would populate that cache once public release bypassed it, so the cache is
+removed and every KeySet release returns its storage. The performance effect
+of losing this reuse is unmeasured.
+
 ## The runtime step under a whole hold
 
 A step runs in a statement holding or reading the map whole, which has

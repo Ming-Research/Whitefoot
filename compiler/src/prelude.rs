@@ -443,6 +443,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/key_set_bytes.wf",
+        PreludeSource::Function,
+        r#"fn key_set_bytes(keys: &KeySet) -> bytes: u64 reads(keys);
+"#,
+    ),
+    (
         "prelude/key_set_read_key.wf",
         PreludeSource::Function,
         r#"fn key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> length: u64 reads(keys), writes(out) contract {
@@ -523,12 +529,17 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's three functions [SHARE-1]
+        // compiler-owned rows only the key set's four functions [SHARE-1]
         // take no type parameter, so each is one ordinary checked function;
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
-        let ungeneric = ["key_set_insert", "key_set_new", "key_set_read_key"];
+        let ungeneric = [
+            "key_set_bytes",
+            "key_set_insert",
+            "key_set_new",
+            "key_set_read_key",
+        ];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert_eq!(
