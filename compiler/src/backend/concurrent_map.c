@@ -2520,7 +2520,10 @@ static void fold_users(wf_cmap *map) {
         u->cursor = NULL;
         u->room = 0;
         memset(u->free, 0, sizeof u->free);
-        atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_relaxed);
+        /* Release: the whole holder running this acquired u's active=0,
+         * which follows u's last table access, so a reserve scan that reads
+         * this zero and skips u's activity still frees after that access. */
+        atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_release);
     }
 }
 

@@ -23,10 +23,6 @@ on:
         type: string
         required: true
         default: "claude/reserve-reclaim"
-  # A push only registers the workflow for dispatch; the job runs on dispatch.
-  push:
-    branches: [claude/reserve-reclaim]
-    paths: [.github/workflows/tmp-map-entry-reads.yml]
 
 permissions:
   contents: read
@@ -62,18 +58,7 @@ jobs:
           out="$RUNNER_TEMP/map-entry-reads-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p "$out"
           echo "MAP_RESULTS=$out" >> "$GITHUB_ENV"
-          # Temporary stage budgets belong to this experiment and expire
-          # with the workflow. Measurement contains nine nominal 12 s runs.
-          cat > "$out/time-budgets.txt" <<'BUDGETS'
-          label linux
-          map-entry-reads/build-base 30
-          map-entry-reads/build-twin 30
-          map-entry-reads/build-head 30
-          map-entry-reads/measure 150
-          BUDGETS
-          cat "$out/time-budgets.txt"
           touch "$out/time-budget-record.txt"
-          echo "WHITEFOOT_TIME_BUDGET_FILE=$out/time-budgets.txt" >> "$GITHUB_ENV"
           echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/time-budget-record.txt" >> "$GITHUB_ENV"
           for tool in clang make perl python3 lscpu taskset; do
             command -v "$tool"

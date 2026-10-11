@@ -68,3 +68,10 @@ performance-slow-control        55     -      -
 performance-shifted-images      10     -      -
 performance-placement-control   45     -      -
 performance-comparison          45     -      -
+
+# tmp-map-entry-reads.yml (temporary, Whitefoot#355; removed with it): on
+# the 14900K, three runtime builds and nine 12 s entry-reads runs
+map-entry-reads/build-base      30     -      -
+map-entry-reads/build-twin      30     -      -
+map-entry-reads/build-head      30     -      -
+map-entry-reads/measure         150    -      -
