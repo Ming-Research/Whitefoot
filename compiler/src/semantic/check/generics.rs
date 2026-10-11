@@ -2300,6 +2300,7 @@ impl<'unit> TypeContext<'unit> {
                         PreludeType::Overflow => out.push_str("Overflow"),
                         PreludeType::DivError => out.push_str("DivError"),
                         PreludeType::NarrowError => out.push_str("NarrowError"),
+                        PreludeType::ScanStep => out.push_str("ScanStep"),
                     }
                     if ordering {
                         out.push(')');

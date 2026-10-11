@@ -117,6 +117,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     *value,
                 )?;
             }
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => {
+                let operands = [*table, *cursor, *count, *limit, *set];
+                self.materialize_operands(operands)?;
+                self.emit_keyed_table_scan_within(result, operands)?;
+            }
             IrOperation::AddressOf { value, referent } => {
                 self.emit_address_of(result, ty, *value, *referent)?;
             }
