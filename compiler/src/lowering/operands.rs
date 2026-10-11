@@ -172,6 +172,19 @@ macro_rules! operation_operands {
                 count,
                 set,
             } => vec![$value(table), $value(cursor), $value(count), $value(set)],
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => vec![
+                $value(table),
+                $value(cursor),
+                $value(count),
+                $value(limit),
+                $value(set),
+            ],
             IrOperation::KeySetReadKey { set, index, out } => {
                 vec![$value(set), $value(index), $value(out)]
             }

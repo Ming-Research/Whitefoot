@@ -230,6 +230,13 @@ uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_widt
  * map whole may scan it at once. */
 uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
                       uint32_t tag_width, uint64_t none_tag);
+/* The byte-bounded scan under the same whole-map hold: the return value
+ * is Next's cursor when *needs is 0, or Needs' exact peak growth when it
+ * is 1. Admission includes whole positions, store/arena growth and scratch. */
+uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint64_t limit,
+                             wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                             uint32_t tag_width, uint64_t none_tag);
+
 /* Empties a map its caller's hold holds whole, as wf_cmap_swap with a new
  * empty map of its layout would, and keeps that map, now holding the old
  * entries, for the caller to release once the hold is given up:
