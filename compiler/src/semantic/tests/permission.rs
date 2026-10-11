@@ -70,6 +70,67 @@ fn main() -> result: unit pure {
     }
 }
 
+/// Only the function-kind argument's result carries a cell: the helper has
+/// no ordinary parameters and returns Bool. Without callable traversal, its
+/// pure, nonwaiting call and the independent call would have disjoint writes
+/// to their distinct let bindings and would incorrectly be eligible. The same
+/// helper with a cell-free factory must retain that overlap permission.
+#[test]
+fn decision_cell_boundaries_follow_function_kind_factory_results() {
+    let source = br#"fn factory_predicate<T: drop, fn make() -> result: T pure>() -> result: Bool pure {
+  let value = make();
+  return True();
+}
+
+fn byte_factory() -> result: u8 pure {
+  return 7_u8;
+}
+
+fn independent_flag() -> result: Bool pure {
+  return True();
+}
+
+fn cell_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<DecisionCell, fn decision_cell_new>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn plain_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<u8, fn byte_factory>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  cell_factory_pair();
+  plain_factory_pair();
+  return unit;
+}
+"#;
+    let table = permission_of(source);
+    let cell_pair = pair_of(
+        &table,
+        "cell_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(matches!(
+        denial(cell_pair, 3),
+        Denial::DecisionCell {
+            side: PairSide::First,
+            ..
+        }
+    ));
+    let plain_pair = pair_of(
+        &table,
+        "plain_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(plain_pair.verdict.is_eligible(), "{plain_pair:?}");
+}
+
 #[test]
 fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
     // PAR-1 records pairs with at least one call, so each write is a helper
