@@ -17,7 +17,6 @@ defaults:
 
 jobs:
   inspect:
-    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -27,23 +26,22 @@ jobs:
           ref: claude/halo-pin-7062f3a
           submodules: true
           path: halo
-      - name: Emit IR and inlining remarks for the Whitefoot#357 release
+      - name: Build Halo with each release, count out-of-line table_get calls, keep concat_step
         working-directory: halo
         run: |
           set -euo pipefail
           make toolchain
           out="$PWD/build/bisect-out"; mkdir -p "$out"
-          OPT=$(command -v opt-22 || ls /usr/lib/llvm-22/bin/opt)
-          for release in wf-exp-4753d28fb4ae; do
+          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-e9d765cd6067; do
             echo "release = $release" > whitefoot.pin
             make compiler
             make toolchain-check
-            wfc=build/whitefoot/$release/whitefootc
-            "$wfc" --graph research/experiments/halo-bench/modules.wfg --entry bench --emit-llvm -o "$out/$release.ll"
-            "$OPT" -passes='default<O3>' -pass-remarks-missed=inline -pass-remarks=inline "$out/$release.ll" -o "$out/$release.opt.ll" 2> "$out/remarks-$release.txt" || echo "opt failed"
-            "$OPT" -S -passes='default<O3>' "$out/$release.ll" -o "$out/$release.O3.ll" || true
-            grep -E "'wf_package.halo.heap.table_get' " "$out/remarks-$release.txt" | sed -E "s/.*table_get' (not inlined|inlined) into '([^']*)'.*(cost=[0-9]+, threshold=[0-9]+).*/\1 \2 \3/" | sort | uniq -c | sort -rn | head -20
-            rm -f "$out/$release.opt.ll"
+            bin="$out/halo-$release"
+            build/whitefoot/$release/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o "$bin"
+            calls=$(objdump -d --no-show-raw-insn "$bin" | grep -cE 'call +[0-9a-f]+ <wf_package.halo.heap.table_get>' || true)
+            f=$(nm "$bin" | awk '/concat_step/ {print $3}' | head -1)
+            objdump -d --no-show-raw-insn -M intel --disassemble="$f" "$bin" > "$out/concat_step-$release.txt"
+            echo "$release: table_get out-of-line calls $calls"
           done
           git checkout -- whitefoot.pin
       - uses: actions/upload-artifact@v4
@@ -62,28 +60,26 @@ jobs:
           fetch-depth: 0
           submodules: true
           path: sg
-      - name: Snowghost IR and inlining remarks before and after #345
+      - name: Snowghost out-of-line calls before #345, after #345 and with Whitefoot#357
         working-directory: sg
         run: |
           set -euo pipefail
           make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
-          OPT=$(command -v opt-22 || ls /usr/lib/llvm-22/bin/opt)
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-e9d765cd6067; do
+            if [ "$release" = wf-exp-e9d765cd6067 ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
             echo "release = $release" > whitefoot.pin
             make -s compiler
             if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
             wfc=$(realpath build/whitefoot/$release/whitefootc)
-            (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle --emit-llvm -o "$out/layout-$release.ll")
-            "$OPT" -passes='default<O2>' -pass-remarks-missed=inline -pass-remarks=inline "$out/layout-$release.ll" -o /dev/null 2> "$out/remarks-$release.txt" || echo "opt failed"
-            for f in next_glyphs set_links set_glyph_class add_scalar_piece set_glyph copy_point; do
-              echo "== $release $f"
-              grep -E "'[a-z_.]*\.$f' " "$out/remarks-$release.txt" | sed -E "s/.*' (not inlined|inlined) into '([^']*)'.*(cost=[0-9]+, threshold=[0-9]+|always inline|never inline|noinline)?.*/\1 \2 \3/" | sort | uniq -c | sort -rn | head -6
-              awk "/^define .*\\.$f\\(/,/^}/" "$out/layout-$release.ll" > "$out/ir-$f-$release.ll"
-              wc -l < "$out/ir-$f-$release.ll"
-            done
+            (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o "$out/layout-$release")
+            { objdump -d --no-show-raw-insn "$out/layout-$release" | grep -oE 'call +[0-9a-f]+ <[^>+]*' || true; } \
+              | sed -E 's/call +[0-9a-f]+ <//' | sort | uniq -c | sort -k2 > "$out/calls-layout-$release.txt"
           done
-          git checkout -- whitefoot.pin
+          git checkout -- whitefoot.pin renderer
+          join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-layout-wf-9497f0a54fec.txt" "$out/calls-layout-wf-exp-b8cf83108946.txt" > "$out/j1.txt"
+          join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-e9d765cd6067.txt" \
+            | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | grep -vE 'plt|wf__' | head -80
       - uses: actions/upload-artifact@v4
         with:
           name: sg-bisect
