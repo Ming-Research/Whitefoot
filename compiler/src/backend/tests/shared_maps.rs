@@ -227,13 +227,26 @@ fn main() -> status: std::process::ExitStatus pure waits {
         && llvm.lines().any(|line| line.contains("call void @wf__table_unlock_entry(ptr ")
             && line.contains(", i32 ")),
         "the runtime receives its unchanged i32 presence argument: {llvm}");
-    let needs_tags = llvm.lines().filter_map(|line| {
-        line.trim().split_once(" = load i32, ptr %scan.needs.").map(|(value, _)| value)
-    }).collect::<Vec<_>>();
-    assert_eq!(needs_tags.len(), 2,
-        "both bounded scans read the runtime's separate i32 needs result: {llvm}");
-    assert!(needs_tags.iter().all(|value| llvm.contains(&format!(" = icmp eq i32 {value}, 0"))),
-        "both bounded scans compare their separate i32 needs result: {llvm}");
+    // The two WF calls share one monomorphized row body. Count runtime
+    // calls, and trace each one's separate needs pointer within that body.
+    let mut bounded_runtime_calls = 0;
+    for body in llvm.split("\n}\n") {
+        for call in body.lines().filter(|line| line.contains("call i64 @wf__keyed_table_scan_within(")) {
+            bounded_runtime_calls += 1;
+            let (_, arguments) = call.split_once("@wf__keyed_table_scan_within(").unwrap();
+            let needs = arguments.split(", ").nth(5).and_then(|arg| arg.strip_prefix("ptr "))
+                .expect("the runtime's sixth argument is its separate needs pointer");
+            assert!(body.contains(&format!("{needs} = alloca i32, align 4")),
+                "the needs output has its unchanged i32 storage: {body}");
+            let loads = body.lines().filter_map(|line| {
+                line.trim().strip_suffix(&format!(" = load i32, ptr {needs}"))
+            }).collect::<Vec<_>>();
+            assert_eq!(loads.len(), 1, "each bounded runtime call reads its i32 needs output once: {body}");
+            assert!(body.contains(&format!(" = icmp eq i32 {}, 0", loads[0])),
+                "the bounded runtime call compares its separate i32 needs result: {body}");
+        }
+    }
+    assert!(bounded_runtime_calls > 0, "the bounded scan runtime is exercised");
     // All four bytes belong to the slot. Dirtying the inactive payload of
     // None is semantically unobservable, but a stale four-byte tag reader
     // mistakes those nonzero neighbors for a present entry.
@@ -285,7 +298,8 @@ uint64_t wf_test_narrow_count(void *map, uint64_t offset, uint32_t width, uint64
             line.to_owned()
         }
     }).collect::<Vec<_>>().join("\n");
-    assert_eq!(scans, 2, "only the two bounded scans have their entry width damaged");
+    assert_eq!(scans, bounded_runtime_calls,
+        "every bounded scan runtime call, shared by both WF call sites, has its entry width damaged");
     let output = compile_link_and_run(&damaged, Some(observer), &[]);
     assert_eq!(output.status.code(), Some(7),
         "the widened bounded scan includes the inactive None as a second key: {output:?}");

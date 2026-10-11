@@ -520,8 +520,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     /// Initializes a constructed value's slot and stores its tag, returning
-    /// the slot's address. Active window-bearing fields are supplied by the
-    /// caller's subsequent stores; inactive enum payload zeroing is retained.
+    /// the slot's address. A union writes its raw tag-and-common-padding
+    /// prefix with one ordinal store, zero-extending and locating the
+    /// physical tag according to target endianness. Physical tag reads and
+    /// product stores keep their count-sized width. Active window-bearing
+    /// fields are supplied by the caller's subsequent stores; inactive enum
+    /// payload zeroing is retained.
     fn begin_construction(
         &mut self,
         result: IrValueId,
@@ -534,9 +538,29 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let IrType::Nominal(nominal) = ty else {
                 return Err(BackendFailure::InvalidIr);
             };
-            let tag_ty = enum_tag_type(self.nominal(nominal)?)?;
+            let (tag_ty, stored_tag) = if union_enums::is_union_enum(self.program, nominal)? {
+                let layout = crate::target::union_enum_layout(self.target, self.program, nominal)
+                    .map_err(BackendFailure::TargetLayout)?;
+                let prefix_bytes = layout.tag_prefix_bytes();
+                let physical_bytes = u64::from(enum_tag_width(self.nominal(nominal)?)?.div_ceil(8));
+                let padding_bytes = prefix_bytes
+                    .checked_sub(physical_bytes)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                // The raw prefix clears only common padding. Keep the
+                // physical discriminant at byte zero on either endianness;
+                // every currently admitted target takes the little-endian
+                // path, whose unsigned ordinal needs no shift.
+                let stored_tag = if self.target.data_layout().starts_with('E') {
+                    u64::from(tag) << (padding_bytes * 8)
+                } else {
+                    u64::from(tag)
+                };
+                (format!("i{}", prefix_bytes * 8), stored_tag)
+            } else {
+                (enum_tag_type(self.nominal(nominal)?)?, u64::from(tag))
+            };
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
-            writeln!(self.output, "  store {tag_ty} {tag}, ptr {address}")
+            writeln!(self.output, "  store {tag_ty} {stored_tag}, ptr {address}")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(destination)

@@ -503,6 +503,7 @@ struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
     handler_offset: Option<u64>,
+    tag_prefix_bytes: u64,
 }
 
 /// What the emitter prints for one union-laid-out enum: the value's size,
@@ -515,6 +516,7 @@ pub(crate) struct UnionEnumLayout {
     align: u64,
     aligning_variant: u32,
     handler_offset: Option<u64>,
+    tag_prefix_bytes: u64,
 }
 
 impl UnionEnumLayout {
@@ -528,6 +530,13 @@ impl UnionEnumLayout {
 
     pub(crate) const fn handler_offset(self) -> Option<u64> {
         self.handler_offset
+    }
+
+    /// A natural integer prefix containing the physical tag and only padding
+    /// common to every variant, bounded before any payload or handler word.
+    /// The variant views and their count-sized tags keep their own types.
+    pub(crate) const fn tag_prefix_bytes(self) -> u64 {
+        self.tag_prefix_bytes
     }
 
     pub(crate) fn handler_alignment(self) -> Option<u64> {
@@ -572,6 +581,7 @@ pub(crate) fn union_enum_layout(
         align: union.value.align,
         aligning_variant,
         handler_offset: union.handler_offset,
+        tag_prefix_bytes: union.tag_prefix_bytes,
     })
 }
 
@@ -1788,13 +1798,29 @@ impl<'types> LayoutComputer<'types> {
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
         let mut align = 1_u64;
+        let mut tag_prefix_limit = 4_u64;
         for variant in variants {
             let mut fields = vec![IrType::Integer {
                 width: tag_width,
                 signed: false,
             }];
             fields.extend(variant.fields().iter().map(|field| field.ty()));
-            let view = self.struct_layout(fields)?;
+            let field_layouts = fields
+                .iter()
+                .map(|&ty| self.layout(ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (view, offsets) = self.aggregate_offsets(
+                field_layouts.iter().copied(),
+                TargetObject::Representation,
+            )?;
+            // A zero-size field has no representation bytes to overwrite.
+            // Every occupied field bounds the common padding prefix, even
+            // when another variant is fieldless or starts its payload later.
+            for (field, offset) in field_layouts.iter().zip(offsets).skip(1) {
+                if field.size != 0 {
+                    tag_prefix_limit = tag_prefix_limit.min(offset);
+                }
+            }
             size = size.max(view.size);
             align = align.max(view.align);
             views.push((variant.tag(), view));
@@ -1818,10 +1844,22 @@ impl<'types> LayoutComputer<'types> {
             None
         };
         let size = align_up(self.target, size, align, TargetObject::Representation)?;
+        tag_prefix_limit = tag_prefix_limit.min(size);
+        if let Some(offset) = handler_offset {
+            tag_prefix_limit = tag_prefix_limit.min(offset);
+        }
+        let tag_prefix_bytes = if tag_prefix_limit >= 4 {
+            4
+        } else if tag_prefix_limit >= 2 {
+            2
+        } else {
+            1
+        };
         Ok(UnionLayout {
             value: Layout { size, align },
             views,
             handler_offset,
+            tag_prefix_bytes,
         })
     }
 
@@ -1928,6 +1966,12 @@ impl<'types> LayoutComputer<'types> {
             let Some(mut leaves) = self.transfer_fields(fields)? else {
                 return Ok(None);
             };
+            // Keep the variant's actual field offsets, but transport the
+            // tag together with its common padding in one natural integer.
+            // This cannot reach any payload, pointer or non-byte leaf.
+            let tag = leaves.first_mut().ok_or(TargetLayoutFailure::InvalidIr)?;
+            tag.size = layout.tag_prefix_bytes;
+            tag.access = TransferAccess::Integer((layout.tag_prefix_bytes * 8) as u16);
             if let Some(offset) = layout.handler_offset {
                 for word in 0..words {
                     leaves.push(TransferGranule {

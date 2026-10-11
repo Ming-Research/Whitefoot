@@ -217,6 +217,7 @@ struct EnumLayout {
     product: (u64, u64),
     views: Vec<(u32, (u64, u64))>,
     tag_bytes: u64,
+    prefix_bytes: u64,
 }
 
 fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
@@ -230,6 +231,23 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
         }
         let field = |ty: IrType| selected(program, ty);
         let tag = payload_tag(variants.len());
+        // Independent of the prefix planner: walk declared views, ignore
+        // zero-sized fields, and bound 1/2/4-byte transport by the earliest
+        // occupied payload offset in any variant.
+        let mut first_payload = None;
+        for variant in variants {
+            let mut end = tag.0;
+            for declared in variant.fields() {
+                let (size, align) = field(declared.ty());
+                let offset = end.next_multiple_of(align);
+                if size != 0 {
+                    first_payload = Some(first_payload.map_or(offset, |prior: u64| prior.min(offset)));
+                }
+                end = offset + size;
+            }
+        }
+        let vacant_prefix = first_payload.unwrap_or(tag.0);
+        let prefix_bytes = if vacant_prefix >= 4 { 4 } else if vacant_prefix >= 2 { 2 } else { 1 };
         let product = sequence(
             std::iter::once(tag).chain(
                 variants
@@ -258,6 +276,7 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
             product,
             views,
             tag_bytes: tag.0,
+            prefix_bytes,
         });
     }
     layouts
@@ -375,9 +394,11 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
             .find_map(|line| line.strip_prefix(&format!("%wf.t.{} = type ", layout.link)))
             .unwrap_or_else(|| panic!("declared enum {}", layout.link));
         if layout.union {
+            assert!(declaration.starts_with(&format!("{{ i{}, ", layout.prefix_bytes * 8)),
+                "the raw carrier merges only the independently computed common tag/padding prefix: {declaration}");
             assert_eq!(
                 declaration.split(", ").nth(1),
-                Some(format!("[{} x i8]", layout.selected.0 - layout.tag_bytes).as_str()),
+                Some(format!("[{} x i8]", layout.selected.0 - layout.prefix_bytes).as_str()),
                 "{declaration}"
             );
         } else {

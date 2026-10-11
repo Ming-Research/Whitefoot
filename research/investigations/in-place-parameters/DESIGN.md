@@ -896,9 +896,11 @@ some captures independently; this experiment addresses copies that remain.
 Target layout owns transfer planning alongside variant and aggregate layout.
 Structs recursively transfer scalar leaves with their original LLVM types and
 widths at target offsets; padding is omitted. Product enums recurse through
-the tag and their physical fields. A union enum partitions its complete size
-at every variant leaf's start **and end**, including nested aggregate boundaries
-and each handler word. Plain-byte intervals use an integer of exactly that
+the tag and their physical fields. A union enum first replaces each variant's
+tag leaf with the common 1-, 2- or 4-byte tag-and-padding prefix bounded before
+every occupied payload and handler word. It then partitions its complete size
+at every resulting leaf's start **and end**, including nested aggregate
+boundaries and each handler word. Plain-byte intervals use an integer of exactly that
 width (not a first-class union carrier); a full pointer word present in every
 view uses `ptr`. Any interval touching an overlaid/split pointer, a one-bit leaf,
 or a nested byte-only interval instead uses byte memmove through planned scratch
@@ -924,10 +926,15 @@ because these copy entry points do not retain a stronger place-alignment fact.
 The backend gate's `layout_transfers` module checks raw IR for the mixed-width
 56-byte Frame fixture: eight loads and stores at offsets 0/8/16/24/32/36/40/48,
 with widths 8/8/4/8/4/1/8/8, all loads before stores and no whole-size intrinsic.
-A Halo-like Value requires 1+3+4+8 with its count-sized tag: the one-byte tag,
-three bytes of padding, a four-byte payload and an eight-byte payload. This
-rejects a tag-only or wide 16-byte transfer; the former four-byte tag gave
-4+4+8 intervals.
+A Halo-like Value requires 4+4+8 intervals: its one-byte physical tag and
+three bytes of padding common to all variants travel in one four-byte prefix,
+followed by a four-byte interval and an eight-byte interval. Construction uses
+the same raw prefix while variant views retain their byte tag. The former
+1+3+4+8 rule introduced an odd-width padding interval; the prefix rule rejects
+that fragmentation, a tag-only copy and a wide 16-byte transfer. Prefixes stop
+before every occupied payload or handler word, so byte-aligned enums retain
+their compact layouts. This emission proposal still needs CI and the Halo
+panel to establish correctness and its timing effect.
 A scalar-only 136-byte record, a 17-byte/17-leaf record, and even small
 array-containing records must retain memmove; a 128-byte/16-leaf record still
 expands. Under current at-most-eight-byte leaves, the large scalar record
