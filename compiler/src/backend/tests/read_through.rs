@@ -303,10 +303,9 @@ fn snapshot(program: &IrProgram, name: &str) -> IrValueId {
 }
 
 fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     assert_eq!(
-        body.lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(&source)),
+        body.lines().any(|line| copy_from(line, &source)),
         copied,
         "{body}"
     );
@@ -314,7 +313,9 @@ fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
 
 fn assert_no_copy(body: &str) {
     assert!(
-        !body.contains("@llvm.memmove.") && !body.contains("@llvm.memcpy."),
+        !body.contains("@llvm.memmove.")
+            && !body.contains("@llvm.memcpy.")
+            && !body.contains("; layout-bounded transfer "),
         "{body}"
     );
 }
@@ -1048,7 +1049,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "only the true/cold successor copies: {lazy}"
     );
     assert_eq!(
-        lazy.matches("@llvm.memmove.").count(),
+        lazy.lines().filter(|line| is_copy_end(line)).count(),
         1,
         "no other path copies: {lazy}"
     );
@@ -1081,7 +1082,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let copy = snapshot_copy_line(returned, addresses[3]);
     let lines: Vec<_> = returned.lines().collect();
     assert!(
-        lines[copy].contains("(ptr %wf.result,"),
+        lines[copy].contains("(ptr %wf.result,") || lines[copy].ends_with(" to %wf.result"),
         "copy directly to the result: {returned}"
     );
     assert_eq!(
@@ -1115,13 +1116,11 @@ fn main() -> status: std::process::ExitStatus pure {
         cold_read.contains("@wf_classify(ptr %wf.arg.v0)"),
         "{cold_read}"
     );
-    // The callee's entry capture stays: its general ABI admits input/result
-    // aliasing at other call sites. Removing a caller copy is independent.
+    // All input reads precede the result write, so neither the caller's
+    // Load nor the destination-result callee needs an entry capture.
     let callee = emitted_function(&module, "destination_result");
     assert!(
-        callee
-            .lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(", ptr %wf.arg.v0,")),
+        !callee.lines().any(|line| copy_from(line, "%wf.arg.v0")),
         "{callee}"
     );
     let output = compile_and_run(&module);
@@ -1133,11 +1132,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn snapshot_copy_line(body: &str, address: IrValueId) -> usize {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     let copies: Vec<_> = body
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.contains("@llvm.memmove.") && line.contains(&source))
+        .filter(|(_, line)| copy_from(line, &source))
         .map(|(line, _)| line)
         .collect();
     assert_eq!(copies.len(), 1, "one snapshot copy: {body}");
@@ -1150,4 +1149,250 @@ fn llvm_block_at(body: &str, line: usize) -> &str {
         .filter_map(|line| line.strip_suffix(':'))
         .last()
         .expect("instruction in an LLVM block")
+}
+
+/// One module/native image covers three placements. Main's consumed inputs
+/// explicitly exercise equal result/input pointers; retained calls keep LLVM
+/// from hiding an ABI error by inlining. This is backend evidence, not a new
+/// source-language acceptance requirement.
+#[test]
+fn destination_parameters_capture_before_invalidation_only_on_paths_that_need_it() {
+    let source = br#"nocopy enum Value {
+  Number(n: u64);
+  Function(id: u64);
+  Native(id: u64);
+  Empty();
+}
+
+fn classify(v: Value) -> result: u64 pure {
+  match move v {
+    Number(n: number) => {
+      return number;
+    }
+    Function(id: function_id) => {
+      return function_id;
+    }
+    Native(id: native_id) => {
+      return native_id;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn read_first(v: Value) -> result: Value pure {
+  let old = classify(v: move v);
+  return Value::Function(id: old);
+}
+
+fn write_then_read(v: Value, observed: &u64) -> result: Value writes(observed) {
+  let out = Value::Function(id: 99_u64);
+  let old = classify(v: move v);
+  set observed^ = old;
+  return move out;
+}
+
+fn make_result() -> result: Value pure {
+  return Value::Function(id: 99_u64);
+}
+
+fn hot_cold(v: Value, cold: Bool, observed: &u64) -> result: Value writes(observed) {
+  if cold {
+    let out = make_result();
+    let old = classify(v: move v);
+    set observed^ = old;
+    return move out;
+  }
+  match move v {
+    Number(..) => {
+      return Value::Number(n: 1_u64);
+    }
+    Function(..) => {
+      return Value::Function(id: 2_u64);
+    }
+    Native(..) => {
+      return Value::Native(id: 3_u64);
+    }
+    Empty() => {
+      return Value::Empty();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first_input = Value::Number(n: 7_u64);
+  let first = read_first(v: move first_input);
+  let first_value = classify(v: move first);
+  if first_value != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let second_input = Value::Number(n: 7_u64);
+  let second_observed = 0_u64;
+  let second = write_then_read(v: move second_input, observed: &second_observed);
+  if second_observed != 7_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let second_value = classify(v: move second);
+  if second_value != 99_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let hot_input = Value::Number(n: 7_u64);
+  let hot_flag = False();
+  let hot_observed = 0_u64;
+  let hot = hot_cold(v: move hot_input, cold: hot_flag, observed: &hot_observed);
+  if hot_observed != 0_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let hot_value = classify(v: move hot);
+  if hot_value != 1_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let cold_input = Value::Number(n: 7_u64);
+  let cold_flag = True();
+  let cold_observed = 0_u64;
+  let cold = hot_cold(v: move cold_input, cold: cold_flag, observed: &cold_observed);
+  if cold_observed != 7_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let cold_value = classify(v: move cold);
+  if cold_value != 99_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    let first = emitted_function(&module, "read_first");
+    // Current main copies at entry solely because the result is a destination;
+    // it fails both the no-copy and direct-argument assertions.
+    assert!(incoming_copy_lines(first).is_empty(), "{first}");
+    assert!(first.contains("@wf_classify(ptr %wf.arg.v0)"), "{first}");
+
+    // Report the observed input through a separate scalar reference. An early
+    // error return here would keep `out` live for cleanup beside that return's
+    // value, preventing their slots from sharing the caller's destination.
+    // The stores below must really target that destination before the read.
+    let second = emitted_function(&module, "write_then_read");
+    let copies = incoming_copy_lines(second);
+    assert_eq!(copies.len(), 1, "one persistent capture: {second}");
+    let write = second
+        .lines()
+        .position(|line| {
+            line.trim_start().starts_with("store ") && line.contains(", ptr %wf.result")
+        })
+        .expect("construct directly in the caller's result");
+    let read = second
+        .lines()
+        .position(|line| line.contains("@wf_classify("))
+        .expect("observe original input after result construction");
+    assert!(copies[0] < write && write < read, "{second}");
+    assert!(!second.contains("@wf_classify(ptr %wf.arg.v0)"), "{second}");
+    // Omitting the result barrier, or recopying at the later call, observes 99
+    // instead of 7 through `observed` when the result aliases v.
+
+    let split = emitted_function(&module, "hot_cold");
+    let copies = incoming_copy_lines(split);
+    assert_eq!(copies.len(), 1, "only the cold path captures: {split}");
+    let write = split
+        .lines()
+        .position(|line| line.contains("@wf_make_result(ptr %wf.result)"))
+        .expect("cold call writes directly through the result pointer");
+    let read = split
+        .lines()
+        .position(|line| line.contains("@wf_classify("))
+        .expect("cold whole-parameter use");
+    assert!(copies[0] < write && write < read, "{split}");
+    assert_eq!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, write),
+        "{split}"
+    );
+    assert_eq!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, read),
+        "{split}"
+    );
+    let entry = split
+        .lines()
+        .position(|line| line.ends_with(':'))
+        .expect("entry block");
+    assert_ne!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, entry),
+        "{split}"
+    );
+    let branch = split
+        .lines()
+        .position(|line| line.contains("switch i1 "))
+        .expect("hot/cold branch");
+    assert!(
+        split
+            .lines()
+            .skip(branch + 1)
+            .take_while(|line| line.trim() != "]")
+            .any(|line| line.trim() == format!("i1 1, label %{}", llvm_block_at(split, copies[0]))),
+        "capture belongs to the true/cold successor: {split}"
+    );
+    assert!(
+        split.lines().any(|line| {
+            line.contains("getelementptr") && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
+        }),
+        "hot tag reads through the incoming pointer: {split}"
+    );
+    // Main's unconditional entry copy fails the cold-block assertions. A copy
+    // after make_result fails ordering and native old-value observation.
+
+    let main = super::emitted_body(&module, "main");
+    for (callee, expected_calls) in [("read_first", 1), ("write_then_read", 1), ("hot_cold", 2)] {
+        let call_head = format!("@wf_{callee}(");
+        let calls: Vec<_> = main
+            .lines()
+            .filter(|line| line.contains(&call_head))
+            .collect();
+        assert_eq!(calls.len(), expected_calls, "{main}");
+        for call in calls {
+            let args = call.split_once(&call_head).expect("call arguments").1;
+            let pointers: Vec<_> = args
+                .split(')')
+                .next()
+                .expect("argument list")
+                .split(", ")
+                .take(2)
+                .collect();
+            assert_eq!(pointers.len(), 2, "{call}");
+            assert_eq!(
+                pointers[0], pointers[1],
+                "result must reuse the consumed input: {call}"
+            );
+        }
+    }
+    let output = compile_and_run(&super::owned_places::retain_calls(&module));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+fn incoming_copy_lines(body: &str) -> Vec<usize> {
+    body.lines()
+        .enumerate()
+        .filter_map(|(at, line)| copy_from(line, "%wf.arg.v0").then_some(at))
+        .collect()
+}
+
+// Placement tests count complete copies, regardless of their transfer form.
+// End markers keep the original immediately-before-consumer assertions; the
+// layout_transfers tests independently check every enclosed load and store.
+fn is_copy_end(line: &str) -> bool {
+    line.contains("@llvm.memmove.")
+        || line.contains("@llvm.memcpy.")
+        || line.contains("; end layout-bounded transfer ")
+}
+
+fn copy_from(line: &str, source: &str) -> bool {
+    (line.contains("@llvm.memmove.") || line.contains("@llvm.memcpy."))
+        && line.contains(&format!(", ptr {source}, i64 "))
+        || line.contains(&format!("; end layout-bounded transfer from {source} to "))
 }

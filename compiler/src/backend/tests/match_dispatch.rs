@@ -1583,21 +1583,59 @@ fn main() -> status: ExitStatus pure {
 /// to the indirect call. A tag/table implementation cannot satisfy this.
 fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
     let dispatch = definition(module, &format!("{base}.dispatch"));
-    let (slot, place) = dispatch.lines().find_map(|line| {
-        let (slot, gep) = line.trim().split_once(" = getelementptr inbounds i8, ptr ")?;
-        let place = gep.strip_suffix(&format!(", i64 {offset}"))?;
-        Some((slot, place))
-    }).expect("the handler word is addressed in the received element");
-    let handler = dispatch.lines().find_map(|line| {
-        line.trim().strip_suffix(&format!(" = load ptr, ptr {slot}, align {align}"))
-    }).expect("the target is loaded with the word's alignment");
-    assert!(dispatch.lines().next().unwrap().contains(&format!("ptr {place}")), "{dispatch}");
-    assert!(dispatch.lines().any(|line| line.contains("musttail call ")
-        && line.contains(&format!(" {handler}("))), "{dispatch}");
-    assert!(!dispatch.contains("load i32"), "{dispatch}");
+    // Copies also address the word at this offset, but their loads use align 1.
+    // Trace the actual call target backwards instead of taking the first GEP.
+    let handler = dispatch
+        .lines()
+        .find_map(|line| {
+            let (_, call) = line.split_once("musttail call ")?;
+            let (target, _) = call.split_once('(')?;
+            target.split_whitespace().next_back()
+        })
+        .expect("the dispatcher tail-calls its handler");
+    assert!(handler.starts_with('%'), "{dispatch}");
+    let slot = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{handler} = load ptr, ptr "))?
+                .strip_suffix(&format!(", align {align}"))
+        })
+        .expect("the called target is loaded with the word's alignment");
+    let place = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{slot} = getelementptr inbounds i8, ptr "))?
+                .strip_suffix(&format!(", i64 {offset}"))
+        })
+        .expect("the called handler word is addressed in the received element");
+    assert!(
+        dispatch
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("ptr {place}")),
+        "{dispatch}"
+    );
+    assert!(
+        dispatch
+            .lines()
+            .any(|line| line.contains("musttail call ") && line.contains(&format!(" {handler}("))),
+        "{dispatch}"
+    );
+    // A bounded copy preserves the tag with an i32 load; dispatch must still
+    // use the received element's pointer word, never a tag switch or table.
+    assert!(!dispatch.contains("switch i32"), "{dispatch}");
     assert!(!dispatch.contains("x ptr]"), "{dispatch}");
-    assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
-    assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
+    assert!(
+        !module.contains(&format!("@{base}.dispatch.table")),
+        "{module}"
+    );
+    assert!(
+        module.contains(&format!("{base}: dispatches through the handler word")),
+        "{module}"
+    );
 }
 
 #[test]
@@ -1618,8 +1656,12 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("call void @llvm.memmove.")
-        && copied.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)")), "{copied}");
+    assert!(copied.contains("; layout-bounded transfer "), "{copied}");
+    assert!(!copied.contains("@llvm.memmove."), "{copied}");
+    super::layout_transfers::assert_typed_transfer(
+        copied,
+        &[(0, "i32"), (4, "i32"), (8, "i8"), (9, "i24"), (12, "ptr")],
+    );
     let main = emitted_body(&module, "main");
     assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
     let tag = emitted_body(&module, "tag");
@@ -1653,6 +1695,17 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         assert_handler_load(&module, "wf_run", 12, 4);
         assert_handler_load(&module, "wf_other_run", 20, 4);
+        super::layout_transfers::assert_typed_transfer(
+            emitted_body(&module, "copy_cell"),
+            &[
+                (0, "i32"),
+                (4, "i32"),
+                (8, "i8"),
+                (9, "i24"),
+                (12, "ptr"),
+                (20, "ptr"),
+            ],
+        );
         let made = emitted_body(&module, "make_add");
         assert!(made.contains("store ptr @wf_run.arm.0,")
             && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");

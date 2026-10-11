@@ -1,5 +1,5 @@
-//! Read-through placement of logical by-value Load snapshots. Unknown roots,
-//! operations and call contracts keep the ordinary copy. This analysis changes
+//! Read-through placement of logical by-value Load and incoming snapshots.
+//! Unknown roots, operations and call contracts keep the ordinary copy. This analysis changes
 //! neither IR values nor source ownership (compiler/storage-placement).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -10,6 +10,17 @@ use crate::{
     IrFunction, IrInstruction, IrNominalKind, IrOperation, IrProgram, IrSourceMode, IrTerminator,
     IrType, IrValueId,
 };
+
+type Point = (usize, usize);
+
+/// Incoming captures persist after an invalidation. Unlike a Load's per-use
+/// copy, a later use cannot recapture from the now-overwritten source.
+#[derive(Default)]
+pub(in crate::backend) struct IncomingSnapshots {
+    pub(in crate::backend) places: BTreeMap<usize, IrValueId>,
+    pub(in crate::backend) copies: BTreeMap<Point, BTreeSet<usize>>,
+    pub(in crate::backend) backing: BTreeMap<Point, BTreeMap<usize, usize>>,
+}
 
 type MaterializationSites = BTreeMap<(usize, usize), BTreeSet<usize>>;
 
@@ -27,6 +38,129 @@ struct SnapshotFacts<'a> {
 }
 
 impl FunctionStoragePlan {
+    /// The emitter calls this only for synchronous, unsplit definitions with
+    /// no overlap groups and a public destination result. Share the Load
+    /// consumer/effect rules, but treat every pointer as potentially aliasing
+    /// an incoming source and add physical result-placement writes.
+    pub(in crate::backend) fn incoming_snapshots(
+        &self,
+        program: &IrProgram,
+        function: &IrFunction,
+        result_slot: Option<usize>,
+        sequential: bool,
+    ) -> Result<IncomingSnapshots, BackendFailure> {
+        let mut selected = IncomingSnapshots::default();
+        if function.blocks().is_empty()
+            // The prologue writes this result before any instruction site.
+            // Its existing two-pass capture order remains the fallback.
+            || function.parameters().iter().any(|(value, _)| {
+                self.slot(*value).is_some_and(|slot| {
+                    Some(self.allocation_root(slot)) == result_slot
+                })
+            })
+        {
+            return Ok(selected);
+        }
+        let graph = FlowGraph::from_function(program, function, sequential)?;
+        let abi = FunctionAbi::build(program, function)?;
+        let mut facts = SnapshotFacts::new(program, function, &self.origins, sequential);
+        let result_write = |value: usize| {
+            self.values[value].is_some_and(|slot| Some(self.allocation_root(slot)) == result_slot)
+        };
+        let mut barriers = BTreeSet::new();
+        for (block, body) in function.blocks().iter().enumerate() {
+            for (at, instruction) in body.instructions().iter().enumerate() {
+                if facts.invalidates(instruction, None)?
+                    || matches!(instruction, IrInstruction::Define { result, .. }
+                        if result_write(index(*result)))
+                {
+                    barriers.insert((block, at));
+                }
+            }
+            // Drops may invalidate a source, and edge transfers may initialize
+            // the physical result before a successor reads an input. Return
+            // stores precede cleanup, so protect its operands there as well.
+            let invalidates = match body.terminator() {
+                IrTerminator::Return { .. } => true,
+                IrTerminator::Jump { drops, .. } => {
+                    !drops.is_empty()
+                        || graph.blocks[block]
+                            .transfers
+                            .iter()
+                            .any(|(target, source)| {
+                                result_write(*target)
+                                    && self.values[*target] != self.values[*source]
+                            })
+                }
+                _ => false,
+            };
+            if invalidates {
+                barriers.insert((block, body.instructions().len()));
+            }
+        }
+        // A Load snapshot can itself materialize into the result slot before
+        // a consumer whose own result is scalar. Count that emitted write too.
+        for (point, slots) in &self.snapshot_copies {
+            if slots
+                .iter()
+                .any(|slot| Some(self.allocation_root(*slot)) == result_slot)
+            {
+                barriers.insert(*point);
+            }
+        }
+        for ((parameter, _), abi) in function.parameters().iter().zip(abi.parameters()) {
+            if !abi.is_indirect() || !self.holds_only(*parameter) {
+                continue;
+            }
+            let Some(backing) = self.slot(*parameter) else {
+                continue;
+            };
+            let family: BTreeSet<_> = self
+                .origins
+                .iter()
+                .enumerate()
+                .filter_map(|(value, origin)| (*origin == Some(index(*parameter))).then_some(value))
+                .collect();
+            let slots: BTreeSet<_> = family
+                .iter()
+                .filter_map(|value| self.values[*value])
+                .collect();
+            if slots.iter().any(|slot| {
+                Some(*slot) == result_slot || !self.holds_origin(*slot, index(*parameter))
+            }) {
+                continue;
+            }
+            let Some(uses) = facts.materialization_sites(
+                &graph,
+                &vec![Some(0); graph.blocks.len()],
+                Some(0),
+                None,
+                &family,
+            )?
+            else {
+                continue;
+            };
+            let Some((copies, private)) = incoming_capture_sites(&graph, &family, &barriers, &uses)
+            else {
+                continue;
+            };
+            for slot in &slots {
+                selected.places.insert(*slot, *parameter);
+            }
+            for point in copies {
+                selected.copies.entry(point).or_default().insert(backing);
+            }
+            for point in private {
+                selected
+                    .backing
+                    .entry(point)
+                    .or_default()
+                    .extend(slots.iter().map(|slot| (*slot, backing)));
+            }
+        }
+        Ok(selected)
+    }
+
     pub(super) fn select_read_through(
         &mut self,
         program: &IrProgram,
@@ -108,7 +242,7 @@ impl FunctionStoragePlan {
                     &graph,
                     &parts,
                     parts[block_index],
-                    root,
+                    Some(root),
                     &family,
                 )?
                 else {
@@ -118,7 +252,7 @@ impl FunctionStoragePlan {
                     || !facts.source_survives(
                         &graph,
                         (block_index, instruction_index),
-                        root,
+                        Some(root),
                         &family,
                         &copies,
                     )?
@@ -140,6 +274,88 @@ impl FunctionStoragePlan {
         }
         Ok(())
     }
+}
+
+/// Place the first required capture on each path, before its first barrier
+/// while a use remains reachable. Every program point must have one static
+/// source choice: if clean and captured paths meet while the value is needed,
+/// retain the entry copy rather than introducing runtime state or pointer phis.
+/// Reentry at a capture is likewise rejected, so no later iteration can
+/// overwrite the original private snapshot from a changed incoming address.
+fn incoming_capture_sites(
+    graph: &FlowGraph,
+    family: &BTreeSet<usize>,
+    barriers: &BTreeSet<Point>,
+    uses: &MaterializationSites,
+) -> Option<(BTreeSet<Point>, BTreeSet<Point>)> {
+    let mut needed: Vec<Vec<bool>> = graph
+        .blocks
+        .iter()
+        .map(|block| {
+            block
+                .instructions
+                .iter()
+                .map(|instruction| {
+                    instruction
+                        .operands
+                        .iter()
+                        .any(|value| family.contains(value))
+                })
+                .chain([block
+                    .terminal_uses
+                    .iter()
+                    .any(|value| family.contains(value))])
+                .collect()
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for (block, body) in graph.blocks.iter().enumerate().rev() {
+            let mut later = body.successors.iter().any(|next| needed[*next][0]);
+            for need in needed[block].iter_mut().rev() {
+                later |= *need;
+                changed |= later != *need;
+                *need = later;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut pending = vec![(0, 0, false)];
+    let mut seen = BTreeSet::new();
+    let mut copies = BTreeSet::new();
+    let mut private = BTreeSet::new();
+    while let Some((block, at, captured)) = pending.pop() {
+        if !seen.insert((block, at, captured)) {
+            continue;
+        }
+        let point = (block, at);
+        if needed[block][at] && seen.contains(&(block, at, !captured)) {
+            return None;
+        }
+        let capture = !captured
+            && needed[block][at]
+            && (barriers.contains(&point) || uses.contains_key(&point));
+        if capture {
+            copies.insert(point);
+        }
+        let captured = captured || capture;
+        if captured {
+            private.insert(point);
+        }
+        if at < graph.blocks[block].instructions.len() {
+            pending.push((block, at + 1, captured));
+        } else {
+            pending.extend(
+                graph.blocks[block]
+                    .successors
+                    .iter()
+                    .map(|next| (*next, 0, captured)),
+            );
+        }
+    }
+    Some((copies, private))
 }
 
 impl<'a> SnapshotFacts<'a> {
@@ -300,9 +516,9 @@ impl<'a> SnapshotFacts<'a> {
     /// A sufficient subset of the emitter's immutable-parameter rule. The
     /// acyclic-body restriction ensures it cannot become a split definition;
     /// a declaration supplies no implementation evidence. Destination-result
-    /// callees are also safe consumers: their prologue captures indirect inputs
-    /// before writing a possibly aliased result. That ABI rule stays in place;
-    /// it does not require a redundant snapshot in this caller.
+    /// callees are also safe consumers: they preserve the original indirect
+    /// inputs across possibly aliased result writes, with entry or proved lazy
+    /// captures. This ABI obligation does not require a redundant caller copy.
     fn immutable_parameter(
         &mut self,
         callee: u32,
@@ -360,7 +576,7 @@ impl<'a> SnapshotFacts<'a> {
         graph: &FlowGraph,
         parts: &[Option<usize>],
         part: Option<usize>,
-        root: usize,
+        root: Option<usize>,
         family: &BTreeSet<usize>,
     ) -> Result<Option<MaterializationSites>, BackendFailure> {
         let mut copies = BTreeMap::new();
@@ -459,7 +675,7 @@ impl<'a> SnapshotFacts<'a> {
         &self,
         graph: &FlowGraph,
         load: (usize, usize),
-        root: usize,
+        root: Option<usize>,
         family: &BTreeSet<usize>,
         copies: &MaterializationSites,
     ) -> Result<bool, BackendFailure> {
@@ -513,14 +729,14 @@ impl<'a> SnapshotFacts<'a> {
         Ok(true)
     }
 
-    fn may_alias(&self, value: IrValueId, root: usize) -> bool {
-        self.roots[index(value)].is_none_or(|other| other == root)
+    fn may_alias(&self, value: IrValueId, root: Option<usize>) -> bool {
+        root.is_none_or(|root| self.roots[index(value)].is_none_or(|other| other == root))
     }
 
     fn invalidates(
         &self,
         instruction: &IrInstruction,
-        root: usize,
+        root: Option<usize>,
     ) -> Result<bool, BackendFailure> {
         // Moving an owner can hide this allocation under a different root.
         // Its later release would then look unrelated. Stop at the transfer,
@@ -623,7 +839,9 @@ impl<'a> SnapshotFacts<'a> {
                 | IrOperation::BoxNew { .. }
                 | IrOperation::BufferFill { .. }
                 | IrOperation::WindowBlockNew { .. }
-                | IrOperation::SegmentsFill { .. } => self.roots[index(*result)] == Some(root),
+                | IrOperation::SegmentsFill { .. } => {
+                    root.is_none_or(|root| self.roots[index(*result)] == Some(root))
+                }
                 IrOperation::Constant(_)
                 | IrOperation::ConstantAddress { .. }
                 | IrOperation::Integer { .. }
@@ -653,5 +871,63 @@ impl<'a> SnapshotFacts<'a> {
                 _ => true,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::storage::{FlowBlock, FlowInstruction};
+
+    #[test]
+    fn incoming_capture_rejects_mixed_joins_and_reentered_captures() {
+        let block = |successors, observes| FlowBlock {
+            parameters: Vec::new(),
+            instructions: vec![FlowInstruction {
+                result: None,
+                operands: if observes { vec![0] } else { Vec::new() },
+                reuse: None,
+                exposed: None,
+            }],
+            terminal_uses: Vec::new(),
+            successors,
+            transfers: Vec::new(),
+        };
+        let family = BTreeSet::from([0]);
+        let mut graph = FlowGraph {
+            entry_parameters: vec![0],
+            blocks: vec![
+                block(vec![1, 2], false),
+                block(vec![3], false),
+                block(vec![3], false),
+                block(Vec::new(), true),
+            ],
+            coalesce: true,
+        };
+        // A write on one arm followed by an input read at the join cannot
+        // select private backing: the other arm has never initialized it.
+        assert!(
+            incoming_capture_sites(&graph, &family, &BTreeSet::from([(1, 0)]), &BTreeMap::new(),)
+                .is_none()
+        );
+        // Both arms capture before their writes, so the joined read can use
+        // the original value whichever arm ran. Rejecting all joins loses this.
+        let (copies, private) = incoming_capture_sites(
+            &graph,
+            &family,
+            &BTreeSet::from([(1, 0), (2, 0)]),
+            &BTreeMap::new(),
+        )
+        .expect("every predecessor initializes the same private backing");
+        assert_eq!(copies, BTreeSet::from([(1, 0), (2, 0)]));
+        assert!(private.contains(&(3, 0)));
+        // Reexecuting a static capture would replace the original value with
+        // already-written source bytes; retain the entry copy for this loop.
+        graph.blocks[0].successors = vec![1];
+        graph.blocks[1].successors = vec![1, 3];
+        assert!(
+            incoming_capture_sites(&graph, &family, &BTreeSet::from([(1, 0)]), &BTreeMap::new(),)
+                .is_none()
+        );
     }
 }
