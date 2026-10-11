@@ -5,6 +5,8 @@ import unittest
 from unittest.mock import patch
 import json
 import hashlib
+import copy
+from identity import classify_construction
 import measure
 import contextlib
 import io
@@ -1000,13 +1002,39 @@ class Experiment6Tests(unittest.TestCase):
         for arm in ("seq", "demand"):
             (self.build / arm).mkdir()
             for name in MANIFEST:
-                for suffix in ("", ".ll", ".o"):
+                for suffix in ("", ".ll", ".o", ".disassembly"):
                     filename = f"{arm}/{name}{suffix}"
                     (self.build / filename).write_bytes(filename.encode())
                     hashes[filename] = hashlib.sha256(filename.encode()).hexdigest()
+        records = {}
+        for name in MANIFEST:
+            record = dict(covered_widths=[1], comparisons=[dict(function="wf__par_seq_body", seq_function="wf_body",
+                role="reachable sequential body/helper", identical=True, seq_instructions=["ret"], demand_instructions=["ret"])],
+                failures=[], dispatch=dict(pool_decisions_per_timed_call=1, outside_loops=True, regions=[]),
+                actual_entry={"W1": dict(outside_loops=True, decision_trace=["pool-active"], computation="wf__par_seq_body")},
+                versioned_region_inventory=[])
+            if name == "small_split":
+                record["covered_widths"] = [1, 2, 4, 8]
+                record["dispatch"]["regions"] = [dict(function="wf_body", decisions_per_active_timed_call=1,
+                    assembly_decisions_per_cheap_timed_call=1, outside_loops=True)]
+                record["versioned_region_inventory"] = ["wf_body"]
+                record["actual_entry"]["W2/W4/W8"] = dict(outside_loops=True,
+                    decision_trace=["pool-active", "cheap-region"], computation="wf__par_seq_body", inputs=dict(rdi=1, rsi=3))
+            classify_construction(record, "wf_bench_fixture", {"wf__par_seq_body"}, {})
+            records[name] = record
         (self.build / "sequential-identity.json").write_text(json.dumps(dict(
             status="pass", hashes=hashes,
-            workloads={name: dict(status="pass", covered_widths=[1, 4, 8]) for name in MANIFEST})))
+            workloads=records)))
+        proof_patch = patch("entry_dispatch.validate_proof", return_value={"status": "pass"})
+        proof_patch.start()
+        self.addCleanup(proof_patch.stop)
+
+    @staticmethod
+    def entry_sample(width, order=0, calls=1024):
+        return dict(width=width, calls=calls, order=order, active=int(width > 1), resolution_ns=1,
+            first_query=dict(wall_ns=1000, cpu_ns=1000),
+            direct=dict(wall_ns=1000000, cpu_ns=1000000, pool_queries=0),
+            dispatch=dict(wall_ns=1001024, cpu_ns=1001024, pool_queries=calls))
 
     def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
         lines = []
@@ -1032,6 +1060,10 @@ class Experiment6Tests(unittest.TestCase):
         sample = self.build / "sizing-e6"
         sample.mkdir(exist_ok=True)
         (sample / "measurements.tsv").write_text("".join(line for line in lines if line.split("\t")[4] == "1"))
+        entry = dict(calibration={str(w): dict(calls=1024, pilots=[self.entry_sample(w)]) for w in (1, 2, 4, 8)},
+            sizing=[dict(self.entry_sample(w, r % 2), round=r) for w in (1, 2, 4, 8) for r in range(6)],
+            decisive=[dict(self.entry_sample(w, r % 2), round=r) for w in (1, 2, 4, 8) for r in range(rounds)])
+        (self.build / "entry-dispatch-measurements.json").write_text(json.dumps(entry))
 
     def row(self, name="large_helper", width=4):
         return next(cell for cell in summarize(self.path, self.inspection, experiment=6)["cells"]
@@ -1111,7 +1143,7 @@ class Experiment6Tests(unittest.TestCase):
         identity_path.unlink()
         with self.assertRaisesRegex(ValueError, "identity"): self.row()
 
-    def test_identical_computation_with_known_construction_differences_still_blocks_timing(self):
+    def test_incomplete_known_difference_labels_still_block_timing(self):
         self.write()
         identity_path = self.build / "sequential-identity.json"
         evidence = json.loads(identity_path.read_text())
@@ -1127,6 +1159,31 @@ class Experiment6Tests(unittest.TestCase):
             identity_path.write_text(json.dumps(evidence))
             with self.assertRaisesRegex(ValueError, "identity"):
                 self.row()
+
+    def test_complete_D_admission_replayed_and_dispatch_count_enforced(self):
+        self.write()
+        from test_identity import ConstructionAttributionTests
+        fixture = ConstructionAttributionTests()
+        record = fixture.record()
+        record["entry_adapter_provenance"] = fixture.adapter_provenance()
+        classify_construction(record, "wf_bench_fixture", set(), {}, {"wf__par_seq_body"})
+        path = self.build / "sequential-identity.json"
+        evidence = json.loads(path.read_text())
+        evidence["workloads"]["stencil"] = record
+        path.write_text(json.dumps(evidence))
+        self.assertEqual(self.row()["status"], "pass")
+        admission = summarize(self.path, self.inspection, experiment=6)["construction_admission"]["stencil"]
+        self.assertEqual(admission["category_counts"], {"latched-writer": 0, "entry-adapter": 1})
+        self.assertEqual(admission["observed_differences"][0]["instruction"], 1)
+        for field, value in (("status", "fail"), ("category_counts", {"entry-adapter": 0, "latched-writer": 0})):
+            wrong = copy.deepcopy(evidence)
+            wrong["workloads"]["stencil"]["admission"][field] = value
+            path.write_text(json.dumps(wrong))
+            with self.assertRaisesRegex(ValueError, "identity admission"): self.row()
+        wrong = copy.deepcopy(evidence)
+        wrong["workloads"]["stencil"]["dispatch"]["pool_decisions_per_timed_call"] = 2
+        path.write_text(json.dumps(wrong))
+        with self.assertRaisesRegex(ValueError, "identity admission"): self.row()
 
     def test_inspection_rerun_disagreement_and_sizing_do_not_manufacture_pass(self):
         self.write()
@@ -1162,6 +1219,9 @@ class Experiment6Tests(unittest.TestCase):
         def fake_run(command, **kwargs):
             if command[0] == "git":
                 return type("Result", (), {"stdout": "fixture\n"})()
+            if Path(command[3]).name == "entry-dispatch":
+                width, calls, order = map(int, command[4:])
+                return type("Result", (), {"stdout": json.dumps(self.entry_sample(width, order, calls))})()
             image, mode, arm, width_text, round_id, attempt = command[3:]
             width = int(width_text)
             name = Path(image).name
@@ -1186,6 +1246,7 @@ class Experiment6Tests(unittest.TestCase):
              patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
              patch.object(measure, "e5c_placement", return_value=(dict(E5C_PLACEMENT), {})), \
              patch.object(measure, "layout_identity", return_value={}), \
+             patch.object(measure, "entry_dispatch_proof", return_value={"status": "pass"}), \
              contextlib.redirect_stdout(io.StringIO()):
             measure.main()
         per_round = sum(len(cell_arms(6, width)) for name in MANIFEST for width in cell_widths(6, name))
@@ -1194,6 +1255,8 @@ class Experiment6Tests(unittest.TestCase):
         identity = json.loads((self.build / "identity.json").read_text())
         self.assertEqual(identity["pinned"]["2"], [2, 4])
         self.assertEqual(identity["sizing_rounds"], 6)
+        self.assertEqual(identity["duration_projection"]["image_invocations_per_round"], 264)
+        self.assertEqual(identity["duration_projection"]["timed_workload_calls_per_round"], 528)
         self.assertEqual({cell["initial"]["layout_floor"]["status"]
                           for cell in json.loads((self.build / "summary.json").read_text())["cells"]
                           if cell["width"] == 1}, {"at the floor"})
@@ -1225,10 +1288,13 @@ class Experiment6Tests(unittest.TestCase):
         self.assertIn('"5c", "6"', workflow)
         self.assertLess(workflow.index("identity.py --self-test"), workflow.index("  par-demand:\n"))
         self.assertIn("--output \"$RUNNER_TEMP/par-demand/sequential-identity.json\"", workflow)
+        self.assertLess(workflow.index('entry_dispatch.py --build "$RUNNER_TEMP/par-demand"'), workflow.index("  par-demand:\n"))
         self.assertIn("Retain hosted construction evidence, including a failed identity\n        if: always()", workflow)
         self.assertIn('[ "$EXPERIMENT" = 6 ]; then', workflow)
         makefile = (Path(__file__).parent / "Makefile").read_text()
         self.assertIn("flags-previous := --par-demand --par-demand-ablation requested", makefile)
+        self.assertIn("build: $(BUILD)/entry-dispatch", makefile)
+        self.assertIn("$(BUILD)/entry-leaf-active.o $(BUILD)/entry-leaf-inactive.o $(native-demand)", makefile)
         self.assertIn("$(BUILD)/seq/%.o $(BUILD)/micro-%.o", makefile)
 
 

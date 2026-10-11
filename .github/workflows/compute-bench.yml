@@ -413,6 +413,7 @@ jobs:
           python3 research/experiments/par-demand/identity.py --self-test
           python3 research/experiments/par-demand/identity.py \
             --build "$RUNNER_TEMP/par-demand" --output "$RUNNER_TEMP/par-demand/sequential-identity.json"
+          python3 research/experiments/par-demand/entry_dispatch.py --build "$RUNNER_TEMP/par-demand"
       - name: Small hosted sizing sample
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}

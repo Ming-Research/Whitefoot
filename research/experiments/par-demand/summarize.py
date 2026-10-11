@@ -12,6 +12,7 @@ import csv
 import hashlib
 import json
 import random
+from identity import validate_admission
 from functools import lru_cache
 from pathlib import Path
 from statistics import median
@@ -552,8 +553,15 @@ def construction_identity(build):
             record.get("status") != "pass" or 1 not in record.get("covered_widths", [])
             for record in records.values()) or not {1, 4, 8} <= set(records["small_split"].get("covered_widths", [])):
         raise ValueError("failed or incomplete experiment 6 sequential identity construction evidence")
+    for name, record in records.items():
+        try:
+            admission = validate_admission(record)
+        except ValueError as error:
+            raise ValueError(f"invalid sequential identity admission: {name}: {error}") from error
+        if admission.get("status") != "pass":
+            raise ValueError(f"failed sequential identity admission: {name}")
     required = {f"{arm}/{name}{suffix}" for name in MANIFEST for arm in ("seq", "demand")
-                for suffix in ("", ".ll", ".o")}
+                for suffix in ("", ".ll", ".o", ".disassembly")}
     hashes = evidence.get("hashes", {})
     if not required <= set(hashes):
         raise ValueError("missing sequential identity artifact hashes")
@@ -572,7 +580,7 @@ def summarize_e6(path, inspection=None, sizing=False):
         raise ValueError("E6 sizing rule requires exactly six rounds without reruns")
     if not sizing:
         evidence_path = Path(path).parent / "sequential-identity.json"
-        construction_identity(Path(path).parent)
+        construction = construction_identity(Path(path).parent)
     inspection = inspection or {}
     cells = []
     for name, meta in MANIFEST.items():
@@ -635,6 +643,19 @@ def summarize_e6(path, inspection=None, sizing=False):
                   h3_policy="reported for every cell; inspect adjacent-width speedup before interpreting CPU margin")
     if not sizing:
         result.update(sizing_evidence=str(sample_path), identity_evidence=str(evidence_path))
+        result["construction_admission"] = {name: dict(
+            status=record["admission"]["status"], computation_status=record["computation_status"],
+            category_counts=record["admission"]["category_counts"],
+            cold_support_boundary=record["admission"]["cold_support_boundary"],
+            entry_decisions=record["admission"]["entry_decisions"],
+            observed_differences=[{key: failure[key] for key in
+                ("category", "function", "reason", "instruction", "seq", "demand") if key in failure}
+                for failure in record["failures"]]) for name, record in construction["workloads"].items()}
+        from entry_dispatch import report as entry_report, validate_proof
+        validate_proof(Path(path).parent)
+        entry_path = Path(path).parent / "entry-dispatch-measurements.json"
+        result["entry_dispatch"] = entry_report(json.loads(entry_path.read_text()), count)
+        result["entry_dispatch_evidence"] = str(entry_path)
     return result
 
 # Rounded spreads transcribed from DESIGN.md, "Experiment 5a's results".

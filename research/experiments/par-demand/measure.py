@@ -11,9 +11,12 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from summarize import (E5A_PADDING, experiment_matrix, parse_experiment, attempt_result,
                        attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity, e2_excluded, load, summarize)
+from entry_dispatch import (MIN_CALLS, MAX_CALLS, MIN_BATCH_NS, WIDTHS as ENTRY_WIDTHS,
+                            validate_proof as entry_dispatch_proof, validate_sample)
 
 
 def run(command, **kwargs):
@@ -267,10 +270,34 @@ def main():
         return
     if args.experiment == 6:
         construction_identity(build)
+        entry_dispatch_proof(build)
+    entry_evidence = dict(calibration={}, sizing=[], decisive=[])
+    def entry_sample(width, calls, order):
+        completed = run(pin(width, [str(build / "entry-dispatch"), str(width), str(calls), str(order)]),
+                        env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND="on"), capture_output=True)
+        return validate_sample(json.loads(completed.stdout), width, calls, order)
+    if args.experiment == 6:
+        for width in ENTRY_WIDTHS:
+            calls, pilots = MIN_CALLS, []
+            while True:
+                sample = entry_sample(width, calls, len(pilots) % 2)
+                pilots.append(sample)
+                threshold = max(MIN_BATCH_NS, 1000 * sample["resolution_ns"])
+                if min(sample[arm]["wall_ns"] for arm in ("direct", "dispatch")) >= threshold or calls == MAX_CALLS:
+                    break
+                calls *= 2
+            entry_evidence["calibration"][str(width)] = dict(calls=calls, pilots=pilots)
+        (build / "entry-dispatch-measurements.json").write_text(json.dumps(entry_evidence, indent=2) + "\n")
     path = build / "measurements.tsv"
     def batch(attempt, selected):
         with path.open("w" if attempt == 1 else "a") as output:
             for round_id in range(args.rounds):
+                if args.experiment == 6 and attempt == 1:
+                    phase = "sizing" if len(entry_evidence["sizing"]) < 6 * len(ENTRY_WIDTHS) else "decisive"
+                    for width in ENTRY_WIDTHS:
+                        calls = entry_evidence["calibration"][str(width)]["calls"]
+                        entry_evidence[phase].append(dict(entry_sample(width, calls, round_id % 2), round=round_id))
+                    (build / "entry-dispatch-measurements.json").write_text(json.dumps(entry_evidence, indent=2) + "\n")
                 names = list(manifest)
                 names = names[round_id % len(names):] + names[:round_id % len(names)]
                 if round_id % 2:
@@ -300,7 +327,9 @@ def main():
     selected = {(name, width) for name in manifest for width in cell_widths(args.experiment, name)}
     if args.experiment in (3, 4, "5a", "5c", 6):
         args.rounds = 6
+        sizing_start = time.monotonic()
         batch(1, selected)
+        sizing_seconds = time.monotonic() - sizing_start
         sample = summarize(path, sizing=True, experiment=args.experiment)
         sample_dir = build / f"sizing-e{args.experiment}"
         sample_dir.mkdir(exist_ok=True)
@@ -309,6 +338,14 @@ def main():
         identity.update(rounds=6, sizing=True)
         (sample_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         args.rounds = sample["decisive_rounds"]
+        if args.experiment == 6:
+            invocations = sum(len(cell_arms(6, width)) for name in manifest for width in cell_widths(6, name))
+            identity["duration_projection"] = dict(sizing_elapsed_seconds=sizing_seconds,
+                decisive_rounds=args.rounds, image_invocations_per_round=invocations,
+                timed_workload_calls_per_round=2 * invocations,
+                initial_total_seconds=sizing_seconds * (1 + args.rounds / 6),
+                all_cells_rerun_total_seconds=sizing_seconds * (1 + 2 * args.rounds / 6),
+                scope="six measured rounds including paired entry diagnostics; excludes calibration, reduction, verification, hosted construction and queue time")
         identity.update(rounds=args.rounds, sizing=args.sizing, sizing_rounds=6)
         (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         if args.sizing:

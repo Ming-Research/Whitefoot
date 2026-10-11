@@ -8,6 +8,8 @@ normalization. Only consistent renaming of nonvolatile integer temporaries
 and caller-clobbered r10/r11 is admitted. Never collapse all registers to REG.
 """
 import argparse
+import copy
+from collections import Counter
 from dataclasses import dataclass
 import json
 import hashlib
@@ -1252,7 +1254,7 @@ def direct_calls(instructions, selected=None, functions=None):
     return result
 
 
-def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions):
+def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions, seq_machine=None, seq_functions=None):
     """Attribute the known cold writer difference without declaring it equal.
 
     A name is only a candidate: the IR must have precisely the shared latch
@@ -1277,13 +1279,68 @@ def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions):
             or common.get('abort') != ['call void @abort()', 'unreachable']
             or not any('@wf_resource_write(' in line for lines in common.values() for line in lines)):
         return None
-    calls = direct_calls(demand, functions=functions)
+    calls = transfer_inventory(demand, functions)
+    original_calls = transfer_inventory(seq_machine, seq_functions) if seq_machine is not None else []
     atomics = [instruction.address for instruction in demand
                if instruction.mnemonic == 'lock' and instruction.operands.startswith('cmpxchg')]
-    if 'wf__floor_record_latch' not in calls or not atomics:
+    if (not {'wf_resource_write', 'abort'} <= set(original_calls)
+            or Counter(calls) != Counter(original_calls) + Counter({'wf__floor_record_latch': 1})
+            or sum(1 for instruction in demand if instruction.mnemonic in ('call', 'callq')
+                   and target(instruction, functions)
+                   and target(instruction, functions)[1] == 'wf__floor_record_latch') != 1
+            or len(atomics) != 1):
         return None
     return {'ir': 'identical write/abort CFG; only shared cmpxchg entry and volatile loser park added',
-            'machine': {'latch_accessor': 'wf__floor_record_latch', 'atomic_acquisition_addresses': atomics}}
+            'original_blocks': original, 'demand_blocks': changed,
+            'machine': {'latch_accessor': 'wf__floor_record_latch', 'atomic_acquisition_addresses': atomics,
+                        'original_calls': sorted(original_calls), 'demand_calls': sorted(calls),
+                        'original_instructions': instruction_snapshot(seq_machine, seq_functions),
+                        'demand_instructions': instruction_snapshot(demand, functions)},
+            'qualification': 'cold support exception: exact common IR and call inventory, not common writer machine-body identity'}
+
+
+def transfer_inventory(instructions, functions=None):
+    addresses = {instruction.address for instruction in instructions}
+    calls = []
+    for instruction in instructions:
+        if instruction.mnemonic.startswith(('call', 'j', 'loop')):
+            destination = target(instruction, functions)
+            if destination is None:
+                raise IdentityError('unresolved writer machine transfer')
+            if destination[0] not in addresses:
+                calls.append(destination[1].removesuffix('@plt'))
+    return calls
+
+
+def instruction_snapshot(instructions, functions=None):
+    """Retain actual instruction addresses and exact resolved transfer names."""
+    result = []
+    for instruction in instructions:
+        operands = instruction.operands
+        destination = target(instruction, functions)
+        if destination and (instruction.mnemonic.startswith('j') or instruction.mnemonic in ('call', 'callq')):
+            operands = f'{destination[0]:x} <{destination[1]}>'
+        result.append({'address': instruction.address, 'mnemonic': instruction.mnemonic, 'operands': operands})
+    return result
+
+
+def snapshot_instructions(rows):
+    if not isinstance(rows, list) or not rows:
+        raise IdentityError('missing actual machine instruction snapshot')
+    return [Instruction(row['address'], row['mnemonic'], row['operands']) for row in rows]
+
+
+def verified_writer_evidence(function, evidence):
+    try:
+        machine = evidence['machine']
+        replay = latched_writer_evidence(function,
+            {'wf_resource_record_abort': evidence['original_blocks']},
+            {function: evidence['demand_blocks']},
+            snapshot_instructions(machine['demand_instructions']), None,
+            snapshot_instructions(machine['original_instructions']))
+        return replay is not None and replay == evidence
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def entry_adapter_evidence(seq_ir, demand_ir, wrapper, seq_header, demand_header):
@@ -1326,47 +1383,130 @@ def entry_adapter_evidence(seq_ir, demand_ir, wrapper, seq_header, demand_header
         return None
     return {'inactive_ir_root': seq_call[3], 'projected_adapter_ir_identical': True,
             'projected_ir_sha256': hashlib.sha256('\n'.join(projected).encode()).hexdigest(),
+            'original_blocks': original, 'demand_blocks': changed,
+            'original_header': seq_header, 'demand_header': demand_header,
             'qualification': 'canonical source IR entrance provenance; selected computation may be inlined and its wrapper machine code still differs'}
 
 
-def classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
-    """Keep construction fatal while separating proved computation closure.
+def verified_adapter_evidence(wrapper, evidence, compared):
+    try:
+        replay = entry_adapter_evidence({wrapper: evidence['original_blocks']},
+            {wrapper: evidence['demand_blocks']}, wrapper,
+            evidence['original_header'], evidence['demand_header'])
+        projection = evidence['optimized_pool_projection']
+        instructions = snapshot_instructions(projection['instructions'])
+        selected, omitted, count = project_pool(instructions, False)
+        closure, declarations = adapter_ir_inventory(evidence['canonical_ir_closure'],
+            evidence['inactive_ir_root'], set(evidence['canonical_ir_declarations']))
+        allowed = set(closure) | declarations
+        # LLVM may lower a referenced memory intrinsic to its native ABI call.
+        # This adds only the specific intrinsic's implementation, not all IR
+        # declarations and never a parallel/original counterpart of a clone.
+        for declaration in declarations:
+            memory = re.fullmatch(r'llvm\.(memcpy|memmove)\.p[0-9]+\.p[0-9]+\.i(?:32|64)|llvm\.(memset)\.p[0-9]+\.i(?:32|64)', declaration)
+            if memory:
+                allowed.add(memory[1] or memory[2])
+        actual_calls = direct_calls(instructions, selected - omitted)
+        return (replay is not None and replay == {key: value for key, value in evidence.items()
+                    if key not in ('optimized_pool_projection', 'canonical_ir_closure', 'canonical_ir_declarations')}
+                and closure == evidence['canonical_ir_closure']
+                and declarations == set(evidence['canonical_ir_declarations'])
+                and actual_calls <= allowed
+                and replay['inactive_ir_root'] in compared
+                and projection['outside_loops'] is True
+                and count == projection['pool_decisions_per_timed_call'] == 1
+                and projection['selected_instruction_addresses'] == [instructions[at].address for at in sorted(selected)])
+    except (KeyError, TypeError, ValueError, StopIteration):
+        return False
 
-    These annotations never admit timing. Unknown differences, missing helpers
-    or incomplete comparisons remain ordinary failures, including a misleading
-    known symbol with different code.
-    """
+
+def adapter_ir_inventory(ir, root, declarations):
+    """Exact inactive entrance's raw IR dependency closure, before inlining."""
+    if root not in ir:
+        raise IdentityError('canonical adapter entrance has no IR definition')
+    pending, reached, external = {root}, {}, set()
+    while pending:
+        function = pending.pop()
+        if function in reached:
+            continue
+        if function not in ir:
+            if function not in declarations:
+                raise IdentityError(f'canonical adapter IR dependency missing: {function}')
+            external.add(function)
+            continue
+        reached[function] = ir[function]
+        pending.update(match[1] for lines in ir[function].values() for line in lines
+                       if (match := re.search(r'\bcall\b.*?@([\w.$]+)\(', line)))
+    return reached, external
+
+
+def classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
+    """Apply the owner's D boundary; retain every observed first difference."""
+    record['admission_inputs'] = {'wrapper': wrapper, 'selected_roots': sorted(selected_roots),
+        'inventory_roots': sorted(selected_roots if inventory_roots is None else inventory_roots),
+        'writer_evidence': writer_evidence}
+    _classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots)
+
+
+def observed_difference(failure):
+    return (type(failure.get('instruction')) is int and failure['instruction'] > 0
+            and isinstance(failure.get('seq'), str) and isinstance(failure.get('demand'), str)
+            and failure['seq'] != failure['demand'])
+
+
+def _classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
+    writer_evidence = {function: evidence for function, evidence in writer_evidence.items()
+                       if verified_writer_evidence(function, evidence)}
     closure = [row for row in record['comparisons'] if row['role'] == 'reachable sequential body/helper']
     compared = {row['function'] for row in closure}
     inventory_roots = selected_roots if inventory_roots is None else inventory_roots | selected_roots
     unknown = []
     for failure in record['failures']:
+        failure.pop('evidence', None)
         evidence = writer_evidence.get(failure['function'])
-        if evidence and failure['reason'] == 'normalized sequential body differs':
+        if evidence and observed_difference(failure) and failure['reason'] == 'normalized sequential body differs':
             failure.update(category='latched-writer', evidence=evidence)
         else:
             failure['category'] = 'ordinary'
             if failure['function'] != wrapper:
                 unknown.append(failure)
-    closure_complete = (bool(inventory_roots) and inventory_roots <= compared
+    comparison_complete = all(isinstance(row.get('seq_instructions'), list) and bool(row['seq_instructions'])
+        and isinstance(row.get('demand_instructions'), list) and bool(row['demand_instructions'])
+        and all(isinstance(line, str) for line in row['seq_instructions'] + row['demand_instructions'])
+        and row.get('seq_function') == canonical_symbol(row['function'])
+        and row['identical'] is (first_difference(row['seq_instructions'], row['demand_instructions']) is None)
+        and (row['identical'] or any(failure['function'] == row['function']
+             and all(failure.get(key) == value for key, value in first_difference(row['seq_instructions'], row['demand_instructions']).items())
+             for failure in record['failures'])) for row in closure)
+    closure_complete = (comparison_complete and bool(inventory_roots) and inventory_roots <= compared
                         and bool(closure) and not unknown
-                        and all(row['identical'] or row['function'] in writer_evidence for row in closure))
+                        and all(row['identical'] is True or row['function'] in writer_evidence
+                                and any(failure['function'] == row['function'] and failure['category'] == 'latched-writer'
+                                        for failure in record['failures']) for row in closure))
     adapter = record.get('entry_adapter_provenance', {})
-    proven_ir_entrance = (adapter.get('inactive_ir_root') in compared
-                          and adapter.get('projected_adapter_ir_identical') is True
-                          and adapter.get('optimized_pool_projection', {}).get('pool_decisions_per_timed_call') == 1)
+    proven_ir_entrance = verified_adapter_evidence(wrapper, adapter, compared)
     for failure in record['failures']:
+        observed_adapter_difference = any(row['function'] == wrapper
+            and row['role'] == 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained'
+            and row.get('identical') is False
+            and isinstance(row.get('seq_instructions'), list) and bool(row['seq_instructions'])
+            and isinstance(row.get('demand_instructions'), list) and bool(row['demand_instructions'])
+            and all(isinstance(line, str) for line in row['seq_instructions'] + row['demand_instructions'])
+            and (difference := first_difference(row['seq_instructions'], row['demand_instructions'])) is not None
+            and all(failure.get(key) == value for key, value in difference.items())
+            for row in record['comparisons'])
         if (failure['function'] == wrapper and 'dispatch' in record and closure_complete
                 and record['dispatch']['pool_decisions_per_timed_call'] == 1
-                and (bool(selected_roots) and selected_roots <= compared or proven_ir_entrance)
-                and (failure['reason'] == 'normalized timed sequential wrapper differs'
-                     or failure['reason'].startswith('wrapper CFG projection lacks entry-state preservation proof:'))):
+                and record['dispatch'].get('outside_loops') is True
+                and not record['dispatch']['regions'] and proven_ir_entrance
+                and observed_difference(failure) and observed_adapter_difference
+                and failure['reason'] == 'normalized timed sequential wrapper differs'):
             failure.update(category='entry-adapter', evidence={
                 'timed_wrapper': wrapper, 'selected_sequential_roots': sorted(selected_roots),
                 'closure_functions': sorted(compared),
                 'dispatch': record['dispatch'],
                 'ir_entrance_provenance': adapter or None,
-                'qualification': 'covered body/helper inventory identical; adapter and any inlined computation machine identity/state proof still fail construction'})
+                'qualification': 'owner-admitted entry boundary: exact IR adapter projection and canonical closure; wrapper machine identity/state preservation are not proved'})
     record['computation_status'] = ('pass' if closure_complete else
                                     'fail' if unknown or any(not row['identical'] and row['function'] not in writer_evidence for row in closure)
                                     else 'unverified')
@@ -1374,7 +1514,7 @@ def classify_construction(record, wrapper, selected_roots, writer_evidence, inve
                                    'inventoried_sequential_roots': sorted(inventory_roots),
                                    'compared_closure_functions': sorted(compared),
                                    'shared_support_exceptions': sorted(writer_evidence),
-                                   'scope': 'covered canonical sequential body/helper closure; timed adapter identity and state preservation remain separate',
+                                   'scope': 'canonical sequential body/helper identity, except the evidenced shared cold writer; entry adapter is a separate admitted boundary',
                                    'complete': closure_complete}
     record['timed_selection_status'] = ('pass' if 'W1' in record.get('actual_entry', {})
                                         and 'dispatch' in record
@@ -1384,6 +1524,57 @@ def classify_construction(record, wrapper, selected_roots, writer_evidence, inve
                                         'adapter identity and overall dispatch coverage remain separate construction obligations')
     record['construction_differences'] = [failure for failure in record['failures']
                                          if failure['category'] != 'ordinary']
+    dispatch = record.get('dispatch', {})
+    regions = dispatch.get('regions', [])
+    entry = record.get('actual_entry', {})
+    pool = dispatch.get('pool_decisions_per_timed_call')
+    decisions_complete = (type(pool) is int and pool in (0, 1) and dispatch.get('outside_loops') is True
+        and (proven_ir_entrance or entry.get('W1', {}).get('outside_loops') is True
+             and entry['W1'].get('decision_trace', []).count('pool-active') == pool)
+        and set(record.get('versioned_region_inventory', [])) == {region['function'] for region in regions}
+        and all(type(region.get('decisions_per_active_timed_call')) is int and region['decisions_per_active_timed_call'] == 1
+                and type(region.get('assembly_decisions_per_cheap_timed_call')) is int and region['assembly_decisions_per_cheap_timed_call'] == 1
+                and region.get('outside_loops') is True for region in regions)
+        and (not regions or entry.get('W2/W4/W8', {}).get('outside_loops') is True
+             and entry['W2/W4/W8'].get('computation') == entry.get('W1', {}).get('computation')
+             and isinstance(entry['W2/W4/W8'].get('inputs'), dict) and bool(entry['W2/W4/W8']['inputs'])
+             and all(type(value) is int for value in entry['W2/W4/W8']['inputs'].values())
+             and entry['W2/W4/W8'].get('decision_trace', []).count('pool-active') == pool
+             and entry['W2/W4/W8'].get('decision_trace', []).count('cheap-region') == len(regions))
+        and all(type(width) is int for width in record.get('covered_widths', []))
+        and {1, *([2, 4, 8] if regions else [])} <= set(record.get('covered_widths', [])))
+    categories = {category: [failure for failure in record['failures'] if failure['category'] == category]
+                  for category in ('latched-writer', 'entry-adapter')}
+    ordinary = [failure for failure in record['failures'] if failure['category'] == 'ordinary']
+    admitted = closure_complete and decisions_complete and not ordinary
+    record['admission'] = {'policy': 'experiment-6-option-D', 'status': 'pass' if admitted else 'fail',
+        'admitted_differences': categories, 'category_counts': {key: len(value) for key, value in categories.items()},
+        'unadmitted_failures': ordinary, 'cold_support_boundary': 'wf_resource_record_abort',
+        'entry_decisions': dispatch, 'decision_proof_complete': decisions_complete,
+        'qualification': 'writer common IR/call inventory and adapter IR entrance are proved; full boundary machine identity is explicitly excluded'}
+    record['status'] = record['admission']['status']
+
+
+def validate_admission(record):
+    """Replay D evidence; consumer labels, counts and status are never authority.
+
+    Image hashes bind the report in the hosted consumer. This pure replay checks
+    retained IR/machine snapshots and every ordinary difference without tools.
+    """
+    try:
+        inputs = record['admission_inputs']
+        replay = copy.deepcopy(record)
+        _classify_construction(replay, inputs['wrapper'], set(inputs['selected_roots']),
+                               inputs['writer_evidence'], set(inputs['inventory_roots']))
+        for key in ('failures', 'construction_differences', 'computation_status', 'computation_scope',
+                    'timed_selection_status', 'timed_selection_scope', 'admission', 'status'):
+            if replay[key] != record[key]:
+                raise IdentityError(f'inconsistent D admission field: {key}')
+        if replay['status'] != 'pass':
+            raise IdentityError('D admission has ordinary, incomplete computation or dispatch evidence')
+        return replay['admission']
+    except (KeyError, TypeError, AttributeError) as error:
+        raise IdentityError(f'incomplete D admission evidence: {error}') from error
 
 
 def check_workload(name, build):
@@ -1445,15 +1636,25 @@ def check_workload(name, build):
                 selected, omitted, count = project_pool(demand[wrapper], False)
                 if 'dispatch' in record and count != record['dispatch']['pool_decisions_per_timed_call']:
                     raise IdentityError('LLVM and optimized assembly dynamic pool counts disagree')
-                diff = first_difference(normalized(seq[wrapper], image=seq_image), normalized(demand[wrapper], selected, omitted, image=demand_image))
-                record['comparisons'].append({'function': wrapper, 'role': 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained', 'identical': diff is None})
+                left = normalized(seq[wrapper], image=seq_image)
+                right = normalized(demand[wrapper], selected, omitted, image=demand_image)
+                diff = first_difference(left, right)
+                record['comparisons'].append({'function': wrapper,
+                    'seq_instructions': left, 'demand_instructions': right,
+                    'role': 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained', 'identical': diff is None})
                 headers = [re.search(r'^define\b[^\n]*@' + re.escape(wrapper) + r'\([^\n]*$', text, re.M)
                            for text in (seq_text, demand_text)]
                 provenance = entry_adapter_evidence(seq_ir, ir, wrapper,
                     headers[0][0] if headers[0] else None, headers[1][0] if headers[1] else None)
                 if provenance:
+                    closure, declarations = adapter_ir_inventory(ir, provenance['inactive_ir_root'],
+                        set(re.findall(r'^declare\b[^\n]*@([\w.$]+)\(', demand_text, re.M)))
+                    provenance['canonical_ir_closure'] = closure
+                    provenance['canonical_ir_declarations'] = sorted(declarations)
                     provenance['optimized_pool_projection'] = {
                         'pool_decisions_per_timed_call': count,
+                        'outside_loops': True,
+                        'instructions': instruction_snapshot(demand[wrapper], demand),
                         'selected_instruction_addresses': [demand[wrapper][at].address for at in sorted(selected)],
                         'state_preservation': 'unverified; CFG selection does not establish ABI preservation'}
                     record['entry_adapter_provenance'] = provenance
@@ -1490,11 +1691,15 @@ def check_workload(name, build):
                 failure(function, 'missing corresponding sequential disassembly function')
                 continue
             try:
-                diff = first_difference(normalized(seq[original], image=seq_image), normalized(demand[function], image=demand_image))
-                record['comparisons'].append({'function': function, 'seq_function': original, 'role': 'reachable sequential body/helper', 'identical': diff is None})
+                left, right = normalized(seq[original], image=seq_image), normalized(demand[function], image=demand_image)
+                diff = first_difference(left, right)
+                record['comparisons'].append({'function': function, 'seq_function': original,
+                    'seq_instructions': left, 'demand_instructions': right,
+                    'role': 'reachable sequential body/helper', 'identical': diff is None})
                 if diff:
                     failure(function, 'normalized sequential body differs', diff)
-                    evidence = latched_writer_evidence(function, seq_ir, ir, demand[function], demand)
+                    evidence = latched_writer_evidence(function, seq_ir, ir, demand[function], demand,
+                                                       seq[original], seq)
                     if evidence:
                         writer_evidence[function] = evidence
                 pending.update(direct_calls(demand[function], functions=demand))
@@ -1538,8 +1743,6 @@ def check_workload(name, build):
                     region['assembly_decisions_per_cheap_timed_call'] = len(comparisons)
                     region['assembly_prefix_instructions'] = len(prefix)
         classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots)
-        if not record['failures']:
-            record['status'] = 'pass'
     except (OSError, IdentityError, ValueError) as error:
         failure('<construction>', str(error))
         for item in record['failures']:
@@ -1676,16 +1879,32 @@ def main():
                 if path.exists():
                     hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     computation = [record['computation_status'] for record in records.values()]
+    for record in records.values():
+        try:
+            validate_admission(record)
+        except IdentityError:
+            record['status'] = 'fail'
+    categories = {category: [failure for record in records.values() for failure in record['failures']
+                             if failure.get('category') == category]
+                  for category in ('latched-writer', 'entry-adapter')}
     result = {'hashes': hashes, 'schema': 1, 'status': 'pass' if all(record['status'] == 'pass' for record in records.values()) else 'fail',
               'computation_status': 'pass' if all(status == 'pass' for status in computation) else 'fail' if 'fail' in computation else 'unverified',
-              'computation_scope': 'covered canonical sequential body/helper closure; shared latched writer and timed entry adapter remain construction obligations',
+              'admission_policy': 'experiment-6-option-D', 'admitted_differences': categories,
+              'category_counts': {category: len(rows) for category, rows in categories.items()},
+              'cold_support_boundary': 'wf_resource_record_abort',
+              'entry_decisions': {name: record.get('dispatch') for name, record in records.items()},
+              'unadmitted_failures': [failure for record in records.values() for failure in record['failures'] if failure.get('category') == 'ordinary'],
+              'computation_scope': 'canonical sequential body/helper closure with evidenced cold-writer and entry-adapter boundaries under option D',
               'workloads': records, 'scope': 'all manifest W1 cells; every discovered cheap region at W1/W2/W4/W8; normalized actual timed wrapper and reachable sequential bodies; conservative CFG dispatch proof'}
     output = args.output or args.build / 'sequential-identity.json'
     output.write_text(json.dumps(result, indent=2) + '\n')
     for record in records.values():
         for failure in record['failures']:
             print(f"{failure['workload']} / {failure['function']} [{failure['category']}]: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else ''))
-    print(f"Covered canonical sequential body/helper closure: {result['computation_status']}; full construction: {result['status']}")
+    for category, rows in categories.items():
+        print(f"{category}: {len(rows)} evidenced differences")
+    print('Cold support boundary: wf_resource_record_abort; common IR/call inventory proved, writer machine identity excluded')
+    print(f"Covered canonical sequential body/helper closure: {result['computation_status']}; option D admission: {result['status']}")
     if result['status'] != 'pass':
         raise SystemExit(1)
 

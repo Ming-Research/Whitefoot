@@ -43,6 +43,9 @@ NATIVE_OPTIMIZATION_FLAGS += -Wa,-L
 NATIVE_LINK_FLAGS += -Wl,--discard-none
 endif
 build: $(IMAGES)
+ifeq ($(EXPERIMENT),6)
+build: $(BUILD)/entry-dispatch
+endif
 # Ordinary arms preprocess out demand fields and instructions. Only candidate
 # and its copied twin link the demand units; idle1 adds the idle-policy guard.
 native-seq := $(NATIVE_OBJECTS)
@@ -53,6 +56,13 @@ native-extent := $(native-demand)
 native-static := $(native-demand)
 native-unversioned := $(native-demand)
 native-previous := $(native-demand)
+$(BUILD)/entry-dispatch.o: entry_dispatch.c $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -Wall -Wextra -Werror -c $< -o $@
+$(BUILD)/entry-leaf-%.o: entry_leaf.c $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) -DWF_ENTRY_LEAF=wf_entry_$* -c $< -o $@
+$(BUILD)/entry-dispatch: $(BUILD)/entry-dispatch.o $(BUILD)/entry-leaf-active.o $(BUILD)/entry-leaf-inactive.o $(native-demand)
+	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
+	objdump -d --no-show-raw-insn $@ > $@.disassembly
 native-seed := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/seed-core.o
 native-dedup := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/dedup-core.o
 $(BUILD)/seed-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile

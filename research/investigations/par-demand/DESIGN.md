@@ -2704,11 +2704,15 @@ otherwise establish that the pool-active decision and any cheap-region
 decision execute once per timed call, before the computation's loops, not
 once per iteration. Count the two decisions separately when both survive.
 
-Compare normalized disassembly of corresponding sequential computations,
+Under [option D](#identity-construction-option-d), compare normalized
+disassembly of corresponding canonical sequential computations,
 preserving operations, data constants, offsets, register relationships and
 control-flow destinations while removing placement addresses and consistent
 register renaming. Follow the selected path through the actual timed entry;
-merely comparing an unused clone does not qualify. A mismatch, missing body,
+merely comparing an unused clone does not qualify. The explicit cold
+resource-record writer boundary is listed separately, and the evidenced
+pool-query entry adapter is counted and timed separately. Neither boundary
+waives a computation mismatch. A mismatch, missing body,
 uncovered region or unproved dispatch placement fails hosted construction,
 naming workload, function and the first differing instruction or missing
 proof. Retain the report and a deliberate changed-body negative control.
@@ -2812,10 +2816,13 @@ inactive pool edge, and checking the dynamic pool count against the LLVM proof.
 A differing save, restore, result store or computation is reported as a
 demonstrated difference. Identical projected text alone does not prove that
 live caller-clobbered values or flags survive the removed pool call; a wrapper
-without the entry-state preservation proof remains a construction failure.
+without the entry-state preservation proof may qualify only as the
+explicitly evidenced entry-adapter boundary selected under option D; it
+remains unproved as literal whole-wrapper machine identity.
 Distinguish that checker limitation from a demonstrated differing sequential
-body. Neither is waived to obtain timing. Hosted execution must establish
-which supported shapes the actual optimized images use.
+body. Option D admits only its evidenced boundaries; a differing computation
+or unsupported attribution still blocks timing. Hosted execution must
+establish which supported shapes the actual optimized images use.
 
 Only edited-Python syntax compilation and patch-whitespace checks ran locally.
 The authored compiler regression, Python cases, compiled changed-body negative
@@ -3166,3 +3173,68 @@ small_constant and hot_helper pass construction. No artifact executable was
 run. This establishes operand identity and the stated attribution on those
 saved images, without settling the owner's construction boundary or allowing
 timing.
+
+### Identity construction: option D
+
+The owner chose **D on the identity-construction card on 2026-10-11**:
+retain canonical sequential lowering and the per-build normalized-disassembly
+gate for every covered computation closure. The resource-failure record
+writer is an explicit cold-path boundary; the timed wrapper's pool query is
+entry dispatch, counted and timed separately under the original
+count-entry-dispatch ruling. This supersedes the earlier requirement that
+these two known construction differences themselves stop timing. It does
+not replace computation identity with IR identity. Option A, compiling a
+single canonical object without cross-boundary LTO, remains the fallback
+for a workload whose computation closure differs.
+
+Admission requires complete evidence, not a category label. The cold
+`wf_resource_record_abort` boundary must preserve the complete write/abort
+IR and differ only by the shared latch acquisition and losing-writer park,
+with the corresponding actual-image latch/atomic evidence. A changed writer
+operation or an unknown support difference still fails. Entry attribution
+requires the exact inactive adapter projection, canonical call inputs and
+result handling, corresponding computation closure comparisons and the
+optimized pool CFG proof. Count zero queries where selection was pruned,
+otherwise exactly one query per timed entry, outside every computation loop;
+count any cheap-region decision separately and retain its covered active
+paths. Inlined entries require canonical IR provenance as well as the actual
+pool projection. Unknown differences, incomplete evidence, missing regions
+or differing computation still fail before timing. Reports retain the first
+differing instructions and list both admitted categories and their counts.
+
+**Separate entry-dispatch measurement, fixed before it measures.** A generic
+native witness links the real demand runtime and compares a noinline direct
+entry with a noinline pool-query/conditional-transfer entry. The active and
+inactive destinations are separately compiled opaque leaves with identical
+computation, without LTO. Hosted disassembly must establish exactly one query
+outside cycles, both conditional destinations and equal leaf computation.
+This measures the query and conditional transfer; it does not attribute the
+real workload wrapper's register allocation, saves or spills to dispatch.
+Both remain present in the full-workload measurements.
+
+Use the same W1/2/4/8 placement and demand settings. Record first-query wall
+and CPU separately, warm the witness, then begin a paired pilot at 1,024
+entries and double up to 1,048,576 until both batches last at least
+`max(1 ms, 1000 * CLOCK_MONOTONIC resolution)`. Freeze the entry count at each
+width; reaching the cap without this precision is reported as inconclusive.
+Alternate direct/dispatch batch order. Retain six sizing pairs separately
+from the full-work sizing's frozen `n` decisive pairs. Report paired wall and
+CPU differences per entry, raw samples, counts and the existing 10,000-draw,
+seed-20261010, 95% bootstrap. These are diagnostic entry costs, with no
+1 ns/2% allowance or additional timing rejection; that earlier allowance
+continues to apply only to nonhoistable per-call decisions.
+
+Dispatch `compute-bench.yml` on this branch with `experiment=par-demand`,
+`par_demand_experiment=6`, `placement_runner=14900k` and empty
+`placement_rounds`; leave other inputs at defaults. Six full-work sizing
+rounds select `n` in 6..30 by the unchanged interval projection. Each full
+round has 264 workload image invocations and 528 timed workload calls, plus
+four paired entry-witness processes. If the six measured rounds, including
+paired entry diagnostics, take `S` seconds, initial sizing plus decisive
+measurement projects to
+`S * (1 + n/6)`; rerunning every cell once would project to
+`S * (1 + 2*n/6)`. These estimates exclude witness calibration, reduction,
+hosted construction and queue time, and assume the sample's throughput
+persists. No experiment-6 sizing duration exists yet; sizing chooses rounds,
+not a fixed duration. The timing command retains its 90-minute timeout and
+the runner job its 120-minute timeout; neither is a performance prediction.
