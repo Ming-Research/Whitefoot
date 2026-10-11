@@ -4,6 +4,8 @@
 use super::RepairPair;
 
 pub(super) const RECURSIVE_EFFECTS: &[RepairPair] = &[
+    // The firn-reported Frozen shape remains a stability regression: reference
+    // match dispatch already exhibits reads(root.inner), including on main.
     RepairPair {
         name: "recursive-frozen-row.wf",
         rejected: br#"enum Node {
@@ -108,6 +110,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // Box preserves the same dispatch-covered row as Frozen; neither pair
+    // depends on recursive read widening to obtain reads(root.inner).
     RepairPair {
         name: "recursive-box-row.wf",
         rejected: br#"enum Node {
@@ -209,6 +213,76 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 1_u8);
     }
   }
+}
+"#],
+    },
+    // An empty child window gives the recursive node a finite leaf. The
+    // forwarded formal index keeps the child path statically nameable, while
+    // the descriptor read children.len cannot cover children[index]. With no
+    // read widening, each recursive projection adds another child suffix.
+    RepairPair {
+        name: "recursive-indexed-read-row.wf",
+        rejected: br#"struct Node {
+  byte: u8;
+  children: Slots<Box<Node>, 1>;
+}
+
+fn sum_path(root: &Box<Node>, index: u64) -> result: u8 reads(root.inner.byte), reads(root.inner.children.len) {
+  let byte = root^.inner.byte;
+  if index < root^.inner.children.len {
+    let child = &root^.inner.children[index];
+    let suffix = sum_path(root: child, index: index);
+    let total = byte +wrap suffix;
+    return total;
+  } else {
+    return byte;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let leaf_children = slots_new::<Box<Node>, 1>();
+  let leaf_value = Node(byte: 7_u8, children: move leaf_children);
+  let leaf_node = box_new::<Node>(value: move leaf_value);
+  let root_children = slots_new::<Box<Node>, 1>();
+  place_back(window: &root_children, value: move leaf_node);
+  let root_value = Node(byte: 9_u8, children: move root_children);
+  let root_node = box_new::<Node>(value: move root_value);
+  let total = sum_path(root: &root_node, index: 0_u64);
+  return std::process::exit_status(code: total);
+}
+"#,
+        rule: "EFF-2",
+        sentences: &[
+            "\n  expected_row: reads(root.inner.byte), reads(root.inner.children[index]), reads(root.inner.children.len)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner.byte), reads(root.inner.children[index]), reads(root.inner.children.len)`, which covers every access the body makes and no other\n",
+        ],
+        repaired: &[br#"struct Node {
+  byte: u8;
+  children: Slots<Box<Node>, 1>;
+}
+
+fn sum_path(root: &Box<Node>, index: u64) -> result: u8 reads(root.inner.byte), reads(root.inner.children[index]), reads(root.inner.children.len) {
+  let byte = root^.inner.byte;
+  if index < root^.inner.children.len {
+    let child = &root^.inner.children[index];
+    let suffix = sum_path(root: child, index: index);
+    let total = byte +wrap suffix;
+    return total;
+  } else {
+    return byte;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let leaf_children = slots_new::<Box<Node>, 1>();
+  let leaf_value = Node(byte: 7_u8, children: move leaf_children);
+  let leaf_node = box_new::<Node>(value: move leaf_value);
+  let root_children = slots_new::<Box<Node>, 1>();
+  place_back(window: &root_children, value: move leaf_node);
+  let root_value = Node(byte: 9_u8, children: move root_children);
+  let root_node = box_new::<Node>(value: move root_value);
+  let total = sum_path(root: &root_node, index: 0_u64);
+  return std::process::exit_status(code: total);
 }
 "#],
     },
@@ -530,6 +604,12 @@ fn recursive_repairs_are_exact_substitutions_and_acyclic_text_is_unchanged() {
         assert_eq!(pair.sentences[1], fix, "{}", pair.name);
         let applied = if pair.name.ends_with("mutually-recursive-rows.wf") {
             rejected.replace("reads(root.inner.Leaf.byte)", row)
+        } else if pair.name == "recursive-indexed-read-row.wf" {
+            rejected.replacen(
+                "reads(root.inner.byte), reads(root.inner.children.len)",
+                row,
+                1,
+            )
         } else if pair.name == "recursive-write-separation.wf" {
             rejected.replacen(
                 "reads(root.inner.next), reads(value), writes(root.inner.byte)",
