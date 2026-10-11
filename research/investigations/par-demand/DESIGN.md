@@ -3134,3 +3134,35 @@ not prove the entire timed wrapper identical or its entry state preserved.
 The overall identity status and process exit remain failing while any
 construction difference remains, pending the owner's identity-construction
 choice.
+
+The next hosted check at `75e1c249e` (run `38152065332`) resolved the external
+GOT reference and the direct TLS load. It exposed a second TLS spelling:
+`wf__heap_change` loads the thread pointer with `mov %fs:0,%rcx`, then forms
+the address with `lea -0x58(%rcx),%rcx` in seq and `lea -0x70(%rcx),%rcx` in
+demand. Resolving this address requires register provenance through the CFG,
+not just direct segment operands. Only a proved thread-pointer-derived base
+may supply the TLS object identity; clobbers or disagreeing incoming paths
+must retain the raw operand.
+
+The attribution also required a surviving optimized canonical call. Spine,
+large_helper, mandelbrot and fir inline that entry into the inactive wrapper
+path, so this requirement left them ordinary failures even though the raw
+adapter selects the canonical entry. Records, stencil, prefix and histogram
+retain that call, but their complete-closure evidence was blocked by the TLS
+address difference. Recursion retains the call and has no heap-helper failure,
+so it already qualified. Attribution for an inlined entry requires the raw
+inactive adapter to match seq's adapter after canonical callee naming,
+including its call inputs and result handling, plus the optimized pool CFG
+projection. This is provenance evidence for the entry-adapter category, not
+proof of equal inlined machine instructions or preserved state across the
+removed query; construction remains failing.
+
+Rechecking the saved `38152065332` images with these repairs reports
+`Covered canonical sequential body/helper closure: pass; full construction:
+fail` and exits 1. No heap-helper or ordinary failures remain. The remaining
+16 differences are the nine timed wrappers classified as entry-adapter and
+the seven resource writers classified as latched-writer, as listed above;
+small_constant and hot_helper pass construction. No artifact executable was
+run. This establishes operand identity and the stated attribution on those
+saved images, without settling the owner's construction boundary or allowing
+timing.

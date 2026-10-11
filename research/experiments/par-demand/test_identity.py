@@ -10,7 +10,7 @@ import identity
 from identity import (IdentityError, Instruction, normalized, first_difference,
                       parse_disassembly, project_pool, entry_shell, computation_root,
                       dispatch_proof, parse_ir, ElfImage, canonical_symbol,
-                      classify_construction, latched_writer_evidence)
+                      classify_construction, latched_writer_evidence, entry_adapter_evidence)
 
 
 def insns(rows):
@@ -18,6 +18,33 @@ def insns(rows):
 
 
 class ConstructionAttributionTests(unittest.TestCase):
+    header = 'define i64 @wf_bench_fixture(i64 %value) {'
+    seq_adapter = '''define i64 @wf_bench_fixture(i64 %value) {
+  %r = call i64 @wf_body(i64 %value)
+  ret i64 %r
+}
+'''
+    demand_adapter = '''define i64 @wf_bench_fixture(i64 %value) {
+  %pool = call i32 @wf__par_pool_active()
+  %active = icmp ne i32 %pool, 0
+  br i1 %active, label %par, label %seq
+par:
+  %a = call i64 @wf_body(i64 %value)
+  br label %join
+seq:
+  %b = call i64 @wf__par_seq_body(i64 %value)
+  br label %join
+join:
+  %r = phi i64 [ %a, %par ], [ %b, %seq ]
+  ret i64 %r
+}
+'''
+
+    def adapter_provenance(self, demand=None):
+        return entry_adapter_evidence(parse_ir(self.seq_adapter),
+            parse_ir(self.demand_adapter if demand is None else demand),
+            'wf_bench_fixture', self.header, self.header)
+
     def record(self, identical=True):
         return {'status': 'fail', 'comparisons': [
             {'function': 'wf__par_seq_body', 'role': 'reachable sequential body/helper', 'identical': identical}],
@@ -58,6 +85,98 @@ class ConstructionAttributionTests(unittest.TestCase):
         self.assertEqual(record['status'], 'fail')
         self.assertEqual(record['computation_scope']['selected_sequential_roots'], [])
         self.assertEqual(record['computation_scope']['inventoried_sequential_roots'], ['wf__par_seq_body'])
+
+    def test_inlined_ir_entrance_and_actual_pool_projection_attribute_but_do_not_admit(self):
+        evidence = self.adapter_provenance()
+        self.assertEqual(evidence['inactive_ir_root'], 'wf__par_seq_body')
+        evidence['optimized_pool_projection'] = {'pool_decisions_per_timed_call': 1}
+        record = self.record()
+        record['entry_adapter_provenance'] = evidence
+        classify_construction(record, 'wf_bench_fixture', set(), {}, {'wf__par_seq_body'})
+        self.assertEqual(record['failures'][0]['category'], 'entry-adapter')
+        self.assertEqual(record['computation_status'], 'pass')
+        self.assertEqual(record['timed_selection_status'], 'unverified')
+        self.assertEqual(record['status'], 'fail')
+        self.assertEqual(record['computation_scope']['selected_sequential_roots'], [])
+        for projection, root in [({}, 'wf__par_seq_body'),
+                                 ({'pool_decisions_per_timed_call': 0}, 'wf__par_seq_body'),
+                                 ({'pool_decisions_per_timed_call': 1}, 'wf__par_seq_unrelated')]:
+            wrong = self.record()
+            wrong['entry_adapter_provenance'] = {**evidence, 'optimized_pool_projection': projection,
+                                                  'inactive_ir_root': root}
+            classify_construction(wrong, 'wf_bench_fixture', set(), {}, {'wf__par_seq_body'})
+            self.assertEqual(wrong['failures'][0]['category'], 'ordinary')
+            self.assertEqual(wrong['status'], 'fail')
+        missing = self.record()
+        missing['comparisons'] = []
+        missing['entry_adapter_provenance'] = evidence
+        classify_construction(missing, 'wf_bench_fixture', set(), {}, {'wf__par_seq_body'})
+        self.assertEqual(missing['failures'][0]['category'], 'ordinary')
+
+    def test_adapter_provenance_preserves_call_arguments_join_and_output(self):
+        for changed in [self.demand_adapter.replace('@wf__par_seq_body(', '@wf__par_seq_other('),
+                        self.demand_adapter.replace('@wf__par_seq_body(i64 %value)', '@wf__par_seq_body(i64 9)'),
+                        self.demand_adapter.replace('[ %b, %seq ]', '[ %a, %seq ]'),
+                        self.demand_adapter.replace('ret i64 %r', 'ret i64 9'),
+                        self.demand_adapter.replace('label %par, label %seq', 'label %seq, label %par')]:
+            self.assertIsNone(self.adapter_provenance(changed))
+        pointer_header = 'define void @wf_bench_fixture(ptr %value, ptr %out) {'
+        pointer_seq = self.seq_adapter.replace(self.header, pointer_header).replace('call i64', 'call ptr').replace('i64 %value', 'ptr %value').replace('ret i64 %r', 'store ptr %r, ptr %out\n  ret void')
+        pointer_demand = self.demand_adapter.replace(self.header, pointer_header).replace('call i64', 'call ptr').replace('i64 %value', 'ptr %value').replace('phi i64', 'phi ptr').replace('ret i64 %r', 'store ptr %r, ptr %out\n  ret void')
+        self.assertIsNotNone(entry_adapter_evidence(parse_ir(pointer_seq), parse_ir(pointer_demand),
+            'wf_bench_fixture', pointer_header, pointer_header))
+        self.assertIsNone(entry_adapter_evidence(parse_ir(pointer_seq),
+            parse_ir(pointer_demand.replace('ptr %out', 'ptr %different_out')),
+            'wf_bench_fixture', pointer_header, pointer_header))
+        self.assertIsNone(entry_adapter_evidence(parse_ir(self.seq_adapter), parse_ir(self.demand_adapter),
+            'wf_bench_fixture', self.header, self.header.replace('i64 %value', 'i32 %value')))
+
+    def test_actual_inlined_wrapper_retains_difference_and_unproved_state(self):
+        seq = '''0000000000000100 <wf_bench_fixture>:
+ 100: lea 7(%rdi),%rax
+ 104: ret
+0000000000000300 <wf_body>:
+ 300: lea 7(%rdi),%rax
+ 304: ret
+'''
+        demand = '''0000000000000100 <wf_bench_fixture>:
+ 100: push %rbx
+ 104: mov %rdi,%rbx
+ 108: call 500 <wf__par_pool_active>
+ 10c: test %eax,%eax
+ 110: je 120 <wf_bench_fixture+0x20>
+ 114: mov $1,%eax
+ 118: jmp 124 <wf_bench_fixture+0x24>
+ 120: lea 7(%rbx),%rax
+ 124: pop %rbx
+ 128: ret
+0000000000000600 <wf__par_seq_body>:
+ 600: lea 7(%rdi),%rax
+ 604: ret
+'''
+        class Image:
+            def __init__(self, _): pass
+            def bound(self, functions):
+                self.functions = functions
+                return functions
+            def code_identity(self, address, spelling):
+                return canonical_symbol(self.functions.resolve(address, spelling))
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            for arm, text, assembly in [('seq', self.seq_adapter, seq),
+                                        ('demand', self.demand_adapter, demand)]:
+                (build / arm).mkdir()
+                (build / arm / 'spine.ll').write_text(text)
+                (build / arm / 'spine.disassembly').write_text(assembly)
+            with patch.object(identity, 'ElfImage', Image):
+                record = identity.check_workload('spine', build)
+            self.assertEqual((record['status'], record['computation_status']), ('fail', 'pass'))
+            self.assertEqual(record['timed_selection_status'], 'unverified')
+            self.assertIn('unsupported entry-shell instruction lea', record['entry_state_proof']['reason'])
+            self.assertEqual(record['computation_scope']['selected_sequential_roots'], [])
+            self.assertEqual(record['entry_adapter_provenance']['inactive_ir_root'], 'wf__par_seq_body')
+            failure = record['failures'][0]
+            self.assertEqual((failure['category'], failure['instruction']), ('entry-adapter', 1))
 
     def writer(self):
         common = {'write.loop': ['%written = call i64 @wf_resource_write(ptr %message, i64 %length)',

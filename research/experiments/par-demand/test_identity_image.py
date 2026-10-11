@@ -147,6 +147,112 @@ class ImageIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(IdentityError, 'not in a TLS section'):
             self.read_image(wrong_section)
 
+    def test_thread_pointer_lea_matches_relocated_tls_across_realistic_branches(self):
+        def instructions(displacement):
+            return [Instruction(0, 'mov', f'%fs:{displacement},%rax'),
+                    Instruction(1, 'test', '%rax,%rax'),
+                    Instruction(2, 'jne', 'c <done>'),
+                    Instruction(3, 'mov', '%fs:0x0,%rcx'),
+                    Instruction(4, 'mov', '$1,%eax'),
+                    Instruction(5, 'lock', 'xadd %eax,(%rdi)'),
+                    Instruction(6, 'cmp', '$0x81,%eax'),
+                    Instruction(7, 'jae', 'd <error>'),
+                    Instruction(8, 'lea', f'{displacement}(%rcx),%rcx'),
+                    Instruction(9, 'mov', '%eax,%edx'),
+                    Instruction(10, 'shl', '$6,%rdx'),
+                    Instruction(11, 'mov', '%rax,(%rcx)'),
+                    Instruction(12, 'ret', ''), Instruction(13, 'ret', '')]
+        seq, moved = self.read_image(tls_fixture()), self.read_image(tls_fixture(memory_size=40))
+        self.assertEqual(normalized(instructions(-16), image=seq), normalized(instructions(-40), image=moved))
+        self.assertIn('tls-address:', normalized(instructions(-16), image=seq)[8])
+
+    def test_thread_pointer_lea_preserves_object_offset_bytes_and_missing_identity(self):
+        def instructions(displacement):
+            return [Instruction(0, 'movq', '%fs:0,%rcx'),
+                    Instruction(1, 'lea', f'{displacement}(%rcx),%rdx')]
+        seq = self.read_image(tls_fixture())
+        self.assertNotEqual(normalized(instructions(-16), image=seq), normalized(instructions(-12), image=seq))
+        for different in (tls_fixture(symbol='other'), tls_fixture(initial=b'abce')):
+            self.assertNotEqual(normalized(instructions(-16), image=seq),
+                                normalized(instructions(-16), image=self.read_image(different)))
+        with self.assertRaisesRegex(IdentityError, 'unbounded TLS'):
+            normalized(instructions(-16), image=self.read_image(tls_fixture(symbol_offset=8)))
+        with self.assertRaisesRegex(IdentityError, 'ELF data evidence'):
+            normalized(instructions(-16))
+
+    def test_thread_pointer_copies_and_derived_pointer_lea_keep_offsets(self):
+        def instructions(displacement):
+            return [Instruction(0, 'movq', '%fs:0,%rcx'),
+                    Instruction(1, 'movq', '%rcx,%r10'),
+                    Instruction(2, 'lea', f'{displacement}(%r10),%r11'),
+                    Instruction(3, 'movq', '%r11,%rcx'),
+                    Instruction(4, 'leaq', '4(%rcx),%rdx')]
+        seq, moved = self.read_image(tls_fixture()), self.read_image(tls_fixture(memory_size=40))
+        rows = normalized(instructions(-16), image=seq)
+        self.assertEqual(rows, normalized(instructions(-40), image=moved))
+        self.assertIn('tls-address:', rows[4])
+        self.assertNotEqual(rows[2], rows[4])
+
+    def test_thread_pointer_clobbers_leave_ordinary_lea_displacements_unchanged(self):
+        clobbers = [Instruction(1, 'movl', '$0,%ecx'),
+                    Instruction(1, 'movb', '$0,%cl'),
+                    Instruction(1, 'pop', '%rcx'),
+                    Instruction(1, 'add', '$4,%rcx'),
+                    Instruction(1, 'xchg', '%rcx,%rax'),
+                    Instruction(1, 'call', '20 <external>'),
+                    Instruction(1, 'movsb', ''),
+                    Instruction(1, 'cmpsq', ''),
+                    Instruction(1, 'mul', '%rdi')]
+        for clobber in clobbers:
+            with self.subTest(clobber=clobber):
+                instructions = [Instruction(0, 'movq', '%fs:0,%rcx'), clobber,
+                                Instruction(2, 'lea', '-16(%rcx),%rdx')]
+                # No image supplied: stale provenance would try ELF lookup
+                # and raise instead of retaining this non-proven displacement.
+                self.assertEqual(normalized(instructions)[2], 'lea -16(%rcx),%rdx')
+
+    def test_thread_pointer_cfg_join_requires_provenance_from_every_path(self):
+        image = self.read_image(tls_fixture())
+        missing = [Instruction(0, 'test', '%eax,%eax'),
+                   Instruction(1, 'jne', '3 <join>'),
+                   Instruction(2, 'movq', '%fs:0,%rcx'),
+                   Instruction(3, 'lea', '-16(%rcx),%rdx')]
+        self.assertEqual(normalized(missing, image=image)[3], 'lea -16(%rcx),%rdx')
+        agreed = [Instruction(0, 'movq', '%fs:0,%rcx'),
+                  Instruction(1, 'test', '%eax,%eax'),
+                  Instruction(2, 'jne', '4 <copy>'),
+                  Instruction(3, 'jmp', '5 <join>'),
+                  Instruction(4, 'movq', '%rcx,%rcx'),
+                  Instruction(5, 'lea', '-16(%rcx),%rdx')]
+        self.assertIn('tls-address:', normalized(agreed, image=image)[5])
+
+    def test_thread_pointer_projection_cannot_omit_a_clobber_from_its_proof(self):
+        instructions = [Instruction(0, 'movq', '%fs:0,%rcx'),
+                        Instruction(1, 'movl', '$0,%ecx'),
+                        Instruction(2, 'lea', '-16(%rcx),%rdx')]
+        self.assertEqual(normalized(instructions, selected={0, 2})[1], 'lea -16(%rcx),%rdx')
+        self.assertEqual(normalized(instructions, omitted={1})[1], 'lea -16(%rcx),%rdx')
+
+    def test_thread_pointer_loop_backedge_clobber_invalidates_join_provenance(self):
+        instructions = [Instruction(0, 'movq', '%fs:0,%rcx'),
+                        Instruction(1, 'lea', '-16(%rcx),%rdx'),
+                        Instruction(2, 'movl', '$0,%ecx'),
+                        Instruction(3, 'jne', '1 <repeat>')]
+        self.assertEqual(normalized(instructions)[1], 'lea -16(%rcx),%rdx')
+        instructions[3] = Instruction(3, 'loop', '1 <repeat>')
+        with self.assertRaisesRegex(IdentityError, 'unsupported loop control'):
+            normalized(instructions)
+
+    def test_ordinary_lea_does_not_gain_thread_pointer_provenance(self):
+        instructions = [Instruction(0, 'mov', '%rdi,%rcx'),
+                        Instruction(1, 'lea', '-16(%rcx),%rdx')]
+        self.assertEqual(normalized(instructions)[1], 'lea -16(%rcx),%rdx')
+
+    def test_truncated_tls_address_formation_keeps_the_raw_offset(self):
+        instructions = [Instruction(0, 'movq', '%fs:0,%rcx'),
+                        Instruction(1, 'lea', '-16(%rcx),%edx')]
+        self.assertEqual(normalized(instructions)[1], 'lea -16(%rcx),%edx')
+
     def test_external_got_slot_relocation_preserves_symbol_version_and_offset(self):
         seq = self.read_image(external_slot_fixture())
         moved = self.read_image(external_slot_fixture(address=0x500))

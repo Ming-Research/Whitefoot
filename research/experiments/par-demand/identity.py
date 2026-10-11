@@ -381,7 +381,7 @@ class ElfImage:
         name = names[0] if len(names) == 1 else 'aliases:' + json.dumps(names, separators=(',', ':'))
         return name, address - start, length
 
-    def tls_identity(self, displacement, instruction):
+    def tls_identity(self, displacement, instruction, address_only=False):
         """Resolve x86-64 variant-II local-exec offsets in the main TLS block."""
         segments = [header for header in getattr(self, 'program_headers', ()) if header[0] == 7]
         if getattr(self, 'machine', None) != 62 or len(segments) != 1:
@@ -402,11 +402,15 @@ class ElfImage:
         _, start, length = objects[0]
         if start + length > memory_size or file_size > memory_size:
             raise IdentityError('TLS object exceeds PT_TLS bounds')
-        if instruction.mnemonic in ('lea', 'leal', 'leaq'):
-            raise IdentityError('unsupported address-valued TLS instruction')
-        width = memory_access_width(instruction)
-        if width is None or offset + width > start + length:
-            raise IdentityError('TLS memory access crosses named object boundary')
+        if address_only:
+            if instruction.mnemonic not in ('lea', 'leaq'):
+                raise IdentityError('unsupported TLS address formation')
+        else:
+            if instruction.mnemonic in ('lea', 'leal', 'leaq'):
+                raise IdentityError('unsupported address-valued TLS instruction')
+            width = memory_access_width(instruction)
+            if width is None or offset + width > start + length:
+                raise IdentityError('TLS memory access crosses named object boundary')
         for key, _, _ in objects:
             section_index = getattr(self, 'symbol_sections', {}).get(key)
             if section_index is not None and (section_index >= len(self.sections)
@@ -418,7 +422,8 @@ class ElfImage:
             raise IdentityError('TLS initialized object data incomplete')
         content += bytes(length - initialized)
         names = sorted(self.local_object_key(key) for key, _, _ in objects)
-        return 'tls:' + json.dumps((names, offset - start, length, content.hex()), separators=(',', ':'))
+        prefix = 'tls-address:' if address_only else 'tls:'
+        return prefix + json.dumps((names, offset - start, length, content.hex()), separators=(',', ':'))
 
     def reference_identity(self, address, instruction, spelling):
         # Equal immutable contents do not imply equal pointer identity. Mutable
@@ -622,12 +627,145 @@ REGISTERS = {
 ALIASES = {alias: (base, group, size) for base, (group, aliases) in REGISTERS.items() for size, alias in enumerate(aliases)}
 
 
+INTEGER_REGISTER_ALIASES = {
+    **{alias: 'r' + base for base, aliases in (
+        ('ax', ('rax', 'eax', 'ax', 'al', 'ah')),
+        ('bx', ('rbx', 'ebx', 'bx', 'bl', 'bh')),
+        ('cx', ('rcx', 'ecx', 'cx', 'cl', 'ch')),
+        ('dx', ('rdx', 'edx', 'dx', 'dl', 'dh')),
+        ('si', ('rsi', 'esi', 'si', 'sil')),
+        ('di', ('rdi', 'edi', 'di', 'dil')),
+        ('bp', ('rbp', 'ebp', 'bp', 'bpl')),
+        ('sp', ('rsp', 'esp', 'sp', 'spl')),
+    ) for alias in aliases},
+    **{alias: f'r{number}' for number in range(8, 16)
+       for alias in (f'r{number}', f'r{number}d', f'r{number}w', f'r{number}b')},
+}
+FULL_INTEGER_REGISTER = re.compile(r'%(r[abcd]x|r[sd]i|rbp|rsp|r(?:[89]|1[0-5]))$')
+TLS_LEA_ADDRESS = re.compile(r'(-?0x[0-9a-fA-F]+|-?\d+)?\(%([A-Za-z][A-Za-z0-9]*)\)$')
+
+
+def thread_pointer_states(instructions):
+    """Must-provenance of Linux x86-64 FS:0 thread-pointer register values.
+
+    Analyze the original CFG, including instructions omitted by dispatch
+    projection. Only exact full-width copies/address formation add facts;
+    joins retain facts agreed by every path. Unsupported effects clear facts.
+    """
+    if not any(re.search(r'%fs:(?:0x0|0),%', insn.operands.replace(' ', ''))
+               for insn in instructions):
+        return {}
+    indexes = {insn.address: at for at, insn in enumerate(instructions)}
+    if any(insn.mnemonic.startswith('loop') for insn in instructions):
+        raise IdentityError('unsupported loop control flow in TLS provenance proof')
+
+    def successors(at):
+        insn = instructions[at]
+        result = []
+        if insn.mnemonic.startswith('j'):
+            dest = target(insn)
+            if dest is None:
+                raise IdentityError('unresolved control flow in TLS provenance proof')
+            if dest[0] in indexes:
+                result.append(indexes[dest[0]])
+        if (not insn.mnemonic.startswith('ret') and insn.mnemonic != 'jmp'
+                and at + 1 < len(instructions)):
+            result.append(at + 1)
+        return result
+
+    def transfer(insn, incoming):
+        state = dict(incoming)
+        opcode = insn.mnemonic
+        operands = insn.operands.split('#', 1)[0].strip()
+        if opcode == 'lock':
+            parts = operands.split(None, 1)
+            opcode, operands = parts[0], parts[1] if len(parts) == 2 else ''
+        parts = [part.strip() for part in re.split(r',(?![^()]*\))', operands)]
+
+        def forget(operand):
+            if re.fullmatch(r'%[A-Za-z][A-Za-z0-9]*', operand):
+                state.pop(INTEGER_REGISTER_ALIASES.get(operand[1:]), None)
+
+        if (opcode.startswith(('j', 'ret', 'nop'))
+                or opcode in ('cmp', 'cmpb', 'cmpw', 'cmpl', 'cmpq',
+                              'test', 'testb', 'testw', 'testl', 'testq')):
+            return state
+        if opcode in ('pause', 'endbr64'):
+            return state
+        if opcode.startswith('call'):
+            return {}  # Conservative even for nonvolatile registers.
+        if opcode in ('mov', 'movq', 'movabs', 'movabsq') and len(parts) == 2:
+            source, destination = parts
+            forget(destination)
+            full = FULL_INTEGER_REGISTER.fullmatch(destination)
+            if full:
+                if source in ('%fs:0', '%fs:0x0'):
+                    state[full[1]] = 0
+                elif FULL_INTEGER_REGISTER.fullmatch(source) and source[1:] in incoming:
+                    state[full[1]] = incoming[source[1:]]
+            return state
+        if opcode in ('lea', 'leaq') and len(parts) == 2:
+            address, destination = parts
+            forget(destination)
+            full, base = FULL_INTEGER_REGISTER.fullmatch(destination), TLS_LEA_ADDRESS.fullmatch(address)
+            if full and base and FULL_INTEGER_REGISTER.fullmatch('%' + base[2]) and base[2] in incoming:
+                offset = int(base[1], 0) if base[1] and '0x' in base[1] else int(base[1] or '0')
+                state[full[1]] = incoming[base[2]] + offset
+            return state
+        if opcode in ('xadd', 'xaddb', 'xaddw', 'xaddl', 'xaddq', 'xchg', 'xchgb', 'xchgw', 'xchgl', 'xchgq'):
+            for operand in parts:
+                forget(operand)
+            return state
+        extensions = ('movb', 'movw', 'movl', 'movsbl', 'movsbw', 'movsbq',
+                      'movzbl', 'movzbw', 'movzbq', 'movswl', 'movswq',
+                      'movzwl', 'movzwq', 'movslq', 'movsxd')
+        conditions = ('a', 'ae', 'b', 'be', 'c', 'e', 'g', 'ge', 'l', 'le',
+                      'na', 'nae', 'nb', 'nbe', 'nc', 'ne', 'ng', 'nge',
+                      'nl', 'nle', 'no', 'np', 'ns', 'nz', 'o', 'p', 'pe',
+                      'po', 's', 'z')
+        cmoves = tuple('cmov' + condition + suffix for condition in conditions for suffix in ('', 'w', 'l', 'q'))
+        sets = tuple('set' + condition for condition in conditions)
+        if ((opcode in extensions + cmoves and len(parts) == 2)
+                or (opcode in sets and len(parts) == 1)):
+            forget(parts[-1])
+            return state
+        ordinary = ('add', 'sub', 'and', 'or', 'xor', 'adc', 'sbb', 'shl', 'shr', 'sal', 'sar', 'rol', 'ror', 'inc', 'dec', 'neg', 'not')
+        if opcode in ordinary or any(opcode == family + suffix for family in ordinary for suffix in 'bwlq'):
+            forget(parts[-1])
+            return state
+        if opcode in ('push', 'pushq'):
+            state.pop('rsp', None)
+            return state
+        if opcode in ('pop', 'popq'):
+            forget(parts[-1])
+            state.pop('rsp', None)
+            return state
+        return {}  # Implicit/unknown register writes must not leave stale facts.
+
+    incoming, outgoing, pending = {0: {}}, {}, [0]
+    while pending:
+        at = pending.pop()
+        after = transfer(instructions[at], incoming[at])
+        if outgoing.get(at) == after:
+            continue
+        outgoing[at] = after
+        for successor in successors(at):
+            before = incoming.get(successor)
+            merged = after if before is None else {name: value for name, value in before.items()
+                                                   if after.get(name) == value}
+            if before != merged:
+                incoming[successor] = dict(merged)
+                pending.append(successor)
+    return incoming
+
+
 def normalized(instructions, selected=None, omitted=(), image=None):
     """Preserve instruction order and label destinations, not absolute PCs."""
     selected = set(range(len(instructions))) if selected is None else set(selected)
     omitted = set(omitted)
     live = [at for at in sorted(selected) if at not in omitted]
     labels = {instructions[at].address: f'I{index}' for index, at in enumerate(live)}
+    tls_states = thread_pointer_states(instructions)
     renaming = {}
     counts = {'saved': 0, 'scratch': 0}
     # A backend can allocate RBP as an ordinary nonvolatile temporary. It is
@@ -660,6 +798,16 @@ def normalized(instructions, selected=None, omitted=(), image=None):
             raise IdentityError('unsupported implicit-register system instruction')
         operands, _, comment = insn.operands.partition('#')
         operands = operands.strip()
+        if insn.mnemonic in ('lea', 'leaq'):
+            parts = [part.strip() for part in re.split(r',(?![^()]*\))', operands)]
+            address = TLS_LEA_ADDRESS.fullmatch(parts[0]) if len(parts) == 2 else None
+            state = tls_states.get(at, {})
+            if address and address[2] in state and FULL_INTEGER_REGISTER.fullmatch(parts[1]):
+                if image is None:
+                    raise IdentityError('TLS address formation requires ELF data evidence')
+                offset = int(address[1], 0) if address[1] and '0x' in address[1] else int(address[1] or '0')
+                identity = image.tls_identity(state[address[2]] + offset, insn, address_only=True)
+                operands = f'[{identity}](%{address[2]}),{parts[1]}'
         dest = target(insn)
         if dest:
             address, symbol = dest
@@ -1138,6 +1286,49 @@ def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions):
             'machine': {'latch_accessor': 'wf__floor_record_latch', 'atomic_acquisition_addresses': atomics}}
 
 
+def entry_adapter_evidence(seq_ir, demand_ir, wrapper, seq_header, demand_header):
+    """Recognize the exact pool diamond's inactive IR provenance.
+
+    The selected source call may be inlined in the actual wrapper. This proof
+    preserves every adapter operation, including output stores, and establishes
+    only which canonical IR entrance was compiled, never its machine identity
+    or preservation of live state across the pool call.
+    """
+    if not seq_header or seq_header != demand_header:
+        return None
+    original, changed = seq_ir.get(wrapper, {}), demand_ir.get(wrapper, {})
+    if len(original) != 1 or len(changed) != 4:
+        return None
+    entry = next(iter(changed.values()))
+    if len(entry) != 3:
+        return None
+    pool = re.fullmatch(r'(%[\w.$]+) = call i32 @wf__par_pool_active\(\)', entry[0])
+    active = re.fullmatch(r'(%[\w.$]+) = icmp ne i32 (%[\w.$]+), 0', entry[1])
+    branch = re.fullmatch(r'br i1 (%[\w.$]+), label %([\w.$]+), label %([\w.$]+)', entry[2])
+    if not pool or not active or not branch or active[2] != pool[1] or branch[1] != active[1]:
+        return None
+    par, seq = changed.get(branch[2], []), changed.get(branch[3], [])
+    if len(par) != 2 or len(seq) != 2 or par[1] != seq[1]:
+        return None
+    join_edge = re.fullmatch(r'br label %([\w.$]+)', seq[1])
+    join = changed.get(join_edge[1], []) if join_edge else []
+    call_pattern = r'(%[\w.$]+) = call (i[0-9]+|ptr) @([\w.$]+)\((.*)\)'
+    par_call, seq_call = re.fullmatch(call_pattern, par[0]), re.fullmatch(call_pattern, seq[0])
+    phi = re.fullmatch(r'(%[\w.$]+) = phi (i[0-9]+|ptr) \[ (%[\w.$]+), %([\w.$]+) \], \[ (%[\w.$]+), %([\w.$]+) \]', join[0]) if join else None
+    if (not par_call or not seq_call or not phi or not seq_call[3].startswith('wf__par_seq_')
+            or par_call[2] != seq_call[2] or par_call[4] != seq_call[4]
+            or par_call[3] != canonical_symbol(seq_call[3])
+            or phi[2] != seq_call[2] or (phi[3], phi[4]) != (par_call[1], branch[2])
+            or (phi[5], phi[6]) != (seq_call[1], branch[3])):
+        return None
+    projected = [f'{phi[1]} = call {seq_call[2]} @{canonical_symbol(seq_call[3])}({seq_call[4]})', *join[1:]]
+    if projected != next(iter(original.values())):
+        return None
+    return {'inactive_ir_root': seq_call[3], 'projected_adapter_ir_identical': True,
+            'projected_ir_sha256': hashlib.sha256('\n'.join(projected).encode()).hexdigest(),
+            'qualification': 'canonical source IR entrance provenance; selected computation may be inlined and its wrapper machine code still differs'}
+
+
 def classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
     """Keep construction fatal while separating proved computation closure.
 
@@ -1160,17 +1351,22 @@ def classify_construction(record, wrapper, selected_roots, writer_evidence, inve
     closure_complete = (bool(inventory_roots) and inventory_roots <= compared
                         and bool(closure) and not unknown
                         and all(row['identical'] or row['function'] in writer_evidence for row in closure))
+    adapter = record.get('entry_adapter_provenance', {})
+    proven_ir_entrance = (adapter.get('inactive_ir_root') in compared
+                          and adapter.get('projected_adapter_ir_identical') is True
+                          and adapter.get('optimized_pool_projection', {}).get('pool_decisions_per_timed_call') == 1)
     for failure in record['failures']:
         if (failure['function'] == wrapper and 'dispatch' in record and closure_complete
                 and record['dispatch']['pool_decisions_per_timed_call'] == 1
-                and bool(selected_roots) and selected_roots <= compared
+                and (bool(selected_roots) and selected_roots <= compared or proven_ir_entrance)
                 and (failure['reason'] == 'normalized timed sequential wrapper differs'
                      or failure['reason'].startswith('wrapper CFG projection lacks entry-state preservation proof:'))):
             failure.update(category='entry-adapter', evidence={
                 'timed_wrapper': wrapper, 'selected_sequential_roots': sorted(selected_roots),
                 'closure_functions': sorted(compared),
                 'dispatch': record['dispatch'],
-                'qualification': 'body/helper closure identical; adapter instructions/state proof still fail construction'})
+                'ir_entrance_provenance': adapter or None,
+                'qualification': 'covered body/helper inventory identical; adapter and any inlined computation machine identity/state proof still fail construction'})
     record['computation_status'] = ('pass' if closure_complete else
                                     'fail' if unknown or any(not row['identical'] and row['function'] not in writer_evidence for row in closure)
                                     else 'unverified')
@@ -1200,13 +1396,14 @@ def check_workload(name, build):
         demand_image = ElfImage(build / 'demand' / name)
         seq = seq_image.bound(parse_disassembly((build / 'seq' / f'{name}.disassembly').read_text()))
         demand = demand_image.bound(parse_disassembly((build / 'demand' / f'{name}.disassembly').read_text()))
-        ir = parse_ir((build / 'demand' / f'{name}.ll').read_text())
-        seq_ir = parse_ir((build / 'seq' / f'{name}.ll').read_text())
+        demand_text = (build / 'demand' / f'{name}.ll').read_text()
+        seq_text = (build / 'seq' / f'{name}.ll').read_text()
+        ir, seq_ir = parse_ir(demand_text), parse_ir(seq_text)
         wrappers = [symbol for symbol in seq_ir if symbol.startswith('wf_bench_') and not symbol.endswith('_release')]
         if len(wrappers) != 1:
             raise IdentityError(f'expected one timed wrapper, found {wrappers}')
         wrapper = wrappers[0]
-        signature = re.search(r'define\b[^\n]*@' + re.escape(wrapper) + r'\(([^)]*)\)', (build / 'demand' / f'{name}.ll').read_text())
+        signature = re.search(r'define\b[^\n]*@' + re.escape(wrapper) + r'\(([^)]*)\)', demand_text)
         if not signature or any(not re.match(r'(?:i[0-9]+|ptr)\b', argument.strip()) for argument in signature[1].split(',') if argument.strip()):
             raise IdentityError('unsupported noninteger/pointer timed-wrapper ABI')
         argument_count = len([argument for argument in signature[1].split(',') if argument.strip()])
@@ -1242,6 +1439,7 @@ def check_workload(name, build):
                     raise IdentityError('active timed cheap path does not select same sequential body once')
                 record['actual_entry']['W2/W4/W8'] = {'computation': active_root, 'decision_trace': active_decisions, 'outside_loops': True, 'inputs': arguments}
         except IdentityError as error:
+            record['entry_state_proof'] = {'status': 'unverified', 'reason': str(error)}
             pending = set()
             try:
                 selected, omitted, count = project_pool(demand[wrapper], False)
@@ -1249,6 +1447,16 @@ def check_workload(name, build):
                     raise IdentityError('LLVM and optimized assembly dynamic pool counts disagree')
                 diff = first_difference(normalized(seq[wrapper], image=seq_image), normalized(demand[wrapper], selected, omitted, image=demand_image))
                 record['comparisons'].append({'function': wrapper, 'role': 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained', 'identical': diff is None})
+                headers = [re.search(r'^define\b[^\n]*@' + re.escape(wrapper) + r'\([^\n]*$', text, re.M)
+                           for text in (seq_text, demand_text)]
+                provenance = entry_adapter_evidence(seq_ir, ir, wrapper,
+                    headers[0][0] if headers[0] else None, headers[1][0] if headers[1] else None)
+                if provenance:
+                    provenance['optimized_pool_projection'] = {
+                        'pool_decisions_per_timed_call': count,
+                        'selected_instruction_addresses': [demand[wrapper][at].address for at in sorted(selected)],
+                        'state_preservation': 'unverified; CFG selection does not establish ABI preservation'}
+                    record['entry_adapter_provenance'] = provenance
                 if diff:
                     failure(wrapper, 'normalized timed sequential wrapper differs', diff)
                 else:
