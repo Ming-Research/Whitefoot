@@ -163,7 +163,7 @@ fn execute_container_program(
         assert_eq!(
             output.stdout,
             format!(
-                "container allocation observer: {expected_allocations} allocations or shared empty headers, each released exactly once\n"
+                "container allocation observer: {expected_allocations} events, each allocation released exactly once and each shared empty header released or grown\n"
             )
             .as_bytes(),
             "{context}: {output:?}"
@@ -179,7 +179,7 @@ fn execute_container_program(
             assert!(concurrent.stderr.is_empty(), "{concurrent:?}");
             assert_eq!(
                 concurrent.stdout,
-                b"container allocation observer: 32 allocations or shared empty headers, each released exactly once\n"
+                b"container allocation observer: 32 events, each allocation released exactly once and each shared empty header released or grown\n"
             );
             for (argument, message) in [
                 ("double-release", "allocation released twice"),

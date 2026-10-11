@@ -30,8 +30,11 @@ extern int wf_fixture_main(int argc, char **argv);
 // [STOR-1] a capacity-0 runtime window is the shared empty header: it is
 // never allocated, so its release or growth is not a ledger event. Each
 // capacity-0 construction ends in exactly one such release or growth, which
-// the observer counts so that its total equals the allocations a
-// per-window header would have made.
+// the observer counts so that the total equals the allocations a per-window
+// header would have made. Every empty owner shares one address, so the count
+// is an aggregate: unlike an allocation, a shared header's release is not
+// tied to its owner, and a missing release offset by a repeated one is not
+// detected here.
 extern const unsigned char wf__empty_window[64];
 static atomic_size_t shared_header_events;
 
@@ -217,7 +220,7 @@ int main(int argc, char **argv) {
     }
     for (size_t index = 0; index < allocation_count; ++index)
         free(allocations[index].pointer);
-    printf("container allocation observer: %zu allocations or shared empty headers, each released exactly once\n",
+    printf("container allocation observer: %zu events, each allocation released exactly once and each shared empty header released or grown\n",
            allocation_count + atomic_load(&shared_header_events));
     unlock_ledger();
     return 0;
