@@ -323,3 +323,159 @@ not results of this run.
 
 The pre-registered rule **rejects this candidate** on the probe in both
 passes. **Firn's engine run is not needed** to decide that rejection.
+
+## Step B: oldest-only handoff, registered before measurement
+
+The owner selected option B on 2026-10-11: first count the costs of the
+baseline and rejected age-bounded turns alongside the next candidate, then
+measure oldest-only handoff. This section registers the comparison before
+any run of that candidate. No new performance result is claimed. This is a
+runtime scheduling experiment under [WAIT-2], with no specification change.
+
+**Question and falsifier.** Does reserving one aged guard's next attempt,
+passing that reservation after a false retry, remove the repeated wake-all
+and bulk-turn costs sufficiently to bound the probe's tail without losing
+more than ten percent runtime? A longest wait above 3,300,000 ns at N = 50,
+or runtime above 1.10 times the baseline at any measured N, rejects this
+candidate when the twin control is valid. Improved median or fewer retries
+cannot compensate for either failure.
+
+**Arms and construction.** Use this revision's compiler, the same unchanged
+`probe.wf`, optimization settings and runtime source for all arms. Build-time
+runtime modes select no guard fairness (`baseline`), rejected age-bounded
+turns (`age`), and oldest-only handoff (`oldest`). `twin` is a byte-for-byte
+copy of the baseline executable, checked with `cmp` and recorded with its
+SHA-256 digest. This is a same-source mechanism comparison; the no-fairness
+arm is not claimed to reproduce every byte of the historical compiler.
+The research Makefile emits the probe LLVM once, then includes the maintained
+`compiler/runtime.mk` native runtime rules with C11,
+`-O2 -falign-functions=64`, full LTO and LLD, matching the driver's prior
+`--full-lto` optimization settings without a new compiler option.
+The age reference retains its bulk-turn admission and optimistic spin loop
+so the attribution compares the rejected mechanism rather than a repaired
+version of it. Normal builds select oldest-only with counters compiled out.
+
+**Placement, scale and order.** All probe execution runs through the
+temporary CI workflow on the native i9-14900K (`self-hosted`, `14900k`), with
+`WF_DRIVERS=2` and `taskset -c 2,4`, matching the previous two-core placement.
+Record the revision, compiler/tool versions, executable hashes and CPU
+sibling topology. Begin with two N = 2, K = 100 pilots for each arm and
+retain their runtime spread before the full comparison. A pilot that cannot
+finish within ten seconds stops expansion; full runs have a 120-second
+watchdog, whose expiry invalidates the evidence rather than changing a
+performance criterion. The registered full experiment is
+two passes of K = 1,000 successful checkouts per context:
+
+| Pass | N order | Arm order within each N |
+|---|---|---|
+| 1 | 2, 8, 50 | oldest, baseline, age, twin |
+| 2 | 50, 8, 2 | twin, age, baseline, oldest |
+
+Arms are interleaved within N, and both orders reverse; the experiment does
+not run all baselines first. Keep every raw row. Each row must contain
+N × K completed checkouts, and all arms at that N must have equal checksums.
+Missing rows, a failed executable, unequal completed work or different twin
+bytes invalidate the comparison. These checks concern comparable work, not
+fairness.
+
+**Decision rule.** First require twin/runtime-baseline in [0.95, 1.05] for
+every pass/N pair. Five percent is a preselected noise tolerance, not a
+measured precision claim. A twin failure makes the comparison inconclusive;
+it cannot establish a candidate pass. With valid controls, oldest-only passes
+only if its N = 50 maximum wait is at most 3,300,000 ns in both passes and
+its runtime/baseline is at most 1.10 at every N in both passes. Ratios use
+the baseline row of the same pass and N; no averaging across passing and
+failing cells. The age reference has no vote in candidate acceptance.
+Only a passing uninstrumented probe warrants asking firn to measure its
+engine. Firn's engine remains a separate required consumer comparison before
+adopting the mechanism; a probe pass does not establish engine performance.
+
+**Counters, separately from judgment.** Build instrumented baseline, age
+and oldest arms separately, then run one diagnostic sweep at N = 2, 8, 50,
+K = 1,000, on the same pinned drivers after their small pilots. Record total
+guard notifications (including registration-before-park wakes), failed
+retries that register and park again, object-lock acquisitions refused by
+a turn/reservation, and fairness-clock reads. Print raw counts and counts
+per successful checkout beside that invocation's latency percentiles.
+The failed-retry count covers guards holding an ordinary object, including
+this probe, and increments only when the false retry actually parks. An
+early intervening wake is a notification but not another park. Table-only
+successful guards have no bridge completion hook to clear retry attribution,
+so their false retries are excluded rather than miscounted. The runtime
+counts generic events without inspecting this probe's state;
+normalization uses the probe's N × K, not all successful object holds (the
+probe also takes the object to return each checkout). Output, aggregation
+and any added clock samples must stay outside the uninstrumented timing
+judgment. Clock reads here mean calls for fairness bookkeeping, not the
+probe's own latency clock. Wake-to-run latency is omitted unless a separate
+sampling mode can quantify its perturbation; count-only instrumentation
+cannot establish scheduler delay or clock-call cost.
+
+**Attribution reading.** Herd amplification is supported only if age's
+notifications and failed retries per successful checkout rise above baseline
+at N = 50 and oldest lowers both alongside an uninstrumented runtime
+improvement. Refused-lock grabs isolate the spin-loop hypothesis: their
+reduction in oldest supports reduced admission traffic, not a claim that
+this traffic alone caused the whole regression. Clock-call counts show
+frequency, not duration; a high count alone does not establish clock cost.
+If the corresponding counts do not grow in age or do not fall in oldest,
+that explanation is falsified for this workload even if timing improves.
+Counters cannot apportion elapsed time among overlapping effects. Compare
+diagnostic runtimes with the uninstrumented rows only to disclose observer
+perturbation; diagnostics judge no performance criterion. No timing or
+counter result has yet been collected for step B.
+
+### Reservation lifetime and progress obligations
+
+A reservation authorizes an attempt, not a successful checkout. It remains
+owned through reacquisition and ends only when the statement releases that
+object after either registering its false guard or executing its block.
+False retries retain their first-registration age. The notification sweep
+visits remaining watches oldest first, including younger watches whose guard
+the original write might have enabled; each failed watcher gets at most one
+attempt in a sweep. A sweep retains its initiating monotonic clock sample
+as an age cutoff, so later new statements cannot indefinitely extend it;
+equal-age ties use context identity. Only a finite number of registrations
+can occur in the clock tick containing that cutoff. This avoids an all-false
+set continuously waking itself without another write. Writes by exempt
+holders while a reservation is live preserve a pending
+notification for watches already tried or newly registered beyond the
+sweep cutoff. Untried watches within the sweep already observe the latest
+state. Pending writes do not restart the oldest watch ahead of those
+remaining watches.
+
+The ordinary acquisition queue gets progress between sweeps. A live guard
+reservation prevents a newcomer from receiving an ordinary handed hold;
+when no reservation is live, the existing bounded acquisition handoff can
+run before a new guard sweep. Earlier-object holders, table-entry holders
+and cancellation-state updates retain their exemptions, since a reserved
+retry may need their earlier locks. The experiment tests no-overtaking for
+ordinary newcomers without these pre-existing obligations. This does not
+promise strict first-come successful guard execution.
+
+Cancellation and deadlines do not asynchronously discard an atomic retry
+([WAIT-2], [PRE-2]). For example, a guard equivalent to
+`available || cancellation_state.fired` may finish after firing and release
+its reservation normally; a guard that does not observe cancellation keeps
+waiting. A timeout is an outcome of a host wait, not a timer attached to an
+atomic guard. A context cannot enter that host wait until its atomic
+statement completes. Every normal block exit releases its holds, including
+the reserved object; the context must hold no reservation when it finishes.
+Thus cancellation and timeout cannot silently remove the only scheduled
+reservation owner. Adding a future asynchronous atomic-abandonment API would
+require an explicit reservation-transfer contract; none is introduced here.
+The existing lowering retries the same saved guard targets before evaluating
+the guard, so a selected reservation's object is always retaken even for a
+multi-object condition.
+
+A multi-object false retry can release B before releasing its reserved A.
+If B is written in that interval, its notification wakes that already
+reserved attempt without installing a second reservation, then continues
+selecting from B's remaining watches. Thus one write can also notify an
+early retry already reserved elsewhere, but creates at most one new
+reservation. The shared watch lock serializes reservation publication and
+retirement across objects; object locks remain outside it in the lock order.
+The deterministic cross-unit test fixes that release/write order with a
+native-thread acknowledgement and checks both notifications, the early wake
+and fresh acquisitions after both contexts exit. Its execution, like the
+ordinary single-object ordering tests, remains to be validated in CI.

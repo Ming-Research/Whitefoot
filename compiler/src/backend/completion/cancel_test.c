@@ -5,6 +5,11 @@
  * real receives; the silent peer remains open throughout cancellation.
  * No test-specific branch is compiled into the runtime. */
 #define _GNU_SOURCE
+/* These races observe broadcast wake deduplication, rather than age-based
+ * selection. Keep them below the age threshold regardless of host speed;
+ * shared_object_test.c supplies the clock and separately covers an aged,
+ * reserved guard completing through its cancellation alternative. */
+#define WF_GUARD_TURN_AGE_NS UINT64_MAX
 #include "bridge.c"
 #include "../ordinary_values.c"
 #include "../runtime_test_guard.h"
@@ -148,10 +153,11 @@ static void guard_races(void) {
     CHECK(view->shared.watching == NULL);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
     /* The early-woken statement retries at once, as emitted code does,
-     * which also ends the turn the firing's wake granted it. */
+     * then completes by releasing the unit. */
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
-    CHECK(view->visible_fired == 1u && view->shared.turns == 0u);
+    CHECK(view->visible_fired == 1u);
     wf__shared_unlock(view, 1u);
+    CHECK(view->shared.reservation == NULL);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));
@@ -232,14 +238,14 @@ static void guard_races(void) {
     CHECK(view->shared.watching == NULL);
     CHECK(((wf_shared *)ordinary)->watched == 0u);
     CHECK(((wf_shared *)ordinary)->watching == NULL);
-    /* The woken statement retries its targets, as emitted code does, which
-     * ends the turn whichever write woke it granted. */
+    /* The woken statement retries its targets, as emitted code does, and
+     * releases every unit when the cancellation alternative completes. */
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
     CHECK(wf_context_root.shared_turn == NULL);
-    CHECK(view->shared.turns == 0u && ((wf_shared *)ordinary)->turns == 0u);
+    CHECK(view->shared.reservation == NULL && ((wf_shared *)ordinary)->reservation == NULL);
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));

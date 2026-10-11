@@ -510,7 +510,8 @@ int wf__watch_park(void *watch, void *frame);
  * `wf__watch_unit`, which registers a watch on such a list.  The moments
  * the runtime's tests observe, which they define `wf__watch_seen` to see: a
  * statement that wrote a watched unit wakes its watches, and a park answers
- * at once for a wake that came first. */
+ * at once for a wake that came first; READY observes each detached watch,
+ * including a notification preceding its park. */
 struct wf_watch_link;
 typedef struct wf_watch_list {
     uint32_t count;
@@ -518,10 +519,26 @@ typedef struct wf_watch_list {
 } wf_watch_list;
 void wf__watch_unit(void *watch, wf_watch_list *list);
 void wf__watch_written(wf_watch_list *list);
-enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
+enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY, WF_WATCH_READY };
 void wf__watch_seen(unsigned moment);
+/* Research arms share the same runtime sources: baseline (0), rejected
+ * age-bounded bulk turns (1), and proposed oldest-only handoff (2). */
+#ifndef WF_GUARD_MODE
+#define WF_GUARD_MODE 2
+#endif
+#if WF_GUARD_MODE < 0 || WF_GUARD_MODE > 2
+#error "WF_GUARD_MODE must be 0, 1 or 2"
+#endif
+#ifndef WF_GUARD_COUNTERS
+#define WF_GUARD_COUNTERS 0
+#endif
+/* The per-watch READY observer is native-test-only, including builds without
+ * LTO. Production and diagnostic counter builds add no test-observer call. */
+#ifndef WF_GUARD_TEST_HOOKS
+#define WF_GUARD_TEST_HOOKS 0
+#endif
 /* Tests may replace the guard-age clock; production reads the platform's
- * monotonic clock only for registration and writes waking object watches. */
+ * monotonic clock only for registration and object notification sweeps. */
 uint64_t wf__guard_clock_ns(void);
 
 /* Emitted heap storage uses the optional heap.c unit; accounting and reads

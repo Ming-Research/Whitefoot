@@ -1227,11 +1227,18 @@ typedef struct wf_shared {
     _Atomic uint8_t claimed;
     uint32_t watched;
     _Atomic uint64_t holders;
-    /* Outstanding attempts of aged guards woken through this object's list.
-     * Mutated and read relaxed under lock for admission. */
+#if WF_GUARD_MODE == 2
+    /* Protected by this object's lock, including watch-list selection (which
+     * additionally takes wf_watch_lock). The owner remains live and retains
+     * this object until its saved-target retry releases the hold. No relaxed
+     * hint dereferences this pointer outside the lock. */
+    wf_context *reservation;
+#else
+    /* Reference arm: mutated and read relaxed under the object's lock. */
     _Atomic uint64_t turns;
+#endif
     /* Circular queue: tail->next is the head. One pointer leaves room for
-     * turns within WF_SHARED_STATE_OFFSET, with constant-time operations. */
+     * the fairness slot within WF_SHARED_STATE_OFFSET, with constant-time operations. */
     wf_context *waiting_tail;
     wf_watch_link *watching;
     /* The parked context an unlock handed the object to, until it resumes
@@ -1301,14 +1308,46 @@ struct wf_context {
      * and whether an unlock handed it the object while it was parked. */
     uint32_t shared_woken;
     uint32_t shared_write;
+    /* Written before queue insertion under the object's lock and read only
+     * while queued under that same lock; retain native cancellation's
+     * admission exemption when its update must park behind a holder. */
+    uint32_t shared_exempt;
     _Atomic uint32_t shared_granted;
     /* Actual holds, including borrowed holds, but not a reservation that
      * an unlock handed us before we resume. Owned by the running context. */
     uint64_t shared_holds;
     /* At most one: a wake removes the watch from every unit. Published by
      * the watch lock for an early wake, or the run queue for a parked one;
-     * consumed under this object's lock on the retry's acquisition. */
+     * consumed under this object's lock, at acquisition in reference mode 1
+     * or release in handoff mode 2. In mode 2 every write also holds
+     * wf_watch_lock: a false retry can be notified on another unit before
+     * releasing the original reservation. Admission reads while running or
+     * queued, when no watch can newly publish ownership to that context. */
     wf_shared *shared_turn;
+#if WF_GUARD_MODE == 2
+    /* Only accessed under the reserved object's lock. An exempt writer may
+     * set this while the owner runs: carry it along the finite sweep, then
+     * restart once at the end so writes cannot lose an earlier notification
+     * or continually reset the cursor before younger watches get a retry. */
+    unsigned guard_rescan;
+    /* Protected by the reserved object's lock; copied before publication
+     * through wf_watch_lock/run queue, then carried unchanged on transfer.
+     * The write's monotonic sample bounds the cohort: newly waiting
+     * statements cannot extend an old sweep indefinitely. */
+    uint64_t guard_cutoff;
+#endif
+#if WF_GUARD_COUNTERS
+    /* Set at wake under wf_watch_lock, published by that lock for an early
+     * wake or by the run queue for a parked one. Only the resumed context
+     * consumes it, once, when it next registers a false guard. */
+    unsigned guard_retry;
+    /* First false registration records ordinary-object participation under
+     * wf_watch_lock; wake reads it there. Table-only guards have no success
+     * callback in this bridge, so false-repark attribution excludes them. */
+    unsigned guard_has_object;
+    /* Owned by the running context, consumed by its next actual park. */
+    unsigned guard_false_retry;
+#endif
     /* First false-guard registration of the current statement, retained
      * across retries, and zero before it waits or after it completes.
      * Only statements holding an ordinary object need an age: they release
@@ -2501,6 +2540,47 @@ static void wf_context_finish(wf_context *context) {
     wf_group_finish(group);
 }
 
+#if WF_GUARD_COUNTERS
+/* Instrumented builds only. Each thread owns one cache-line-sized slot;
+ * registration uses one relaxed RMW, then counter increments need no shared
+ * RMW. Atomic relaxed slots also permit diagnostic calls from native test
+ * threads without a reporting data race. The final report follows driver
+ * termination, so the program's driver counts are final. Counts include
+ * generic runtime work, not a special probe path. */
+typedef struct {
+    _Alignas(64) _Atomic uint64_t value[4];
+} wf_guard_counter_slot;
+static wf_guard_counter_slot wf_guard_counters[WF_HEAP_COUNTERS];
+static _Atomic unsigned wf_guard_counter_count;
+static _Thread_local wf_guard_counter_slot *wf_guard_counter_self;
+enum { WF_GUARD_COUNT_WOKEN, WF_GUARD_COUNT_SPURIOUS,
+       WF_GUARD_COUNT_REFUSED, WF_GUARD_COUNT_CLOCK };
+static void wf_guard_count(unsigned which) {
+    if (wf_guard_counter_self == NULL) {
+        unsigned slot = atomic_fetch_add_explicit(
+            &wf_guard_counter_count, 1u, memory_order_relaxed);
+        if (slot >= WF_HEAP_COUNTERS) wf_bridge_fail("too many guard counter threads");
+        wf_guard_counter_self = &wf_guard_counters[slot];
+    }
+    _Atomic uint64_t *value = &wf_guard_counter_self->value[which];
+    atomic_store_explicit(value, atomic_load_explicit(value, memory_order_relaxed) + 1u,
+                          memory_order_relaxed);
+}
+static void wf_guard_report(void) {
+    uint64_t totals[4] = {0u};
+    for (unsigned slot = 0; slot < WF_HEAP_COUNTERS; ++slot)
+        for (unsigned field = 0; field < 4; ++field)
+            totals[field] += atomic_load_explicit(
+                &wf_guard_counters[slot].value[field], memory_order_relaxed);
+    fprintf(stderr, "guard_counters,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[0], (unsigned long long)totals[1],
+            (unsigned long long)totals[2], (unsigned long long)totals[3]);
+}
+#define WF_GUARD_COUNT(which) wf_guard_count(which)
+#else
+#define WF_GUARD_COUNT(which) ((void)0)
+#endif
+
 /* ------------------------------------------------------ guard watches */
 
 /* How many unlocks wake a parked statement to try again before the next one
@@ -2527,8 +2607,8 @@ static void wf_context_finish(wf_context *context) {
  * context resumed.  One lock guards every list, because guards wait rarely,
  * while a statement that finds no link on its unit reads one word and takes
  * no lock.  A release that follows its own statement's false guard writes
- * nothing [SHARE-2] and wakes no one, or the watches on one unit would wake
- * one another without end. */
+ * nothing [SHARE-2]. In handoff mode it may pass the earlier write's
+ * notification to the next untried watcher, but cannot start a new sweep. */
 enum { WF_GUARD_IDLE, WF_GUARD_REGISTERED, WF_GUARD_WOKEN, WF_GUARD_PARKED };
 
 static atomic_flag wf_watch_lock = ATOMIC_FLAG_INIT;
@@ -2541,10 +2621,17 @@ __attribute__((weak)) void wf__watch_seen(unsigned moment) {
 
 /* Clock seam for deterministic runtime tests, like the observation hooks
  * above. Production uses the same platform monotonic clock as host waits.
- * Called only at watch registration and at writes waking object watches. */
+ * Called at watch registration and when an object notification sweep starts. */
 __attribute__((weak)) uint64_t wf__guard_clock_ns(void) {
     return wf_file_monotonic_ns();
 }
+
+#if WF_GUARD_MODE != 0
+static uint64_t wf_guard_now(void) {
+    WF_GUARD_COUNT(WF_GUARD_COUNT_CLOCK);
+    return wf__guard_clock_ns();
+}
+#endif
 
 static void wf_ready_all(wf_context *list) {
     while (list != NULL) {
@@ -2602,9 +2689,18 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
             wf_spin_unlock(&wf_watch_lock);
             break;
         }
-        if (self->guard_started == 0u && self->shared_holds != 0u) {
-            self->guard_started = wf__guard_clock_ns();
+#if WF_GUARD_COUNTERS
+        if (watch->state == WF_GUARD_IDLE) {
+            self->guard_has_object = self->shared_holds != 0u;
+            self->guard_false_retry = self->guard_has_object && self->guard_retry;
+            self->guard_retry = 0u;
         }
+#endif
+#if WF_GUARD_MODE != 0
+        if (self->guard_started == 0u && self->shared_holds != 0u) {
+            self->guard_started = wf_guard_now();
+        }
+#endif
         if (watch->used < WF_WATCH_INLINE_LINKS) {
             link = &watch->links[watch->used];
         } else if (watch->more != NULL && watch->more->used < WF_WATCH_CHUNK_LINKS) {
@@ -2651,49 +2747,138 @@ static void wf_watch_link_off(wf_watch_link *link) {
     __atomic_store_n(link->count, __atomic_load_n(link->count, __ATOMIC_RELAXED) - 1u, __ATOMIC_RELAXED);
 }
 
-/* Wakes every watch on a unit's list, under the watch lock: takes each
- * watch's links off every list, its chunks onto `dead`, to give back once
- * the lock is released, and answers the contexts of parked watches, chained
- * through `next`, to make ready then. */
-static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead, wf_shared *turn) {
+/* Detach exactly one notification under wf_watch_lock. Its context's age
+ * stays live across retries; every link is removed, including other units. */
+static wf_context *wf_watch_wake_one_locked(wf_watch *watch, wf_watch_chunk **dead) {
+    wf_watch_chunk *chunk;
+    for (uint32_t index = 0u; index < wf_watch_inline_used(watch); ++index)
+        wf_watch_link_off(&watch->links[index]);
+    while ((chunk = watch->more) != NULL) {
+        for (uint32_t index = 0u; index < chunk->used; ++index)
+            wf_watch_link_off(&chunk->links[index]);
+        watch->more = chunk->next;
+        chunk->next = *dead;
+        *dead = chunk;
+    }
+    watch->used = 0u;
+    WF_GUARD_COUNT(WF_GUARD_COUNT_WOKEN);
+#if WF_GUARD_COUNTERS
+    watch->context->guard_retry = watch->context->guard_has_object;
+#endif
+#if WF_GUARD_TEST_HOOKS
+    wf__watch_seen(WF_WATCH_READY);
+#endif
+    if (watch->state == WF_GUARD_PARKED) {
+        watch->state = WF_GUARD_IDLE;
+        watch->context->next = NULL;
+        return watch->context;
+    }
+    watch->state = WF_GUARD_WOKEN;
+    return NULL;
+}
+
+#if WF_GUARD_MODE == 2
+/* Original age orders a sweep, with integer context identity breaking equal
+ * clock samples. `after` is live while its hold is being released; no cursor
+ * pointer survives that call. The cutoff assumes the platform monotonic
+ * clock: new waits after its finite clock tick lie beyond the sweep. Missing
+ * or backwards samples do not start a reservation. A false retry keeps its
+ * age and cannot select itself again without a later write. Younger watches also receive
+ * the write's notification after the older watches have tried it. */
+static int wf_guard_before(const wf_context *left, const wf_context *right) {
+    return left->guard_started < right->guard_started
+        || (left->guard_started == right->guard_started
+            && (uintptr_t)left < (uintptr_t)right);
+}
+static wf_watch *wf_guard_oldest(wf_watch_link *head, const wf_context *after, uint64_t cutoff) {
+    wf_watch *oldest = NULL;
+    for (wf_watch_link *link = head; link != NULL; link = link->next) {
+        wf_context *context = link->watch->context;
+        if (context->guard_started > cutoff) continue;
+        if (after != NULL && !wf_guard_before(after, context)) continue;
+        if (oldest == NULL || wf_guard_before(context, oldest->context))
+            oldest = link->watch;
+    }
+    return oldest;
+}
+static wf_context *wf_guard_reserve_locked(wf_shared *shared, wf_watch *watch,
+                                          unsigned rescan, uint64_t cutoff, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
-    uint64_t now = turn != NULL && *head != NULL ? wf__guard_clock_ns() : 0u;
+    for (;;) {
+        wf_context *owner = watch->context;
+        if (owner->shared_turn == NULL) {
+            shared->reservation = owner;
+            owner->shared_turn = shared;
+            owner->guard_rescan = rescan;
+            owner->guard_cutoff = cutoff;
+        }
+        /* A multi-unit guard may re-register false, release B, then receive
+         * B's notification before releasing its old reservation on A. Wake
+         * that attempt without replacing A's ownership; continue B's sweep
+         * so other guards cannot lose B's notification. All shared_turn
+         * writes use wf_watch_lock, including release on a different unit. */
+        wf_context *woken = wf_watch_wake_one_locked(watch, dead);
+        if (woken != NULL) {
+            woken->next = ready;
+            ready = woken;
+        }
+        if (shared->reservation != NULL) return ready;
+        watch = wf_guard_oldest(shared->watching, owner, cutoff);
+        if (watch == NULL) return ready;
+    }
+}
+#endif
+
+/* One write's notifications. Table writes retain their baseline wake-all
+ * behavior. Object calls hold both the object and watch locks. */
+static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead,
+                                        wf_shared *turn) {
+    wf_context *ready = NULL;
+#if WF_GUARD_MODE == 2
+    if (turn != NULL && turn->reservation != NULL) {
+        wf_context *owner = turn->reservation;
+        /* Untried younger watches will observe this write in their existing
+         * turn. Watches behind the cursor or newer than its cutoff need a
+         * notification after the sweep; marking every exempt write would
+         * retry the whole cohort twice even before its first evaluation. */
+        for (wf_watch_link *link = *head; link != NULL; link = link->next) {
+            if (!wf_guard_before(owner, link->watch->context)
+                || link->watch->context->guard_started > owner->guard_cutoff) {
+                owner->guard_rescan = 1u;
+                break;
+            }
+        }
+        return NULL;
+    }
+    if (turn != NULL && *head != NULL
+        && atomic_load_explicit(&turn->granted, memory_order_relaxed) == NULL) {
+        wf_watch *oldest = wf_guard_oldest(*head, NULL, UINT64_MAX);
+        uint64_t now = wf_guard_now();
+        uint64_t started = oldest->context->guard_started;
+        if (started != 0u && now >= started && now - started > WF_GUARD_TURN_AGE_NS)
+            return wf_guard_reserve_locked(turn, oldest, 0u, now, dead);
+    }
+#elif WF_GUARD_MODE == 1
+    uint64_t now = turn != NULL && *head != NULL ? wf_guard_now() : 0u;
+#else
+    (void)turn;
+#endif
     while (*head != NULL) {
         wf_watch *watch = (*head)->watch;
-        uint32_t index;
-        wf_watch_chunk *chunk;
-        /* Only the list whose write won grants a turn. Table writes pass
-         * NULL even when the watch also named a shared object. A writer
-         * never watches: false-guard releases are quiet. Young watches
-         * still wake and race normally. A missing/backward clock sample
-         * grants no turn, rather than underflowing into an ancient age. */
+#if WF_GUARD_MODE == 1
         uint64_t started = watch->context->guard_started;
         if (turn != NULL && started != 0u && now >= started
             && now - started > WF_GUARD_TURN_AGE_NS) {
-            if (watch->context->shared_turn != NULL) {
+            if (watch->context->shared_turn != NULL)
                 wf_bridge_fail("a guard was woken before using its previous turn");
-            }
             watch->context->shared_turn = turn;
             atomic_fetch_add_explicit(&turn->turns, 1u, memory_order_relaxed);
         }
-        for (index = 0u; index < wf_watch_inline_used(watch); index++) {
-            wf_watch_link_off(&watch->links[index]);
-        }
-        while ((chunk = watch->more) != NULL) {
-            for (index = 0u; index < chunk->used; index++) {
-                wf_watch_link_off(&chunk->links[index]);
-            }
-            watch->more = chunk->next;
-            chunk->next = *dead;
-            *dead = chunk;
-        }
-        watch->used = 0u;
-        if (watch->state == WF_GUARD_PARKED) {
-            watch->state = WF_GUARD_IDLE;
-            watch->context->next = ready;
-            ready = watch->context;
-        } else {
-            watch->state = WF_GUARD_WOKEN;
+#endif
+        wf_context *woken = wf_watch_wake_one_locked(watch, dead);
+        if (woken != NULL) {
+            woken->next = ready;
+            ready = woken;
         }
     }
     return ready;
@@ -2741,6 +2926,9 @@ int wf__watch_park(void *watch_frame, void *frame) {
     wf_spin_lock(&wf_watch_lock);
     self->watching = NULL;
     if (watch->state == WF_GUARD_WOKEN) {
+#if WF_GUARD_COUNTERS
+        self->guard_false_retry = 0u;
+#endif
         watch->state = WF_GUARD_IDLE;
         wf_spin_unlock(&wf_watch_lock);
         wf__watch_seen(WF_WATCH_EARLY);
@@ -2749,6 +2937,10 @@ int wf__watch_park(void *watch_frame, void *frame) {
     /* A watch registered on no unit waits for a write no statement makes,
      * and its statement does not complete, as one whose guard is false at
      * every point does not [SHARE-3]. */
+#if WF_GUARD_COUNTERS
+    if (self->guard_false_retry) WF_GUARD_COUNT(WF_GUARD_COUNT_SPURIOUS);
+    self->guard_false_retry = 0u;
+#endif
     watch->state = WF_GUARD_PARKED;
     self->resume = frame;
     wf_context_parked_away = 1;
@@ -2878,34 +3070,47 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
 /* A new statement waits for the aged guards this object woke to attempt it.
  * Statements already holding objects are exempt, as is shared_take for
  * table entries: a retry may need their earlier locks first. The common
- * case adds only this relaxed load to the ordinary admission test. */
+ * case adds only the protected fairness-slot read to ordinary admission. */
+static int wf_shared_has_turn(wf_shared *shared) {
+#if WF_GUARD_MODE == 2
+    return shared->reservation != NULL;
+#elif WF_GUARD_MODE == 1
+    return atomic_load_explicit(&shared->turns, memory_order_relaxed) != 0u;
+#else
+    (void)shared;
+    return 0;
+#endif
+}
+static int wf_shared_turn_refuses(wf_shared *shared, wf_context *self, int exempt) {
+    return !exempt && wf_shared_has_turn(shared)
+        && self->shared_turn != shared && self->shared_holds == 0u;
+}
 static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
-    return wf_shared_admits(shared, write)
-        && (exempt || atomic_load_explicit(&shared->turns, memory_order_relaxed) == 0u
-            || self->shared_turn == shared || self->shared_holds != 0u);
+    int refused = wf_shared_turn_refuses(shared, self, exempt);
+    if (refused) WF_GUARD_COUNT(WF_GUARD_COUNT_REFUSED);
+    return !refused && wf_shared_admits(shared, write);
 }
 
-/* Record an actual acquisition, including taking a handed or borrowed
- * hold. A turn ends before evaluating the guard, even when it is false.
- * The object is held now; its ordinary last unlock wakes the parked queue
- * after the final turn, including the false-guard release path.
- *
- * No timeout or abandonment is needed: lowering's lower_guard retries the
- * same saved targets, taking every guard-read group before evaluation. A
- * wake unlinks all units, so a mixed table/object watch gets exactly one
- * turn from the winning object write, or none from a table write. Guards
- * cannot wait or exit the statement; host cancellation/stop returns host
- * outcomes, never discards an atomic retry. Thus a context cannot finish
- * with a turn, and the statement keeps the object alive until it is used. */
+/* Actual acquisition, including handed/borrowed holds. Reference turns end
+ * here; oldest-only reservations survive until false repark or block exit.
+ * Saved guard targets are always reacquired before evaluation. Host timeout
+ * or cancellation returns a host-call outcome, never abandons an atomic
+ * retry. A cancellation guard that succeeds releases its reservation on all
+ * block-exit edges. There is no asynchronous guard-abort API; adding one
+ * would require unlinking/handing on the reservation before frame disposal. */
 static void wf_shared_took_locked(wf_shared *shared, wf_context *self) {
+#if WF_GUARD_MODE != 1
+    (void)shared;
+#endif
     if (self != NULL) {
         self->shared_holds += 1u;
+#if WF_GUARD_MODE == 1
         if (self->shared_turn == shared) {
             self->shared_turn = NULL;
-            if (atomic_fetch_sub_explicit(&shared->turns, 1u, memory_order_relaxed) == 0u) {
+            if (atomic_fetch_sub_explicit(&shared->turns, 1u, memory_order_relaxed) == 0u)
                 wf_bridge_fail("a guard used a turn its object did not count");
-            }
         }
+#endif
     }
 }
 
@@ -2923,8 +3128,9 @@ static void wf_shared_hold_locked(wf_shared *shared, uint32_t write) {
 /* Parks the running context in the object's queue: at its head when an
  * unlock woke it and it missed again, at its tail otherwise.  Called under
  * the object's lock. */
-static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t write) {
+static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t write, int exempt) {
     self->shared_write = write;
+    self->shared_exempt = (uint32_t)exempt;
     if (shared->waiting_tail != NULL) {
         self->next = shared->waiting_tail->next;
         shared->waiting_tail->next = self;
@@ -2940,10 +3146,9 @@ static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t 
 /* Wakes the first parked statement once the object is free: to try again,
  * or, once WF_SHARED_HANDOFF unlocks have woken it in vain, holding the
  * object.  Called under the object's lock; returns the context to make ready
- * once the lock is released. Turns do not suppress these wakes or the
- * bounded handoff: repeated writes can renew watches without end, but a
- * parked newcomer with a persistently true guard must still proceed. A
- * handed hold retains the existing claimed/borrowed protocol. */
+ * once the lock is released. Handoff mode advances an ordinary newcomer
+ * between finite guard sweeps; reference mode advances it on every unlock.
+ * A handed hold retains the existing claimed/borrowed protocol. */
 static wf_context *wf_shared_wake_locked(wf_shared *shared) {
     wf_context *first;
     wf_context *before;
@@ -2954,15 +3159,25 @@ static wf_context *wf_shared_wake_locked(wf_shared *shared) {
      * the object free, and the turn holder parked behind it would wait for an
      * unlock no one makes: wake the first parked context the turns admit. */
     before = shared->waiting_tail;
-    if (atomic_load_explicit(&shared->turns, memory_order_relaxed) != 0u) {
+    if (wf_shared_has_turn(shared)) {
         wf_context *candidate = before->next;
         for (;;) {
-            if (candidate->shared_turn == shared || candidate->shared_holds != 0u) {
+            if (candidate->shared_turn == shared || candidate->shared_holds != 0u
+#if WF_GUARD_MODE == 2
+                || candidate->shared_exempt != 0u
+#endif
+            ) {
                 break;
             }
             if (candidate == shared->waiting_tail) {
+#if WF_GUARD_MODE == 2
+                /* A live reservation cannot be borrowed by a newcomer.
+                 * The ordinary queue advances between notification sweeps. */
+                return NULL;
+#else
                 before = shared->waiting_tail;
                 break;
+#endif
             }
             before = candidate;
             candidate = candidate->next;
@@ -3055,6 +3270,15 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
                 wf_spin_unlock(&shared->lock);
                 return 0;
             }
+#if WF_GUARD_MODE == 2
+            if (wf_shared_turn_refuses(shared, self, exempt)) {
+                self->resume = frame;
+                wf_context_parked_away = 1;
+                wf_shared_park_locked(shared, self, write, exempt);
+                wf_spin_unlock(&shared->lock);
+                return 1;
+            }
+#endif
             wf_spin_unlock(&shared->lock);
         }
         if (spins >= WF_SHARED_SPINS) {
@@ -3073,7 +3297,7 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
     }
     self->resume = frame;
     wf_context_parked_away = 1;
-    wf_shared_park_locked(shared, self, write);
+    wf_shared_park_locked(shared, self, write, exempt);
     wf_spin_unlock(&shared->lock);
     return 1;
 }
@@ -3133,8 +3357,8 @@ void wf__shared_take(void *object, uint32_t write) {
     }
 }
 
-/* After a statement wrote the object, under the object's lock: wakes every
- * watch on the object's list, unless the statement's own guard was false,
+/* After a statement wrote the object, under the object's lock: notifies its
+ * watchers according to the arm, unless the statement's own guard was false,
  * answering the contexts to make ready and adding chunks to `dead`. */
 static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
@@ -3150,10 +3374,43 @@ static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **
     return ready;
 }
 
-/* Ends one hold under the object's lock and returns the contexts to make
- * ready: the first parked statement once the object is free, woken or handed
- * the object, and, after a write, every context watching for one. */
-static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote, wf_watch_chunk **dead) {
+/* Ends a reservation on a false/read-only retry by passing the original
+ * write's notification to the next age/identity. A successful write starts
+ * a fresh sweep instead. Return whether writes accumulated during the old
+ * sweep require another one; every old-sweep watch goes first, even young
+ * watches, so repeated exempt writes cannot continually reset its cursor.
+ * Both shared->lock and wf_watch_lock protect selection and publication. */
+#if WF_GUARD_MODE == 2
+static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
+                                        wf_watch_chunk **dead, wf_context **ready) {
+    wf_context *self = wf_context_current;
+    if (shared->reservation == NULL || shared->reservation != self) return 0u;
+    wf_spin_lock(&wf_watch_lock);
+    unsigned rescan = self->guard_rescan;
+    shared->reservation = NULL;
+    self->shared_turn = NULL;
+    self->guard_rescan = 0u;
+    if (wrote && !wf_watch_quiet()) {
+        wf_spin_unlock(&wf_watch_lock);
+        return 0u;
+    }
+    wf_watch *next = wf_guard_oldest(shared->watching, self, self->guard_cutoff);
+    if (next != NULL) {
+        *ready = wf_guard_reserve_locked(shared, next, rescan, self->guard_cutoff, dead);
+        if (shared->reservation != NULL) rescan = 0u;
+    }
+    wf_spin_unlock(&wf_watch_lock);
+    return rescan;
+}
+#endif
+
+/* Once a sweep finishes, advance the ordinary acquisition queue before
+ * starting another one. Its existing failed-wake count eventually grants
+ * the hold; a grant suppresses new reservations until that context takes
+ * it. A live reservation admits only its owner and the lock-order/cancel
+ * exemptions, never a newcomer. Thus renewal cannot defeat [WAIT-2]. */
+static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write,
+                                            int wrote, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
     wf_context *woken = NULL;
     if (write != 0u) {
@@ -3161,12 +3418,29 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, 
     } else {
         atomic_fetch_sub_explicit(&shared->holders, 1u, memory_order_relaxed);
     }
-    if (wrote) {
-        ready = wf_shared_written_locked(shared, dead);
-    }
-    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
+#if WF_GUARD_MODE == 2
+    unsigned rescan = wf_guard_release_locked(shared, wrote, dead, &ready);
+    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u)
         woken = wf_shared_wake_locked(shared);
+    /* Cross-unit early notifications may also be in ready. A write by an
+     * exempt holder merely marks the live reservation's notification. */
+    wf_context *written = wrote ? wf_shared_written_locked(shared, dead) : NULL;
+    if (rescan) {
+        wf_spin_lock(&wf_watch_lock);
+        written = wf_watch_wake_locked(&shared->watching, dead, shared);
+        wf_spin_unlock(&wf_watch_lock);
     }
+    if (written != NULL) {
+        wf_context *tail = written;
+        while (tail->next != NULL) tail = tail->next;
+        tail->next = ready;
+        ready = written;
+    }
+#else
+    if (wrote) ready = wf_shared_written_locked(shared, dead);
+    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u)
+        woken = wf_shared_wake_locked(shared);
+#endif
     if (woken != NULL) {
         woken->next = ready;
         ready = woken;
@@ -3186,9 +3460,23 @@ static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write,
         memory_order_relaxed
     );
     atomic_store_explicit(&shared->borrowed, 0u, memory_order_relaxed);
-    if (write != 0u) {
-        ready = wf_shared_written_locked(shared, dead);
+#if WF_GUARD_MODE == 2
+    unsigned rescan = wf_guard_release_locked(shared, write != 0u, dead, &ready);
+    wf_context *written = write != 0u ? wf_shared_written_locked(shared, dead) : NULL;
+    if (rescan) {
+        wf_spin_lock(&wf_watch_lock);
+        written = wf_watch_wake_locked(&shared->watching, dead, shared);
+        wf_spin_unlock(&wf_watch_lock);
     }
+    if (written != NULL) {
+        wf_context *tail = written;
+        while (tail->next != NULL) tail = tail->next;
+        tail->next = ready;
+        ready = written;
+    }
+#else
+    if (write != 0u) ready = wf_shared_written_locked(shared, dead);
+#endif
     return ready;
 }
 
@@ -3198,17 +3486,7 @@ void wf__shared_unlock(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *ready;
     wf_watch_chunk *dead = NULL;
-    if (wf_context_current != NULL) {
-        wf_context_current->shared_holds -= 1u;
-        /* A false guard registers before any release, so quiet releases
-         * preserve the first wait across every retry, including table wakes
-         * and early wakes. A nonquiet release follows the successful block:
-         * every guard target has already been retaken and its turn consumed.
-         * Reset even for a read hold and on every block-exit edge. */
-        if (!wf_watch_quiet()) {
-            wf_context_current->guard_started = 0u;
-        }
-    }
+    if (wf_context_current != NULL) wf_context_current->shared_holds -= 1u;
     wf_spin_lock(&shared->lock);
     if (atomic_load_explicit(&shared->borrowed, memory_order_relaxed) != 0u) {
         ready = wf_shared_give_back_locked(shared, write, &dead);
@@ -3216,6 +3494,16 @@ void wf__shared_unlock(void *object, uint32_t write) {
         ready = wf_shared_end_hold_locked(shared, write, write != 0u, &dead);
     }
     wf_spin_unlock(&shared->lock);
+    /* Keep the age until reservation transfer has used its sweep cursor.
+     * False releases preserve it; successful exit clears it after the last
+     * ordinary hold, including read-only holds and every block-exit edge. */
+    if (wf_context_current != NULL && wf_context_current->shared_holds == 0u
+        && !wf_watch_quiet()) {
+        wf_context_current->guard_started = 0u;
+#if WF_GUARD_COUNTERS
+        wf_context_current->guard_retry = 0u;
+#endif
+    }
     wf_watch_give_back(dead);
     wf_ready_all(ready);
 }
@@ -3647,6 +3935,9 @@ void wf__context_root_run(void *frame) {
         wf_bridge_fail("the entry finished while contexts it started were running");
     }
     wf_drivers_end();
+#if WF_GUARD_COUNTERS
+    wf_guard_report();
+#endif
     wf_context_current = &wf_context_root;
     wf__coro_destroy(frame);
     wf_context_release_arena(&wf_context_root);
