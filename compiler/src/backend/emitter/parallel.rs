@@ -780,8 +780,14 @@ impl FunctionEmitter<'_, '_> {
 
             {
                 self.output.symbol("wf__par_acquire_lane");
+                // The recursion budget already bounds exposed work. Waiting
+                // for a request here delays a thief until the next budgeted
+                // node; only the historical requested control retains that
+                // gate. Ordinary call groups and loop slices keep polling.
                 if self.program.par_demand
                     && self.function.synthesis() != Some(IrSynthesis::Splitter)
+                    && (self.grain.is_none()
+                        || self.program.demand_ablation == crate::DemandAblation::Requested)
                 {
                     let condition = format!("%{}", self.next_temporary()?);
                     let acquired = format!("%{}", self.next_temporary()?);

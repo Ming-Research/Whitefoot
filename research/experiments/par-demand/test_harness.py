@@ -4,12 +4,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import json
+import hashlib
 import measure
 import contextlib
 import io
 from pathlib import Path
 from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E5C_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, E5A_ARMS, E5A_PADDING, E5A_MANIFEST, layout_floor, load, summarize,
-                       attempt_result_e2, attempt_result_e3, attempt_result_e4, cause_verdict, e3_round_count, e4_round_count)
+                       attempt_result_e2, attempt_result_e3, attempt_result_e4, attempt_result_e6, e6_attempt,
+                       cell_widths, cell_arms, E6_ARMS, E6_CORE_ARMS, E6_SWEEP, cause_verdict, e3_round_count, e4_round_count)
 from measure import cpu_list, performance_cores, demand_setting, e5c_placement, E5C_PLACEMENT
 
 class VerdictTests(unittest.TestCase):
@@ -984,6 +986,233 @@ class MeasurementModeTests(unittest.TestCase):
             self.assertEqual(len(observed), len(MANIFEST) * len(E2_ARMS) * len(WIDTHS) * 30)
             self.assertEqual({row[3] for row in observed}, set(map(str, range(30))))
 
+
+
+class Experiment6Tests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.build = Path(self.directory.name)
+        self.path = self.build / "measurements.tsv"
+        self.inspection = {name: dict(hot_work_survives=True, evidence="E6 controlled image",
+                                     check_compiles_to="entry dispatch") for name in MANIFEST}
+        hashes = {}
+        for arm in ("seq", "demand"):
+            (self.build / arm).mkdir()
+            for name in MANIFEST:
+                for suffix in ("", ".ll", ".o"):
+                    filename = f"{arm}/{name}{suffix}"
+                    (self.build / filename).write_bytes(filename.encode())
+                    hashes[filename] = hashlib.sha256(filename.encode()).hexdigest()
+        (self.build / "sequential-identity.json").write_text(json.dumps(dict(
+            status="pass", hashes=hashes,
+            workloads={name: dict(status="pass", covered_widths=[1, 4, 8]) for name in MANIFEST})))
+
+    def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
+        lines = []
+        for name in MANIFEST:
+            for width in cell_widths(6, name):
+                for attempt in attempts:
+                    for arm in cell_arms(6, width):
+                        wall, cpu = (1000000, 1000000) if arm in ("seq", *E5A_PADDING) else (500000, 1000000)
+                        wall, cpu = (changes or {}).get((name, width, arm), (changes or {}).get(arm, (wall, cpu)))
+                        if attempt == 2:
+                            wall, cpu = (rerun_changes or {}).get((name, width, arm), (rerun_changes or {}).get(arm, (wall, cpu)))
+                        explicit_twin = ((name, width, arm) in (changes or {}) or arm in (changes or {})
+                                         or attempt == 2 and ((name, width, arm) in (rerun_changes or {})
+                                                              or arm in (rerun_changes or {})))
+                        if arm == "twin" and not explicit_twin:
+                            wall, cpu = (changes or {}).get((name, width, "demand"), (changes or {}).get("demand", (wall, cpu)))
+                            if attempt == 2:
+                                wall, cpu = (rerun_changes or {}).get((name, width, "demand"), (rerun_changes or {}).get("demand", (wall, cpu)))
+                        for r in range(rounds):
+                            for sample in (0, 1):
+                                lines.append(f"{name}\t{arm}\t{width}\t{r}\t{attempt}\t{sample}\t{wall}\t{cpu}\t1\n")
+        self.path.write_text("".join(lines))
+        sample = self.build / "sizing-e6"
+        sample.mkdir(exist_ok=True)
+        (sample / "measurements.tsv").write_text("".join(line for line in lines if line.split("\t")[4] == "1"))
+
+    def row(self, name="large_helper", width=4):
+        return next(cell for cell in summarize(self.path, self.inspection, experiment=6)["cells"]
+                    if cell["workload"] == name and cell["width"] == width)
+
+    def test_matrix_and_previous_arm_guard_every_protected_cell(self):
+        self.write()
+        result = summarize(self.path, self.inspection, experiment=6)
+        self.assertEqual(len(result["cells"]), len(MANIFEST) * 3 + 2)
+        self.assertEqual({cell["status"] for cell in result["cells"]}, {"pass"})
+        self.assertNotIn("E4-H3", self.row()["verdicts"])
+        for reference in ("unversioned", "previous"):
+            self.write({reference: (400000, 1000000)}, attempts=(1, 2))
+            self.assertEqual(self.row()["verdicts"][f"E6-keep-{reference}"], "fail")
+        arms = {arm: {r: (100, 100) for r in range(6)} for arm in E6_CORE_ARMS}
+        arms["demand"] = arms["twin"] = {r: (106, 100) for r in range(6)}
+        self.assertEqual(e6_attempt("recursion", arms, 8)["rules"]["E6-par"]["status"], "exceeds")
+        self.assertEqual(e6_attempt("records", arms, 8)["rules"]["E6-par"]["status"], "not-applicable")
+
+    def test_floor_uses_this_workload_full_interval_and_void_has_no_floor(self):
+        arms = {arm: {r: (1000000, 1000000) for r in range(6)} for arm in E6_ARMS}
+        arms["demand"] = arms["twin"] = {r: (1001000, 1000000) for r in range(6)}
+        arms["seq-shift4160"] = {r: (1002000, 1000000) for r in range(6)}
+        result = attempt_result_e6(arms, 1)
+        self.assertEqual(result["literal_seq_diagnostic"]["status"], "exceeds")
+        self.assertEqual(result["layout_floor"]["status"], "at the floor")
+        self.assertAlmostEqual(result["layout_floor"]["radius"], .002)
+        arms["demand"] = arms["twin"] = {r: (1003000, 1000000) for r in range(6)}
+        self.assertEqual(attempt_result_e6(arms, 1)["layout_floor"]["status"], "outside the floor")
+        arms["twin"] = {r: (1100000, 1000000) for r in range(6)}
+        self.assertIsNone(attempt_result_e6(arms, 1)["layout_floor"]["radius"])
+        self.assertEqual(attempt_result_e6(arms, 1)["layout_floor"]["status"], "void")
+
+    def test_h3_and_literal_seq_cannot_trigger_a_rerun(self):
+        self.write({"demand": (1001000, 4000000), "previous": (1001000, 4000000),
+                    "unversioned": (1001000, 4000000), "par": (1001000, 4000000),
+                    "seq-shift64": (1002000, 1000000)})
+        cell = self.row(width=1)
+        self.assertEqual(cell["status"], "pass")
+        self.assertGreater(cell["initial"]["h3"]["demand"]["median"], 0)
+        self.assertEqual(cell["initial"]["literal_seq_diagnostic"]["status"], "exceeds")
+        self.assertEqual(cell["initial"]["layout_floor"]["status"], "at the floor")
+        self.assertNotIn("rerun", cell)
+
+    def test_sweep_reports_paired_wall_cpu_and_scaling_uncertainty(self):
+        changes = {(name, width, arm): (1000000 // width, 2000000)
+                   for name in E6_SWEEP for width in (1, 2, 4, 8) for arm in E6_CORE_ARMS}
+        self.write(changes)
+        result = summarize(self.path, self.inspection, experiment=6)
+        self.assertEqual({row["workload"] for row in result["sweep"]}, set(E6_SWEEP))
+        for row in result["sweep"]:
+            self.assertEqual([w["width"] for w in row["widths"]], [1, 2, 4, 8])
+            self.assertEqual({q["scaling"] for q in row["adjacent_widths"]}, {"demonstrated faster"})
+            self.assertEqual({q["higher_over_lower_wall"]["median"] for q in row["adjacent_widths"]}, {.5})
+            self.assertEqual({q["higher_over_lower_cpu"]["median"] for q in row["adjacent_widths"]}, {1})
+        self.write()
+        self.assertEqual({q["scaling"] for row in summarize(self.path, self.inspection, experiment=6)["sweep"]
+                          for q in row["adjacent_widths"]}, {"uncertain"})
+
+    def test_missing_mutated_matrix_identity_or_sizing_never_passes(self):
+        self.write()
+        original = self.path.read_text().splitlines(keepends=True)
+        variants = [original[:-1], original + [original[0]],
+                    [line for line in original if "\tprevious\t" not in line],
+                    [line for line in original if "\tseq-shift4160\t" not in line],
+                    [line for line in original if not (line.startswith("stencil\t") and line.split("\t")[2] == "2")],
+                    [line for line in original if line.split("\t")[5] != "0"],
+                    [original[0].rsplit("\t", 1)[0] + "\t2\n"] + original[1:]]
+        for lines in variants:
+            self.path.write_text("".join(lines))
+            with self.assertRaises(ValueError): self.row()
+        self.write()
+        identity_path = self.build / "sequential-identity.json"
+        for evidence in (dict(status="fail"), dict(status="pass", workloads={})):
+            identity_path.write_text(json.dumps(evidence))
+            with self.assertRaisesRegex(ValueError, "identity"): self.row()
+        identity_path.unlink()
+        with self.assertRaisesRegex(ValueError, "identity"): self.row()
+
+    def test_inspection_rerun_disagreement_and_sizing_do_not_manufacture_pass(self):
+        self.write()
+        self.inspection = {}
+        self.assertEqual(self.row()["status"], "inconclusive")
+        self.assertEqual({c["status"] for c in summarize(self.path, sizing=True, experiment=6)["cells"]}, {"inconclusive"})
+        self.assertEqual(summarize(self.path, sizing=True, experiment=6)["decisive_rounds"], 6)
+        self.inspection = {name: dict(hot_work_survives=True, evidence="image", check_compiles_to="dispatch") for name in MANIFEST}
+        self.write({"demand": (600000, 1000000)}, attempts=(1, 2), rerun_changes={"demand": (500000, 1000000)})
+        self.assertEqual(self.row()["verdicts"]["E6-keep-previous"], "inconclusive")
+
+    def test_missing_sizing_wrong_frozen_count_and_sizing_rerun_raise(self):
+        self.write()
+        sample = self.build / "sizing-e6" / "measurements.tsv"
+        saved = sample.read_text()
+        sample.unlink()
+        with self.assertRaisesRegex(ValueError, "sizing evidence"): self.row()
+        self.write(rounds=7)
+        sample.write_text(saved)
+        with self.assertRaisesRegex(ValueError, "frozen"): self.row()
+        self.write(attempts=(1, 2))
+        sample.write_text(self.path.read_text())
+        with self.assertRaisesRegex(ValueError, "without reruns"): self.row()
+
+    def test_driver_preserves_cell_matrix_pin_sets_and_diagnostic_only_rules(self):
+        for arm in E6_ARMS:
+            (self.build / arm).mkdir(exist_ok=True)
+            for name in MANIFEST:
+                if arm not in ("seq", "demand"):
+                    (self.build / arm / name).write_bytes((self.build / "demand" / name).read_bytes()
+                                                        if arm == "twin" else (name + arm).encode())
+        observed = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": "fixture\n"})()
+            image, mode, arm, width_text, round_id, attempt = command[3:]
+            width = int(width_text)
+            name = Path(image).name
+            expected_pins = dict(E5C_PLACEMENT)
+            expected_pins[2] = [2, 4]
+            self.assertEqual(command[:3], ["taskset", "-c", ",".join(map(str, expected_pins[width]))])
+            self.assertEqual(mode, "measure")
+            self.assertIn(width, cell_widths(6, name))
+            self.assertIn(arm, cell_arms(6, width))
+            self.assertEqual(kwargs["env"]["WF_PAR_DEMAND"], demand_setting(6, arm))
+            if "repetitions" in MANIFEST[name]:
+                self.assertEqual(kwargs["env"]["WFD_REPETITIONS"], str(MANIFEST[name]["repetitions"]))
+            observed.append((name, width, arm, attempt))
+            # All candidates agree, a tiny seq loss is at the local floor,
+            # and huge H3 cannot cause a rerun.
+            wall = 1002000 if arm in E5A_PADDING else 1000000 if arm == "seq" else 1001000
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{name}\t{arm}\t{width}\t{round_id}\t{attempt}\t{sample}\t{wall}\t4000000\t1\n")
+        with patch("sys.argv", ["measure.py", "--build", str(self.build), "--experiment", "6"]), \
+             patch.object(measure, "run", side_effect=fake_run), \
+             patch.object(measure.platform, "system", return_value="Linux"), \
+             patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+             patch.object(measure, "e5c_placement", return_value=(dict(E5C_PLACEMENT), {})), \
+             patch.object(measure, "layout_identity", return_value={}), \
+             contextlib.redirect_stdout(io.StringIO()):
+            measure.main()
+        per_round = sum(len(cell_arms(6, width)) for name in MANIFEST for width in cell_widths(6, name))
+        self.assertEqual(len(observed), per_round * 12)
+        self.assertEqual({row[3] for row in observed}, {"1"})
+        identity = json.loads((self.build / "identity.json").read_text())
+        self.assertEqual(identity["pinned"]["2"], [2, 4])
+        self.assertEqual(identity["sizing_rounds"], 6)
+        self.assertEqual({cell["initial"]["layout_floor"]["status"]
+                          for cell in json.loads((self.build / "summary.json").read_text())["cells"]
+                          if cell["width"] == 1}, {"at the floor"})
+
+    def test_changed_identity_bound_image_and_cross_width_extent_are_rejected(self):
+        self.write()
+        image = self.build / "demand" / "records"
+        image.write_bytes(b"mutated image")
+        with self.assertRaisesRegex(ValueError, "artifact changed"): self.row()
+        image.write_bytes(b"demand/records")
+        rows = [line.split("\t") for line in self.path.read_text().splitlines()]
+        for row in rows:
+            if row[0] == "stencil" and row[2] == "2": row[-1] = "2"
+        self.path.write_text("".join("\t".join(row) + "\n" for row in rows))
+        with self.assertRaisesRegex(ValueError, "extent changed"): self.row()
+        self.write()
+        sizing = summarize(self.path, sizing=True, experiment=6)
+        self.assertEqual({q["scaling"] for row in sizing["sweep"] for q in row["adjacent_widths"]}, {"sizing only"})
+        self.write({("large_helper", 1, "demand"): (1001000, 1000000),
+                    ("large_helper", 1, "seq-shift64"): (1002000, 1000000)}, attempts=(1, 2),
+                   rerun_changes={("large_helper", 1, "twin"): (1100000, 1000000)})
+        cell = self.row(width=1)
+        self.assertEqual(cell["status"], "void")
+        self.assertEqual(cell["initial"]["layout_floor"]["status"], "void")
+        self.assertEqual(cell["rerun"]["layout_floor"]["status"], "void")
+
+    def test_workflow_wiring_identity_precedes_native_timing_and_retains_failure(self):
+        workflow = (Path(__file__).resolve().parents[3] / ".github/workflows/compute-bench.yml").read_text()
+        self.assertIn('"5c", "6"', workflow)
+        self.assertLess(workflow.index("identity.py --self-test"), workflow.index("  par-demand:\n"))
+        self.assertIn("--output \"$RUNNER_TEMP/par-demand/sequential-identity.json\"", workflow)
+        self.assertIn("Retain hosted construction evidence, including a failed identity\n        if: always()", workflow)
+        self.assertIn('[ "$EXPERIMENT" = 6 ]; then', workflow)
+        makefile = (Path(__file__).parent / "Makefile").read_text()
+        self.assertIn("flags-previous := --par-demand --par-demand-ablation requested", makefile)
+        self.assertIn("$(BUILD)/seq/%.o $(BUILD)/micro-%.o", makefile)
 
 
 if __name__ == "__main__":

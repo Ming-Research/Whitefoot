@@ -301,6 +301,8 @@ pub enum DemandAblation {
     Static,
     /// Disable only function-body cheap-region versioning.
     Unversioned,
+    /// Restore request-gated offers inside budgeted recursive functions.
+    Requested,
 }
 
 /// Whether lowering actualizes ordinary permission-derived overlap.
@@ -312,9 +314,9 @@ pub enum OverlapLowering {
     #[default]
     Off,
     /// Research-only demand hand-out. The call grain selects which permitted
-    /// call offers remain, as for `--par`, and a request decides when one is
-    /// handed out; static small splits are pruned and other non-indexed
-    /// splits use slices.
+    /// call offers remain, as for `--par`. Budgeted recursive functions offer
+    /// immediately; other call offers and non-indexed loop slices wait for a
+    /// request. Static small splits are pruned.
     Demand {
         /// A research ablation, or the runtime-extent-priced demand prototype.
         ablation: DemandAblation,

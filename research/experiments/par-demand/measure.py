@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from summarize import (E5A_PADDING, experiment_matrix, parse_experiment, attempt_result,
-                       attempt_result_e2, attempt_result_e4, e2_excluded, load, summarize)
+                       attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity, e2_excluded, load, summarize)
 
 
 def run(command, **kwargs):
@@ -140,7 +140,7 @@ def e5c_placement(root=Path("/sys/devices/system/cpu"),
 def demand_setting(experiment, arm):
     return "on" if (experiment == 2 and arm in ("demand", "idle1", "twin")
                     or experiment in (3, 4) and arm not in ("seq", "par")
-                    or experiment in ("5a", "5c") and arm in ("demand", "unversioned", "twin")) else "off-never-request"
+                    or experiment in ("5a", "5c", 6) and arm in ("demand", "unversioned", "previous", "twin")) else "off-never-request"
 
 
 def layout_identity(build, manifest):
@@ -179,13 +179,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--rounds", type=int)
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c"), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6), default=1)
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    if args.experiment in (3, 4, "5a", "5c") and args.rounds is not None:
-        parser.error("experiments 3, 4, 5a and 5c select their rounds from six sizing rounds; omit --rounds")
+    if args.experiment in (3, 4, "5a", "5c", 6) and args.rounds is not None:
+        parser.error("experiments 3, 4, 5a, 5c and 6 select their rounds from six sizing rounds; omit --rounds")
     if args.instrumented and (args.experiment != 3 or args.sizing or args.verify_only):
         parser.error("--instrumented requires experiment 3 without sizing or verify-only")
     if args.rounds is None:
@@ -207,12 +207,15 @@ def main():
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
     topology = None
-    if args.experiment in (2, 3, 4, "5a", "5c") and not args.verify_only:
+    if args.experiment in (2, 3, 4, "5a", "5c", 6) and not args.verify_only:
         if platform.system() != "Linux" or shutil.which("taskset") is None:
-            raise ValueError("experiments 2, 3, 4, 5a and 5c require Linux topology and taskset pinning")
-        if args.experiment == "5c":
+            raise ValueError("experiments 2, 3, 4, 5a, 5c and 6 require Linux topology and taskset pinning")
+        if args.experiment in ("5c", 6):
             # CPU 0 itself need not be in this service's allowed affinity.
             pinned, topology = e5c_placement()
+            if args.experiment == 6:
+                pinned[2] = [2, 4]
+                topology["placement_policy"] = "fixed E6 P-core sets; never CPU 0"
             cores = []
         else:
             cores, topology = performance_cores(minimum_cores=1) if args.experiment == "5a" else performance_cores()
@@ -220,13 +223,13 @@ def main():
         # Verification has no timing verdict and may run on the hosted sizing
         # machine. Every experiment-2 timing batch, sizing included, is strict.
         cores = one_cpu_per_core()
-    if args.experiment != "5c" or args.verify_only:
+    if args.experiment not in ("5c", 6) or args.verify_only:
         pinned = {width: cores[:max(width, 1)] for width in widths_for_run} if len(cores) >= max(widths_for_run) else {}
     if args.experiment == "5a" and not args.verify_only:
         if 2 not in cores or topology["performance_cpus"] is None or 2 not in topology["performance_cpus"]:
             raise ValueError("experiment 5a requires CPU 2 to be an allowed first P-core sibling")
         pinned = {1: [2]}
-    layout = layout_identity(build, manifest) if args.experiment == "5a" else None
+    layout = layout_identity(build, manifest) if args.experiment in ("5a", 6) else None
     def pin(width, command):
         cpus = pinned.get(width)
         return ["taskset", "-c", ",".join(map(str, cpus))] + command if cpus else command
@@ -235,13 +238,15 @@ def main():
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
-                    setting="on" if args.experiment in (2, 3, 4, "5a", "5c") else "off-never-request", manifest=manifest,
+                    setting="on" if args.experiment in (2, 3, 4, "5a", "5c", 6) else "off-never-request", manifest=manifest,
                     instrumented=args.instrumented, layout=layout)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in manifest:
             for arm in arms_for_run:
-                for width in widths_for_run if args.experiment in (2, 3, 4, "5a", "5c") else (1, 4):
+                for width in cell_widths(args.experiment, name) if args.experiment in (2, 3, 4, "5a", "5c", 6) else (1, 4):
+                    if arm not in cell_arms(args.experiment, width):
+                        continue
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
                             env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND=setting))
@@ -260,6 +265,8 @@ def main():
                             env=dict(settings, WF_WORKERS=str(width), WF_SCHED_REPORT="2",
                                      WF_PAR_DEMAND=demand_setting(3, arm)), stdout=output, stderr=output)
         return
+    if args.experiment == 6:
+        construction_identity(build)
     path = build / "measurements.tsv"
     def batch(attempt, selected):
         with path.open("w" if attempt == 1 else "a") as output:
@@ -272,14 +279,14 @@ def main():
                     meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
-                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c") else meta["repetitions"])
-                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c") else meta["extent"])
-                    widths = list(widths_for_run)
+                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["repetitions"])
+                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["extent"])
+                    widths = list(cell_widths(args.experiment, name))
                     widths = widths[round_id % len(widths):] + widths[:round_id % len(widths)]
                     for width in widths:
                         if (name, width) not in selected:
                             continue
-                        arms = list(arms_for_run)
+                        arms = list(cell_arms(args.experiment, width))
                         shift = (round_id + widths_for_run.index(width)) % len(arms)
                         arms = arms[shift:] + arms[:shift]
                         if round_id % 2:
@@ -290,8 +297,8 @@ def main():
                                 env=dict(settings, WF_WORKERS=str(width),
                                          WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
-    selected = {(name, width) for name in manifest for width in widths_for_run}
-    if args.experiment in (3, 4, "5a", "5c"):
+    selected = {(name, width) for name in manifest for width in cell_widths(args.experiment, name)}
+    if args.experiment in (3, 4, "5a", "5c", 6):
         args.rounds = 6
         batch(1, selected)
         sample = summarize(path, sizing=True, experiment=args.experiment)
@@ -319,6 +326,8 @@ def main():
     inspection_path = build / "inspection.json"
     inspection = json.loads(inspection_path.read_text()) if inspection_path.exists() else {}
     def exceeded(name, width, arms):
+        if args.experiment == 6:
+            return e6_attempt(name, arms, width)["status"] == "exceeds"
         if args.experiment in (4, "5c"):
             return attempt_result_e4(arms, width,
                                      excluded=e2_excluded(name, inspection.get(name, {})),

@@ -19,13 +19,17 @@ else ifeq ($(EXPERIMENT),4)
 ARMS := seq par demand static twin
 else ifeq ($(EXPERIMENT),5c)
 ARMS := seq par demand unversioned twin
+# E6 reconstructs E5c with the request-gated budget ablation.
+else ifeq ($(EXPERIMENT),6)
+PADDING_SIZES := 64 4160 65664
+ARMS := seq par demand unversioned previous twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifeq ($(EXPERIMENT),5a)
 # Same seq WF/oracle/runner/runtime objects; only linked placement changes.
 WORKLOADS := $(KERNELS)
 PADDING_SIZES := 64 4160 65664
 ARMS := seq par demand twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifneq ($(EXPERIMENT),1)
-$(error EXPERIMENT must be 1, 2, 3, 4, 5a or 5c)
+$(error EXPERIMENT must be 1, 2, 3, 4, 5a, 5c or 6)
 endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
@@ -42,6 +46,7 @@ native-order := $(native-demand)
 native-extent := $(native-demand)
 native-static := $(native-demand)
 native-unversioned := $(native-demand)
+native-previous := $(native-demand)
 native-seed := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/seed-core.o
 native-dedup := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/dedup-core.o
 $(BUILD)/seed-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
@@ -88,6 +93,7 @@ flags-seed := --par-demand --par-demand-ablation seed
 flags-extent := --par-demand
 flags-static := --par-demand --par-demand-ablation static
 flags-unversioned := --par-demand --par-demand-ablation unversioned
+flags-previous := --par-demand --par-demand-ablation requested
 # Static pattern rules let the maintained formal sources remain single-owned.
 define arm-rules
 $(addprefix $(BUILD)/$(1)/,$(addsuffix .ll,$(MICROS))): $(BUILD)/$(1)/%.ll: %.wf micro_host.ll $(WFC) Makefile
@@ -114,6 +120,8 @@ else ifeq ($(EXPERIMENT),4)
 $(eval $(call arm-rules,static))
 else ifeq ($(EXPERIMENT),5c)
 $(eval $(call arm-rules,unversioned))
+else ifeq ($(EXPERIMENT),6)
+$(foreach arm,unversioned previous,$(eval $(call arm-rules,$(arm))))
 endif
 $(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-dedup)
 	@mkdir -p $(@D)
@@ -121,7 +129,7 @@ $(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(
 $(addprefix $(BUILD)/dedup/,$(KERNELS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-dedup)
 	@mkdir -p $(@D)
 	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o $@
-# E5a is Linux-only. Uncalled NOP text is linked before the exact seq WF
+# E5a/E6 are Linux-only. Uncalled NOP text is linked before the exact seq WF
 # object. Its 64-byte alignment preserves existing function alignment while
 # the three extents vary line/page placement. No second LLVM compile occurs.
 $(BUILD)/layout/%.S: Makefile
@@ -130,11 +138,14 @@ $(BUILD)/layout/%.S: Makefile
 $(BUILD)/layout/%.o: $(BUILD)/layout/%.S $(NATIVE_CONFIG)
 	$(CLANG) -c $< -o $@
 define layout-rules
+$(addprefix $(BUILD)/seq-shift$(1)/,$(MICROS)): $(BUILD)/seq-shift$(1)/%: $(BUILD)/layout/$(1).o $(BUILD)/seq/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-seq)
+	@mkdir -p $$(@D)
+	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
 $(addprefix $(BUILD)/seq-shift$(1)/,$(KERNELS)): $(BUILD)/seq-shift$(1)/%: $(BUILD)/layout/$(1).o $(BUILD)/seq/%.o $(BUILD)/oracle-%.o $(BUILD)/runner.o $(native-seq)
 	@mkdir -p $$(@D)
 	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
 endef
-ifeq ($(EXPERIMENT),5a)
+ifneq ($(filter 5a 6,$(EXPERIMENT)),)
 $(foreach size,$(PADDING_SIZES),$(eval $(call layout-rules,$(size))))
 endif
 

@@ -9,6 +9,7 @@ reported in experiment 1 and judges H3 in experiments 2, 4 and 5c.
 """
 import argparse
 import csv
+import hashlib
 import json
 import random
 from functools import lru_cache
@@ -22,9 +23,12 @@ E2_ARMS = ("seq", "par", "demand", "idle1", "twin")
 E3_ARMS = ("seq", "par", "demand", "twin", "order", "seed", "extent", "dedup")
 E4_ARMS = ("seq", "par", "demand", "static", "twin")
 E5C_ARMS = ("seq", "par", "demand", "unversioned", "twin")
+E6_CORE_ARMS = ("seq", "par", "demand", "unversioned", "previous", "twin")
+E6_SWEEP = ("stencil", "histogram")
 # Three nonzero shifts; ordinary seq is the zero-padding baseline.
 E5A_PADDING = {"seq-shift64": 64, "seq-shift4160": 4160, "seq-shift65664": 65664}
 E5A_ARMS = ("seq", "par", "demand", "twin", *E5A_PADDING)
+E6_ARMS = (*E6_CORE_ARMS, *E5A_PADDING)
 E5A_MANIFEST = {name: MANIFEST[name] for name in
                 ("mandelbrot", "records", "fir", "stencil", "prefix", "histogram")}
 E3_WIDTHS = (4, 8)
@@ -37,10 +41,20 @@ def parse_experiment(value):
 
 
 def experiment_matrix(experiment):
+    if experiment == 6:
+        return E6_ARMS, (1, 2, 4, 8), MANIFEST
     if experiment == "5a":
         return E5A_ARMS, (1,), E5A_MANIFEST
     arms = E5C_ARMS if experiment == "5c" else E4_ARMS if experiment == 4 else E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
     return arms, E3_WIDTHS if experiment == 3 else WIDTHS, MANIFEST
+
+
+def cell_widths(experiment, name):
+    return ((1, 2, 4, 8) if name in E6_SWEEP else WIDTHS) if experiment == 6 else experiment_matrix(experiment)[1]
+
+
+def cell_arms(experiment, width):
+    return (E6_ARMS if width == 1 else E6_CORE_ARMS) if experiment == 6 else experiment_matrix(experiment)[0]
 
 
 def load(path, experiment=1, sample_index=1):
@@ -54,7 +68,7 @@ def load(path, experiment=1, sample_index=1):
                 raise ValueError(f"malformed measurement: {row}")
             name, arm = row[:2]
             width, round_id, attempt, sample, wall, cpu, count = map(int, row[2:])
-            if (name not in manifest or arm not in expected_arms or width not in expected_widths
+            if (name not in manifest or arm not in expected_arms or width not in cell_widths(experiment, name) or arm not in cell_arms(experiment, width)
                     or round_id < 0 or attempt not in (1, 2) or sample not in (0, 1)
                     or min(wall, cpu, count) <= 0):
                 raise ValueError(f"invalid measurement: {row}")
@@ -64,13 +78,13 @@ def load(path, experiment=1, sample_index=1):
             if key in seen:
                 raise ValueError(f"duplicate measurement: {key}")
             seen.add(key)
-            if experiment in (2, 3, 4, "5a", "5c"):
-                cell = (name, width) if experiment in (4, "5a", "5c") else (name, width, attempt)
+            if experiment in (2, 3, 4, "5a", "5c", 6):
+                cell = name if experiment == 6 else (name, width) if experiment in (4, "5a", "5c") else (name, width, attempt)
                 if counts.setdefault(cell, count) != count:
                     raise ValueError(f"comparison extent changed: {cell}")
             if sample == sample_index:  # second call judges; first reports startup
                 groups.setdefault((name, width, attempt), {}).setdefault(arm, {})[round_id] = (wall, cpu)
-    if experiment in (2, 3, 4, "5a", "5c"):
+    if experiment in (2, 3, 4, "5a", "5c", 6):
         for key in seen:
             if key[:-1] + (1 - key[-1],) not in seen:
                 raise ValueError(f"missing first/second call: {key}")
@@ -132,6 +146,8 @@ def attempt_result(arms, width, decisions=0):
 
 
 def summarize(path, inspection=None, sizing=False, experiment=1):
+    if experiment == 6:
+        return summarize_e6(path, inspection, sizing)
     if experiment == "5a":
         return summarize_e5a(path, sizing)
     if experiment in (4, "5c"):
@@ -417,6 +433,210 @@ def summarize_e4(path, inspection=None, sizing=False, experiment=4):
     return result
 
 
+
+def attempt_result_e6(arms, width, startup=None):
+    expected = cell_arms(6, width)
+    if set(arms) != set(expected):
+        raise ValueError("missing experiment-6 arm")
+    rounds = set(arms["seq"])
+    if not rounds or rounds != set(range(len(rounds))) or any(set(rows) != rounds for rows in arms.values()):
+        raise ValueError("unpaired or missing experiment-6 rounds")
+    order = sorted(rounds)
+    walls = {arm: [arms[arm][r][0] for r in order] for arm in expected}
+    cpus = {arm: [arms[arm][r][1] for r in order] for arm in expected}
+    def ratios(source, numerator, denominator="seq"):
+        return [a / b for a, b in zip(source[numerator], source[denominator])]
+    twin = quantity(ratios(walls, "twin", "demand"))
+    void = not twin["interval"][0] <= 1 <= twin["interval"][1]
+    rules = {f"E6-keep-{reference}": upper_bound(ratios(walls, "demand", reference), 1.05)
+             for reference in ("unversioned", "previous")}
+    # Preserve par speedups. The preregistered recursion W8 check is applied
+    # unconditionally by summarize_e6, even if this run's par interval is noisy.
+    rules["E6-par"] = upper_bound(ratios(walls, "demand", "par"), 1.05)
+    if quantity(ratios(walls, "par"))["interval"][1] >= 1:
+        rules["E6-par"].update(status="not-applicable", reason="par/seq interval is not wholly below 1")
+    literal = upper_bound(ratios(walls, "demand"), 1.00)
+    controls = {arm: quantity(ratios(walls, arm)) for arm in E5A_PADDING} if width == 1 else {}
+    floor = max((max(abs(q["interval"][0] - 1), abs(q["interval"][1] - 1))
+                 for q in controls.values()), default=None)
+    floor_status = ("void" if void else "at the floor" if floor is not None and
+                    1 - floor <= literal["interval"][0] and literal["interval"][1] <= 1 + floor
+                    else "outside the floor" if floor is not None else "not measured at this width")
+    margins = {arm: quantity([(cpu - 1.1 * seq_cpu - 0.1 * max(0, seq_wall - wall) * width) / seq_cpu
+                             for cpu, seq_cpu, seq_wall, wall in zip(cpus[arm], cpus["seq"], walls["seq"], walls[arm])])
+               for arm in ("par", "demand", "unversioned", "previous")}
+    for rule in rules.values():
+        if void:
+            rule["status"] = "void"
+    statuses = {rule["status"] for rule in rules.values()}
+    result = dict(status="void" if void else "exceeds" if "exceeds" in statuses else
+                  "inconclusive" if "inconclusive" in statuses else "pass",
+                  rounds=len(rounds), rules=rules, twin_wall_ratio=twin,
+                  wall_ns={arm: quantity(values) for arm, values in walls.items()},
+                  cpu_ns={arm: quantity(values) for arm, values in cpus.items()},
+                  wall_over_seq={arm: quantity(ratios(walls, arm)) for arm in expected},
+                  cpu_over_seq={arm: quantity(ratios(cpus, arm)) for arm in expected},
+                  literal_seq_diagnostic=literal,
+                  layout_floor=dict(status=floor_status, radius=None if void else floor,
+                                    band=None if floor is None or void else [1 - floor, 1 + floor], controls=controls),
+                  h3=margins, h3_policy="reported; no E6 gate or rerun; scaling evidence is reported separately")
+    if startup is not None:
+        if set(startup) != set(expected) or any(set(rows) != rounds for rows in startup.values()):
+            raise ValueError("unpaired first calls")
+        result["first_call_wall_ns"] = {arm: quantity([startup[arm][r][0] for r in order]) for arm in expected}
+        result["first_call_cpu_ns"] = {arm: quantity([startup[arm][r][1] for r in order]) for arm in expected}
+        result["first_call_cpu_above_wall_ns"] = {
+            arm: quantity([startup[arm][r][1] - startup[arm][r][0] for r in order]) for arm in expected}
+    return result
+
+
+def e6_attempt(name, arms, width, startup=None):
+    result = attempt_result_e6(arms, width, startup)
+    if name in ("small_constant", "spine") and result["status"] != "void":
+        result["rules"]["E6-par"].update(status="not-applicable", reason="reported E4 control; par rule decides nothing")
+    if name == "recursion" and width == 8 and result["status"] != "void":
+        rule = result["rules"]["E6-par"]
+        low, high = rule["interval"]
+        rule["status"] = "pass" if high <= 1.05 else "exceeds" if low > 1.05 else "inconclusive"
+        rule.pop("reason", None)
+    if result["status"] != "void":
+        statuses = {r["status"] for r in result["rules"].values()}
+        result["status"] = "exceeds" if "exceeds" in statuses else "inconclusive" if "inconclusive" in statuses else "pass"
+    return result
+
+
+def e6_sweep(groups, cells, sizing=False):
+    """Cross-width pairing is same-round and same attempt; never pool reruns.
+
+    Every initial width exists; reruns need not cover adjacent widths, so they
+    report their raw wall/CPU but do not fabricate a paired scaling interval.
+    """
+    by_cell = {(cell["workload"], cell["width"]): cell for cell in cells}
+    reports = []
+    for name in E6_SWEEP:
+        rows = []
+        for width in (1, 2, 4, 8):
+            cell = by_cell[name, width]
+            rows.append(dict(width=width, validity=cell["status"],
+                             inspection="missing" if cell.get("reason") == "optimized hot-site inspection missing" else
+                             "sizing only" if sizing else "provided", wall_ns=cell["initial"]["wall_ns"],
+                             cpu_ns=cell["initial"]["cpu_ns"], h3=cell["initial"]["h3"],
+                             rerun=cell.get("rerun")))
+        comparisons = []
+        for lower, higher in ((1, 2), (2, 4), (4, 8)):
+            a, b = groups[name, lower, 1], groups[name, higher, 1]
+            for arm in E6_CORE_ARMS:
+                rounds = sorted(a[arm])
+                if set(rounds) != set(b[arm]):
+                    raise ValueError("unpaired sweep rounds")
+                wall = quantity([b[arm][r][0] / a[arm][r][0] for r in rounds])
+                cpu = quantity([b[arm][r][1] / a[arm][r][1] for r in rounds])
+                void = any(by_cell[name, w]["status"] == "void" for w in (lower, higher))
+                comparisons.append(dict(arm=arm, lower_width=lower, higher_width=higher,
+                                        higher_over_lower_wall=wall, higher_over_lower_cpu=cpu,
+                                        scaling="sizing only" if sizing else "void" if void else "demonstrated faster" if wall["interval"][1] < 1 else
+                                        "demonstrated slower" if wall["interval"][0] > 1 else "uncertain"))
+        reports.append(dict(workload=name, widths=rows, adjacent_widths=comparisons,
+                            interpretation="scaling observations require surviving-work inspection before attributing CPU tradeoffs"))
+    return reports
+
+
+
+def construction_identity(build):
+    evidence_path = build / "sequential-identity.json"
+    if not evidence_path.exists():
+        raise ValueError("missing experiment 6 sequential identity construction evidence")
+    evidence = json.loads(evidence_path.read_text())
+    records = evidence.get("workloads", {})
+    if evidence.get("status") != "pass" or set(records) != set(MANIFEST) or any(
+            record.get("status") != "pass" or 1 not in record.get("covered_widths", [])
+            for record in records.values()) or not {1, 4, 8} <= set(records["small_split"].get("covered_widths", [])):
+        raise ValueError("failed or incomplete experiment 6 sequential identity construction evidence")
+    required = {f"{arm}/{name}{suffix}" for name in MANIFEST for arm in ("seq", "demand")
+                for suffix in ("", ".ll", ".o")}
+    hashes = evidence.get("hashes", {})
+    if not required <= set(hashes):
+        raise ValueError("missing sequential identity artifact hashes")
+    for filename, digest in hashes.items():
+        artifact = build / filename
+        if Path(filename).is_absolute() or ".." in Path(filename).parts:
+            raise ValueError("invalid sequential identity artifact path")
+        if not artifact.is_file() or hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"sequential identity artifact changed: {filename}")
+    return evidence
+
+def summarize_e6(path, inspection=None, sizing=False):
+    groups = load(path, experiment=6)
+    startup = load(path, experiment=6, sample_index=0)
+    if sizing and any(attempt != 1 for _, _, attempt in groups):
+        raise ValueError("E6 sizing rule requires exactly six rounds without reruns")
+    if not sizing:
+        evidence_path = Path(path).parent / "sequential-identity.json"
+        construction_identity(Path(path).parent)
+    inspection = inspection or {}
+    cells = []
+    for name, meta in MANIFEST.items():
+        checked = inspection.get(name, {})
+        inspected = (checked.get("hot_work_survives") is True and bool(checked.get("evidence"))
+                     and bool(checked.get("check_compiles_to")))
+        for width in cell_widths(6, name):
+            key = (name, width, 1)
+            if key not in groups:
+                raise ValueError(f"missing experiment 6 cell: {name}/{width}")
+            initial = e6_attempt(name, groups[key], width, startup[key])
+            cell = dict(workload=name, width=width, attribution=meta["kind"], initial=initial)
+            second = groups.get((name, width, 2))
+            if second is not None:
+                cell["rerun"] = e6_attempt(name, second, width, startup[name, width, 2])
+            verdicts = {}
+            for key, rule in initial["rules"].items():
+                status = rule["status"]
+                if status == "exceeds":
+                    status = "needs-rerun" if second is None else "fail" if cell["rerun"]["rules"][key]["status"] == "exceeds" else "inconclusive"
+                elif second is not None and cell["rerun"]["rules"][key]["status"] != status:
+                    status = "inconclusive"
+                if initial["status"] == "void" or cell.get("rerun", {}).get("status") == "void":
+                    status = "void"
+                elif sizing and status != "not-applicable":
+                    status = "inconclusive"
+                elif status == "pass" and not inspected:
+                    status = "inconclusive"
+                verdicts[key] = status
+            if not inspected or sizing:
+                cell["reason"] = "sizing only" if sizing else "optimized hot-site inspection missing"
+            if "void" in verdicts.values():
+                for attempt in (initial, *([cell["rerun"]] if "rerun" in cell else [])):
+                    attempt["layout_floor"].update(status="void", radius=None, band=None)
+            cell["verdicts"] = verdicts
+            cell["status"] = next((s for s in ("void", "fail", "needs-rerun", "inconclusive", "pass")
+                                   if s in verdicts.values()), "not-applicable")
+            cells.append(cell)
+    if sizing:
+        # Floor controls and the literal diagnostic participate in sizing,
+        # but neither diagnostic nor H3 can trigger a decisive rerun.
+        sizing_cells = []
+        for cell in cells:
+            initial = cell["initial"]
+            rules = dict(initial["rules"], literal=initial["literal_seq_diagnostic"])
+            rules.update({arm: dict(q, bound=1, status="intervals")
+                          for arm, q in initial["layout_floor"]["controls"].items()})
+            sizing_cells.append(dict(initial=dict(initial, rules=rules)))
+        count = e4_round_count(sizing_cells)
+    else:
+        sample_path = Path(path).parent / "sizing-e6" / "measurements.tsv"
+        if not sample_path.exists():
+            raise ValueError("missing experiment 6 six-round sizing evidence")
+        count = summarize_e6(sample_path, sizing=True)["decisive_rounds"]
+        if any(attempt["rounds"] != count for cell in cells
+               for attempt in (cell["initial"], *([cell["rerun"]] if "rerun" in cell else []))):
+            raise ValueError("decisive rounds differ from the count frozen by sizing")
+    result = dict(experiment=6, sizing=sizing, cells=cells, decisive_rounds=count,
+                  sweep=e6_sweep(groups, cells, sizing),
+                  h3_policy="reported for every cell; inspect adjacent-width speedup before interpreting CPU margin")
+    if not sizing:
+        result.update(sizing_evidence=str(sample_path), identity_evidence=str(evidence_path))
+    return result
+
 # Rounded spreads transcribed from DESIGN.md, "Experiment 5a's results".
 # This run was globally inconclusive (records' twin voided its cell); these
 # controls cannot alter any literal E4-seq verdict or establish a micro floor.
@@ -604,7 +824,7 @@ def main():
     parser.add_argument("measurements", type=Path)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--sizing", action="store_true")
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c"), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6), default=1)
     args = parser.parse_args()
     inspection = json.loads(args.inspection.read_text()) if args.inspection and args.inspection.exists() else {}
     rows = summarize(args.measurements, inspection, args.sizing, args.experiment)

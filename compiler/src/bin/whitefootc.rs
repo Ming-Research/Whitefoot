@@ -1514,7 +1514,8 @@ impl Options {
                         Some("seed") => whitefoot::DemandAblation::Seed,
                         Some("static") => whitefoot::DemandAblation::Static,
                         Some("unversioned") => whitefoot::DemandAblation::Unversioned,
-                        _ => return Err("--par-demand-ablation requires none, order, seed, static or unversioned".to_owned()),
+                        Some("requested") => whitefoot::DemandAblation::Requested,
+                        _ => return Err("--par-demand-ablation requires none, order, seed, static, unversioned or requested".to_owned()),
                     };
                     if demand_ablation.replace(arm).is_some() {
                         return Err("--par-demand-ablation may be written only once".to_owned());
@@ -2139,7 +2140,7 @@ mod tests {
         assert!(module.contains("udiv i64 149999, %"));
         let static_price = emit(parse(&["--par-demand", "--par-demand-ablation", "static", "value.wf"]).unwrap());
         assert!(!static_price.contains("udiv i64 149999,"));
-        for arm in ["none", "order", "seed", "static", "unversioned"] {
+        for arm in ["none", "order", "seed", "static", "unversioned", "requested"] {
             assert!(parse(&["--par-demand", "--par-demand-ablation", arm, "value.wf"]).is_ok());
             assert!(parse(&["--par", "--par-demand-ablation", arm, "value.wf"]).is_err());
         }
@@ -2149,6 +2150,17 @@ mod tests {
                 .overlap(),
             OverlapLowering::Demand {
                 ablation: whitefoot::DemandAblation::Unversioned,
+                budget: RecursionBudget::RuntimeDerived,
+                call_grain: CallGrain::WorkUnit,
+                sequential_refusal: false,
+            }
+        );
+        assert_eq!(
+            parse(&["--par-demand", "--par-demand-ablation", "requested", "value.wf"])
+                .unwrap()
+                .overlap(),
+            OverlapLowering::Demand {
+                ablation: whitefoot::DemandAblation::Requested,
                 budget: RecursionBudget::RuntimeDerived,
                 call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,

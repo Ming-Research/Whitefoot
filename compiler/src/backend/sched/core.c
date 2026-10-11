@@ -1754,9 +1754,10 @@ int wf__par_pool_active(void) {
 #if defined(WF_PAR_DEMAND)
     /* A demand poll is a plain load of this thread's word, so nothing on the
      * no-request path starts the pool or registers this thread's word. World
-     * selection does both: an offer waits for a request, a request needs
-     * running thieves and a registered owner, so neither may wait on the
-     * other. Idempotent, and a thread that already attached pays one
+     * selection does both: request-gated call groups and loop slices need
+     * running thieves and a registered owner before they can offer work.
+     * Budgeted recursion offers immediately through acquire_lane instead.
+     * Idempotent, and a thread that already attached pays one
      * thread-local test. */
     if (active && !wf__par_attached) {
         wf__sched_once(&wf__par_demand_initialized, wf__par_enable_demand);

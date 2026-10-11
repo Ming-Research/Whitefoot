@@ -2647,3 +2647,179 @@ within scope. Checklist A4/D2 passed; D1/V3 and specification delivery were
 not applicable; code/test/gate groups were outside this prose-only change.
 CI construction, oracle execution and semantic correctness were not
 independently rerun. Patch whitespace passed `git diff --check`.
+
+## Experiment 6: eager budgeted recursion and sequential identity, fixed before it measures
+
+**Question and selection ground.** The owner's 2026-10-11 rulings select
+immediate offers within the existing recursion budget, mechanical sequential
+identity instead of inferring identity from timing, a same-job layout floor
+beside the literal never-slower diagnostic, and a wall/CPU width sweep beside
+H3. Does removing the request test above the recursion cut recover recursion
+W8's lost speedup while preserving experiment 5c's protected cells? Can the
+timed one-worker and versioned-cheap computations meet instruction identity
+and execute their entry decisions outside every loop?
+
+The competing explanations are delayed recursive work exposure versus other
+scheduler or optimized-code costs. Compare default demand with an otherwise
+identical request-gated budget arm and ordinary par. Experiment 5c measured
+recursion W8 demand/par at 1.08–1.11; the request is observed only at a
+budgeted node, with none below the cut. The owner's approximately 0.14 ms
+leaf wait is a motivating estimate, not a latency measurement in this trial.
+No new measurement preceded this registration.
+
+**Change and controls.** A budget-variant function offers immediately instead
+of first testing its request word. Budget initialization, spending at groups,
+carried callback budgets, exhausted-budget sequential transfer, lane refusal,
+call grain, loop-slice request gating and the runtime are unchanged. The
+existing budget remains the bound on exposed recursive work; it is not reset
+on steals or increased. This implements the eager recursive part of the
+[hybrid proposal](hybrid-plan.md), without adopting its other mechanisms.
+
+Use the same twelve workloads, inputs, repetitions and extents as experiment
+5c. At W1/4/8 interleave `seq`, `par`, `demand`, `previous`, `unversioned`
+and the byte-identical demand `twin`. `previous` uses
+`--par-demand --par-demand-ablation requested`, reconstructing the prior
+request-gated budget behavior with region versioning retained. `unversioned`
+uses its existing ablation with the new default budget policy, retaining the
+5c versioning comparison. These two controls separate preservation of the
+previous candidate from preservation against the unversioned control; neither
+is silently substituted for the other. Requests are on for demand, previous,
+unversioned and twin; seq and par use `off-never-request`.
+
+At W1 add `seq-shift64`, `seq-shift4160`, `seq-shift65664` for **all twelve**
+workloads, reusing the exact seq WF, oracle, runner and runtime objects and
+5a's uncalled padding construction. Validate and retain every WF text-symbol
+shift before timing. Do not import 5a's historical floor or use a different
+workload's layout sensitivity. Add W2 for stencil and histogram, with the
+same six ordinary arms, to complete their 1/2/4/8 wall and CPU sweep.
+
+**Construction identity, before timing.** Every W1 workload is covered,
+including small_constant and spine. Check the timed `wf_bench_micro` entry
+for the six micros and each kernel's `wf_bench_<workload>` entry, its selected
+sequential computation and reachable original-function helpers. Also cover
+small_split's cheap-region selection at W4/W8 (extent 3), and inventory every
+`par.region.entry` in the demand IR so a newly versioned region cannot escape
+coverage. Zero dispatches are expected where pruning removed selection;
+otherwise establish that the pool-active decision and any cheap-region
+decision execute once per timed call, before the computation's loops, not
+once per iteration. Count the two decisions separately when both survive.
+
+Compare normalized disassembly of corresponding sequential computations,
+preserving operations, data constants, offsets, register relationships and
+control-flow destinations while removing placement addresses and consistent
+register renaming. Follow the selected path through the actual timed entry;
+merely comparing an unused clone does not qualify. A mismatch, missing body,
+uncovered region or unproved dispatch placement fails hosted construction,
+naming workload, function and the first differing instruction or missing
+proof. Retain the report and a deliberate changed-body negative control.
+Correct oracle output cannot waive this identity requirement.
+
+Experiment 5c already found nonidentical selected bodies in fir, stencil,
+prefix and histogram, beyond register renaming. This gate may therefore stop
+the experiment before timing: that is a compiler optimization gap to expose,
+not permission to omit those cells, normalize away changed loop organization,
+or relax the requirement. The separate seq module and the demand module's
+clones can receive different host-optimizer transformations even when their
+source computations agree. Fixing that general preservation boundary is not
+silently included in the request-gating change.
+
+**Placement and protocol.** Require native 14900K CI and experiment 5c's
+validated P-core placement: W1 `{2}`, W2 `{2,4}`, W4 `{2,4,6,8}`, W8
+`{2,4,6,8,10,12,14,1}`. Exclude logical CPU 0, retain the caveat that CPU 1
+shares its physical core, and reject unavailable CPUs or duplicate cores.
+Verify all selected arms against the independent oracles with requests both
+on and off before timing. Rotate/reverse the paired arms, workload order and
+widths; retain first-call wall and CPU/startup separately and judge call 1
+(the second call). Use paired per-round ratios, their median, **10,000
+bootstrap draws, seed 20261010, and 95% intervals**.
+
+Collect six full-work sizing rounds in the same job; they judge nothing.
+Freeze the smallest `n` from 6 through 30 whose projected interval widths,
+scaled by `sqrt(6/n)`, are all at most `max(0.02, |median-bound|)`; otherwise
+use 30. Include the literal seq diagnostic, par and both preservation
+comparisons, plus W1 shifted-seq ratios about 1; H3 is reported and does not
+select `n`. Save `sizing-e6/` and require its exact frozen count. Collect
+separate decisive rounds and never pool sizing with them. An exceeding
+gated cell receives exactly one further `n`-round attempt with all its arms.
+A twin/demand interval excluding 1 in either attempt voids the cell and its
+floor reading. A persistent exceedance fails; attempt disagreement or a
+straddle stays inconclusive, with no additional reruns.
+
+**Rules and rejection, fixed before measurement.**
+
+- E6-recursion: recursion W8 demand/par wall upper bound **<= 1.05**, without
+  requiring a separate par-speedup condition. Persistent exceedance rejects
+  recovery of the observed loss and returns the attribution for investigation.
+  Other applicable par-speedup cells retain E4-par's 1.05 bound.
+- E6-keep: **every cell protected by 5c** keeps demand/unversioned **and**
+  demand/previous wall upper bounds **<= 1.05**, including its reported
+  controls. Apply these bounds to the added W2 cells too. A persistent
+  exceedance rejects preservation; missing image inspection cannot pass.
+- E6-identity: the construction check must pass for every covered cell.
+  Failed or missing construction evidence prevents timing qualification;
+  timing never repairs an identity mismatch.
+- E6-seq diagnostic: retain the literal demand/seq wall upper bound
+  **<= 1.00** and its interval classification. For each W1 workload and
+  attempt, let `[L_s,U_s]` be each shifted-seq/seq wall interval and set
+  `F = max_s(max(abs(L_s-1), abs(U_s-1)))`. If the **entire** demand/seq
+  interval is contained in `[1-F,1+F]`, record **at the floor**, alongside
+  the literal result, rather than a failure. This is an empirical envelope,
+  not proof of layout causality or a universal performance guarantee. An
+  interval outside it retains its literal diagnostic; absent controls or a
+  void twin supply no floor. No W4/W8 allowance is inferred from W1 controls.
+  The seq diagnostic alone does not trigger an E6 rerun or reject construction.
+- H3: report the unchanged margin
+  `(cpu_demand - 1.1*cpu_seq - 0.1*max(0,wall_seq-wall_demand)*W)/cpu_seq`
+  and its interval, without an H3 failure or H3-triggered rerun in this
+  experiment. For stencil/histogram report absolute wall and CPU at every
+  width and paired adjacent-width wall/CPU ratios (2/1, 4/2, 8/4).
+  An adjacent wall-ratio upper bound below 1 demonstrates further speedup;
+  a straddle is inconclusive and a lower bound above 1 shows slowing.
+  A positive H3 margin while wall still shortens is a reported CPU tradeoff,
+  not a rejection. Without demonstrated scaling, report that the owner's
+  speedup condition is unestablished; no unconditional CPU-cost exemption
+  follows from making H3 diagnostic in this trial. Width comparisons use
+  the initial complete sweep, not a mixture of selectively rerun widths.
+
+The owner's earlier per-call rule remains for a decision whose condition
+cannot be hoisted: at most **1 ns or 2% per execution, whichever is wider**.
+It is not an allowance for W1 identity or small_split's invariant region.
+Applying it requires an inspected surviving decision and its execution count;
+do not invent a count for a loop-slice poll or label a layout displacement as
+decision cost. This experiment adds no nonhoistable per-call decision.
+
+**Dispatch and pending evidence.** Dispatch `compute-bench.yml` with
+`experiment=par-demand`, `par_demand_experiment=6`,
+`placement_runner=14900k`, and empty `placement_rounds`. Hosted CI constructs
+the images, runs negative harness controls, checks identity and verifies the
+oracles before the dependent timing job. The session that owns this line commits,
+pushes and runs CI. No local build, test suite, compiler or harness execution, or measurement
+is authorized for this edit. Syntax compilation of edited Python is the only
+permitted local code check. There is no specification change or approval-log
+entry. Retain these controls while the investigation needs reproduction.
+
+**Construction implementation boundary.** The checker targets the hosted
+Linux x86-64 ELF images. It bounds functions by ELF symbol sizes, preserves
+ABI registers and normalizes consistent nonvolatile/scratch-register renaming,
+checks referenced constant bytes, and rejects address-valued data references
+whose object identity it cannot preserve. Its supported entry-shell proof
+follows concrete timed scalar inputs and requires restored arguments, saved
+registers and stack before a tail transfer. It rejects unknown instructions,
+branches and calling forms. The formal kernel adapters also contain nontail
+calls followed by Box-result unpacking. An unsupported shell remains a
+construction failure; a conservative W1 CFG comparison still retains all
+nondecision wrapper instructions and reports their first difference. Distinguish
+this checker limitation from a demonstrated differing sequential body. Neither
+is waived to obtain timing. Hosted execution must establish which supported
+shapes the actual optimized images use.
+
+Only edited-Python syntax compilation and patch-whitespace checks ran locally.
+The authored compiler regression, Python cases, compiled changed-body negative
+control, oracle checks and measurements await CI. Scoped independent
+cross-reviews covered the compiler and the experiment machinery separately;
+they fixed sizing-rerun admission and identity-proof issues involving flags,
+register aliases, readonly address identity and private stack saves. A fresh
+whole-change reviewer could not start because the agent tool reached its
+thread limit and the separate CLI review failed initialization with
+`Operation not permitted`; these scoped reviews do not replace that missing
+fresh review. No approval or measured success is claimed.

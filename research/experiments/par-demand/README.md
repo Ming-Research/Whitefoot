@@ -29,16 +29,19 @@ site only after the demand-mode pass. Its caller goes straight to the chunk,
 and its unused driver is omitted. The existing non-demand lowering, weight
 assignment and emission branches retain their output text.
 
-The C lane layout remains private. Both checks emit one load of the module's
-thread-local request word:
+The C lane layout remains private. Request-gated call groups and loop slices
+emit one load of the module's thread-local request word:
 
 ```llvm
 %word = load atomic i64, ptr @wf__par_demand_word monotonic, align 8
 %requested = icmp ne i64 %word, 0
 ```
 
-At a group this branches around acquisition and merges a null frame into the
-existing refused edge. At a non-indexed loop, the remaining-work comparison
+At a nonbudgeted group this branches around acquisition and merges a null
+frame into the existing refused edge. Budgeted recursive functions offer work
+immediately within their existing budget; they skip the request test. The
+`requested` ablation restores that test for experiment 6's previous-demand
+control. Budget exhaustion still transfers to the sequential clone. At a non-indexed loop, the remaining-work comparison
 precedes the poll inside the driver, and a false poll executes a chunk slice
 then returns to the comparison. Its recursive workers use
 the same interval and still check before offering a half. The word is this
@@ -61,7 +64,8 @@ scan, through the address the victim's lane registered when its owner thread
 attached (null, and so unaskable, before). Publication clears the owner's own
 word before making its frame stealable. The setting
 `WF_PAR_DEMAND=off-never-request` is read once on demand startup, prevents
-every posting and leaves the checks at zero. `on` (or unset) enables posting.
+every posting and leaves the checks at zero. It does not suppress immediate
+budgeted-recursion offers or indexed splitting. `on` (or unset) enables posting.
 Hints carry no task or result synchronization; deque and join ordering remain
 the existing protocol. World selection (`wf__par_pool_active`) starts the
 pool and attaches the selecting thread in demand mode, so asking for demand
@@ -76,9 +80,10 @@ Dispatch `.github/workflows/compute-bench.yml` with `experiment=par-demand`,
 `placement_rounds` for experiment 1 or 2's round count. Every dispatch first
 builds on a hosted runner, verifies results with requests on and off at the
 experiment's widths (1/4 for experiment 1, 1/4/8 for experiments 2/4/5c, 4/8 for
-experiment 3), and compares legacy emission. Experiments 1 and 2 also run one
+experiment 3; experiment 6 adds W2 for stencil/histogram and W1 layout arms),
+and compares legacy emission. Experiments 1 and 2 also run one
 small hosted sizing round. The selected runner then uses those exact images;
-experiments 2, 3, 4, 5a and 5c require the 14900K for timing, while a hosted
+experiments 2, 3, 4, 5a, 5c and 6 require the 14900K for timing, while a hosted
 experiment-1 selection remains sizing-only. The native
 runner shares the formal performance instrument's prepare/call/check boundary:
 only the WF call is timed, with wall and process CPU clocks. Sample zero warms
@@ -106,7 +111,7 @@ Makefile compiles those `.wf` sources directly. Prefix and histogram reuse
 their formal performance APIs unchanged.
 
 Rounds rotate and reverse workload, width and build order. In experiments 1
-2, 4 and 5c, exceeded bounds get
+2, 4, 5c and 6, exceeded gated bounds get
 one extra interleaved batch at the same workload and width. No timing or source
 result is replaced on a rerun. The reducer reports wall/CPU medians, candidate
 ratio intervals and the initial/rerun verdicts. A failed rerun is `fail`; a first
@@ -375,3 +380,66 @@ No local build, test, harness execution or timing is authorized. The estimated
 scaled to five arms; frozen rounds and reruns may change it, and hosted
 construction/queue time is additional. These edits are unverified until CI
 and image review complete.
+
+
+## Experiment 6: eager budgeted recursion and sequential identity
+
+Select `experiment=par-demand`, `par_demand_experiment=6`,
+`placement_runner=14900k`, with `placement_rounds` empty. The
+[preregistration](../../investigations/par-demand/DESIGN.md#experiment-6-eager-budgeted-recursion-and-sequential-identity-fixed-before-it-measures)
+owns the comparisons and rejection criteria. The twelve E5c workloads use
+seq, par, demand, unversioned, previous and a byte-identical demand twin at
+W1/4/8. Previous compiles with `--par-demand --par-demand-ablation requested`,
+retaining the old request test in budgeted recursion while keeping versioning.
+Unversioned uses the new eager-budget default with versioning disabled. Neither
+control changes the demand runtime or source. Every W1 workload also uses the
+three shifted-seq arms, linked from the exact seq objects; stencil and
+histogram add W2 with the six ordinary arms. The pin sets are W1 `{2}`,
+W2 `{2,4}`, W4 `{2,4,6,8}`, W8 `{2,4,6,8,10,12,14,1}`. The E5c topology
+validation and CPU 1/CPU 0 physical-core sharing caveat remain.
+
+Hosted construction runs reducer and identity negative controls and the focused
+budgeted-recursion compiler shape test. `identity.py` compares every W1
+selected computation and every versioned cheap region against seq, proving
+entry-dispatch placement before loops. It saves `sequential-identity.json`,
+including workload/function/instruction diagnostics and hashes binding the
+report to the images, LLVM and objects. A mismatch stops construction before
+timing; hosted artifacts are retained even on that failure. Known E5c
+optimizer differences may expose an identity gap and prevent this experiment
+from measuring. The driver and reducer require passing, complete construction
+evidence and recheck its hashes; timing cannot waive a mismatch.
+
+Save six full-work sizing rounds under `sizing-e6/`, then freeze 6–30 decisive
+rounds with E4's projection rule over the literal seq diagnostic, par, both
+preservation comparisons and W1 shifts. H3 does not select the round count.
+Take a separate complete decisive matrix and one rerun only for a cell whose
+par or preservation bound exceeds. Recursion W8 demand/par must have upper
+bound <=1.05 without a separate par-speedup condition. Both demand/previous and
+demand/unversioned must have upper bound <=1.05 in every cell, including
+reported controls and W2. Other par-speedup cells retain the E4 par rule and
+reported-control exclusions. A passing verdict still needs this run's
+`inspection.json` hot-work, artifact and decision-shape evidence.
+
+The literal demand/seq <=1.00 result is a diagnostic, never an E6 rerun
+trigger. For each W1 workload and attempt, let each shifted-seq/seq interval be
+`[L_s,U_s]` and set `F=max_s(max(abs(L_s-1),abs(U_s-1)))`. An entire demand/seq
+interval contained in `[1-F,1+F]` is recorded as **at the floor**, alongside
+its literal result. Other intervals retain their diagnostic. Controls from
+another workload/run/width never supply the floor. Either attempt's void twin
+voids its cell and both floor readings.
+
+H3 is reported with its unchanged margin and interval for every cell and does
+not gate or trigger a rerun. The stencil/histogram sweep reports absolute wall
+and CPU, paired 2/1, 4/2 and 8/4 wall/CPU ratios, and whether each wall interval
+shows further speedup, slowing or uncertainty. Only initial complete sweeps
+supply cross-width ratios; selective reruns are retained separately. A positive
+CPU margin with demonstrated speedup is a reported tradeoff. Missing scaling
+evidence establishes no unconditional CPU-cost exemption. Bootstrap pairing,
+10,000 draws, seed 20261010, 95% intervals and twin/rerun discipline are as E4.
+
+CI uses `build verify`, `measure` and `summarize` with `EXPERIMENT=6`. The
+per-call allowance for a nonhoistable decision remains max(1 ns, 2%) per
+execution; this change adds none and assigns no invented decision count. No
+local build, test, harness execution or measurement is authorized. These
+construction checks and timing results remain unverified until the owner runs
+CI.

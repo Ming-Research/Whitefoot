@@ -50,6 +50,7 @@ fn default_demand_is_unchanged_after_each_ablation() {
         crate::DemandAblation::Seed,
         crate::DemandAblation::Static,
         crate::DemandAblation::Unversioned,
+        crate::DemandAblation::Requested,
     ] {
         let _ = emit_lowered(SMALL.as_bytes(), ablation(arm));
         assert_eq!(before, emit_lowered(SMALL.as_bytes(), ablation(Default::default())));
@@ -217,11 +218,44 @@ fn a_slice_driver_reads_the_request_word_only_for_a_range_worth_handing_out() {
 fn demand_checks_groups_before_acquisition_and_keeps_the_budget_cut() {
     let source = include_bytes!("../../../../tests/programs/parallel/tree.wf");
     let demand = emit_lowered(source, DEMAND);
-    assert!(demand.contains("par.demand.v"));
-    assert!(demand.contains("phi ptr [ null, %par.demand.v"));
-    assert!(demand.contains(POLL));
+    let pair = function_body(&demand, "@wf_pair");
+    assert!(pair.contains("par.demand.v"), "{pair}");
+    assert!(pair.contains("phi ptr [ null, %par.demand.v"), "{pair}");
+    assert!(pair.contains(POLL), "{pair}");
     assert!(demand.contains("@wf__par_budget_"));
     assert!(demand.contains("@wf__par_seq_"));
+}
+
+#[test]
+fn budgeted_demand_offers_immediately_and_keeps_the_sequential_cut() {
+    let source = include_bytes!("../../../../tests/programs/parallel/tree.wf");
+    let demand = emit_lowered(source, DEMAND);
+    let budgeted = function_body(&demand, "@wf__par_budget_fold");
+    assert!(budgeted.contains("icmp sgt i64 %wf.budget, 0"), "{budgeted}");
+    assert!(budgeted.contains("sub i64 %wf.budget, 1"), "{budgeted}");
+    assert!(budgeted.contains("@wf__par_seq_fold"), "{budgeted}");
+    assert!(budgeted.contains("@wf__par_acquire_lane"), "{budgeted}");
+    assert!(budgeted.contains("@wf__par_publish"), "{budgeted}");
+    assert!(!budgeted.contains(POLL), "{budgeted}");
+    assert!(!budgeted.contains("par.demand.v"), "{budgeted}");
+    let sequential = function_body(&demand, "@wf__par_seq_fold");
+    assert!(!sequential.contains(POLL), "{sequential}");
+    assert!(!sequential.contains("@wf__par_acquire_lane"), "{sequential}");
+
+    let requested = emit_lowered(source, ablation(crate::DemandAblation::Requested));
+    let previous = function_body(&requested, "@wf__par_budget_fold");
+    assert!(previous.contains(POLL), "{previous}");
+    assert!(previous.contains("phi ptr [ null, %par.demand.v"), "{previous}");
+    assert_eq!(
+        function_body(&requested, "@wf_pair"),
+        function_body(&demand, "@wf_pair")
+    );
+    let loops = emit_lowered(SMALL.as_bytes(), DEMAND);
+    assert!(loops.contains(POLL));
+    assert_eq!(
+        loops,
+        emit_lowered(SMALL.as_bytes(), ablation(crate::DemandAblation::Requested))
+    );
 }
 
 #[test]
