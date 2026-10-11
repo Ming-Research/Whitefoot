@@ -386,31 +386,66 @@ fn walk(repetitions: u64, extent: u64, seed: u64) -> result: u64 pure {
 
 #[test]
 fn invariant_demand_region_selects_the_sequential_walker_once() {
-    let module = emit_lowered(REGION.as_bytes(), DEMAND);
-    let walker = function_body(&module, "@wf_walk");
-    assert_eq!(walker.matches("par.region.entry:").count(), 1, "{walker}");
-    assert!(walker.contains("call i64 @wf__par_seq_walk("), "{walker}");
-    assert!(walker.contains("@wf_paint("), "{walker}");
-    let sequential = function_body(&module, "@wf__par_seq_walk");
-    assert!(sequential.contains("@wf__par_seq_paint("), "{sequential}");
-    let paint = function_body(&module, "@wf__par_seq_paint");
-    assert!(paint.contains("@wf__par_seq__par_chunk_"), "{paint}");
-    for body in [sequential, paint] {
-        for forbidden in [
-            "par.region",
-            "par.small",
-            "par.slice",
-            "wf__par_demand",
-            "149999",
-            "21428",
-            "thread_local",
-        ] {
-            assert!(!body.contains(forbidden), "{forbidden}: {body}");
+    // The first shape places the guarded call after the backedge's block
+    // index. The second also resets the offset, as small_split's walker does;
+    // neither change affects the guarded span's invariant extent.
+    let reset = REGION.replace(
+        "    let hi = lo +wrap extent;",
+        "    if lo >= 4000_u64 {\n      set lo = 0_u64;\n    }\n    let hi = lo +wrap extent;",
+    );
+    for source in [REGION, reset.as_str()] {
+        let module = emit_lowered(source.as_bytes(), DEMAND);
+        let walker = function_body(&module, "@wf_walk");
+        assert_eq!(walker.matches("par.region.entry:").count(), 1, "{walker}");
+        assert!(walker.contains("call i64 @wf__par_seq_walk("), "{walker}");
+        assert!(walker.contains("@wf_paint("), "{walker}");
+        let sequential = function_body(&module, "@wf__par_seq_walk");
+        assert!(sequential.contains("@wf__par_seq_paint("), "{sequential}");
+        let paint = function_body(&module, "@wf__par_seq_paint");
+        assert!(paint.contains("@wf__par_seq__par_chunk_"), "{paint}");
+        for body in [sequential, paint] {
+            for forbidden in [
+                "par.region",
+                "par.small",
+                "par.slice",
+                "wf__par_demand",
+                "149999",
+                "21428",
+                "thread_local",
+            ] {
+                assert!(!body.contains(forbidden), "{forbidden}: {body}");
+            }
         }
+        // Bounds and wrap guards remain source operations in the cheap version.
+        assert!(sequential.contains("icmp ule i64"), "{sequential}");
+        assert!(sequential.contains("add i64"), "{sequential}");
     }
-    // Bounds and wrap guards remain source operations in the cheap version.
-    assert!(sequential.contains("icmp ule i64"), "{sequential}");
-    assert!(sequential.contains("add i64"), "{sequential}");
+}
+
+#[test]
+fn a_call_after_a_loop_is_not_repeated_scheduling() {
+    // A loop exit can lie inside the header-to-backedge block-index interval
+    // even though the call executes only once.
+    let source = format!(
+        "{SMALL}{}",
+        r#"
+fn walk(repetitions: u64, extent: u64) -> result: u64 pure {
+  let n = 0_u64;
+  loop @walk {
+    if n == repetitions {
+      break @walk;
+    }
+    set n = n +wrap 1_u64;
+  }
+  let result = dynamic(seed: n, n: extent);
+  return result;
+}
+"#
+    );
+    let module = emit_lowered(source.as_bytes(), DEMAND);
+    let walker = function_body(&module, "@wf_walk");
+    assert!(!walker.contains("par.region"), "{walker}");
+    assert!(walker.contains("@wf_dynamic("), "{walker}");
 }
 
 #[test]

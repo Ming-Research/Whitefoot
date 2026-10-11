@@ -7,7 +7,7 @@
 //! operation, capture or cleanup is moved or rewritten.
 use std::collections::{BTreeMap, HashSet};
 
-use super::{loops::U64, split::loop_depths, work::Environment};
+use super::{loops::U64, work::Environment};
 use crate::{
     DemandAblation, IrEnumType, IrFunction, IrInstruction, IrIntegerOperation as Op, IrOperation,
     IrSynthesis, IrTerminator, IrValueId, IrWorkEstimate as Work,
@@ -317,6 +317,42 @@ fn normalize(work: &Work, env: &mut Environment<'_>) -> Option<Work> {
     })
 }
 
+/// Repeated scheduling requires a call or split in a control-flow cycle.
+/// The work estimator's block-index intervals are only a cost approximation:
+/// nested branch bodies can be allocated after the block carrying the loop's
+/// backedge, while an exit block can lie inside that interval.
+fn repeated_scheduling(function: &IrFunction) -> bool {
+    let edges: Vec<Vec<usize>> = function
+        .blocks()
+        .iter()
+        .map(|block| match block.terminator() {
+            IrTerminator::Jump { target, .. } => vec![target.index()],
+            IrTerminator::Match { targets, .. } => {
+                targets.iter().map(|target| target.block().index()).collect()
+            }
+            IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
+        })
+        .collect();
+    crate::cycles::components(&edges).into_iter().any(|component| {
+        let cyclic = component.len() > 1 || edges[component[0]].contains(&component[0]);
+        cyclic
+            && component.iter().any(|index| {
+                function.blocks()[*index]
+                    .instructions()
+                    .iter()
+                    .any(|instruction| {
+                        matches!(
+                            instruction,
+                            IrInstruction::Define {
+                                operation: IrOperation::Call { .. } | IrOperation::LoopSplit { .. },
+                                ..
+                            }
+                        )
+                    })
+            })
+    })
+}
+
 pub(super) fn plan(
     functions: &[IrFunction],
     ablation: DemandAblation,
@@ -332,20 +368,7 @@ pub(super) fn plan(
         if function.synthesis().is_some() {
             continue;
         }
-        let depths = loop_depths(function.blocks());
-        let repeated = function.blocks().iter().zip(depths).any(|(block, depth)| {
-            depth > 0
-                && block.instructions().iter().any(|instruction| {
-                    matches!(
-                        instruction,
-                        IrInstruction::Define {
-                            operation: IrOperation::Call { .. } | IrOperation::LoopSplit { .. },
-                            ..
-                        }
-                    )
-                })
-        });
-        if repeated
+        if repeated_scheduling(function)
             && let Some(predicates) = summaries.get(ordinal)
             && !predicates.is_empty()
         {
