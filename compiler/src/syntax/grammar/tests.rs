@@ -124,6 +124,8 @@ fn complete_inventory_is_pinned() {
     // v0.84's range facts add `apart_clause` [GRAM-4] and `range_clause`,
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
+    // HOLD-1 adds `held_clause` to GRAM-2's existing fence; all seven
+    // normative fences still feed the same build-time generator.
     assert_eq!(productions().len(), 101);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
@@ -513,14 +515,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 178 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 179 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 178);
+    assert_eq!(decisions, 179);
 }
 
 #[test]

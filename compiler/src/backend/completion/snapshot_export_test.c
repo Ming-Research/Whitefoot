@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "../runtime_test_guard.h"
 
 #define CHECK(value) do { if (!(value)) { \
@@ -337,6 +338,27 @@ static void exhaustion_and_discard(void) {
     wf_cmap_destroy(map);
 }
 
+static void expired_ordinary_read_never_reaches_host(void) {
+    int descriptors[2];
+    CHECK(pipe(descriptors) == 0);
+    unsigned char sent = 0x44, received = 0x7e;
+    CHECK(write(descriptors[1], &sent, 1) == 1);
+    wf_completion_record record;
+    uint64_t submissions = wf__completion_file_submissions();
+    wf__completion_next_deadline(1);
+    wf__completion_file_read_submit(descriptors[0], &received, 1, &record);
+    int64_t count;
+    int error;
+    wf__completion_file_join(&record, &count, &error);
+    CHECK(count < 0 && error != 0 && wf__completion_deadline_passed(&record));
+    CHECK(received == 0x7e && wf__completion_file_submissions() == submissions);
+    /* An expired call must leave the ready byte for the next ordinary read. */
+    wf__completion_file_read_submit(descriptors[0], &received, 1, &record);
+    wf__completion_file_join(&record, &count, &error);
+    CHECK(count == 1 && error == 0 && received == sent);
+    CHECK(close(descriptors[0]) == 0 && close(descriptors[1]) == 0);
+}
+
 static void read_interruptions_retain_job(void) {
     wf_cmap *map = map_new();
     put(map, 'a', 11);
@@ -354,12 +376,19 @@ static void read_interruptions_retain_job(void) {
     CHECK(result.error == 2 && result.count == 0);
     CHECK(memcmp(window, expected, sizeof(window)) == 0);
     CHECK(!wf__shared_release(never));
+    /* Real cancellation watches belong to an executing source context and
+     * its one operation block, even when already fired before submission.
+     * This final probe has no coroutine or suspended wait: its root context
+     * owns the operation block until process exit, as in cancel_test.c. */
+    wf__context_root_begin();
+    wf_completion_record *watched_record = wf__context_operation();
     void *cancel = wf__cancel_new();
     wf__shared_take(cancel, 1);
     wf__cancel_fire_held(cancel);
     started = wf_snapshot_read_start(job, window, sizeof(window), 0, 0,
-                                    cancel, &record, &result);
-    if (started != 0) wf_snapshot_read_finish(job, window, &record, &result);
+                                    cancel, watched_record, &result);
+    CHECK(started == 1);
+    wf_snapshot_read_finish(job, window, watched_record, &result);
     CHECK(result.error == 3 && result.count == 0);
     CHECK(memcmp(window, expected, sizeof(window)) == 0);
     CHECK(wf__shared_release(cancel));
@@ -556,9 +585,10 @@ int main(void) {
     wf_test_guard_start(30);
     captured_image_and_control();
     exhaustion_and_discard();
-    read_interruptions_retain_job();
     complete_owned_closure();
     malformed_fixed_length();
+    expired_ordinary_read_never_reaches_host();
+    read_interruptions_retain_job();
     wf_test_guard_finish();
     return 0;
 }

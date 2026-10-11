@@ -2,14 +2,12 @@
  * The bounded file adapter: the queue, the helpers, the claim of one's own
  * queued record, and the in-place progress pass.
  *
- * One implementation for every platform.  The one thing a platform differs in
- * is the host call each request kind makes, which is `wf_file_execute_direct`
- * and lives in one leaf per platform: `file_posix.c` and `file_windows.c`.
- * Nothing in this unit makes a host call of its own -- its threads come from
- * `wf_prim_thread_start` and its lock and condition from the platform's one
- * wait set -- so there is no `#if` here and no header of a host in it; its one
- * fail-stop writes a line through the C library and aborts, as the other
- * units' do.
+ * One queue implementation for every platform. Ordinary host calls use
+ * `wf_file_execute_direct` in `file_posix.c` or `file_windows.c`; the qualified
+ * closed snapshot request uses its runtime collector instead. Threads come
+ * from `wf_prim_thread_start` and the lock and condition from the platform's
+ * one wait set, so this unit needs no host header. Its fail-stop writes a line
+ * through the C library and aborts, as the other units' do.
  */
 
 #include "file_adapter.h"
@@ -63,8 +61,13 @@ int wf_file_request_valid(const wf_file_request *request) {
     case WF_FILE_CLOSE:
         return 1;
     case WF_FILE_SNAPSHOT_FINISH:
+#if defined(__linux__) && defined(__x86_64__) && defined(__LP64__) && defined(__GLIBC__)
         return request->operation.snapshot.owner != NULL
             && request->operation.snapshot.abort_requested <= 1u;
+#else
+        /* No composition can create a snapshot job on an unqualified host. */
+        return 0;
+#endif
     /* A listen and a connect name an address and create their own socket, so
      * there is no descriptor and no buffer to check; the address is a value
      * the emitter built and every combination of its operands is one address
@@ -378,6 +381,7 @@ static void wf_file_finish_execution(
  * Only this trusted kind reaches the runtime collector; no callback or
  * source function pointer is installed in a completion record. */
 static wf_file_result wf_file_execute_target(wf_file_request *request) {
+#if defined(__linux__) && defined(__x86_64__) && defined(__LP64__) && defined(__GLIBC__)
     if (request->kind == WF_FILE_SNAPSHOT_FINISH) {
         wf_file_result result;
         memset(&result, 0, sizeof(result));
@@ -386,6 +390,7 @@ static wf_file_result wf_file_execute_target(wf_file_request *request) {
                                request->operation.snapshot.abort_requested);
         return result;
     }
+#endif
     return wf_file_execute_direct(request);
 }
 

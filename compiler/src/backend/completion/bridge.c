@@ -4632,6 +4632,21 @@ static void wf_bridge_dispatch_bound(wf_completion_record *record, int bounded,
         wf_bridge_complete_empty(record);
         return;
     }
+    /* A deadline reached before dispatch has already ended the wait. No
+     * engine has produced an outcome yet, so submitting now could transfer
+     * bytes after the required zero-transfer DeadlinePassed outcome. Later
+     * deadline races still preserve an engine's completed transfer. */
+    uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_relaxed);
+    if (deadline != 0 && wf_file_monotonic_ns() >= deadline) {
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        wf_completion_record_complete(record);
+        return;
+    }
     if (wf_bridge_ring_offer(record)) {
         return;
     }
