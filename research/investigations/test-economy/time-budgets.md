@@ -480,9 +480,16 @@ in the workflow's order, the first build took 101.6 s and the second 93.2 s;
 in run 37395370468, with the two build steps swapped, the first took 107.2 s
 and the second 93.2 s. The owner set the budget directly to 130 s on
 2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
-every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+every later raise at 10 s; `performance-baseline-compiler` then kept 105 s, over its slowest run of 97.3 s. Why the first cold build is
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
+
+**`performance-baseline-compiler` raised to 115 s.** The baseline build
+compiles main's source, which no pull request changes, yet it overran 105 s on
+four branches with different changes, Whitefoot#346, #355, #358 and #359, at
+105.0 to 108.5 s, and every re-run passed. Main's cold build grows with main,
+so the owner approved a raise of 10 s, to 115 s, on the status board on
+2026-10-11 (card coord-budget-baseline-raise).
 
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
