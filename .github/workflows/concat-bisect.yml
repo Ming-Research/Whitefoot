@@ -26,27 +26,26 @@ jobs:
           ref: claude/halo-pin-7062f3a
           submodules: true
           path: halo
-      - name: Build the bench program with each release and disassemble
+      - name: Emit IR before and after #345 and record inlining remarks
         working-directory: halo
         run: |
           set -euo pipefail
-          git log --oneline -1
           make toolchain
           out="$PWD/build/bisect-out"; mkdir -p "$out"
-          for release in wf-78223721f77d wf-fe5589ec5f45 wf-fd49ea518e16 wf-0c0a2eda83ae wf-a3205af0bbea wf-bae97fdcf890 wf-179dc9cf1345 wf-9497f0a54fec wf-exp-b8cf83108946 wf-7062f3ac4ac7; do
+          OPT=$(command -v opt || ls /usr/lib/llvm-*/bin/opt 2>/dev/null | sort -V | tail -1)
+          echo "opt = $OPT"; "$OPT" --version | head -3
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
             echo "release = $release" > whitefoot.pin
             make compiler
             make toolchain-check
-            bin="$out/halo-$release"
-            if ! build/whitefoot/$release/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o "$bin" > "$out/build-$release.log" 2>&1; then
-              echo "$release: build failed"; tail -5 "$out/build-$release.log"; continue
-            fi
-            nm -C "$bin" | grep -E 'table_get|concat' > "$out/syms-$release.txt" || true
-            calls=$(objdump -d --no-show-raw-insn -M intel "$bin" | grep -cE 'call +[0-9a-f]+ <[^>]*table_get' || true)
-            echo "$release: table_get symbols $(grep -c table_get "$out/syms-$release.txt" || true), call sites $calls"
-            for f in $(nm "$bin" | awk '/concat_step|table_get/ {print $3}' | sort -u); do
-              objdump -d --no-show-raw-insn -M intel --disassemble="$f" "$bin" > "$out/disasm-$release-$(echo "$f" | tr '$/' '__' | cut -c1-120).txt" 2>/dev/null || true
-            done
+            wfc=build/whitefoot/$release/whitefootc
+            "$wfc" --graph research/experiments/halo-bench/modules.wfg --entry bench --emit-llvm -o "$out/$release.ll"
+            awk '/^define .*halo\.heap\.table_get[(\"]/,/^}/' "$out/$release.ll" > "$out/ir-table_get-$release.ll"
+            grep -n 'halo.heap.table_get(' "$out/$release.ll" | grep -v '^[0-9]*:define' | head -20 > "$out/ir-calls-$release.txt" || true
+            "$OPT" -passes='default<O3>' -pass-remarks-missed=inline -pass-remarks-analysis=inline -pass-remarks=inline \
+              "$out/$release.ll" -o /dev/null 2> "$out/remarks-$release.txt" || echo "opt failed for $release"
+            echo "$release: inline remarks for table_get"
+            grep -E "table_get'|table_get\b" "$out/remarks-$release.txt" | grep -v table_get_str | sed -E 's/ at callsite.*//' | sort | uniq -c | sort -rn | head -8
           done
           git checkout -- whitefoot.pin
       - uses: actions/upload-artifact@v4
