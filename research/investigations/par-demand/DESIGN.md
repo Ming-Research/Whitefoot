@@ -1727,12 +1727,14 @@ Placement: `measurement-host.txt` identifies the 14900K; the saved
 `identity.json` records the pin sets and Linux P-core topology, and this
 revision's `measure.py` passes those sets to `taskset -c` for every process.
 The native log confirms execution of that harness; it does not print
-per-process affinity. The recorded sets are: W=1 uses CPU
-`0`, W=4 uses `0,2,4,6`, W=8 uses `0,2,4,6,8,10,12,14`, one logical CPU
-per P-core. CPU 0 was retained for comparability with experiments 1–3. As the
-owner notes, CPU 0 handles interrupts and has larger noise than the other
-P-cores; this is a placement caveat, not a reason to widen a bound or discard
-an observation. No per-CPU interrupt measurement is in the artifacts.
+per-process affinity. The recorded sets are: W=1 uses CPU 0 alone,
+W=4 uses `0,2,4,6`, W=8 uses `0,2,4,6,8,10,12,14`, one logical CPU
+per P-core. Every W=1 cell, including both attempts of the mandelbrot and
+records E4-seq failures, was therefore measured on CPU 0. CPU 0 was retained
+for comparability with experiments 1–3. As the owner notes, CPU 0 handles
+interrupts and has larger noise than the other P-cores; this caveat applies
+at every measured width and is not a reason to widen a bound or discard an
+observation. No per-CPU interrupt measurement is in the artifacts.
 
 All ratios below are dimensionless paired **second-call** wall ratios
 (10,000 bootstrap draws, seed `20261010`);
@@ -2026,3 +2028,164 @@ harness execution or timing is authorized. Construction, harness cases and
 measurements remain unverified until that CI run. Keep this harness with the
 investigation while its layout attribution needs reproduction; retire it
 when that question no longer needs measurement.
+
+
+## Experiment 5a's results
+
+[Compute-bench run 38096360826](https://github.com/Ming-Research/Whitefoot/actions/runs/38096360826),
+`claude/par-demand-5a` at `81eb205186d42495fbd6e1646523df5431147e5c`, native
+i9-14900K (`MBSDESKTOP`, Linux 7.0.0-38-generic, x86-64; Clang 18.1.3).
+The 14900K job ran 2026-10-10 23:53:11–23:55:30 UTC (run metadata supplied
+with the downloaded results). Both sizing and decisive identities record
+`{1: [2]}`: every W=1 arm used **CPU 2**. Experiment 4 used **CPU 0 alone**
+at W=1, including both attempts of the mandelbrot and records E4-seq failures.
+The experiments therefore differ in both the core and the run; this comparison
+does not isolate either effect. The identities give matching seq, par, demand
+and twin image hashes across the two experiments for all selected workloads.
+
+**Frozen sample and verification.** Recomputing `sizing-e5a/measurements.tsv`
+with the maintained `summarize.py` freezes **n = 30** under the registered
+six-round sizing projection. The 504 sizing rows judge nothing and are not
+pooled with the 2,520 decisive rows: thirty separate rounds, all six workloads,
+all seven arms and both calls, without a rerun. Recomputed decisive quantities
+and the overall reading match the downloaded `summary.json` exactly.
+Every downloaded image hash matches `identity.json`; each twin is byte-identical
+to demand. Sequential WF object hashes match the layout identities, whose
+recorded WF text-symbol offsets differ from seq by each specified padding size.
+This checks the saved records, without executing downloaded images or
+independently repeating CI construction or oracle verification.
+
+**Registered reading: inconclusive.** Records' twin/demand interval is
+**0.998128 [0.995764, 0.999452]**, which excludes 1 and voids its W=1 cell.
+The registered rule, “A disagreeing twin voids its cell and leaves the overall
+reading inconclusive,” applies even though some controls reach the spread
+criterion. There is no overall instrument-floor or quiet-control verdict.
+No E4 threshold or verdict changes, and no lowering fix is selected.
+
+All table ratios are dimensionless medians of same-round **second-call wall**
+ratios, with 95% bootstrap intervals (10,000 draws, seed 20261010). Seq is the
+baseline except for twin/demand, whose baseline is demand. The ideal is 1 for
+shifted controls and the identical twin, and ≤ 1 for demand/seq and par/seq;
+the latter are observations here. `h`, `d` and spread apply only to controls;
+quiet requires both `h < 0.001` and `d < 0.001`, while spread ≥ 0.0015 is the
+registered floor criterion subject to twin validity. E4 columns give initial
+W=1 ratios on CPU 0, independently recomputed from its decisive TSV; they
+are compared with E5a on CPU 2, without pooling. All numerical evidence is in
+`{summary.json,measurements.tsv,identity.json}` and `sizing-e5a/` in this run's
+downloaded results; E4 comparisons use its `par-demand-results-14900k/`.
+
+CPU/seq ratios below are dimensionless second-call paired ratios (baseline seq,
+ideal ≤ 1). First-call CPU−wall is reported separately in µs (ideal 0); its
+medians follow arm order seq / par / demand / twin / shift64 / shift4160 /
+shift65664 and do not judge the control.
+
+**mandelbrot, W=1.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 0.998446 [0.992160, 1.001382] | 0.004611 | 0.001554 | 0.004611 | – |
+| seq-shift4160/seq | 0.997448 [0.994153, 1.002178] | 0.004012 | 0.002552 | 0.004012 | – |
+| seq-shift65664/seq | 0.999106 [0.994774, 1.000582] | 0.002904 | 0.000894 | 0.002904 | – |
+| demand/seq | 0.997604 [0.991936, 1.001920] | – | – | – | 1.002544 [1.001952, 1.003329] |
+| par/seq | 1.000095 [0.993876, 1.001786] | – | – | – | 1.002616 [1.001364, 1.003380] |
+| twin/demand | 1.000884 [0.998058, 1.003137] | – | – | – | – |
+
+CPU/seq: demand 0.996067 [0.991936, 1.000725];
+par 1.000094 [0.993686, 1.001783]. First-call CPU−wall medians (µs):
+1.8135 / 1.8235 / 1.7970 / 1.7345 / 1.8250 / 1.8075 / 1.8220.
+
+**records, W=1 — void cell; observations only.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 0.997979 [0.997156, 0.999484] | 0.001164 | 0.002021 | 0.002021 | – |
+| seq-shift4160/seq | 0.998919 [0.997623, 1.000800] | 0.001588 | 0.001081 | 0.001588 | – |
+| seq-shift65664/seq | 1.000695 [0.998557, 1.002577] | 0.002010 | 0.000695 | 0.002010 | – |
+| demand/seq | 1.000950 [0.999745, 1.005268] | – | – | – | 1.001498 [1.000961, 1.002727] |
+| par/seq | 1.000102 [0.998107, 1.000788] | – | – | – | 1.000626 [1.000270, 1.001401] |
+| twin/demand | 0.998128 [0.995764, 0.999452] | – | – | – | – |
+
+CPU/seq: demand 1.000954 [0.999710, 1.005266];
+par 1.000268 [0.999509, 1.001171]. First-call CPU−wall medians (µs):
+4.7495 / 4.9210 / 4.9430 / 4.6815 / 4.5635 / 4.9815 / 4.9190.
+
+**fir, W=1.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 1.000707 [0.999952, 1.001742] | 0.000895 | 0.000707 | 0.000895 | – |
+| seq-shift4160/seq | 0.999869 [0.999061, 1.002862] | 0.001901 | 0.000131 | 0.001901 | – |
+| seq-shift65664/seq | 1.000192 [0.999317, 1.001247] | 0.000965 | 0.000192 | 0.000965 | – |
+| demand/seq | 0.956309 [0.954103, 0.957170] | – | – | – | 0.948415 [0.947836, 0.949131] |
+| par/seq | 0.956249 [0.955298, 0.957548] | – | – | – | 0.948067 [0.947504, 0.949149] |
+| twin/demand | 1.000139 [0.999163, 1.000902] | – | – | – | – |
+
+CPU/seq: demand 0.956268 [0.954101, 0.957146];
+par 0.956096 [0.955122, 0.957532]. First-call CPU−wall medians (µs):
+2.6000 / 2.5495 / 2.5215 / 2.4955 / 2.5585 / 2.6260 / 2.5615.
+
+**stencil, W=1.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 1.000281 [0.998950, 1.001390] | 0.001220 | 0.000281 | 0.001220 | – |
+| seq-shift4160/seq | 1.000559 [0.998618, 1.002394] | 0.001888 | 0.000559 | 0.001888 | – |
+| seq-shift65664/seq | 1.001295 [0.999962, 1.002412] | 0.001225 | 0.001295 | 0.001295 | – |
+| demand/seq | 1.000972 [0.999808, 1.002083] | – | – | – | 1.002030 [0.996893, 1.004693] |
+| par/seq | 1.000279 [0.999707, 1.002809] | – | – | – | 1.000956 [0.996803, 1.003859] |
+| twin/demand | 0.999714 [0.998726, 1.000660] | – | – | – | – |
+
+CPU/seq: demand 1.000548 [0.999903, 1.001607];
+par 1.000310 [0.999714, 1.002875]. First-call CPU−wall medians (µs):
+4.4250 / 4.4280 / 4.8175 / 2.2625 / 4.4015 / 4.6230 / 3.3025.
+
+**prefix, W=1.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 0.999723 [0.995603, 1.004419] | 0.004408 | 0.000277 | 0.004408 | – |
+| seq-shift4160/seq | 0.999263 [0.993312, 1.004139] | 0.005413 | 0.000737 | 0.005413 | – |
+| seq-shift65664/seq | 1.002369 [0.994525, 1.006287] | 0.005881 | 0.002369 | 0.005881 | – |
+| demand/seq | 1.001887 [0.994488, 1.007151] | – | – | – | 1.002314 [0.995216, 1.011101] |
+| par/seq | 0.997610 [0.991612, 1.004748] | – | – | – | 1.000053 [0.991769, 1.009214] |
+| twin/demand | 0.997908 [0.993007, 1.000253] | – | – | – | – |
+
+CPU/seq: demand 1.002419 [0.994915, 1.005408];
+par 0.996760 [0.992882, 1.004215]. First-call CPU−wall medians (µs):
+3.6520 / 3.7820 / 3.7505 / 3.7050 / 3.8335 / 3.6845 / 3.7240.
+
+**histogram, W=1.**
+
+| Wall ratio (named denominator is baseline) | E5a CPU 2 median [95% interval], dimensionless; ideal controls/twin = 1, demand/seq and par/seq ≤ 1 | h = (upper−lower)/2, dimensionless; ideal < 0.001 | d = abs(median−1), dimensionless; ideal < 0.001 | Spread = max(h,d), dimensionless; quiet ideal < 0.001, floor ≥ 0.0015 | E4 CPU 0 same wall ratio, median [95% interval], dimensionless; ideal ≤ 1 |
+|---|---|---:|---:|---:|---|
+| seq-shift64/seq | 0.996883 [0.990956, 1.004459] | 0.006751 | 0.003117 | 0.006751 | – |
+| seq-shift4160/seq | 1.000617 [0.997401, 1.005238] | 0.003918 | 0.000617 | 0.003918 | – |
+| seq-shift65664/seq | 1.002081 [0.999074, 1.003415] | 0.002170 | 0.002081 | 0.002170 | – |
+| demand/seq | 0.982690 [0.979628, 0.986413] | – | – | – | 0.978058 [0.970988, 0.986388] |
+| par/seq | 0.985039 [0.977496, 0.988885] | – | – | – | 0.981913 [0.973347, 0.985246] |
+| twin/demand | 0.994230 [0.991198, 1.001736] | – | – | – | – |
+
+CPU/seq: demand 0.982691 [0.979626, 0.986834];
+par 0.985038 [0.977695, 0.988928]. First-call CPU−wall medians (µs):
+-2.6255 / -3.0365 / -2.9225 / -3.1375 / -3.2150 / -3.3165 / -3.5060.
+
+**Control observations, separate from the overall reading.** Fourteen of
+eighteen controls have spread ≥ 0.0015: all three shifts for mandelbrot,
+records, prefix and histogram, plus shift4160 for fir and stencil. The records
+controls belong to the void cell. Only records shift64 excludes 1:
+0.997979 [0.997156, 0.999484]. All other control intervals contain 1.
+The largest observed spread is histogram shift64, 0.006751, from its
+half-width; it is uncertainty, not evidence of a layout displacement.
+
+**W=1 comparison observations.** Mandelbrot demand/seq is now 0.997604
+[0.991936, 1.001920], against E4's initial 1.002544 [1.001952, 1.003329];
+par/seq is 1.000095 [0.993876, 1.001786], against 1.002616
+[1.001364, 1.003380]. Records demand/seq is 1.000950 [0.999745, 1.005268],
+against 1.001498 [1.000961, 1.002727]; par/seq is 1.000102
+[0.998107, 1.000788], against 1.000626 [1.000270, 1.001401].
+These CPU 2 intervals contain 1; records remains void. Fir and histogram
+demand/seq and par/seq intervals remain wholly below 1; stencil and prefix
+contain 1 in both runs. The tables give every comparison. The changed core
+and run prevent attributing these differences to removal of CPU 0 noise or
+to layout. The W=1 cause remains unresolved; the E4 failures retain their
+registered verdicts.
