@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           make toolchain
           out="$PWD/build/bisect-out"; mkdir -p "$out"
-          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-a92354b8c160; do
+          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-ce22645f11a0; do
             echo "release = $release" > whitefoot.pin
             make compiler
             make toolchain-check
@@ -42,6 +42,7 @@ jobs:
             f=$(nm "$bin" | awk '/concat_step/ {print $3}' | head -1)
             objdump -d --no-show-raw-insn -M intel --disassemble="$f" "$bin" > "$out/concat_step-$release.txt"
             echo "$release: table_get out-of-line calls $calls"
+            size -A "$bin" | awk -v r="$release" '$1 == ".text" {print r ": text bytes " $2}'
           done
           git checkout -- whitefoot.pin
       - uses: actions/upload-artifact@v4
@@ -66,8 +67,8 @@ jobs:
           set -euo pipefail
           make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-a92354b8c160; do
-            if [ "$release" = wf-exp-a92354b8c160 ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-ce22645f11a0; do
+            if [ "$release" = wf-exp-ce22645f11a0 ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
             echo "release = $release" > whitefoot.pin
             make -s compiler
             if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
@@ -78,7 +79,7 @@ jobs:
           done
           git checkout -- whitefoot.pin renderer
           join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-layout-wf-9497f0a54fec.txt" "$out/calls-layout-wf-exp-b8cf83108946.txt" > "$out/j1.txt"
-          join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-a92354b8c160.txt" \
+          join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-ce22645f11a0.txt" \
             | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | grep -vE 'plt|wf__' > "$out/diff.txt" || true
           wc -l < "$out/diff.txt"
           grep -E '\.(next_glyphs|set_links|set_glyph_class|add_scalar_piece|write_item|sizing_reset|size_of|height_relative)(\.body)?$' "$out/diff.txt" || true
