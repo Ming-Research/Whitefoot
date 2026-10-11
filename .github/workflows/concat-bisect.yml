@@ -79,8 +79,11 @@ jobs:
           git checkout -- whitefoot.pin renderer
           join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-layout-wf-9497f0a54fec.txt" "$out/calls-layout-wf-exp-b8cf83108946.txt" > "$out/j1.txt"
           join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-a92354b8c160.txt" \
-            | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | grep -vE 'plt|wf__' | head -80
-      - uses: actions/upload-artifact@v4
+            | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | grep -vE 'plt|wf__' > "$out/diff.txt" || true
+          wc -l < "$out/diff.txt"
+          grep -E '\.(next_glyphs|set_links|set_glyph_class|add_scalar_piece|write_item|sizing_reset|size_of|height_relative)(\.body)?$' "$out/diff.txt" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: sg-bisect
           path: sg/build/sg-bisect
