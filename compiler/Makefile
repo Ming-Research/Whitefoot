@@ -262,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test shared-take-witness cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -487,11 +487,9 @@ $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
 
-# Phase-1 count witness: built only when explicitly requested, never by the
-# gate or completion-test-images. The witness includes bridge.c with one
-# macro-only counter hook; compatible support objects retain their usual
-# construction. The temporary dispatch workflow owns trials and interprets
-# exit 2 as a recorded bound failure, not a broken runtime harness.
+# Required count regression and disabled-escalation negative control. The
+# witness includes bridge.c with test-only instrumentation; compatible support
+# objects retain their usual construction. Only the mutant disables escalation.
 SHARED_TAKE_WITNESS_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
@@ -499,12 +497,17 @@ SHARED_TAKE_WITNESS_OBJECTS := \
 $(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_take_witness.o: $(COMPLETION_DIR)/bridge.c
 $(COMPLETION_TMP)/shared-take-witness: $(SHARED_TAKE_WITNESS_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+SHARED_TAKE_NEGATIVE_OBJECT := $(COMPLETION_TMP)/objects/shared-take-witness-no-escalation/completion/shared_take_witness.o
+$(SHARED_TAKE_NEGATIVE_OBJECT): $(COMPLETION_DIR)/shared_take_witness.c $(COMPLETION_DIR)/bridge.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_SHARED_TAKE_TEST_NO_ESCALATION -c "$<" -o "$@"
+$(COMPLETION_TMP)/shared-take-witness-no-escalation: $(filter-out $(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_take_witness.o,$(SHARED_TAKE_WITNESS_OBJECTS)) $(SHARED_TAKE_NEGATIVE_OBJECT)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 .PHONY: shared-take-witness-build shared-take-witness
-shared-take-witness-build: $(COMPLETION_TMP)/shared-take-witness
-# A direct invocation preserves the witness's raw verdict (including exit 2).
-SHARED_TAKE_WITNESS_ARGS ?= 1 256 1
-shared-take-witness: $(COMPLETION_TMP)/shared-take-witness
-	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-take-witness" $(SHARED_TAKE_WITNESS_ARGS)
+shared-take-witness-build: $(COMPLETION_TMP)/shared-take-witness $(COMPLETION_TMP)/shared-take-witness-no-escalation
+shared-take-witness: shared-take-witness-build
+	python3 $(COMPLETION_DIR)/shared_take_check.py --self-test
+	$(NO_CORE_DUMPS) python3 $(COMPLETION_DIR)/shared_take_check.py --binary "$(COMPLETION_TMP)/shared-take-witness" --negative-binary "$(COMPLETION_TMP)/shared-take-witness-no-escalation" --require-bound
 
 # Cancellation runtime probe uses the private bridge/ordinary bodies in its
 # own translation unit to control park/fire interleavings. Other native
@@ -601,7 +604,8 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
-	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/shared-take-witness \
+	$(COMPLETION_TMP)/shared-take-witness-no-escalation $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
 	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))

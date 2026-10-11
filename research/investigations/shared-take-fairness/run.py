@@ -8,88 +8,19 @@ implement runtime semantics or serve as a compiler correctness oracle.
 
 import argparse
 import csv
-import io
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import time
-import unittest
 
-
-FIELDS = ["mode", "n", "cap", "trial", "bound", "y_at_first_fail",
-          "y_at_acquire", "overtakes", "failed_probes", "y_total",
-          "drained_before_acquire", "result"]
-
-
-def validate(output, status, n, cap, trial):
-    """Reject missing evidence; only a measured bound violation is XFAIL."""
-    reader = csv.DictReader(io.StringIO(output))
-    if reader.fieldnames != FIELDS:
-        raise ValueError("missing or incorrect CSV header")
-    rows = list(reader)
-    if len(rows) != 1 or set(rows[0]) != set(FIELDS) or None in rows[0].values():
-        raise ValueError("expected exactly one complete CSV row")
-    row = rows[0]
-    values = {key: int(row[key]) for key in FIELDS if key not in {"mode", "result"}}
-    if any(value < 0 for value in values.values()):
-        raise ValueError("negative count")
-    if (values["n"], values["cap"], values["trial"], values["bound"]) != (n, cap, trial, 64 * n):
-        raise ValueError("row does not match invocation and registered bound")
-    if row["mode"] != ("contended" if n else "control"):
-        raise ValueError("incorrect trial mode")
-    if values["y_total"] != n * cap or values["y_at_first_fail"] != 0:
-        raise ValueError("incomplete Y work or broken initial-failure handshake")
-    if not 0 <= values["y_at_acquire"] <= values["y_total"]:
-        raise ValueError("acquisition count outside completed work")
-    if values["overtakes"] != values["y_at_acquire"] - values["y_at_first_fail"]:
-        raise ValueError("overtaking subtraction does not match raw counts")
-    if n and (values["failed_probes"] == 0 or values["overtakes"] == 0):
-        raise ValueError("contested trial did not observe X miss the seeded hold")
-    if not n and (values["failed_probes"] or values["overtakes"]):
-        raise ValueError("uncontended control failed")
-    expected_drained = int(n > 0 and values["y_at_acquire"] == n * cap)
-    if values["drained_before_acquire"] != expected_drained:
-        raise ValueError("drain marker disagrees with counts")
-    exceeded = values["overtakes"] > 64 * n
-    expected = "bound_exceeded" if exceeded else "bound_pass"
-    if row["result"] != expected or status != (2 if exceeded else 0):
-        raise ValueError("child exit or verdict disagrees with count criterion")
-    return row
-
-
-class EvidenceControls(unittest.TestCase):
-    def output(self, overtakes=65):
-        row = ["contended", 1, 256, 1, 64, 0, overtakes, overtakes, 7, 256, 0,
-               "bound_exceeded" if overtakes > 64 else "bound_pass"]
-        stream = io.StringIO()
-        writer = csv.writer(stream)
-        writer.writerow(FIELDS)
-        writer.writerow(row)
-        return stream.getvalue()
-
-    def test_boundary_and_exceeded(self):
-        validate(self.output(64), 0, 1, 256, 1)
-        validate(self.output(65), 2, 1, 256, 1)
-
-    def test_wrong_child_verdict_is_detected(self):
-        with self.assertRaises(ValueError):
-            validate(self.output(65), 0, 1, 256, 1)
-        with self.assertRaises(ValueError):
-            validate(self.output(64), 2, 1, 256, 1)
-
-    def test_runtime_error_is_not_xfail(self):
-        for status in (1, 9, 124, -11):
-            with self.assertRaises(ValueError):
-                validate(self.output(), status, 1, 256, 1)
-
-    def test_missing_rows_or_wrong_counts_are_detected(self):
-        for output in ("", ",".join(FIELDS) + "\n", self.output() + self.output(),
-                       self.output().replace(",65,65,", ",65,64,"),
-                       self.output().replace(",7,256,", ",0,256,"),
-                       self.output().replace(",7,256,", ",7,255,")):
-            with self.assertRaises(ValueError):
-                validate(output, 2, 1, 256, 1)
+# Research consumes the maintained oracle; runtime checks import no research.
+CHECKER = Path(__file__).resolve().parents[3] / "compiler/src/backend/completion/shared_take_check.py"
+SPEC = importlib.util.spec_from_file_location("shared_take_check", CHECKER)
+CHECKS = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CHECKS)
+FIELDS, validate = CHECKS.FIELDS, CHECKS.validate
 
 
 def sweep(binary, destination, require_bound):
@@ -133,7 +64,7 @@ def sweep(binary, destination, require_bound):
             for trial in range(1, 6):
                 run(f"n{n}-k{cap}-trial{trial}", n, cap, trial)
     failures = sum(row["result"] == "bound_exceeded" for row in observations)
-    verdict = (f"XFAIL: {failures} valid trials exceeded B(N)=64*N; sampled bound rejected."
+    verdict = (f"{'FAIL' if require_bound else 'XFAIL'}: {failures} valid trials exceeded B(N)=64*N; sampled bound rejected."
                if failures else
                "SAMPLED PASS: every valid trial met B(N)=64*N; unbounded schedules remain open.")
     (destination / "verdict.txt").write_text(verdict + "\n")
@@ -159,6 +90,6 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
-        unittest.main(argv=[sys.argv[0]])
+        CHECKS.unittest.main(module=CHECKS, argv=[sys.argv[0]])
     else:
         sys.exit(main())

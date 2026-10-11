@@ -2,19 +2,20 @@
 
 ## Purpose and scope
 
-This directory owns the phase-1 investigation of whether a statement already
+This directory owns the investigation of whether a statement already
 holding a map entry can be overtaken indefinitely at its later ordinary-object
 acquisition. It retains the question, protocol and evidence needed to choose a
 phase-2 progress mechanism. Supersede this protocol in place when that mechanism
 is selected, retaining its dated results as evidence; remove the temporary
-workflow and runner when the witness becomes a required runtime regression.
-The native witness belongs under `compiler/src/backend/completion/` so it can
-eventually join runtime checks without a dependency on research inputs.
+workflow and research sweep runner when the phase-2 hosted comparison is
+complete; keep the required native regression and its maintained count checker.
+The native witness belongs under `compiler/src/backend/completion/` and joins
+runtime checks without a dependency on research inputs.
 
-This phase changes neither the specification nor runtime admission, scheduling,
-handoff or borrowing. No phase-2 option below has been selected. No measurements
-were available when this protocol was written; execution is CI-only and is
-performed by the owner.
+The owner selected phase-2 option B: count-based escalation to nonparking
+handoff claims. Its implementation and proposed arbitration are below. The
+specification is unchanged. The phase-1 protocol preceded the first hosted
+measurement; phase-2 execution is also CI-only and is performed by the owner.
 
 ## Question and semantic witness
 
@@ -128,12 +129,12 @@ lost races from host scheduling delay. Instrumentation can also change the
 interleaving. These trials measure this instrumented acquisition protocol
 under hosted schedules, with no latency or throughput claim.
 
-## Construction, evidence and expected-failure wiring
+## Phase-1 construction and expected-failure wiring
 
-`compiler/Makefile` provides `shared-take-witness-build` and the separately
-invoked `shared-take-witness` (default arguments `1 256 1`, or set
-`SHARED_TAKE_WITNESS_ARGS` to N, K and trial). Neither is a dependency of
-`make check`, `completion-test` or `completion-test-images`. Compatible
+At the recorded phase-1 revision, `compiler/Makefile` provided an isolated
+`shared-take-witness-build` and a separately invoked trial target. Neither
+was a dependency of `make check`, `completion-test` or
+`completion-test-images`. The current required wiring is described below. Compatible
 native support objects reuse the ordinary runtime-test construction. The
 witness translation unit includes the bridge with
 `WF_SHARED_TAKE_WITNESS` defined; a failed-probe counter hook is compiled
@@ -148,9 +149,9 @@ Omitting or corrupting the first-failure observation prevents a contested
 trial from producing valid evidence; an incorrect subtraction, total,
 verdict or exit code fails the caller's independent count checks.
 
-The dispatch-only `.github/workflows/tmp-shared-take-witness.yml` runs on
-`ubuntu-24.04` and `macos-15`. It builds only this image, runs the evidence
-reader's boundary and invalid-input controls, then invokes this directory's
+The phase-1 dispatch-only `.github/workflows/tmp-shared-take-witness.yml` ran on
+`ubuntu-24.04` and `macos-15`. It built only this image, ran the evidence
+reader's boundary and invalid-input controls, then invoked this directory's
 `run.py` for the control, pilots and full grid. The runner retains stdout,
 stderr, raw child exit codes, per-invocation arguments, pilot elapsed-time
 spread, aggregate counts and a verdict; the workflow also uploads the exact
@@ -166,9 +167,9 @@ missing row, wrong count or nonzero control result fails the workflow.
 `run.py --self-test` includes the exact boundary (64 passes; 65 exceeds for
 N = 1), reversed exit codes, runtime errors, missing/duplicate rows, absent
 probe observations and corrupted counts. These controls are wired into CI;
-none was executed locally. A phase-2 caller can use `--require-bound` to
-fail on any count violation, before promoting the native witness to required
-runtime ownership with an approved bound and removing this temporary sweep.
+none was executed locally. Phase 2 uses `--require-bound` to fail on any
+count violation and promotes the native witness to required runtime ownership,
+while retaining the temporary sweep for the hosted comparison.
 
 The two `run-check.pl` stage labels have provisional Linux/macOS ceilings
 in `.github/time-budgets.txt`. These are initial CI resource limits, explicitly
@@ -185,7 +186,17 @@ does not raise an existing budget.
 | One driver runs a chain of grouped statements without passing to another ready coroutine | Static only: the group path bypasses `wf__shared_acquire`'s context pass; yielding the host thread does not resume another coroutine. The primary witness does not test coroutine scheduling or a single-driver group loop. |
 | X holds an entry needed by a reserved guard and then needs that guard's object | Design constraint only: this base lacks the other branch's guard reservations, and the witness has no guards. A later fix must validate this cycle against the reservation implementation. |
 
-## Phase-2 alternatives, not implementations
+## Phase-2 alternatives
+
+The owner chose option B below, escalation to handoff arbitration. Option A
+was declined because tickets approach strict turns: the guarded-wait record
+measured firn engine throughput at 1/7.5–1/47 of control with strict turns,
+and putting a spinner behind a grantee unable to run on its driver recreates
+the borrowing deadlock. Those are selection grounds, not a measurement of
+this spinner-ticket alternative. Option C was declined because a single
+arbiter has the widest interface and proof scope and is premature while the
+guard-fairness cost sources are still being separated. First-acquisition
+resumption remains separate work.
 
 All alternatives must retain the distinction between a **physical handed
 hold** (temporarily borrowable until its grantee claims it) and a **guard
@@ -208,6 +219,121 @@ block may already have moved values or changed locals before its lazy use
 of O, so replay changes the once-executed block contract. Moving all locks
 to statement entry changes the recorded lazy-locking decision and needs its
 own investigation. Neither is implemented or silently used by this witness.
+
+## Phase-2 claim arbitration
+
+The proposed implementation uses **K = 1 failed admission confirmed under O's
+lock**. An optimistic observation is not the registration point. On the first
+confirmed miss, X links its stack-resident claim into O's active-claim queue
+in the same critical section. It keeps E and its physical executor, and
+polls its claim; it never parks its coroutine. An uncontended take and an
+immediately available borrowed hold need no queue entry. K greater than one
+failed probe would leave an interval in which a preempted X has no entitlement
+and arbitrarily many Y completions could precede the next probe. K = 1 closes
+that interval at the confirmed miss, leaving room within the unchanged 64 × N
+witness criterion. This is a provisional implementation choice, not an
+extension of WAIT-2.
+
+The active queue is FIFO among escalated claims, rather than tickets for all
+acquisitions. A queued claimant has no earlier object pending acquisition:
+it already holds every earlier target it needs. A claim is an entitlement
+to a physical hold, separate from both a parked context's wake and a guard's
+reservation to retry. Ordinary acquisitions, including compatible new readers,
+are refused while claims wait; current readers drain. On the last physical
+release:
+
+1. Give the parked head its existing opportunity, preserving two vain wakes
+   before a physical handoff. If the opportunity only wakes it to retry,
+   hand the free physical hold directly to the oldest active claim.
+2. If the parked opportunity hands a physical hold to a context, retain that
+   context's ownership. Mark that it has had its opportunity while active
+   claims wait. The next real free release must hand directly to the oldest
+   active claim rather than grant another parked hold first.
+3. Reset the opportunity marker on an active-claim admission, including
+   borrowing. Thus each class gets progress: continuous active claims offer
+   the parked queue retries and its bounded handoff, while continuous due
+   parked handoffs cannot indefinitely precede an active claim.
+
+Until a handed grantee claims its hold, the oldest active claim may borrow
+that hold exclusively. With no pending claim an immediate take may borrow
+as before. No later claimant may bypass an older one to borrow. Borrowing
+consumes the borrower's active claim and returns the original physical hold
+to its original grantee on unlock. Once the grantee claims, only a borrower
+already underway may finish before it; that precedence is unchanged. A
+borrowed release is not a real free release and does not award the original
+hold to another grantee.
+
+There is no reserved guard in this base. The queue and service helpers depend
+only on physical ownership and active claims, not guard selection, so a claim
+does not wait behind a logical guard reservation. When integrating with the
+guard-fairness branch, keep active service ahead of reservation-only admission
+and preserve an exempt claimant's borrowing; the reserved guard may need E
+before it can retry O. A **physical** handed grantee is different: its actual
+hold was granted at its acquisition boundary, after any preceding locks it
+needs, and it can finish without awaiting an earlier lock held by X. Queuing
+an entry holder behind a reserved guard, or replacing a borrowed grant with
+a new unborrowable parked-owner entitlement, would reintroduce the deadlock.
+
+### Progress argument and scope
+
+At registration, only finitely many active claims precede X. New claims join
+behind it; ordinary newcomers cannot barge. Each earlier claimant gets at
+most one intervening parked physical handoff before its own admission. A
+parked handoff retains a finite running borrow if one is underway, and once
+its grantee runs its claim excludes subsequent borrowing. A claim either
+receives a free hold or, at the queue head, borrows the existing unclaimed
+hold. Removing the claim before release-publishing its grant prevents a
+stack record from surviving its caller's return. Every earlier active owner
+and every claimed grantee obeys the total target order, so retained earlier
+entries cannot create a lock cycle with later targets. The queue never
+requires a claimant to suspend the driver that must run a parked grantee.
+
+Let q count active claims ahead of X and h count the statements already
+entitled to complete on O at registration: current readers or a writer,
+including both an underway borrower and its already-handed grantee when
+borrowing is in progress. A conservative completion count from registration
+through X's admission is h + 2q + 1: h initial completions, q earlier active
+claim completions, and at most q + 1 newly handed parked completions. An
+already-handed grantee belongs to h, not to the newly handed term. With at
+most N competing requests already before X, h + q ≤ N, so this is at most
+2N + 1, leaving room under 64N for N ≥ 1. In the primary
+write-only witness there is no earlier active claim or initial parked grant:
+Y0 holds O until X's confirmed miss and registration, then its one release
+hands to X, so only one Y completion precedes X. The broader argument counts
+completions on O, not arbitrary code work or elapsed time, and is conditional on
+holders and ready grantees getting steps and finishing their blocks.
+
+There is no finite completion bound before X obtains O's internal spin lock
+to register: host preemption and that primitive's scheduling are separate
+conditions. The witness's initial holder remains held until the confirmed
+miss, so this limitation cannot hide a counted pre-registration interval
+in its 64N verdict. Counters and deterministic schedules remain test-only;
+production admission never depends on a test mode, N, cap or observation.
+
+The same claim applies to a grouped atomic's contended first ordinary object,
+because `wf__atomic_group_take` calls `wf__shared_take`. It supplies contention
+progress there without changing `keyed_table.c`. It does **not** make an
+uncontended grouped loop pass to another ready coroutine on one driver, nor
+distinguish a first-object newcomer from an earlier-lock holder for the other
+branch's guard reservations. Those two entry-path/scheduling gaps remain
+separate; this change does not claim to close them.
+
+### Representation and integration limits
+
+The parked queue becomes a circular tail queue with the same head-retry and
+tail-newcomer order. Its saved pointer slot holds the active-claim tail, and
+the arbitration marker occupies header padding, preserving the 64-byte
+shared-state offset and the public header ABI. Claim records live on the
+native stack of nonparking callers, including native test holders outside a
+coroutine context. Ownership of the hold is published with release/acquire
+ordering before the record may disappear.
+
+The guard-fairness branch independently used the same saved header slot for
+its reservation pointer. A later combination must reconcile that layout and
+validate both protocols together; this phase does not claim tested binary
+or execution compatibility with an unmerged implementation. No `bridge.h`
+change is needed here. The grouped scheduling gap and the combined layout
+are recorded integration work, rather than hidden by a fallback.
 
 ## Results and remaining evidence
 
@@ -232,12 +358,51 @@ had finished all its capped statements.
 | 8, 4096 | 2467 | 4096-32768 |
 | 8, 65536 | 3 | 708-266982 |
 
-The sampled bound is rejected on both hosts, so the static cycle in
-[the question](#question-and-semantic-witness) is observed, not only
-argued: on macOS X routinely waited until its competitors ran out of work,
-and its overtaking count grew with the cap, which is the shape unbounded
-overtaking predicts; on Linux it is rare but present. The uncontended
-control passed on both. Finite runs cannot show that the wait is
-infinite; they show that today's runtime gives X no bound related to N.
-Phase 2 needs one of the alternatives above; the guard reservation it must
-stay compatible with is on `claude/guard-fairness` and is not on this base.
+The sampled 64 x N bound was rejected on both hosts. On macOS the
+counts grew with the cap and X often waited for the competitors to drain;
+Linux also produced one violation. These observations support the static
+starvation argument, but do not establish an infinite execution, repeated
+losses at each available gap, or the absence of every possible N-dependent
+bound: host scheduling also contributes to the observed interval. The
+uncontended control passed on both. These are the owner's recorded results;
+this phase has not retrieved the raw artifacts or run a new measurement.
+
+## Required regression and pending phase-2 evidence
+
+`compiler/Makefile` now includes `shared-take-witness` in `completion-test`
+and both candidate and disabled-escalation images in `completion-test-images`.
+The maintained `compiler/src/backend/completion/shared_take_check.py` runs
+with `--require-bound`, validates raw counts and child exits independently,
+and rejects missing evidence or runtime errors. The research sweep imports
+that validator; the gate has no research dependency.
+
+The fixed gate inventory contains:
+
+- An uncontended control, which must acquire without a failed probe.
+- A scheduled N=1, cap=65 candidate trial, which must acquire after exactly
+  one completion. The same fixture pauses X outside the object lock at the
+  first failed-probe hook until its claim is granted or 65 Y completions
+  finish. Thus the disabled-escalation image must report exactly 65 overtakes
+  and exit 2; a crash, timeout or passing mutant is an error. This deliberately
+  models host preemption after the failed probe, without modifying production
+  admission or release. The phase-1 runtime lacks the claim and fails it.
+- Two natural trials each at N=1,2,8 and cap=256, all requiring <=64 x N.
+- Native arbitration fixtures checking writer FIFO, initial-reader drain,
+  compatible-reader admission veto, alternating parked and spinner handoffs,
+  the handed grantee's precedence, and head-only queued borrowing. The prior
+  runtime has no claim queue and cannot satisfy these assertions. Handoff
+  counters are primed in these narrow fixtures; existing shared-object tests
+  retain real parked-wake and repeated borrowing coverage.
+- Validator sensitivity cases for the inclusive 64 boundary, 65 violation,
+  false child verdicts, runtime errors, missing/duplicate rows, incorrect raw
+  subtraction, incomplete Y work and the negative control's intended count.
+
+The dispatch-only workflow retains the repeated sweep on ubuntu-24.04 and
+macos-15, now also requiring the bound and running the fixed gate inventory.
+It uploads raw counts, exits and construction logs even on failure. No new
+`run-check.pl` label is introduced, so existing stage budget rows still apply.
+Remove this temporary workflow and the sweep driver when the hosted phase-2
+comparison is complete; keep the native regression and maintained checker.
+
+Native compilation, execution, sanitizer results and phase-2 counts are
+unverified until the owner runs CI. There is no local runtime measurement.

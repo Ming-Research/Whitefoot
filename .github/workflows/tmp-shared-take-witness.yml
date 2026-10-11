@@ -1,5 +1,5 @@
-# Temporary phase-1 investigation. Remove when its count witness is promoted
-# to a required runtime regression; no automatic or canonical-gate caller.
+# Temporary phase-2 count sweep. Remove after the hosted comparison is
+# complete; the fixed required regression remains in completion-test.
 name: tmp-shared-take-witness
 
 on:
@@ -55,7 +55,15 @@ jobs:
             > "$WITNESS_EVIDENCE/verdict-controls.log" 2>&1
           cat "$WITNESS_EVIDENCE/verdict-controls.log"
 
-      - name: Pilot then repeated count trials (bound failures are recorded)
+      - name: Required runtime regression and negative control
+        run: |
+          status=0
+          make -C compiler shared-take-witness CC=clang LLVM_CC=clang \
+            > "$WITNESS_EVIDENCE/required-checks.log" 2>&1 || status=$?
+          cat "$WITNESS_EVIDENCE/required-checks.log"
+          exit "$status"
+
+      - name: Pilot then repeated count trials (bound failures fail the job)
         env:
           WHITEFOOT_CHECK_TIMEOUT: 240
         run: |
@@ -64,7 +72,7 @@ jobs:
           perl .github/run-check.pl shared-take-witness-counts \
             python3 research/investigations/shared-take-fairness/run.py \
             --binary "$WHITEFOOT_SCRATCH_ROOT/whitefoot-completion-test/shared-take-witness" \
-            --output "$WITNESS_EVIDENCE/counts" \
+            --output "$WITNESS_EVIDENCE/counts" --require-bound \
             > "$WITNESS_EVIDENCE/sweep.log" 2>&1 || status=$?
           cat "$WITNESS_EVIDENCE/sweep.log"
           exit "$status"
