@@ -2,13 +2,19 @@
 
 ## Scope and status
 
-This is the implementation study and phase-2 plan for the proposed v0.126
-snapshot amendment in [the active specification](../../../spec/kernel-spec.md).
+This is the implementation study and phase-2 plan for the snapshot
+amendment in [the active specification](../../../spec/kernel-spec.md).
 The specification owns the callable declarations, admission rules, byte
 grammar and outcomes. This record owns the implementation questions and
 comparisons; it establishes no implemented capability or performance result.
 Phase 1 changes the specification, design decisions and conformance cases.
 Compiler and runtime implementation follow review of that draft.
+
+The implementation attempt exposed a contradiction between PRE-2's exact
+snapshot declaration bytes and FORM-2's canonical indentation. The
+[merge and implementation report](phase-2-merge-report.md) records the minimal
+witness, native integration prerequisites and verbatim specification amendment.
+The declaration remains unchanged pending correction of that contradiction.
 
 The owner's 2026-10-11 choice was a fixed typed export with no user execution
 in the child, using one value-type argument and an ordinary callable surface.

@@ -1,0 +1,11 @@
+fn drop_it<T: drop>(value: T) -> r: unit pure {
+  release::<T>(value: move value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let owned = box_new::<u64>(value: 7_u64);
+  drop_it::<Box<u64>>(value: move owned);
+  drop_it::<u64>(value: 11_u64);
+  return std::process::exit_status(code: 0_u8);
+}

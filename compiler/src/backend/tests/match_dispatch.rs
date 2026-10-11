@@ -1583,21 +1583,59 @@ fn main() -> status: ExitStatus pure {
 /// to the indirect call. A tag/table implementation cannot satisfy this.
 fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
     let dispatch = definition(module, &format!("{base}.dispatch"));
-    let (slot, place) = dispatch.lines().find_map(|line| {
-        let (slot, gep) = line.trim().split_once(" = getelementptr inbounds i8, ptr ")?;
-        let place = gep.strip_suffix(&format!(", i64 {offset}"))?;
-        Some((slot, place))
-    }).expect("the handler word is addressed in the received element");
-    let handler = dispatch.lines().find_map(|line| {
-        line.trim().strip_suffix(&format!(" = load ptr, ptr {slot}, align {align}"))
-    }).expect("the target is loaded with the word's alignment");
-    assert!(dispatch.lines().next().unwrap().contains(&format!("ptr {place}")), "{dispatch}");
-    assert!(dispatch.lines().any(|line| line.contains("musttail call ")
-        && line.contains(&format!(" {handler}("))), "{dispatch}");
-    assert!(!dispatch.contains("load i32"), "{dispatch}");
+    // Copies also address the word at this offset, but their loads use align 1.
+    // Trace the actual call target backwards instead of taking the first GEP.
+    let handler = dispatch
+        .lines()
+        .find_map(|line| {
+            let (_, call) = line.split_once("musttail call ")?;
+            let (target, _) = call.split_once('(')?;
+            target.split_whitespace().next_back()
+        })
+        .expect("the dispatcher tail-calls its handler");
+    assert!(handler.starts_with('%'), "{dispatch}");
+    let slot = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{handler} = load ptr, ptr "))?
+                .strip_suffix(&format!(", align {align}"))
+        })
+        .expect("the called target is loaded with the word's alignment");
+    let place = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{slot} = getelementptr inbounds i8, ptr "))?
+                .strip_suffix(&format!(", i64 {offset}"))
+        })
+        .expect("the called handler word is addressed in the received element");
+    assert!(
+        dispatch
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("ptr {place}")),
+        "{dispatch}"
+    );
+    assert!(
+        dispatch
+            .lines()
+            .any(|line| line.contains("musttail call ") && line.contains(&format!(" {handler}("))),
+        "{dispatch}"
+    );
+    // A bounded copy preserves the tag with an i32 load; dispatch must still
+    // use the received element's pointer word, never a tag switch or table.
+    assert!(!dispatch.contains("switch i32"), "{dispatch}");
     assert!(!dispatch.contains("x ptr]"), "{dispatch}");
-    assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
-    assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
+    assert!(
+        !module.contains(&format!("@{base}.dispatch.table")),
+        "{module}"
+    );
+    assert!(
+        module.contains(&format!("{base}: dispatches through the handler word")),
+        "{module}"
+    );
 }
 
 #[test]
@@ -1618,8 +1656,12 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("call void @llvm.memmove.")
-        && copied.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)")), "{copied}");
+    assert!(copied.contains("; layout-bounded transfer "), "{copied}");
+    assert!(!copied.contains("@llvm.memmove."), "{copied}");
+    super::layout_transfers::assert_typed_transfer(
+        copied,
+        &[(0, "i32"), (4, "i32"), (8, "i8"), (9, "i24"), (12, "ptr")],
+    );
     let main = emitted_body(&module, "main");
     assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
     let tag = emitted_body(&module, "tag");
@@ -1653,6 +1695,17 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         assert_handler_load(&module, "wf_run", 12, 4);
         assert_handler_load(&module, "wf_other_run", 20, 4);
+        super::layout_transfers::assert_typed_transfer(
+            emitted_body(&module, "copy_cell"),
+            &[
+                (0, "i32"),
+                (4, "i32"),
+                (8, "i8"),
+                (9, "i24"),
+                (12, "ptr"),
+                (20, "ptr"),
+            ],
+        );
         let made = emitted_body(&module, "make_add");
         assert!(made.contains("store ptr @wf_run.arm.0,")
             && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");
@@ -2142,4 +2195,75 @@ fn main() -> status: std::process::ExitStatus pure {
         output.stdout.is_empty() && output.stderr.is_empty(),
         "{output:?}"
     );
+}
+
+#[test]
+fn bounded_scan_results_initialize_handler_words() {
+    // ScanStep may acquire a handler word just like a source payload enum.
+    // Constructing only an SSA { tag, next, bytes } leaves that word absent.
+    let source = br#"fn scan_step_run(value: &ScanStep, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Next(next: cursor) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return cursor^;
+      }
+      Needs(bytes: required) => {
+        return 99_u64;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 0_u64);
+  let key = array_filled::<u8, 1>(value: 255_u8);
+  let code = 1_u8;
+  atomic map = &store {
+    let name = &key[0_u64..1_u64];
+    set map^[name] = Some<u8>(value: 1_u8);
+    let needs = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: 0_u64, keys: &keys);
+    let refused = scan_step_run(value: &needs, count: 2_u64);
+    let required = 0_u64;
+    match needs {
+      Next(next: cursor) => {
+      }
+      Needs(bytes: wanted) => {
+        set required = wanted;
+      }
+    }
+    if refused == 99_u64 {
+      if required > 0_u64 {
+        let next = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: required, keys: &keys);
+        let cursor = scan_step_run(value: &next, count: 2_u64);
+        if cursor == 0_u64 {
+          if keys.len == 1_u64 {
+            set code = 0_u8;
+          }
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: code);
+}
+"#;
+    let module = emit(source);
+    assert_split(&module, "wf_scan_step_run", 2);
+    assert!(
+        module.contains("wf_scan_step_run: dispatches through the handler word"),
+        "{module}"
+    );
+    for arm in 0..2 {
+        assert!(
+            module.contains(&format!("store ptr @wf_scan_step_run.arm.{arm},")),
+            "{module}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }

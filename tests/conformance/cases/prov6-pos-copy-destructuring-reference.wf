@@ -1,0 +1,18 @@
+struct Pair {
+  first: u64;
+  second: u64;
+}
+
+fn sum_left(input: &Pair) -> result: u64 reads(input) {
+  let Pair(first: left, ..) = input^;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pair = Pair(first: 7_u64, second: 9_u64);
+  let left = sum_left(input: &pair);
+  if left != pair.first {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

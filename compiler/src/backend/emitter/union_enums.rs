@@ -12,7 +12,7 @@
 //! LLVM has no union type, so such a value, and any aggregate holding one
 //! inline, is memory-only: it always lives in a slot, its payload fields are
 //! read and written with their own types through view addresses, whole values
-//! move by memmove, calls pass its address and return it through a
+//! move through bounded transfers or memmove, calls pass its address and return it through a
 //! destination, and its release helper takes its address. Every first-class
 //! carrier would copy it element by element, move pointers and padding
 //! through integers, or read a one-bit leaf through a type it was not stored

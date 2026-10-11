@@ -132,6 +132,12 @@ uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_wi
 
 uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
 
+uint64_t wf__keyed_table_scan_within(void *table, uint64_t cursor, uint64_t count, uint64_t limit,
+                                    wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                                    uint32_t tag_width, uint64_t none_tag) {
+    return wf_cmap_scan_within((wf_cmap *)table, cursor, count, limit, set, needs, tag_offset, tag_width, none_tag);
+}
+
 uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
                               uint32_t tag_width, uint64_t none_tag) {
     return wf_cmap_scan((wf_cmap *)table, cursor, count, set, tag_offset, tag_width, none_tag);

@@ -287,6 +287,23 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
         for row in ["append", "split_off"] {
             let body = emitted_prelude_row(&module, row);
             let lines = body.lines().collect::<Vec<_>>();
+            let mut in_transfer = false;
+            let element_transfer = lines
+                .iter()
+                .map(|line| {
+                    if line.starts_with("  ; layout-bounded transfer from ") {
+                        in_transfer = true;
+                    }
+                    let inside = in_transfer;
+                    if line.starts_with("  ; end layout-bounded transfer from ") {
+                        in_transfer = false;
+                    }
+                    inside
+                })
+                .collect::<Vec<_>>();
+            let header_store = |index: usize| {
+                !element_transfer[index] && lines[index].trim().starts_with("store i64 ")
+            };
             let zero = lines
                 .iter()
                 .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
@@ -321,27 +338,30 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
                     .all(|line| !line.contains("store ") && !line.contains("@llvm.mem")),
                 "{body}"
             );
-            assert_eq!(body.matches("  store i64 ").count(), 2, "{body}");
+            assert_eq!(
+                (0..lines.len())
+                    .filter(|&index| header_store(index))
+                    .count(),
+                2,
+                "{body}"
+            );
             let commit = lines
                 .iter()
                 .position(|line| line.ends_with(".commit:"))
                 .expect("positive transfer commits its headers");
             assert!(
-                lines[..commit]
-                    .iter()
-                    .all(|line| !line.trim().starts_with("store i64 ")),
+                (0..commit).all(|index| !header_store(index)),
                 "header stores occur only after positive transfer: {body}"
             );
             assert_eq!(
-                lines[commit + 1..done]
-                    .iter()
-                    .filter(|line| line.trim().starts_with("store i64 "))
+                (commit + 1..done)
+                    .filter(|&index| header_store(index))
                     .count(),
                 2,
                 "{body}"
             );
             assert!(
-                body.contains("@llvm.memmove"),
+                body.contains("@llvm.memmove") || element_transfer.contains(&true),
                 "positive transfers still move their elements: {body}"
             );
         }
@@ -1450,7 +1470,26 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("captured pointer definition")
         .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
-    assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
+    // Bounded copies of Columns load both Box fields too. Count reads of
+    // the captured field address, whose result the target chain below uses;
+    // the two Columns GEPs above still forbid reevaluating that projection.
+    let load_prefix = " = load ptr, ptr ";
+    let field = update[captured + load_prefix.len()..]
+        .lines()
+        .next()
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap();
+    assert_eq!(
+        update
+            .lines()
+            .filter_map(|line| line.split_once(load_prefix))
+            .filter(|(_, operand)| operand.split(',').next() == Some(field))
+            .count(),
+        1,
+        "the target's Box pointer is loaded once: {update}"
+    );
     let address = update[captured..rhs]
         .lines()
         .find_map(|line| {
@@ -1505,7 +1544,7 @@ struct Owner {
   suffix: Box<Slots<u64>>;
 }
 
-fn release(owner: Owner) -> result: unit pure {
+fn finish(owner: Owner) -> result: unit pure {
   doc "Holds the whole nested owner and nothing else, so its one return edge carries exactly four cell releases.";
   return unit;
 }
@@ -1517,18 +1556,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let prefix = box_slots_new::<u32>(capacity: 1_u64);
   let suffix = box_slots_new::<u64>(capacity: 1_u64);
   let owner = Owner(prefix: move prefix, pair: move pair, suffix: move suffix);
-  release(owner: move owner);
+  finish(owner: move owner);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
-    // `release` holds the whole nested owner and nothing else, so its one
+    // `finish` holds the whole nested owner and nothing else, so its one
     // return edge carries exactly four run releases. Allocation identities
     // and their order are checked by the owned-place execution controls.
-    let release = emitted_function(&llvm, "release");
+    let release = emitted_function(&llvm, "finish");
     assert_eq!(release.matches("call void @wf__heap_give").count(), 4);
     // Allocation is total [STOR-8], so `main` has no refusal arm to hold a
-    // partly built owner on: its one edge hands the whole owner to `release`
+    // partly built owner on: its one edge hands the whole owner to `finish`
     // and carries no release of its own.
     let main = emitted_function(&llvm, "main");
     assert_eq!(main.matches("call void @wf__heap_give").count(), 0);
