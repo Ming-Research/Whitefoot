@@ -34,7 +34,7 @@ fn measure_release(meter: &MemoryMeter) -> result: u8 writes(meter) {
   }
   let empty = box_slots_new::<u8>(capacity: 0_u64);
   let empty_held = std::process::heap_in_use(meter: meter);
-  if empty_held <= before {
+  if empty_held < before {
     return 22_u8;
   }
   release::<Box<Slots<u8>>>(value: move empty);
