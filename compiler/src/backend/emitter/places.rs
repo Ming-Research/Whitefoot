@@ -7,6 +7,40 @@
 
 use super::*;
 
+/// [REF-1, PRE-1, MSR-1, STOR-7] immutable target backing for type-fixed
+/// readonly fields, deduplicated by value in each emitted module.
+pub(super) fn emit_measure_constants(output: &mut Module, program: &IrProgram) {
+    // [REF-1, PRE-1, MSR-1, STOR-7] type-constant readonly fields share one
+    // immutable word per value. Record each symbol's function references at
+    // projection emission so whole-module and fragment rendering agree.
+    let mut measures = BTreeSet::new();
+    for function in program.functions() {
+        for instruction in function.blocks().iter().flat_map(IrBlock::instructions) {
+            if let IrInstruction::Define {
+                operation:
+                    IrOperation::ProjectAddress {
+                        address,
+                        projection: crate::IrPlaceStep::Measure { measure },
+                    },
+                ..
+            } = instruction
+                && let Some(IrType::Address(base)) = function.value_type(*address)
+                && let Some(value) = measure.type_constant(base.ty())
+            {
+                measures.insert(value);
+            }
+        }
+    }
+    for value in measures {
+        output.fragment_local_constant(
+            format!(".wf_measure.{value}"),
+            "i64".to_owned(),
+            value.to_string(),
+            Some(8),
+        );
+    }
+}
+
 pub(in crate::backend) fn returned_storage_slot(
     function: &IrFunction,
     storage: &FunctionStoragePlan,
@@ -760,6 +794,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 self.aggregate_field_pointer(base.ty(), &self.value_name(address), *field as usize)?
+            }
+            crate::IrPlaceStep::Measure { measure } => {
+                if referent.ty()
+                    != (IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+                {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                if let Some(value) = measure.type_constant(base.ty()) {
+                    let symbol = format!(".wf_measure.{value}");
+                    self.output.symbol(symbol.clone());
+                    return Ok(format!("@{symbol}"));
+                }
+                let field = measure
+                    .descriptor_field(base.ty())
+                    .ok_or(BackendFailure::InvalidIr)?;
+                self.aggregate_field_pointer(base.ty(), &self.value_name(address), field as usize)?
             }
             crate::IrPlaceStep::BoxReferent { nominal } => {
                 let IrNominalKind::Box {

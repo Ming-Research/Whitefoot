@@ -17,7 +17,7 @@ use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId,
+    CheckedValue, FunctionId, IntegerType,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
@@ -2129,6 +2129,7 @@ impl<'unit> TypeContext<'unit> {
                     };
                     referent
                 }
+                CheckedPlaceStep::Measure(_) => CheckedType::Integer(IntegerType::U64),
                 CheckedPlaceStep::Subscript(index) => {
                     if ty != index.base_type {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
