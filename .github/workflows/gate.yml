@@ -86,7 +86,7 @@ jobs:
             *) echo "unsupported gate event: $GITHUB_EVENT_NAME" >&2; exit 1 ;;
           esac
           if [ "$both" = true ]; then
-            platforms='["ubuntu-24.04"]'
+            platforms='["ubuntu-24.04","macos-15"]'
           else
             platforms='["ubuntu-24.04"]'
           fi
