@@ -1402,7 +1402,7 @@ fn consume(value: Holder) -> result: u8 pure {
   return 0_u8;
 }
 
-fn release(value: Holder, early: Bool) -> result: u8 pure {
+fn finish(value: Holder, early: Bool) -> result: u8 pure {
   touch(value: &value.stamp);
   if value.stamp != 41_u64 {
     return 2_u8;
@@ -1420,7 +1420,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let bytes = box_slots_new::<u8>(capacity: 3_u64);
     let holder = Holder(cell: move cell, bytes: move bytes, stamp: 0_u64);
     let early = round == 0_u64;
-    let status = release(value: move holder, early: early);
+    let status = finish(value: move holder, early: early);
     if status != 0_u8 {
       return std::process::exit_status(code: status);
     }
@@ -1598,6 +1598,9 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
 #include <stdlib.h>
 #include <string.h>
 
+/* STOR-1: capacity-zero runtime windows allocate nothing and are never freed. */
+extern const unsigned char wf__empty_window[64];
+
 static void *held[{slots}];
 static size_t requested[{slots}];
 static unsigned attempts;
@@ -1630,6 +1633,7 @@ void *wf_test_allocate(size_t size) {{
 }}
 
 void wf_test_release(void *allocation, uint64_t bytes) {{
+    if (allocation == (const void *)&wf__empty_window) return;
     lock_observer();
     for (unsigned id = 1; id <= attempts && id <= {limit}; ++id) {{
         if (allocation != NULL && held[id] == allocation) {{
@@ -1649,6 +1653,11 @@ void wf_test_release(void *allocation, uint64_t bytes) {{
    A-then-F events the former malloc, copy and free produced, and a refusal of
    the request returns NULL with the old block still held. */
 void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
+    if (allocation == (const void *)&wf__empty_window) {{
+        void *fresh = wf_test_allocate(size);
+        if (fresh != NULL) memcpy(fresh, allocation, (size_t)old_bytes);
+        return fresh;
+    }}
     if (allocation == NULL) return wf_test_allocate(size);
     lock_observer();
     unsigned id = ++attempts;

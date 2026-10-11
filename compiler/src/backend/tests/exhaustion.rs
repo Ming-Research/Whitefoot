@@ -669,10 +669,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// for more than the target serves. 1000 elements allocate once and run.
 ///
 /// `grow` computes its size at its own emitted site, so it is observed the
-/// same way: an empty window takes its first allocation, `grow` to 1000
-/// takes the second and releases the first, and a refused count ends the run
-/// after the first allocation alone. A servable count whose `realloc` the
-/// allocator refuses leaves the first block held and ends in the same record.
+/// same way: capacity zero allocates nothing (STOR-1), `grow` to 1000
+/// takes the first block, and a refused count ends before any allocation.
+/// A servable count whose allocator refuses ends in the same record without
+/// releasing the shared static header.
 ///
 /// `box_segments_filled` [OP-13] sums its lengths before it sizes its block,
 /// so its run has two lengths of `n` one-byte elements behind a 32-byte
@@ -710,8 +710,9 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
             "grow",
             "let values = box_slots_new::<u16>(capacity: 0_u64);\n  grow(cell: &values, capacity: n);",
             16_u64,
-            "A1;A2;F1;F2;",
-            "A1;",
+            // STOR-1: the capacity-zero window now allocates nothing.
+            "A1;F1;",
+            "",
         ),
         (
             "Segments",
@@ -737,12 +738,13 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         let observed = module
             .replace("@wf__heap_take(", "@wf_test_allocate(")
             .replace("@wf__heap_give(", "@wf_test_release(")
-            // `grow` reallocates; the observer books a realloc as A(new) then F(old),
-            // so the served trace keeps its A1;A2;F1;F2; shape.
+            // The observer recognizes retake of the shared empty header;
+            // STOR-1 makes it A(new) only, with no old allocation to release.
             .replace("@wf__heap_retake(", "@wf_test_reallocate(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
-            super::owned_places::allocation_observer_by_process(2)
+            // STOR-1 removes the initial capacity-zero allocation in grow.
+            super::owned_places::allocation_observer_by_process(if shape == "grow" { 1 } else { 2 })
         );
         let directory = test_directory();
         let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
@@ -768,16 +770,14 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
             }
         }
         if shape == "grow" {
-            // A servable size the allocator then refuses: the observer refuses
-            // allocation id 2, the `grow` realloc, returning NULL with the old
-            // block still held. The run ends at the resource abort with the
-            // first block neither released nor freed (no `F1;`).
+            // STOR-1: capacity zero allocates nothing, so the observer
+            // refuses allocation id 1 at grow and never frees the static header.
             let output = Command::new(&executable)
-                .env("WF_TEST_REFUSE_ALLOCATION", "2")
+                .env("WF_TEST_REFUSE_ALLOCATION", "1")
                 .bounded_output()
-                .expect("run the refused reallocation");
+                .expect("run the refused growth from the shared header");
             assert_eq!(signal_of(&output), Some(libc_sigabrt()), "{output:?}");
-            assert_eq!(output.stdout, b"A1;X2;", "{output:?}");
+            assert_eq!(output.stdout, b"X1;", "{output:?}");
             assert_resource_record(&output.stderr, "heap");
         }
         std::fs::remove_dir_all(directory).expect("remove allocation size image");

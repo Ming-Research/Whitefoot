@@ -26,6 +26,7 @@ use super::super::loop_permission::{
 use super::super::permission::PermissionMetadata;
 use super::{with_semantics, with_semantics_dark};
 
+mod dispatch;
 mod fields;
 
 fn permission_of(source: &[u8]) -> PermissionMetadata {

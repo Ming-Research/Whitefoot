@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 41] = [
+    let declarations: [(&str, &str, &[&str]); 42] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -246,6 +246,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
             "wf__keyed_table_scan",
             "i64",
             &["ptr", "i64", "i64", "ptr", "i64", "i32", "i64"],
+        ),
+        (
+            "wf__keyed_table_scan_within",
+            "i64",
+            &["ptr", "i64", "i64", "i64", "ptr", "ptr", "i64", "i32", "i64"],
         ),
         (
             "wf__keyed_table_clear",
@@ -970,11 +975,12 @@ fn emit_cleanup_jobs(
                         IrNominalKind::Box { referent, release } => {
                             // A boxed runtime-capacity shape is thin: the
                             // cell pointer is the block, whose header and
-                            // elements are the same allocation
-                            // (compiler/storage-representation), which is
-                            // what [TYPE-9]'s "exactly one heap object" and
-                            // [STOR-3]'s "one compiler-derived heap free"
-                            // say. Loading the block would read past its
+                            // elements are one allocation, or the shared
+                            // empty header at capacity 0 [STOR-1], which
+                            // `wf__heap_give` recognizes and does not free
+                            // (compiler/storage-representation); [STOR-3]
+                            // frees each allocation the content occupies.
+                            // Loading the block would read past its
                             // declared zero-length element array, so its
                             // walk takes the pointer and the cell's own free
                             // is the block's.

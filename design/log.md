@@ -5,6 +5,36 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Copy struct destructuring and the prelude's release
+
+Nodes: language/ownership/copy-classification, language/ownership/linearity
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner approved the item request "approve Whitefoot #341's specification v0.126 changes and two design decisions: GRAM-4 makes `move` optional on the right of a destructuring let, judged by OWN-1 from the value's class; PROV-6 renames the destructuring consume to struct destructuring, a copy value's destructuring copies its fields and leaves the original usable while affine and linear values still need `move` and are consumed, and early release reads 'the prelude supplies this function as `release`'; PRE-1 adds `fn release<T: drop>(value: T) -> result: unit pure;` at the end of its declarations and preorder; FORM-2, CALL-4, MOD-5 and MSR-3 follow the rename without change of meaning; two new ownership decisions: copy destructuring without `move`, and the prelude's ordinary consuming function `release`" with "agreed" (translated).
+
+Summary: Struct destructuring takes a bare copy place and copies its bound fields while leaving the source live, affine and linear operands keeping `move`, because a struct of copy fields otherwise could not be destructured and OWN-1's repair produced a grammar rejection; redundant `move` on copy values and destructuring confined to noncopy structs were rejected. The prelude supplies the ordinary consuming function `release<T: drop>`, because firn wrote the same empty consuming function three times; block statements and per-project definitions were rejected, and the separate early-release mechanism stays rejected.
+## 2026-10-11 Destination results read their inputs in place, and small values move by layout granules
+
+Nodes: compiler/storage-placement, compiler/payload-enum-layout
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner answered "agree" (translated) on item lm-bl-frame-store-forward to the request "approve #345's three design decisions: (1) storage placement: a function returning its result through a destination pointer keeps reading a by-value aggregate parameter through the caller's pointer until it may be changed, and takes a private copy only on the path that may change it, before the change (writing the result destination counts as a possible change); (2) storage placement: whole-value copies of small structs (at most 128 bytes and 16 granules) are split by field width; (3) payload enum layout: union-laid-out values are copied in granules at every variant's field boundaries, falling back to one memmove for pointers, one-bit leaves and oversized cases" (translated). The direction was the owner's choice of A on the card lm-dec-store-forward on 2026-10-10.
+
+Summary: Halo's frames and register values were written field by field and read back by 16-byte loads that store forwarding cannot serve. A definition returning through a destination now reads an immutable by-value aggregate parameter through the caller's pointer and captures it privately only on a path that may invalidate it, counting every write of the result destination as one because the caller may pass the same storage; this removes `table_get`'s key copy. Stored structs of at most 128 bytes and 16 granules move leaf by leaf at their own widths, and union enum values move by the intervals between every variant's leaf boundaries, capturing every source granule before any destination store. On the 14900K all seven Halo kernels got faster (fib 0.955, integer-table 0.858, twin within 0.8%) ([Halo timing of both steps](../research/investigations/in-place-parameters/DESIGN.md#halo-timing-of-both-steps)); LLVM still merges two adjacent 8-byte Frame fields into one 16-byte load, so the frame stall is only partly removed.
+## 2026-10-11 A scan bounded by the heap it may grow
+
+Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner approved the item request "approve #343: the three changes of the specification (SHARE-1 adds map_scan_within, PRE-1 adds ScanStep, one sentence of MSR-1) and the two design tree decisions; also raise io-hosts' linux-asan-ubsan budget from 10 s to 20 s" (translated) with "agreed" (translated), after choosing option A on the card "how can map_scan give a bound a caller can rely on before it allocates?" (translated) on 2026-10-10.
+
+Summary: A byte-bounded scan is a separate `map_scan_within` returning `Next` or `Needs`, with `map_scan` unchanged, because a caller budgeting heap needs whole-position progress and the exact budget of an indivisible first position before anything is copied, instead of turning the count hint into a bound or returning an unchanged cursor silently. The runtime preflights whole positions without allocating, simulates the key set's growth with fresh allocations and allocates its exact sort workspace only after admitting a prefix, because gathering or sorting an unaffordable position would itself exceed the bound and a thread-local spare could change the answer, instead of copying first and testing the final heap delta or discounting held spare storage; the repeated reads within a colliding home this costs are unmeasured. Two existing concurrent-map decisions now name `map_scan` as their subject, their content unchanged.
+
+## 2026-10-10 Empty contiguous runtime windows share one header
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a capacity-0 Box<Slots/Ring/Array> avoid allocating heap memory? (changes STOR-1)" (translated).
+
+Summary: An empty runtime-capacity Array, Slots or Ring Box points at one read-only shared header that release and retake recognize, because Halo's binary-trees spent at least 25.6% of its time in glibc malloc and free with a capacity-0 header allocated per table and Rust's `Vec::new` and PUC Lua's dummynode allocate nothing; a null cell pointer tested on every header read and a fat Box carrying its header were rejected. The one-allocation owner, `grow` and small-block copy decisions now state the capacity they apply to: positive-capacity growth from the shared header always takes a writable block, including for a zero-stride element whose size equals the header's.
+
 ## 2026-10-10 Lazy syntax paths and descendant index, shared declaration reads and indexed generic provenance
 
 Nodes: compiler/typed-syntax-access, compiler/generic-validation-scope

@@ -1,4 +1,4 @@
-fn release(store: &Shared<ConcurrentHashMap<u8>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), reads(meter) {
+fn reclaim_reserve(store: &Shared<ConcurrentHashMap<u8>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), reads(meter) {
   doc "A read effect on the meter cannot authorize releasing map reserve.";
   return std::process::release_map_reserve::<u8>(map: store, meter: meter);
 }

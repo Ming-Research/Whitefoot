@@ -11,6 +11,30 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-11 v0.127: struct destructuring of copy values, and the prelude's `release`
+
+Rules: changed GRAM-4, PROV-6, PRE-1, FORM-2, CALL-4, MOD-5, MSR-3
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner approved the item request "approve Whitefoot #341's specification v0.126 changes and two design decisions: GRAM-4 makes `move` optional on the right of a destructuring let, judged by OWN-1 from the value's class; PROV-6 renames the destructuring consume to struct destructuring, a copy value's destructuring copies its fields and leaves the original usable while affine and linear values still need `move` and are consumed, and early release reads 'the prelude supplies this function as `release`'; PRE-1 adds `fn release<T: drop>(value: T) -> result: unit pure;` at the end of its declarations and preorder; FORM-2, CALL-4, MOD-5 and MSR-3 follow the rename without change of meaning; two new ownership decisions: copy destructuring without `move`, and the prelude's ordinary consuming function `release`" with "agreed" (translated).
+
+Summary: GRAM-4 required `move` on the right of a destructuring `let` while OWN-1 refuses `move` on a copy value, so a struct of copy fields could not be destructured and OWN-1's repair led to a grammar rejection. `move` is now optional there and OWN-1 judges the spelling by the operand's class: destructuring a copy value copies each bound field and leaves the source live; an affine or linear operand keeps `move` and is consumed as before, with `..`-covered fields judged by WIN-3 only in that consuming form (PROV-6). PRE-1 adds `release<T: drop>`, the ordinary consuming function that releases its parameter under the leaving-edge rules, which PROV-6 now names as the early-release route. FORM-2, CALL-4, MOD-5 and MSR-3 follow the rename to struct destructuring. Selection ground: the owner chose admitting copy destructuring over only repairing the diagnostic, and firn had written the same empty consuming function three times. The approval named v0.126; the merge order gave v0.126 to the bounded scan, so these unchanged rules are numbered v0.127.
+
+## 2026-10-11 v0.126: a scan bounded by the heap it may grow
+
+Rules: changed SHARE-1, PRE-1, MSR-1
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "how can map_scan give a bound a caller can rely on before it allocates?" (translated), whose option A read "add a bounded scan map_scan_within whose bound counts heap growth; when the bound cannot hold the next position it refuses and reports Needs(n); map_scan stays unchanged" (translated); and on 2026-10-11 the owner approved the item request "approve #343: the three changes of the specification (SHARE-1 adds map_scan_within, PRE-1 adds ScanStep, one sentence of MSR-1) and the two design tree decisions; also raise io-hosts' linux-asan-ubsan budget from 10 s to 20 s" (translated) with "agreed" (translated).
+
+Summary: SHARE-1's `map_scan` takes `count` only as a hint, so one call could copy any number of key bytes, and firn's chunked rewrite could not reserve memory for a scan step before taking it. SHARE-1 adds `map_scan_within`, which shares `map_scan`'s cursor, extent and order and adds a byte limit: it returns `Next(0)` when no `Some` key remains; inserts nothing and returns `Needs(bytes: n)`, the cursor unchanged, when the first nonempty position's keys alone need peak heap growth `n` above the limit, counted with fresh storage for every allocation so a retry with `limit >= n` progresses while the map is unchanged; and otherwise inserts a prefix of whole positions with its heap increase, temporary storage included, at most the limit throughout. PRE-1 declares `enum ScanStep { Next(next: u64); Needs(bytes: u64); }` and the function, placed after `map_scan` in the declaration preorder, which moves the later diagnostic ordinals. MSR-1 publishes a `KeySet`'s length from below for both scans. `map_scan` is unchanged. Selection ground: a caller that reserves memory before it scans must learn the size it needs before anything is copied, and a position's keys are inserted whole because the cursor names positions, not keys.
+
+## 2026-10-10 v0.125: an empty contiguous runtime window allocates nothing
+
+Rules: changed OP-13, STOR-1, STOR-3, TYPE-9
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a capacity-0 Box<Slots/Ring/Array> avoid allocating heap memory? (changes STOR-1)" (translated), whose option A read "change the specification: a runtime-capacity contiguous window (`Array<T>`, `Slots<T>`, `Ring<T>`) of capacity 0 in a Box occupies no allocation and its release frees nothing, the first `grow` allocates; every such Box points at one read-only static empty header, release and growth recognize it and skip the free, and `append` and `split_off` moving no element write no header" (translated).
+
+Summary: STOR-1 required every `Box` content to be one allocation, so `box_slots_new::<T>(capacity: 0)` took a header from the heap and freed it again; Halo pays two such allocations per table, and its binary-trees spent at least a quarter of its time in the allocator. A runtime-capacity `Array<T>`, `Slots<T>` or `Ring<T>` content of capacity 0 is now the shared empty header, immutable static storage that no release frees (STOR-1, TYPE-9's description of `Box`); a `Box` release frees each allocation its content occupies (STOR-3); a construction of count 0 builds the shared header and allocates nothing (OP-13). `Segments` and `Paged` keep their allocations. Selection ground: an empty window holds no element and only its header is read, so sharing one zero header changes no observable value, while the heap meter, which counts allocations, now reads no bytes for it.
+
 ## 2026-10-10 v0.124: a swap's exchange is a placement
 
 Rules: changed TYPE-9, TYPE-10

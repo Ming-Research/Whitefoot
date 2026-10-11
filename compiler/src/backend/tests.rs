@@ -36,6 +36,7 @@ mod integer_conversion;
 mod integer_extended;
 mod integer_negation;
 mod loop_split;
+mod layout_transfers;
 mod match_dispatch;
 mod owned_places;
 mod parallel;
@@ -550,13 +551,12 @@ fn build_linked_executable_inner(
     // dependencies, using the same build inputs as the driver. Source
     // classification never selects a second linkage or callable ABI.
     let mut staged_units = Vec::new();
-    let needs_heap = llvm.contains("@wf__heap_take(")
-        || llvm.contains("@wf__heap_give(")
-        || llvm.contains("@wf__heap_retake(")
+    let needs_heap = crate::module_requires_heap_runtime(llvm)
         || host.is_some_and(|source| {
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")
                 || source.contains("wf__heap_retake(")
+                || source.contains("wf__empty_window")
         });
     if defines.is_empty() && library_defines.is_empty() {
         // These inputs and options are immutable for this test executable.
