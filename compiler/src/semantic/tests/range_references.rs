@@ -28,7 +28,9 @@
 //! scalar count bound — keep their live subject rule and belong with the other
 //! subscript tests, not with the retired view apparatus.
 
-use crate::{CallRequirementDisposition, SemanticIssueKind, SemanticOutcome, SemanticRule};
+use crate::{
+    CallRequirementDisposition, SemanticIssueKind, SemanticLocation, SemanticOutcome, SemanticRule,
+};
 
 use super::{assert_accepts, assert_rule_kind, with_semantics};
 
@@ -55,6 +57,43 @@ fn a_range_reference_forms_and_reslices() {
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/ref4-pos-range-reference-and-reslice.wf"
     ));
+}
+
+/// [TYPE-7, DIAG-1] refusals cite the complete place (excluding the borrow
+/// marker) and retain all three prescribed restructuring choices.
+#[test]
+fn range_referent_diagnostics_cite_complete_places_and_offer_repairs() {
+    for (source, cited) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type7-neg-range-referent-borrow-parameter.wf"
+            )
+            .as_slice(),
+            "r^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-range-referent-field.wf")
+                .as_slice(),
+            "r^.field",
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected TYPE-7 at {cited:?}, got {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Type7);
+            let SemanticIssueKind::RangeReferentUse { mechanical_fix } = issue.kind() else {
+                panic!("expected a range-referent repair, got {issue:?}");
+            };
+            for repair in ["let q = r;", "&r^[i]", "&r^[a..b]"] {
+                assert!(mechanical_fix.contains(repair), "missing repair {repair:?}");
+            }
+            let SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+            assert_eq!(&source[start..end], cited.as_bytes());
+        });
+    }
 }
 
 /// [REF-4] a range reference over a `Ring` is a hard error: a wrapped window is

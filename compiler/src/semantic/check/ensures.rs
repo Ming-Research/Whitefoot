@@ -700,6 +700,8 @@ impl<'unit> Checker<'_, 'unit> {
                     .tree
                     .first_child_with(definition, Production::Expr)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                self.types
+                    .check_range_referent_places(check_context, expression, bindings)?;
                 if !self.types.declarations.validate_clause_computation(
                     ClauseKind::Postcondition(record),
                     definition,
@@ -763,6 +765,8 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(clause, Production::ClauseExpr)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            self.types
+                .check_range_referent_places(check_context, expression, bindings)?;
             self.types.declarations.validate_clause_condition(
                 ClauseKind::Postcondition(record),
                 clause,
