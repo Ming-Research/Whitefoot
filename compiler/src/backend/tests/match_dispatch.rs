@@ -837,7 +837,12 @@ fn high_tag_program(high: u32) -> crate::IrProgram {
 fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
     for (high, width) in [(128, 8), (32768, 16)] {
         let program = high_tag_program(high);
-        let module = crate::emit_llvm(&program).expect("dense high-tag enums emit").into_string();
+        let mut module = crate::emit_llvm(&program).expect("dense high-tag enums emit");
+        // Direct IR emission has the callable ABI; executable builds add
+        // their selected entry's launcher after emission.
+        module.append(crate::driver::launcher::render(&program, "main")
+            .expect("the high-tag fixture's main has an executable launcher"));
+        let module = module.into_string();
         let slots = usize::try_from(high).unwrap() + 1;
         assert_split_with_table_slots(&module, "wf_run", 2, slots);
         let table = module.lines().find(|line| line.starts_with("@wf_run.dispatch.table = "))
@@ -862,6 +867,8 @@ fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
         // module has emission assertions, avoiding a large native build while
         // detecting truncation and signed table indexing at the i16 boundary.
         if high == 128 {
+            assert!(definition(&module, "wf__main_body").contains("wf_main"),
+                "the executable launcher invokes the mutated fixture's main");
             let output = compile_and_run(&module);
             assert_eq!(output.status.code(), Some(0), "{output:?}");
         }
