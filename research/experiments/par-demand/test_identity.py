@@ -1,12 +1,123 @@
 """Hosted identity checks. No compiler fixture, timing or build runs here."""
 import unittest
+import contextlib
+import io
+import json
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
+import identity
 from identity import (IdentityError, Instruction, normalized, first_difference,
                       parse_disassembly, project_pool, entry_shell, computation_root,
-                      dispatch_proof, parse_ir, ElfImage, canonical_symbol)
+                      dispatch_proof, parse_ir, ElfImage, canonical_symbol,
+                      classify_construction, latched_writer_evidence)
 
 
 def insns(rows):
     return [Instruction(0x100 + index * 4, *row) for index, row in enumerate(rows)]
+
+
+class ConstructionAttributionTests(unittest.TestCase):
+    def record(self, identical=True):
+        return {'status': 'fail', 'comparisons': [
+            {'function': 'wf__par_seq_body', 'role': 'reachable sequential body/helper', 'identical': identical}],
+            'dispatch': {'pool_decisions_per_timed_call': 1, 'outside_loops': True, 'regions': []},
+            'failures': [{'workload': 'fixture', 'function': 'wf_bench_fixture',
+                          'reason': 'normalized timed sequential wrapper differs',
+                          'instruction': 1, 'seq': 'push %rax', 'demand': 'push %saved0.0'}]}
+
+    def test_identical_body_closure_does_not_green_an_entry_adapter_difference(self):
+        record = self.record()
+        classify_construction(record, 'wf_bench_fixture', {'wf__par_seq_body'}, {})
+        self.assertEqual(record['computation_status'], 'pass')
+        self.assertEqual(record['status'], 'fail')
+        failure = record['failures'][0]
+        self.assertEqual(failure['category'], 'entry-adapter')
+        self.assertEqual((failure['instruction'], failure['seq'], failure['demand']),
+                         (1, 'push %rax', 'push %saved0.0'))
+        self.assertEqual(failure['evidence']['selected_sequential_roots'], ['wf__par_seq_body'])
+
+    def test_changed_missing_or_unselected_body_cannot_qualify_adapter(self):
+        for changed, roots, missing in [(True, {'wf__par_seq_body'}, False),
+                                        (False, set(), False), (False, {'wf__par_seq_body'}, True)]:
+            record = self.record(not changed)
+            if missing:
+                record['failures'].append({'function': 'wf_missing', 'reason': 'missing corresponding sequential disassembly function'})
+            classify_construction(record, 'wf_bench_fixture', roots, {})
+            self.assertNotEqual(record['computation_status'], 'pass')
+            self.assertEqual(record['failures'][0]['category'], 'ordinary')
+            self.assertEqual(record['status'], 'fail')
+
+    def test_inventory_identity_does_not_prove_unknown_timed_selection(self):
+        record = self.record()
+        record['failures'][0]['reason'] = 'wrapper CFG projection: unsupported machine decision'
+        classify_construction(record, 'wf_bench_fixture', set(), {}, {'wf__par_seq_body'})
+        self.assertEqual(record['computation_status'], 'pass')
+        self.assertEqual(record['timed_selection_status'], 'unverified')
+        self.assertEqual(record['failures'][0]['category'], 'ordinary')
+        self.assertEqual(record['status'], 'fail')
+        self.assertEqual(record['computation_scope']['selected_sequential_roots'], [])
+        self.assertEqual(record['computation_scope']['inventoried_sequential_roots'], ['wf__par_seq_body'])
+
+    def writer(self):
+        common = {'write.loop': ['%written = call i64 @wf_resource_write(ptr %message, i64 %length)',
+                                 'br label %abort'],
+                  'abort': ['call void @abort()', 'unreachable']}
+        seq = {'entry': ['br label %write.loop'], **common}
+        demand = {'entry': ['%latch = call ptr @wf__floor_record_latch()',
+                            '%acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst',
+                            '%won = extractvalue { i32, i1 } %acquired, 1',
+                            'br i1 %won, label %write.loop, label %park'], **common,
+                  'park': ['%parked = load volatile i32, ptr %latch, align 4', 'br label %park']}
+        machine = insns([('call', '500 <wf__floor_record_latch>'),
+                         ('lock', 'cmpxchg %edx,(%rax)'), ('ret', '')])
+        return seq, demand, machine
+
+    def test_latched_writer_requires_both_exact_ir_delta_and_actual_atomic(self):
+        seq, demand, machine = self.writer()
+        evidence = latched_writer_evidence('wf_resource_record_abort',
+            {'wf_resource_record_abort': seq}, {'wf_resource_record_abort': demand}, machine, None)
+        self.assertIsNotNone(evidence)
+        record = self.record()
+        record['comparisons'].append({'function': 'wf_resource_record_abort',
+                                     'role': 'reachable sequential body/helper', 'identical': False})
+        record['failures'].append({'function': 'wf_resource_record_abort',
+                                  'reason': 'normalized sequential body differs', 'instruction': 4})
+        classify_construction(record, 'wf_bench_fixture', {'wf__par_seq_body'},
+                              {'wf_resource_record_abort': evidence})
+        self.assertEqual(record['computation_status'], 'pass')
+        self.assertEqual(record['failures'][1]['category'], 'latched-writer')
+        self.assertEqual(record['status'], 'fail')
+        changed = {**demand, 'write.loop': ['call void @different_write()', 'br label %abort']}
+        for candidate, actual in [(changed, machine), (demand, machine[:1]), (demand, insns([('lock', 'cmpxchg %edx,(%rax)'), ('ret', '')]))]:
+            self.assertIsNone(latched_writer_evidence('wf_resource_record_abort',
+                {'wf_resource_record_abort': seq}, {'wf_resource_record_abort': candidate}, actual, None))
+        self.assertIsNone(latched_writer_evidence('wf_unrelated_writer',
+            {'wf_resource_record_abort': seq}, {'wf_unrelated_writer': demand}, machine, None))
+
+    def test_cli_retains_known_difference_first_instruction_and_nonzero_exit(self):
+        def checked(name, _):
+            record = self.record()
+            record['failures'][0]['workload'] = name
+            classify_construction(record, 'wf_bench_fixture', {'wf__par_seq_body'}, {})
+            # The main-level small_split coverage assertion remains satisfied;
+            # this case isolates whether attribution could admit a failure.
+            record['dispatch']['regions'] = [{'function': 'wf_body'}]
+            return record
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            output = io.StringIO()
+            with patch('sys.argv', ['identity.py', '--build', directory]), \
+                 patch.object(identity, 'check_workload', side_effect=checked), \
+                 contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as exit_status:
+                identity.main()
+            self.assertEqual(exit_status.exception.code, 1)
+            result = json.loads((build / 'sequential-identity.json').read_text())
+            self.assertEqual((result['status'], result['computation_status']), ('fail', 'pass'))
+            first = result['workloads']['stencil']['failures'][0]
+            self.assertEqual((first['category'], first['instruction']), ('entry-adapter', 1))
+            self.assertIn('[entry-adapter]', output.getvalue())
+            self.assertIn("instruction 1: seq='push %rax'", output.getvalue())
 
 
 class NormalizationTests(unittest.TestCase):

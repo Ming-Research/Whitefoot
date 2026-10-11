@@ -61,7 +61,153 @@ def readonly_local_fixture():
     return bytes(data)
 
 
+def tls_fixture(memory_size=16, symbol='counter', symbol_offset=0, initial=b'abcd'):
+    """An aligned PT_TLS template with initialized bytes and zero-fill tail."""
+    data = bytearray(0x400)
+    ident = b'\x7fELF\x02\x01\x01' + bytes(9)
+    struct.pack_into('<16sHHIQQQIHHHHHH', data, 0,
+                     ident, 2, 62, 1, 0, 0x40, 0x200, 0, 64, 56, 1, 64, 4, 0)
+    struct.pack_into('<IIQQQQQQ', data, 0x40,
+                     7, 4, 0x80, 0x300, 0x300, len(initial), memory_size, 8)
+    data[0x80:0x80 + len(initial)] = initial
+    strings = b'\0' + symbol.encode() + b'\0'
+    data[0x180:0x180 + len(strings)] = strings
+    struct.pack_into('<IBBHQQ', data, 0x100, 1, 0x16, 0, 1, symbol_offset, 8)
+    sections = [(0,) * 10,
+                (0, 1, 0x403, 0x300, 0x80, memory_size, 0, 0, 8, 0),
+                (0, 2, 0, 0, 0x100, 24, 3, 0, 8, 24),
+                (0, 3, 0, 0, 0x180, len(strings), 0, 0, 1, 0)]
+    for index, section in enumerate(sections):
+        struct.pack_into('<IIQQQQIIQQ', data, 0x200 + index * 64, *section)
+    return bytes(data)
+
+
+def external_slot_fixture(address=0x300, symbol='stderr', version='GLIBC_2.2.5'):
+    """A real RELA/dynsym/versym/verneed-backed external object GOT slot."""
+    data = bytearray(0x700)
+    ident = b'\x7fELF\x02\x01\x01' + bytes(9)
+    struct.pack_into('<16sHHIQQQIHHHHHH', data, 0,
+                     ident, 3, 62, 1, 0, 0, 0x400, 0, 64, 0, 0, 64, 8, 0)
+    strings, offsets = b'\0', {}
+    for spelling in (symbol, 'libc.so.6', version, 'bounded'):
+        offsets[spelling] = len(strings)
+        strings += spelling.encode() + b'\0'
+    data[0x200:0x200 + len(strings)] = strings
+    struct.pack_into('<IBBHQQ', data, 0x100, offsets[symbol], 0x11, 0, 0, 0, 8)
+    struct.pack_into('<QQq', data, 0x130, address, 6, 0)
+    struct.pack_into('<H', data, 0x150, 2)
+    struct.pack_into('<HHIII', data, 0x160, 1, 1, offsets['libc.so.6'], 16, 0)
+    struct.pack_into('<IHHII', data, 0x170, 0, 0, 2, offsets[version], 0)
+    struct.pack_into('<IBBHQQ', data, 0x190, offsets['bounded'], 0x11, 0, 1, address + 8, 8)
+    sections = [(0,) * 10,
+                (0, 1, 3, address, 0x80, 16, 0, 0, 8, 0),
+                (0, 11, 0, 0, 0x100, 24, 4, 0, 8, 24),
+                (0, 4, 0, 0, 0x130, 24, 2, 0, 8, 24),
+                (0, 3, 0, 0, 0x200, len(strings), 0, 0, 1, 0),
+                (0, 0x6fffffff, 0, 0, 0x150, 2, 2, 0, 2, 2),
+                (0, 0x6ffffffe, 0, 0, 0x160, 32, 4, 1, 4, 0),
+                (0, 2, 0, 0, 0x190, 24, 4, 0, 8, 24)]
+    for index, section in enumerate(sections):
+        struct.pack_into('<IIQQQQIIQQ', data, 0x400 + index * 64, *section)
+    return bytes(data)
+
+
 class ImageIdentityTests(unittest.TestCase):
+    def read_image(self, data):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'image'
+            path.write_bytes(data)
+            return ElfImage(path)
+
+    def test_tls_layout_movement_uses_object_identity_including_offset_zero(self):
+        seq = self.read_image(tls_fixture())
+        moved = self.read_image(tls_fixture(memory_size=40))
+        def rows(displacement, image):
+            return normalized([Instruction(0x100, 'movq', f'%fs:0x{displacement % (1 << 64):x},%rax')], image=image)
+        self.assertEqual(seq.symbols['counter'], (0, 8, 6))
+        self.assertEqual(rows(-16, seq), rows(-40, moved))
+        self.assertNotEqual(rows(-16, seq), rows(-40, self.read_image(tls_fixture(memory_size=40, symbol='other'))))
+        self.assertNotEqual(rows(-16, seq), rows(-40, self.read_image(tls_fixture(memory_size=40, initial=b'abce'))))
+        with self.assertRaisesRegex(IdentityError, 'unbounded TLS'):
+            rows(-16, self.read_image(tls_fixture(symbol_offset=8)))
+        with self.assertRaisesRegex(IdentityError, 'ELF data evidence'):
+            rows(-16, None)
+
+    def test_tls_within_object_offsets_and_access_bounds_survive_normalization(self):
+        image = self.read_image(tls_fixture())
+        a = normalized([Instruction(0x100, 'movl', '%fs:-16,%eax')], image=image)
+        b = normalized([Instruction(0x100, 'movl', '%fs:-12,%eax')], image=image)
+        self.assertNotEqual(a, b)
+        with self.assertRaisesRegex(IdentityError, 'crosses named object'):
+            normalized([Instruction(0x100, 'movq', '%fs:-12,%rax')], image=image)
+        with self.assertRaisesRegex(IdentityError, 'unsupported indexed'):
+            normalized([Instruction(0x100, 'movq', '%fs:-16(%rax),%rax')], image=image)
+        wrong_section = bytearray(tls_fixture())
+        struct.pack_into('<H', wrong_section, 0x106, 3)
+        with self.assertRaisesRegex(IdentityError, 'not in a TLS section'):
+            self.read_image(wrong_section)
+
+    def test_external_got_slot_relocation_preserves_symbol_version_and_offset(self):
+        seq = self.read_image(external_slot_fixture())
+        moved = self.read_image(external_slot_fixture(address=0x500))
+        def rows(address, image, opcode='movq', register='rax'):
+            return normalized([Instruction(0x100, opcode, f'0x20(%rip),%{register} # {address:x} <misleading>')], image=image)
+        self.assertEqual(rows(0x300, seq), rows(0x500, moved))
+        self.assertNotEqual(rows(0x300, seq), rows(0x300, self.read_image(external_slot_fixture(symbol='stdout'))))
+        self.assertNotEqual(rows(0x300, seq), rows(0x300, self.read_image(external_slot_fixture(version='GLIBC_2.34'))))
+        changed_bytes = bytearray(external_slot_fixture(address=0x500))
+        changed_bytes[0x80] = 1
+        self.assertNotEqual(rows(0x300, seq), rows(0x500, self.read_image(changed_bytes)))
+        changed_addend = bytearray(external_slot_fixture())
+        struct.pack_into('<q', changed_addend, 0x140, 1)
+        self.assertNotEqual(rows(0x300, seq), rows(0x300, self.read_image(changed_addend)))
+        self.assertNotEqual(rows(0x300, seq, 'movl', 'eax'), rows(0x304, seq, 'movl', 'eax'))
+        with self.assertRaisesRegex(IdentityError, 'slot access bounds'):
+            rows(0x304, seq)
+        del moved.relocation_slots[0x500]
+        with self.assertRaisesRegex(IdentityError, 'unbounded mutable'):
+            rows(0x500, moved)
+
+    def test_mutable_local_object_provenance_and_layout_are_both_checked(self):
+        def image_at(address, source='first.c'):
+            image = ElfImage.__new__(ElfImage)
+            image.data = bytes(8)
+            image.sections = [(0, 8, 3, address, 0, 8, 0, 0, 8, 0)]
+            image.symbols = {'counter': (address, 8, 1)}
+            image.symbol_names = {'counter': 'counter'}
+            image.symbol_bindings = {'counter': 0}
+            image.symbol_sources = {'counter': (source, 0)}
+            return image
+        instruction = Instruction(0x100, 'movl', '(%rip),%eax')
+        seq, moved, different = image_at(0x300), image_at(0x500), image_at(0x300, 'second.c')
+        self.assertEqual(seq.reference_identity(0x304, instruction, 'nearest'),
+                         moved.reference_identity(0x504, instruction, 'nearest'))
+        self.assertNotEqual(seq.reference_identity(0x300, instruction, 'nearest'),
+                            seq.reference_identity(0x304, instruction, 'nearest'))
+        self.assertNotEqual(seq.reference_identity(0x300, instruction, 'nearest'),
+                            different.reference_identity(0x300, instruction, 'nearest'))
+        with self.assertRaisesRegex(IdentityError, 'crosses named object'):
+            moved.reference_identity(0x504, Instruction(0x100, 'movq', '(%rip),%rax'), 'nearest')
+
+    def test_mutable_alias_names_cannot_disappear_in_content_normalization(self):
+        image = ElfImage.__new__(ElfImage)
+        image.data = bytes(8)
+        image.sections = [(0, 8, 3, 0x300, 0, 8, 0, 0, 8, 0)]
+        image.symbols = {'counter': (0x300, 8, 1), 'alias': (0x300, 8, 1)}
+        instruction = Instruction(0x100, 'movq', '(%rip),%rax')
+        aliased = image.reference_identity(0x300, instruction, 'nearest')
+        del image.symbols['alias']
+        self.assertNotEqual(aliased, image.reference_identity(0x300, instruction, 'nearest'))
+
+    def test_rip_data_is_not_read_from_an_overlapping_tls_template_address(self):
+        image = ElfImage.__new__(ElfImage)
+        image.data = b'\x07\0\0\0\0\0\0\0'
+        image.sections = [(0, 8, 0x403, 0x300, 0, 8, 0, 0, 8, 0),
+                          (0, 1, 3, 0x300, 0, 8, 0, 0, 8, 0)]
+        image.symbols = {'counter': (0x300, 8, 1), 'tls_counter': (0, 8, 6)}
+        self.assertEqual(image.reference_bytes(0x300, Instruction(0x100, 'movq', '(%rip),%rax')),
+                         image.data)
+
     def test_retained_cleanup_helper_bounds_and_canonical_namespace_agree(self):
         def image_at(name, address):
             image = ElfImage.__new__(ElfImage)

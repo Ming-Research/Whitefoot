@@ -1111,6 +1111,23 @@ class Experiment6Tests(unittest.TestCase):
         identity_path.unlink()
         with self.assertRaisesRegex(ValueError, "identity"): self.row()
 
+    def test_identical_computation_with_known_construction_differences_still_blocks_timing(self):
+        self.write()
+        identity_path = self.build / "sequential-identity.json"
+        evidence = json.loads(identity_path.read_text())
+        evidence["computation_status"] = "pass"
+        workload = evidence["workloads"]["stencil"]
+        workload.update(status="fail", computation_status="pass", construction_differences=[
+            dict(category="entry-adapter", function="wf_bench_stencil", instruction=4),
+            dict(category="latched-writer", function="wf_resource_record_abort", instruction=4)])
+        # Both an honestly failed aggregate and an inconsistent aggregate pass
+        # must be rejected: additive attribution metadata grants no admission.
+        for aggregate in ("fail", "pass"):
+            evidence["status"] = aggregate
+            identity_path.write_text(json.dumps(evidence))
+            with self.assertRaisesRegex(ValueError, "identity"):
+                self.row()
+
     def test_inspection_rerun_disagreement_and_sizing_do_not_manufacture_pass(self):
         self.write()
         self.inspection = {}

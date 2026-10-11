@@ -152,6 +152,9 @@ class ElfImage:
         if self.data[:6] != b'\x7fELF\x02\x01':
             raise IdentityError('construction identity supports little-endian ELF64 only')
         fields = struct.unpack_from('<16sHHIQQQIHHHHHH', self.data)
+        self.machine = fields[2]
+        self.program_headers = [struct.unpack_from('<IIQQQQQQ', self.data, fields[5] + index * fields[9])
+                                for index in range(fields[10])]
         offset, stride, count = fields[6], fields[11], fields[12]
         self.sections = [struct.unpack_from('<IIQQQQIIQQ', self.data, offset + index * stride) for index in range(count)]
         section_names = self.sections[fields[13]]
@@ -161,6 +164,7 @@ class ElfImage:
         self.symbol_names = {}
         self.symbol_bindings = {}
         self.symbol_sources = {}
+        self.symbol_sections = {}
         records = {}
         for section in self.sections:
             if section[1] != 2:  # SHT_SYMTAB, not the incomplete dynamic table
@@ -169,22 +173,25 @@ class ElfImage:
             table = self.data[strings[4]:strings[4] + strings[5]]
             file_name, file_ordinal, file_counts = '<unknown>', 0, {}
             for at in range(section[4], section[4] + section[5], section[9]):
-                name, info, _, _, address, size = struct.unpack_from('<IBBHQQ', self.data, at)
+                name, info, _, section_index, address, size = struct.unpack_from('<IBBHQQ', self.data, at)
                 spelling = table[name:].split(b'\0', 1)[0].decode()
                 if info & 15 == 4:  # STT_FILE identifies a local symbol's unit.
                     file_name = spelling
                     file_ordinal = file_counts.get(spelling, 0)
                     file_counts[spelling] = file_ordinal + 1
                     continue
-                if spelling and address:
-                    record = (address, size, info & 15, info >> 4, file_name, file_ordinal)
+                if info & 15 == 6 and section_index:
+                    if section_index >= len(self.sections) or not self.sections[section_index][2] & 0x400:
+                        raise IdentityError('defined TLS symbol is not in a TLS section')
+                if spelling and section_index and (address or info & 15 == 6):
+                    record = (address, size, info & 15, info >> 4, file_name, file_ordinal, section_index)
                     # Multiple symbol tables or aliases can repeat the exact
                     # record, but distinct addresses must all survive.
                     if record not in records.setdefault(spelling, []):
                         records[spelling].append(record)
         for spelling, values in records.items():
             values.sort()
-            for ordinal, (address, size, kind, binding, file_name, file_ordinal) in enumerate(values):
+            for ordinal, (address, size, kind, binding, file_name, file_ordinal, section_index) in enumerate(values):
                 key = spelling if len(values) == 1 else f'{spelling}#{ordinal}'
                 if key in self.symbols:
                     raise IdentityError(f'ELF symbol identity key collision: {key}')
@@ -192,6 +199,8 @@ class ElfImage:
                 self.symbol_names[key] = spelling
                 self.symbol_bindings[key] = binding
                 self.symbol_sources[key] = (file_name, file_ordinal)
+                self.symbol_sections[key] = section_index
+        self.relocation_slots = self.external_object_slots()
         if not self.symbols:
             raise IdentityError('ELF symbol table absent; cannot bound functions')
 
@@ -245,14 +254,90 @@ class ElfImage:
             return canonical_symbol(key)
         source = getattr(self, 'symbol_sources', {}).get(key)
         if source is None or source[0] in ('', '<unknown>'):
-            raise IdentityError('local readonly object lacks translation-unit provenance')
+            raise IdentityError('local object lacks translation-unit provenance')
         spelling = self.symbol_names[key]
         peers = sorted((start, symbol_key) for symbol_key, (start, _, kind) in self.symbols.items()
-                       if kind == 1 and self.symbol_names[symbol_key] == spelling
+                       if kind == self.symbols[key][2] and self.symbol_names[symbol_key] == spelling
                        and self.symbol_sources[symbol_key] == source)
         ordinal = next(index for index, (_, symbol_key) in enumerate(peers) if symbol_key == key)
         suffix = f'#{ordinal}' if len(peers) > 1 else ''
         return f'{source[0]}#{source[1]}::{spelling}{suffix}'
+
+    def external_object_slots(self):
+        """Exact dynamic GLOB_DAT slots, never a nearest GOT label heuristic."""
+        slots = {}
+        for section in self.sections:
+            if section[1] != 4:  # SHT_RELA
+                continue
+            symbols = self.sections[section[6]]
+            if symbols[1] != 11:  # Only linked dynamic relocations are supported.
+                continue
+            strings = self.sections[symbols[6]]
+            names = self.data[strings[4]:strings[4] + strings[5]]
+            for at in range(section[4], section[4] + section[5], section[9]):
+                address, info, addend = struct.unpack_from('<QQq', self.data, at)
+                if info & 0xffffffff != 6:  # R_X86_64_GLOB_DAT, eight-byte slot
+                    continue
+                if self.machine != 62 or symbols[9] != 24:
+                    raise IdentityError('unsupported dynamic object relocation ABI')
+                index = info >> 32
+                if index * symbols[9] >= symbols[5]:
+                    raise IdentityError('dynamic object relocation symbol is absent')
+                name, symbol_info, _, defined, _, _ = struct.unpack_from(
+                    '<IBBHQQ', self.data, symbols[4] + index * symbols[9])
+                # Internal addresses need pointee/code identity, not external
+                # binding normalization. Do not erase their relocations.
+                if defined or symbol_info & 15 != 1:
+                    continue
+                spelling = names[name:].split(b'\0', 1)[0].decode()
+                if not spelling:
+                    raise IdentityError('dynamic object relocation has no symbol name')
+                identity = (6, spelling, symbol_info >> 4, addend,
+                            self.external_version(section[6], index))
+                if address in slots and slots[address] != identity:
+                    raise IdentityError('conflicting dynamic object relocations')
+                slots[address] = identity
+        return slots
+
+    def external_version(self, symbol_table, symbol_index):
+        versions = [section for section in self.sections
+                    if section[1] == 0x6fffffff and section[6] == symbol_table]
+        if not versions:
+            return None
+        if len(versions) != 1 or (symbol_index + 1) * 2 > versions[0][5]:
+            raise IdentityError('dynamic object symbol version is absent')
+        version = struct.unpack_from('<H', self.data, versions[0][4] + symbol_index * 2)[0]
+        if version & 0x7fff <= 1:
+            return ('unversioned', version)
+        matches = []
+        for section in self.sections:
+            if section[1] != 0x6ffffffe:  # SHT_GNU_verneed
+                continue
+            strings = self.sections[section[6]]
+            names = self.data[strings[4]:strings[4] + strings[5]]
+            at, end = section[4], section[4] + section[5]
+            while at < end:
+                if at + 16 > end:
+                    raise IdentityError('truncated ELF version requirement')
+                format_version, count, library, auxiliary, following = struct.unpack_from('<HHIII', self.data, at)
+                if format_version != 1:
+                    raise IdentityError('unsupported ELF version requirement')
+                dependency = names[library:].split(b'\0', 1)[0].decode()
+                aux = at + auxiliary
+                for _ in range(count):
+                    if aux < at or aux + 16 > end:
+                        raise IdentityError('truncated ELF symbol version')
+                    hash_value, flags, other, name, next_aux = struct.unpack_from('<IHHII', self.data, aux)
+                    if other == version & 0x7fff:
+                        matches.append((dependency, names[name:].split(b'\0', 1)[0].decode(),
+                                        hash_value, flags, bool(version & 0x8000)))
+                    aux += next_aux
+                if not following:
+                    break
+                at += following
+        if len(matches) != 1:
+            raise IdentityError('unresolved dynamic object symbol version')
+        return matches[0]
 
     def readonly_address_identity(self, address):
         objects = [(key, start, length) for key, (start, length, kind) in self.symbols.items()
@@ -261,7 +346,8 @@ class ElfImage:
             raise IdentityError('readonly address lacks exact retained object bounds; symbol-retaining image required')
         identities = []
         for key, start, length in objects:
-            section = next((section for section in self.sections if section[3] <= start and start + length <= section[3] + section[5]), None)
+            section = next((section for section in self.sections if not section[2] & 0x400
+                            and section[3] <= start and start + length <= section[3] + section[5]), None)
             if section is None or section[2] & 1 or section[1] == 8:
                 raise IdentityError('readonly object bounds are not wholly immutable file data')
             offset = section[4] + start - section[3]
@@ -290,13 +376,55 @@ class ElfImage:
         ranges = {(start, length) for _, start, length in objects}
         if len(ranges) != 1:
             raise IdentityError('overlapping mutable ELF object identities')
-        key, start, length = min(objects)
-        return canonical_symbol(key), address - start, length
+        _, start, length = min(objects)
+        names = sorted(self.local_object_key(key) for key, _, _ in objects)
+        name = names[0] if len(names) == 1 else 'aliases:' + json.dumps(names, separators=(',', ':'))
+        return name, address - start, length
+
+    def tls_identity(self, displacement, instruction):
+        """Resolve x86-64 variant-II local-exec offsets in the main TLS block."""
+        segments = [header for header in getattr(self, 'program_headers', ()) if header[0] == 7]
+        if getattr(self, 'machine', None) != 62 or len(segments) != 1:
+            raise IdentityError('TLS reference requires one x86-64 PT_TLS segment')
+        _, _, file_offset, address, _, file_size, memory_size, alignment = segments[0]
+        # The supported hosted images have an aligned TLS template. A template
+        # with a nonzero first-byte alignment offset needs a different proof.
+        if alignment == 0 or alignment & (alignment - 1) or address % alignment:
+            raise IdentityError('unsupported PT_TLS template alignment')
+        block_size = (memory_size + alignment - 1) & -alignment
+        offset = displacement + block_size
+        objects = [(key, start, length) for key, (start, length, kind) in self.symbols.items()
+                   if kind == 6 and length and start <= offset < start + length]
+        if not objects:
+            raise IdentityError(f'unbounded TLS object at thread offset {displacement}')
+        if len({(start, length) for _, start, length in objects}) != 1:
+            raise IdentityError('overlapping TLS object identities')
+        _, start, length = objects[0]
+        if start + length > memory_size or file_size > memory_size:
+            raise IdentityError('TLS object exceeds PT_TLS bounds')
+        if instruction.mnemonic in ('lea', 'leal', 'leaq'):
+            raise IdentityError('unsupported address-valued TLS instruction')
+        width = memory_access_width(instruction)
+        if width is None or offset + width > start + length:
+            raise IdentityError('TLS memory access crosses named object boundary')
+        for key, _, _ in objects:
+            section_index = getattr(self, 'symbol_sections', {}).get(key)
+            if section_index is not None and (section_index >= len(self.sections)
+                                             or not self.sections[section_index][2] & 0x400):
+                raise IdentityError('TLS symbol is not in a TLS section')
+        initialized = max(0, min(length, file_size - start))
+        content = self.data[file_offset + start:file_offset + start + initialized]
+        if len(content) != initialized:
+            raise IdentityError('TLS initialized object data incomplete')
+        content += bytes(length - initialized)
+        names = sorted(self.local_object_key(key) for key, _, _ in objects)
+        return 'tls:' + json.dumps((names, offset - start, length, content.hex()), separators=(',', ':'))
 
     def reference_identity(self, address, instruction, spelling):
         # Equal immutable contents do not imply equal pointer identity. Mutable
         # addresses use the exact bounded object and offset instead of contents.
-        section = next((section for section in self.sections if section[3] <= address < section[3] + section[5]), None)
+        section = next((section for section in self.sections if not section[2] & 0x400
+                        and section[3] <= address < section[3] + section[5]), None)
         if section is None:
             raise IdentityError(f'RIP address {address:x} is outside ELF data sections')
         if not section[2] & 1:  # immutable constants use bytes, not anonymous pool placement
@@ -308,6 +436,20 @@ class ElfImage:
             return 'readonly:' + content
         # Mutable storage must keep an actual object identity, not a section's
         # nearest label. Source-memory aliasing is not inferred from bytes.
+        slots = [(start, identity) for start, identity in getattr(self, 'relocation_slots', {}).items()
+                 if start <= address < start + 8]
+        if slots:
+            if len(slots) != 1:
+                raise IdentityError('overlapping dynamic object relocation slots')
+            start, identity = slots[0]
+            width = memory_access_width(instruction)
+            if width is None or address + width > start + 8 or start + 8 > section[3] + section[5]:
+                raise IdentityError('unsupported dynamic object slot access bounds')
+            offset = section[4] + start - section[3]
+            content = self.data[offset:offset + 8]
+            if len(content) != 8:
+                raise IdentityError('dynamic object slot data incomplete')
+            return 'external-object-slot:' + json.dumps((identity, address - start, content.hex()), separators=(',', ':'))
         key, displacement, extent = self.object_identity(address)
         if instruction.mnemonic.startswith(('call', 'jmp')):
             raise IdentityError('unsupported indirect RIP call or jump')
@@ -317,6 +459,8 @@ class ElfImage:
     def reference_bytes(self, address, instruction):
         for section in self.sections:
             _, kind, flags, begin, offset, size, *_ = section
+            if flags & 0x400:  # TLS template VAs can overlap ordinary data VAs.
+                continue
             if begin <= address < begin + size:
                 available = begin + size - address
                 objects = [(start, length) for start, length, kind in self.symbols.values() if kind == 1 and length and start <= address < start + length]
@@ -401,7 +545,7 @@ def memory_access_width(instruction):
     if opcode[-1:] in widths and opcode[:-1] in scalar_opcodes:
         return widths[opcode[-1]]
     registers = re.findall(r'%([A-Za-z][A-Za-z0-9]*)', instruction.operands.split('#', 1)[0])
-    registers = [register for register in registers if register != 'rip']
+    registers = [register for register in registers if register not in ('rip', 'fs')]
     sizes = set()
     for register in registers:
         if re.fullmatch(r'r(?:[abcd]x|[sd]i|[sb]p|[89]|1[0-5])', register):
@@ -544,6 +688,20 @@ def normalized(instructions, selected=None, omitted=(), image=None):
                 raise IdentityError('RIP reference requires ELF data evidence')
             reference_name = image.reference_identity(int(reference[1], 16), insn, reference_name)
             operands = re.sub(r'[-+]?0x[0-9a-fA-F]+\(%rip\)|[-+]?\d+\(%rip\)', f'[{reference_name}](%rip)', operands)
+        tls = re.search(r'%fs:(-?0x[0-9a-fA-F]+|-?\d+)(?=,|\s|$)', operands)
+        if '%fs:' in operands and tls is None:
+            raise IdentityError('unsupported indexed or symbolic TLS reference')
+        if tls:
+            displacement = int(tls[1], 0) if '0x' in tls[1] else int(tls[1])
+            if displacement < -(1 << 63) or displacement >= 1 << 64:
+                raise IdentityError('TLS displacement is outside x86-64 address bounds')
+            if displacement >= 1 << 63:
+                displacement -= 1 << 64
+            if displacement < 0:
+                if image is None:
+                    raise IdentityError('TLS reference requires ELF data evidence')
+                identity = image.tls_identity(displacement, insn)
+                operands = operands[:tls.start()] + f'%fs:[{identity}]' + operands[tls.end():]
         operands = re.sub(r'%([A-Za-z][A-Za-z0-9]*)', register, operands)
         operands = re.sub(r'\s+', ' ', operands)
         rows.append(f'{insn.mnemonic} {operands}'.rstrip())
@@ -946,8 +1104,95 @@ def direct_calls(instructions, selected=None, functions=None):
     return result
 
 
+def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions):
+    """Attribute the known cold writer difference without declaring it equal.
+
+    A name is only a candidate: the IR must have precisely the shared latch
+    addition, preserving every write/abort block, and the actual image must
+    retain the latch accessor call and atomic acquisition.
+    """
+    if canonical_symbol(function) != 'wf_resource_record_abort':
+        return None
+    original = seq_ir.get('wf_resource_record_abort', {})
+    changed = demand_ir.get(function, {})
+    entry = [
+        '%latch = call ptr @wf__floor_record_latch()',
+        '%acquired = cmpxchg ptr %latch, i32 0, i32 1 seq_cst seq_cst',
+        '%won = extractvalue { i32, i1 } %acquired, 1',
+        'br i1 %won, label %write.loop, label %park',
+    ]
+    park = ['%parked = load volatile i32, ptr %latch, align 4', 'br label %park']
+    common = {block: lines for block, lines in original.items() if block != 'entry'}
+    if (original.get('entry') != ['br label %write.loop']
+            or changed.get('entry') != entry or changed.get('park') != park
+            or not common or common != {block: lines for block, lines in changed.items() if block not in ('entry', 'park')}
+            or common.get('abort') != ['call void @abort()', 'unreachable']
+            or not any('@wf_resource_write(' in line for lines in common.values() for line in lines)):
+        return None
+    calls = direct_calls(demand, functions=functions)
+    atomics = [instruction.address for instruction in demand
+               if instruction.mnemonic == 'lock' and instruction.operands.startswith('cmpxchg')]
+    if 'wf__floor_record_latch' not in calls or not atomics:
+        return None
+    return {'ir': 'identical write/abort CFG; only shared cmpxchg entry and volatile loser park added',
+            'machine': {'latch_accessor': 'wf__floor_record_latch', 'atomic_acquisition_addresses': atomics}}
+
+
+def classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
+    """Keep construction fatal while separating proved computation closure.
+
+    These annotations never admit timing. Unknown differences, missing helpers
+    or incomplete comparisons remain ordinary failures, including a misleading
+    known symbol with different code.
+    """
+    closure = [row for row in record['comparisons'] if row['role'] == 'reachable sequential body/helper']
+    compared = {row['function'] for row in closure}
+    inventory_roots = selected_roots if inventory_roots is None else inventory_roots | selected_roots
+    unknown = []
+    for failure in record['failures']:
+        evidence = writer_evidence.get(failure['function'])
+        if evidence and failure['reason'] == 'normalized sequential body differs':
+            failure.update(category='latched-writer', evidence=evidence)
+        else:
+            failure['category'] = 'ordinary'
+            if failure['function'] != wrapper:
+                unknown.append(failure)
+    closure_complete = (bool(inventory_roots) and inventory_roots <= compared
+                        and bool(closure) and not unknown
+                        and all(row['identical'] or row['function'] in writer_evidence for row in closure))
+    for failure in record['failures']:
+        if (failure['function'] == wrapper and 'dispatch' in record and closure_complete
+                and record['dispatch']['pool_decisions_per_timed_call'] == 1
+                and bool(selected_roots) and selected_roots <= compared
+                and (failure['reason'] == 'normalized timed sequential wrapper differs'
+                     or failure['reason'].startswith('wrapper CFG projection lacks entry-state preservation proof:'))):
+            failure.update(category='entry-adapter', evidence={
+                'timed_wrapper': wrapper, 'selected_sequential_roots': sorted(selected_roots),
+                'closure_functions': sorted(compared),
+                'dispatch': record['dispatch'],
+                'qualification': 'body/helper closure identical; adapter instructions/state proof still fail construction'})
+    record['computation_status'] = ('pass' if closure_complete else
+                                    'fail' if unknown or any(not row['identical'] and row['function'] not in writer_evidence for row in closure)
+                                    else 'unverified')
+    record['computation_scope'] = {'selected_sequential_roots': sorted(selected_roots),
+                                   'inventoried_sequential_roots': sorted(inventory_roots),
+                                   'compared_closure_functions': sorted(compared),
+                                   'shared_support_exceptions': sorted(writer_evidence),
+                                   'scope': 'covered canonical sequential body/helper closure; timed adapter identity and state preservation remain separate',
+                                   'complete': closure_complete}
+    record['timed_selection_status'] = ('pass' if 'W1' in record.get('actual_entry', {})
+                                        and 'dispatch' in record
+                                        and (not record['dispatch']['regions'] or 'W2/W4/W8' in record['actual_entry'])
+                                        else 'unverified')
+    record['timed_selection_scope'] = ('ABI-preserving concrete W1 and covered active cheap-path body selection only; '
+                                        'adapter identity and overall dispatch coverage remain separate construction obligations')
+    record['construction_differences'] = [failure for failure in record['failures']
+                                         if failure['category'] != 'ordinary']
+
+
 def check_workload(name, build):
-    record = {'status': 'fail', 'covered_widths': [1], 'comparisons': [], 'failures': []}
+    record = {'status': 'fail', 'computation_status': 'unverified', 'covered_widths': [1], 'comparisons': [], 'failures': []}
+    selected_roots, inventory_roots, writer_evidence = set(), set(), {}
     def failure(function, reason, difference=None):
         record['failures'].append(dict(workload=name, function=function, reason=reason, **(difference or {})))
     try:
@@ -956,7 +1201,8 @@ def check_workload(name, build):
         seq = seq_image.bound(parse_disassembly((build / 'seq' / f'{name}.disassembly').read_text()))
         demand = demand_image.bound(parse_disassembly((build / 'demand' / f'{name}.disassembly').read_text()))
         ir = parse_ir((build / 'demand' / f'{name}.ll').read_text())
-        wrappers = [symbol for symbol in parse_ir((build / 'seq' / f'{name}.ll').read_text()) if symbol.startswith('wf_bench_') and not symbol.endswith('_release')]
+        seq_ir = parse_ir((build / 'seq' / f'{name}.ll').read_text())
+        wrappers = [symbol for symbol in seq_ir if symbol.startswith('wf_bench_') and not symbol.endswith('_release')]
         if len(wrappers) != 1:
             raise IdentityError(f'expected one timed wrapper, found {wrappers}')
         wrapper = wrappers[0]
@@ -986,6 +1232,8 @@ def check_workload(name, build):
             if diff:
                 failure(wrapper, 'normalized timed sequential computation differs', diff)
             pending = direct_calls(demand[demand_root], functions=demand) | {demand_root}
+            if demand_root.startswith('wf__par_seq_') or diff is None and not decisions:
+                selected_roots.add(demand_root)
             if 'dispatch' in record and record['dispatch']['regions']:
                 if arguments is None:
                     raise IdentityError('cheap-region concrete timed scalar inputs unavailable')
@@ -1010,6 +1258,7 @@ def check_workload(name, build):
                     # supplies the state-preservation proof needed to admit.
                     failure(wrapper, f'wrapper CFG projection lacks entry-state preservation proof: {error}')
                 pending.update(direct_calls(demand[wrapper], selected, demand))
+                selected_roots.update(function for function in pending if function.startswith('wf__par_seq_'))
             except IdentityError as fallback_error:
                 failure(wrapper, str(error))
                 failure(wrapper, f'wrapper CFG projection: {fallback_error}')
@@ -1017,7 +1266,8 @@ def check_workload(name, build):
         # are covered by the wrapper; surviving calls expand this set recursively.
         # Inventory provides independent evidence even if wrapper projection fails.
         for block in ir.get(wrapper, {}).values():
-            pending.update(match[1] for line in block if (match := re.search(r'\bcall\b.*?@(wf__par_seq_[\w.$]+)\(', line)))
+            inventory_roots.update(match[1] for line in block if (match := re.search(r'\bcall\b.*?@(wf__par_seq_[\w.$]+)\(', line)))
+        pending.update(inventory_roots)
         seen = set()
         while pending:
             function = min(pending)
@@ -1036,6 +1286,9 @@ def check_workload(name, build):
                 record['comparisons'].append({'function': function, 'seq_function': original, 'role': 'reachable sequential body/helper', 'identical': diff is None})
                 if diff:
                     failure(function, 'normalized sequential body differs', diff)
+                    evidence = latched_writer_evidence(function, seq_ir, ir, demand[function], demand)
+                    if evidence:
+                        writer_evidence[function] = evidence
                 pending.update(direct_calls(demand[function], functions=demand))
             except IdentityError as error:
                 failure(function, str(error))
@@ -1076,10 +1329,14 @@ def check_workload(name, build):
                         failure(function, f'unsupported cheap-region predicate shape: {len(comparisons)} machine comparisons')
                     region['assembly_decisions_per_cheap_timed_call'] = len(comparisons)
                     region['assembly_prefix_instructions'] = len(prefix)
+        classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots)
         if not record['failures']:
             record['status'] = 'pass'
     except (OSError, IdentityError, ValueError) as error:
         failure('<construction>', str(error))
+        for item in record['failures']:
+            item.setdefault('category', 'ordinary')
+        record['computation_status'] = 'fail'
     return record
 
 
@@ -1200,7 +1457,8 @@ def main():
     # small_split is a research coverage assertion, not a compiler dispatch.
     if not records.get('small_split', {}).get('dispatch', {}).get('regions'):
         records['small_split']['status'] = 'fail'
-        records['small_split']['failures'].append({'workload': 'small_split', 'function': 'wf_workload', 'reason': 'required cheap-region dispatch coverage missing'})
+        records['small_split']['computation_status'] = 'fail'
+        records['small_split']['failures'].append({'workload': 'small_split', 'function': 'wf_workload', 'category': 'ordinary', 'reason': 'required cheap-region dispatch coverage missing'})
     hashes = {}
     for name in manifest:
         for arm in ('seq', 'demand'):
@@ -1209,12 +1467,17 @@ def main():
                 path = args.build / relative
                 if path.exists():
                     hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    result = {'hashes': hashes, 'schema': 1, 'status': 'pass' if all(record['status'] == 'pass' for record in records.values()) else 'fail', 'workloads': records, 'scope': 'all manifest W1 cells; every discovered cheap region at W1/W2/W4/W8; normalized actual timed wrapper and reachable sequential bodies; conservative CFG dispatch proof'}
+    computation = [record['computation_status'] for record in records.values()]
+    result = {'hashes': hashes, 'schema': 1, 'status': 'pass' if all(record['status'] == 'pass' for record in records.values()) else 'fail',
+              'computation_status': 'pass' if all(status == 'pass' for status in computation) else 'fail' if 'fail' in computation else 'unverified',
+              'computation_scope': 'covered canonical sequential body/helper closure; shared latched writer and timed entry adapter remain construction obligations',
+              'workloads': records, 'scope': 'all manifest W1 cells; every discovered cheap region at W1/W2/W4/W8; normalized actual timed wrapper and reachable sequential bodies; conservative CFG dispatch proof'}
     output = args.output or args.build / 'sequential-identity.json'
     output.write_text(json.dumps(result, indent=2) + '\n')
     for record in records.values():
         for failure in record['failures']:
-            print(f"{failure['workload']} / {failure['function']}: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else ''))
+            print(f"{failure['workload']} / {failure['function']} [{failure['category']}]: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else ''))
+    print(f"Covered canonical sequential body/helper closure: {result['computation_status']}; full construction: {result['status']}")
     if result['status'] != 'pass':
         raise SystemExit(1)
 

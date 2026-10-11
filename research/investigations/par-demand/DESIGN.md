@@ -3087,3 +3087,50 @@ ordinary plan under isolated names. This is an unsupported backend boundary,
 not a source-language rejection. A common handler binding or representation
 conversion needs a separate decision; returning to the synthesized sequential
 body would hide the gap.
+
+### Hosted identity after canonical demand lowering at 39401dd11
+
+The hosted check at `39401dd11` (compute-bench run `38150667865`) no longer
+reports the computation functions or their sequential helper closures as
+different. Its remaining operand-resolution failures are the heap TLS slot
+and the external-object GOT slot used by `wf_bridge_fail`. The checker now
+resolves local-exec TLS through the ELF TLS segment and symbol bounds, and
+mutable RIP references through bounded objects or exact dynamic object
+relocations. It compares object identity and the byte offset within that
+object, retaining external symbol versions and relocation addends. Different
+objects or bytes still differ; unresolved identities still fail construction.
+
+The table below records the expected remaining failures after that checker
+repair, derived from the complete hosted differences rather than a new run.
+CI must confirm the repaired operand comparisons. A `latched-writer` requires
+the shared atomic acquisition and loser parking, with the remaining write and
+abort CFG unchanged. An `entry-adapter` requires a proved pool/region dispatch
+and a completely compared selected sequential closure; it retains the first
+differing machine instruction. Neither category admits timing.
+
+| Workload | Remaining function(s) | Category and evidence | Depends on |
+| --- | --- | --- | --- |
+| small_constant | None expected | Only the two object-resolution failures were reported. | CI verification of named operands. |
+| small_split | `wf_resource_record_abort` | latched-writer: direct writer versus `wf__floor_record_latch` acquisition. | Owner's identity-construction card: resource-support boundary. |
+| recursion | `wf_bench_micro` | entry-adapter: `push %rax` versus `push %saved2.0` at instruction 3. | Owner's identity-construction card: timed entry boundary. |
+| spine | `wf_bench_micro` | entry-adapter: `mov %rdx,%rax` versus `push %saved0.0` at instruction 1. | Owner's identity-construction card: timed entry boundary. |
+| large_helper | `wf_bench_micro` | entry-adapter: the same instruction-1 difference as spine. | Owner's identity-construction card: timed entry boundary. |
+| mandelbrot | `wf_bench_mandelbrot`; `wf_resource_record_abort` | entry-adapter: `push %saved0.0` versus `push %rbp` at instruction 1; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+| records | `wf_bench_records`; `wf_resource_record_abort` | entry-adapter: `mov 0x30(%rsp),%saved2.0` versus `push %saved3.0` at instruction 4; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+| fir | `wf_bench_fir`; `wf_resource_record_abort` | entry-adapter: `push %rbp` versus `push %saved0.0` at instruction 1; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+| stencil | `wf_bench_stencil`; `wf_resource_record_abort` | entry-adapter: `mov %r9,%saved2.0` versus `push %saved3.0` at instruction 4; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+| prefix | `wf_bench_prefix`; `wf_resource_record_abort` | entry-adapter: `push %saved0.0` versus `push %rbp` at instruction 1; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+| histogram | `wf_bench_histogram`; `wf_resource_record_abort` | entry-adapter: `mov %r9,%saved2.0` versus `push %saved3.0` at instruction 4; latched-writer. | Owner's identity-construction card: timed entry and resource support. |
+
+For every reported writer difference, the first difference is instruction 4:
+seq prepares `0x14` while demand calls the latch accessor. The latch remains
+necessary on worker-reachable failure paths. For the wrappers, the pool query
+and its consequences for register/frame allocation remain actual construction
+differences, qualified by the projection boundary described in
+[Hosted construction attribution at 968ed23c8](#hosted-construction-attribution-at-968ed23c8).
+The additive computation status covers the canonical body/helper closure,
+excluding those explicitly evidenced support and entry differences; it does
+not prove the entire timed wrapper identical or its entry state preserved.
+The overall identity status and process exit remain failing while any
+construction difference remains, pending the owner's identity-construction
+choice.
