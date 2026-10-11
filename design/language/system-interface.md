@@ -8,6 +8,8 @@ Decision: Owners responsible for closing a native resource are declared linear a
 
 Decision: The shipped invocation groups its ordinary inputs in the Inputs struct and hands over no storage provider of any kind, entry selection imposing no special source declaration or call prohibition, because the program has one heap supplied by the trusted base that every function reaches without a parameter and whose allocation and release carry no effect entry, so an invocation parameter has no storage capability left to convey, instead of a separately branded heap parameter, command labels, an unspellable entry brand, or a mandatory source-uncallable main.
 
+Decision: Proposed: The invocation supplies its runtime driver count as the ordinary public u64 field drivers in Inputs, because a count fixed for the run is an execution input a program can pass as an ordinary value, instead of a new function or a field reporting the requested configuration before runtime limits and host availability are applied.
+
 Decision: TcpConnection is an ordinary public struct of separately closable direction owners, because well-typed reconstruction may pair halves from different connections and cleanup must remain correct for that pair, instead of a public-field struct with a native-only constructor or a hidden matching-pair release invariant.
 
 Decision: Arguments and paths preserve the target host's bytes with explicit conversion, and range-bearing operations expose their exact window and result relations through ordinary contracts, because a Unicode-only path model cannot represent every host path and an implicit window cannot supply a source proof, instead of string-typed paths or operation-name proof sources.

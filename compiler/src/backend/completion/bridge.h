@@ -310,6 +310,11 @@ int wf__completion_pending(const void *record);
 
 /* ------------------------------------------------------ waiting contexts */
 
+/* The execution's driver count, fixed before the entry receives Inputs.
+ * Establishes root-ring availability without starting a helper or executor;
+ * later lazy context startup must start exactly this many driver roles. */
+uint64_t wf__context_driver_count(void);
+
 /* Contexts [WAIT-2], each a chain of resumable frames
  * (design/compiler/waiting-contexts.md).  The emitted code of a
  * waiting function allocates its frame with `wf__context_frame_allocate` and

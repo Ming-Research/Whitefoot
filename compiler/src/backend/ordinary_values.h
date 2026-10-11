@@ -103,7 +103,9 @@ _Static_assert(sizeof(wf_sleep_result) == 8, "ordinary sleep Result layout");
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
 typedef struct {
-    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
+    wf_value args;
+    uint64_t drivers;
+    wf_value cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -125,7 +127,9 @@ _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
 _Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
-_Static_assert(sizeof(wf_inputs) == 352, "ordinary Inputs layout");
+_Static_assert(offsetof(wf_inputs, drivers) == 32 &&
+               offsetof(wf_inputs, cwd_read) == 48 &&
+               sizeof(wf_inputs) == 368, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
                "ordinary Option<u64> layout");
 

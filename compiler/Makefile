@@ -262,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test driver-count-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -571,6 +571,39 @@ driver-service-native-tsan: $(COMPLETION_TMP)/driver-service-native-tsan
 driver-service-sanitize: driver-service-native-sanitize
 driver-service-tsan: driver-service-native-tsan
 
+# Linux execution-input selection: observe real tasks before entry, count
+# actual secondary executor starts after environment/affinity changes, and
+# require each selected-driver resource refusal to stop with its diagnostic.
+ifeq ($(shell uname -s),Linux)
+DRIVER_COUNT_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/driver_count_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/driver_count_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/driver-count-test: $(DRIVER_COUNT_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+driver-count-test: $(COMPLETION_TMP)/driver-count-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/driver-count-test" singleton
+	@$(NO_CORE_DUMPS) status=0; $(NATIVE_REQUIREMENT) "$(COMPLETION_TMP)/driver-count-test" frozen || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			echo "driver count io_uring: unavailable on this host (not native evidence)"; \
+		else exit $$status; fi
+	@$(NO_CORE_DUMPS) for mode in wake-refused ring-refused callback-refused; do \
+		status=0; $(NATIVE_REQUIREMENT) "$(COMPLETION_TMP)/driver-count-test" "$$mode" \
+			> "$(COMPLETION_TMP)/driver-count.out" 2> "$(COMPLETION_TMP)/driver-count.err" || status=$$?; \
+		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
+			cat "$(COMPLETION_TMP)/driver-count.err"; \
+		else \
+			cat "$(COMPLETION_TMP)/driver-count.err"; \
+			test $$status = 134 && test ! -s "$(COMPLETION_TMP)/driver-count.out" || exit 1; \
+			case $$mode in wake-refused) reason=wake;; ring-refused) reason=ring;; callback-refused) reason='ring wake';; esac; \
+			printf '%s\n' "whitefoot completion: cannot initialize a selected driver $$reason" | \
+				cmp - "$(COMPLETION_TMP)/driver-count.err" || exit 1; \
+		fi; \
+	done
+endif
+.PHONY: driver-count-test
+driver-count-test:
+
 # The executables completion-test runs, which the runtime group builds with
 # every processor before it runs their cases one at a time: compiling them
 # one after another was about two thirds of the group's time, while several
@@ -584,6 +617,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/driver-count-test) \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
 	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
 completion-test-images: $(COMPLETION_TEST_IMAGES)
