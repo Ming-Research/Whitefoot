@@ -385,16 +385,11 @@ impl Analyzer<'_, '_> {
         // target's own kills the events every substitution must survive.
         if commit_reached
             && let Some(prepared) = prepared.as_ref()
-            && let CheckedSetTarget::Place(place) = target
+            && set_target_place(target).is_some()
         {
             let destinations = vec![Some((
-                place.binding,
-                place
-                    .fields
-                    .iter()
-                    .map(|field| GoalProjection::Field(*field))
-                    .collect::<Vec<_>>(),
-                place.ty,
+                target.binding(),
+                ResultDestination::SetTarget(target.clone()),
             ))];
             self.reasoning().establish_result_list_destinations(
                 node_path,
@@ -691,7 +686,10 @@ impl Analyzer<'_, '_> {
                     {
                         state.affine.values.insert(*binding, value);
                     }
-                    destinations.push(Some((*binding, Vec::new(), *ty)));
+                    destinations.push(Some((
+                        *binding,
+                        ResultDestination::Place(PlaceRoot::Binding(*binding), Vec::new()),
+                    )));
                 }
                 if judgment.reached {
                     for (ordinal, carry) in &taken {

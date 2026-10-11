@@ -2063,14 +2063,22 @@ impl Reasoning<'_, '_, '_> {
                 // `result.inner.len` names the measure of the cell content
                 // the binder holds [TYPE-9] and not a measure of the cell,
                 // which has no row at all.
-                let mut path = path.clone();
-                path.extend(projections.iter().cloned());
-                match measure {
-                    Some(measure) => {
-                        self.postcondition_measure_term(measure, *root, &path, ty, false)
-                    }
-                    None => self.vocabulary.postcondition_place_term(*root, &path, ty),
+                let place = ResolvedPlace {
+                    root: *root,
+                    path: path
+                        .iter()
+                        .map(|projection| projection.place_step())
+                        .collect(),
+                    atomic_aliases: Vec::new(),
+                };
+                self.projected_destination_term(place, projections, measure, ty)
+            }
+            ResultDestination::SetTarget(target) => {
+                if measure.is_none() && !self.input.set_result_integer_admitted(target, projections)
+                {
+                    return None;
                 }
+                self.projected_destination_term(set_target_place(target)?, projections, measure, ty)
             }
             ResultDestination::PayloadRoot(payload) => {
                 let path = projections
@@ -2079,6 +2087,30 @@ impl Reasoning<'_, '_, '_> {
                     .collect::<Vec<_>>();
                 self.payload_root_term(*payload, &path, measure)
             }
+        }
+    }
+
+    /// Project result data below the destination's complete proof place,
+    /// retaining captured offsets and atomic aliases [CALL-4, ENT-2].
+    fn projected_destination_term(
+        &mut self,
+        mut place: ResolvedPlace,
+        projections: &[GoalProjection],
+        measure: Option<CheckedMeasure>,
+        ty: CheckedType,
+    ) -> Option<TermId> {
+        place
+            .path
+            .extend(projections.iter().map(|projection| projection.place_step()));
+        match measure {
+            Some(measure) => {
+                Some(self.measure_term(measure, place, measured_kind(ty)?, type_constant(ty)))
+            }
+            None => Some(
+                self.vocabulary
+                    .terms
+                    .intern(TermKind::Place(place, fragment_type(ty)?)),
+            ),
         }
     }
 
@@ -2160,7 +2192,7 @@ impl Reasoning<'_, '_, '_> {
     pub(super) fn establish_result_list_destinations(
         &mut self,
         statement: &crate::NodePath,
-        destinations: &[Option<(BindingId, Vec<GoalProjection>, CheckedType)>],
+        destinations: &[Option<(BindingId, ResultDestination)>],
         value: &CheckedExpression,
         prepared: &PreparedCall,
         extra_kills: &[KillEvent],
@@ -2186,11 +2218,11 @@ impl Reasoning<'_, '_, '_> {
         let mut result_places = Vec::with_capacity(destinations.len());
         let mut anchor = None;
         for destination in destinations {
-            result_places.push(destination.as_ref().map(|(binding, fields, _)| {
+            result_places.push(destination.as_ref().map(|(binding, place)| {
                 if anchor.is_none() {
                     anchor = Some(*binding);
                 }
-                ResultDestination::Place(PlaceRoot::Binding(*binding), fields.clone())
+                place.clone()
             }));
         }
         let Some(anchor) = anchor else {
