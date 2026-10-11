@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Copy struct destructuring and the prelude's release
+
+Nodes: language/ownership/copy-classification, language/ownership/linearity
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner approved the item request "approve Whitefoot #341's specification v0.126 changes and two design decisions: GRAM-4 makes `move` optional on the right of a destructuring let, judged by OWN-1 from the value's class; PROV-6 renames the destructuring consume to struct destructuring, a copy value's destructuring copies its fields and leaves the original usable while affine and linear values still need `move` and are consumed, and early release reads 'the prelude supplies this function as `release`'; PRE-1 adds `fn release<T: drop>(value: T) -> result: unit pure;` at the end of its declarations and preorder; FORM-2, CALL-4, MOD-5 and MSR-3 follow the rename without change of meaning; two new ownership decisions: copy destructuring without `move`, and the prelude's ordinary consuming function `release`" with "agreed" (translated).
+
+Summary: Struct destructuring takes a bare copy place and copies its bound fields while leaving the source live, affine and linear operands keeping `move`, because a struct of copy fields otherwise could not be destructured and OWN-1's repair produced a grammar rejection; redundant `move` on copy values and destructuring confined to noncopy structs were rejected. The prelude supplies the ordinary consuming function `release<T: drop>`, because firn wrote the same empty consuming function three times; block statements and per-project definitions were rejected, and the separate early-release mechanism stays rejected.
+
 ## 2026-10-10 Empty contiguous runtime windows share one header
 
 Nodes: compiler/storage-representation
