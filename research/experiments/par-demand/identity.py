@@ -39,16 +39,72 @@ INSN = re.compile(r'^\s*([0-9a-fA-F]+):\s+(.*)$')
 TARGET = re.compile(r'(?<![\w$])([0-9a-fA-F]+)\s+<([^>]+)>')
 
 
+class FunctionTable(dict):
+    """Retain every machine function; duplicate spellings are not identities.
+
+    Duplicate ordinals provide conservative seq/demand pairing candidates.
+    Call targets resolve by address and their paired bodies must still compare.
+    """
+    def __init__(self, entries):
+        self.starts, self.names, self.by_name = {}, {}, {}
+        groups = {}
+        for name, start, instructions in entries:
+            groups.setdefault(name, []).append((start, instructions))
+        for name, bodies in groups.items():
+            bodies.sort(key=lambda body: body[0])
+            if len({start for start, _ in bodies}) != len(bodies):
+                raise IdentityError(f'duplicate disassembly identity {name} at one address')
+            keys = []
+            for ordinal, (start, instructions) in enumerate(bodies):
+                key = name if len(bodies) == 1 else f'{name}#{ordinal}'
+                if key in self:
+                    raise IdentityError(f'function identity key collision: {key}')
+                self[key] = instructions
+                self.starts[key], self.names[key] = start, name
+                keys.append(key)
+            self.by_name[name] = keys
+
+    def __getitem__(self, key):
+        if key in self.by_name and len(self.by_name[key]) > 1:
+            raise IdentityError(f'ambiguous function name {key}; resolve its target address')
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        if key in self.by_name and len(self.by_name[key]) > 1:
+            raise IdentityError(f'ambiguous function name {key}; resolve its target address')
+        return super().get(key, default)
+
+    def resolve(self, address, spelling):
+        base, separator, offset = spelling.partition('+')
+        candidates = self.by_name.get(base, [])
+        if separator:
+            if not re.fullmatch(r'0x[0-9a-fA-F]+', offset):
+                raise IdentityError(f'unsupported target offset {spelling}')
+            begin = address - int(offset, 16)
+        else:
+            begin = address
+        matches = [key for key in candidates if self.starts[key] == begin]
+        if len(matches) == 1:
+            return matches[0] + (f'+{offset}' if separator else '')
+        if candidates:
+            raise IdentityError(f'target {spelling} at {address:x} has no matching function identity')
+        at_address = [key for key, start in self.starts.items() if start == begin]
+        if len(at_address) == 1:
+            return at_address[0] + (f'+{offset}' if separator else '')
+        if at_address:
+            raise IdentityError(f'ambiguous function aliases at target address {address:x}')
+        # PLT and other external entries need not have a bounded ELF function.
+        return spelling
+
+
 def parse_disassembly(text):
-    functions = {}
+    entries = []
     current = None
     for line in text.splitlines():
         header = HEADER.match(line)
         if header:
-            current = header[2]
-            if current in functions:
-                raise IdentityError(f'duplicate disassembly function {current}')
-            functions[current] = []
+            current = []
+            entries.append((header[2], int(header[1], 16), current))
             continue
         match = INSN.match(line)
         if not match or current is None:
@@ -59,10 +115,10 @@ def parse_disassembly(text):
         pieces = rest.split(None, 1)
         if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_.]*', pieces[0]):
             raise IdentityError(f'unparsed instruction: {line}')
-        functions[current].append(Instruction(int(match[1], 16), pieces[0], pieces[1] if len(pieces) > 1 else ''))
-    if not functions:
+        current.append(Instruction(int(match[1], 16), pieces[0], pieces[1] if len(pieces) > 1 else ''))
+    if not entries:
         raise IdentityError('empty disassembly')
-    return functions
+    return FunctionTable(entries)
 
 
 class ElfImage:
@@ -75,6 +131,9 @@ class ElfImage:
         offset, stride, count = fields[6], fields[11], fields[12]
         self.sections = [struct.unpack_from('<IIQQQQIIQQ', self.data, offset + index * stride) for index in range(count)]
         self.symbols = {}
+        self.symbol_names = {}
+        self.symbol_bindings = {}
+        records = {}
         for section in self.sections:
             if section[1] != 2:  # SHT_SYMTAB, not the incomplete dynamic table
                 continue
@@ -84,71 +143,194 @@ class ElfImage:
                 name, info, _, _, address, size = struct.unpack_from('<IBBHQQ', self.data, at)
                 spelling = table[name:].split(b'\0', 1)[0].decode()
                 if spelling and address:
-                    self.symbols[spelling] = (address, size, info & 15)
+                    record = (address, size, info & 15, info >> 4)
+                    # Multiple symbol tables or aliases can repeat the exact
+                    # record, but distinct addresses must all survive.
+                    if record not in records.setdefault(spelling, []):
+                        records[spelling].append(record)
+        for spelling, values in records.items():
+            values.sort()
+            for ordinal, (address, size, kind, binding) in enumerate(values):
+                key = spelling if len(values) == 1 else f'{spelling}#{ordinal}'
+                if key in self.symbols:
+                    raise IdentityError(f'ELF symbol identity key collision: {key}')
+                self.symbols[key] = (address, size, kind)
+                self.symbol_names[key] = spelling
+                self.symbol_bindings[key] = binding
         if not self.symbols:
             raise IdentityError('ELF symbol table absent; cannot bound functions')
 
     def bound(self, functions):
-        result = {}
-        for name, instructions in functions.items():
-            symbol = self.symbols.get(name)
-            if symbol and symbol[2] == 2 and symbol[1]:  # STT_FUNC
-                begin, size, _ = symbol
-                result[name] = [instruction for instruction in instructions if begin <= instruction.address < begin + size]
-        return result
+        entries = []
+        for key, instructions in functions.items():
+            name = functions.names[key] if isinstance(functions, FunctionTable) else key
+            begin = functions.starts[key] if isinstance(functions, FunctionTable) else (instructions[0].address if instructions else None)
+            matches = [(address, size) for symbol_key, (address, size, kind) in self.symbols.items()
+                       if kind == 2 and size and address == begin
+                       and getattr(self, 'symbol_names', {}).get(symbol_key, symbol_key) == name]
+            if len(set(matches)) > 1:
+                raise IdentityError(f'conflicting ELF function bounds for {name} at {begin:x}')
+            if matches:
+                address, size = matches[0]
+                entries.append((name, address, [instruction for instruction in instructions if address <= instruction.address < address + size]))
+            elif isinstance(functions, FunctionTable) and len(functions.by_name[name]) > 1:
+                raise IdentityError(f'duplicate local function {name} at {begin:x} lacks exact ELF bounds')
+        self.functions = FunctionTable(entries)
+        return self.functions
+
+    def code_identity(self, address, spelling):
+        if hasattr(self, 'functions'):
+            return canonical_symbol(self.functions.resolve(address, spelling))
+        # Object-only negative self-tests do not construct an ELF image.
+        raise IdentityError('ELF function identities have not been bounded')
+
+    def object_identity(self, address):
+        objects = [(key, start, length) for key, (start, length, kind) in self.symbols.items()
+                   if kind == 1 and length and start <= address < start + length]
+        if not objects:
+            raise IdentityError('unbounded mutable RIP object identity')
+        # Overlapping symbol objects require an alias model, not a smallest
+        # name heuristic that could hide different pointer relationships.
+        ranges = {(start, length) for _, start, length in objects}
+        if len(ranges) != 1:
+            raise IdentityError('overlapping mutable ELF object identities')
+        key, start, length = min(objects)
+        return canonical_symbol(key), address - start, length
 
     def reference_identity(self, address, instruction, spelling):
-        # Equal contents do not imply equal pointer or alias identity. This
-        # checker compares data loads; it does not prove pointer relationships.
-        if instruction.mnemonic.startswith(('lea', 'call', 'jmp')):
-            raise IdentityError('unsupported address-valued RIP reference')
-        content = self.reference_bytes(address, instruction).hex()
-        section = next(section for section in self.sections if section[3] <= address < section[3] + section[5])
+        # Equal immutable contents do not imply equal pointer identity. Mutable
+        # addresses use the exact bounded object and offset instead of contents.
+        section = next((section for section in self.sections if section[3] <= address < section[3] + section[5]), None)
+        if section is None:
+            raise IdentityError(f'RIP address {address:x} is outside ELF data sections')
         if not section[2] & 1:  # immutable constants use bytes, not anonymous pool placement
+            if instruction.mnemonic.startswith(('lea', 'call', 'jmp')):
+                raise IdentityError('unsupported address-valued RIP reference')
+            content = self.reference_bytes(address, instruction).hex()
             return 'readonly:' + content
         # Mutable storage must keep an actual object identity, not a section's
         # nearest label. Source-memory aliasing is not inferred from bytes.
-        if not any(kind == 1 and length and start <= address < start + length for start, length, kind in self.symbols.values()):
-            raise IdentityError('unbounded mutable RIP object identity')
-        return spelling + ':' + content
+        key, displacement, extent = self.object_identity(address)
+        if instruction.mnemonic.startswith(('call', 'jmp')):
+            raise IdentityError('unsupported indirect RIP call or jump')
+        content = self.reference_bytes(address, instruction).hex()
+        return f'{key}+0x{displacement:x}/size={extent}:' + content
 
     def reference_bytes(self, address, instruction):
         for section in self.sections:
             _, kind, flags, begin, offset, size, *_ = section
             if begin <= address < begin + size:
-                if kind == 8:  # BSS is mutable; refer to the exact object identity
-                    raise IdentityError('unsupported zero-fill data reference')
                 available = begin + size - address
                 objects = [(start, length) for start, length, kind in self.symbols.values() if kind == 1 and length and start <= address < start + length]
+                access = memory_access_width(instruction)
                 if objects:
                     start, length = min(objects, key=lambda obj: obj[1])
                     extent = start + length - address
+                    if access is not None and access > extent:
+                        raise IdentityError('RIP memory access crosses named object boundary')
                 else:
-                    mnemonic = instruction.mnemonic
-                    if mnemonic.startswith(('lea', 'call', 'jmp')):
+                    if access is None:
                         raise IdentityError('unbounded address-valued RIP reference')
-                    if any(part in mnemonic for part in ('aps', 'ups', 'apd', 'upd', 'dqa', 'dqu')) or mnemonic.endswith(('ps', 'pd')):
-                        extent = 32 if '%ymm' in instruction.operands else 64 if '%zmm' in instruction.operands else 16
-                    elif mnemonic.endswith(('sd', 'q')) or '%rax' in instruction.operands or re.search(r'%r(?:[a-z]+|[0-9]+)\b', instruction.operands):
-                        extent = 8
-                    elif mnemonic.endswith(('ss', 'l')) or '%eax' in instruction.operands:
-                        extent = 4
-                    elif mnemonic.endswith('w'):
-                        extent = 2
-                    elif mnemonic.endswith('b'):
-                        extent = 1
-                    else:
-                        raise IdentityError(f'unsupported RIP load width: {mnemonic}')
+                    extent = access
                 if extent > available:
                     raise IdentityError('RIP object crosses section boundary')
+                if kind == 8:  # SHT_NOBITS is initialized to zero, not file bytes.
+                    self.object_identity(address)
+                    return bytes(extent)
                 at = offset + address - begin
                 return self.data[at:at + extent]
         raise IdentityError(f'RIP address {address:x} is outside ELF data sections')
 
 
-def target(insn):
+def memory_access_width(instruction):
+    """Bound supported scalar/vector RIP accesses; unknown widths reject."""
+    opcode = instruction.mnemonic
+    if opcode in ('lock', 'rep', 'repe', 'repne'):
+        opcode = instruction.operands.split(None, 1)[0]
+    if opcode in ('lea', 'leal', 'leaq'):
+        return None  # address formation observes no bytes
+    if opcode.startswith(('call', 'jmp')):
+        raise IdentityError('unsupported indirect RIP call or jump')
+    # Conversion names describe both input and output types. Match their
+    # memory INPUT explicitly; the final suffix alone is not a load width.
+    double_conversions = ('cvtsd2ss', 'cvtsd2si', 'cvtsd2siq', 'cvttsd2si',
+                          'cvttsd2siq')
+    single_conversions = ('cvtss2sd', 'cvtss2si', 'cvtss2siq', 'cvttss2si',
+                          'cvttss2siq')
+    scalar_double = ('movsd', 'addsd', 'subsd', 'mulsd', 'divsd', 'minsd',
+                     'maxsd', 'sqrtsd', 'comisd', 'ucomisd', 'roundsd')
+    scalar_single = ('movss', 'addss', 'subss', 'mulss', 'divss', 'minss',
+                     'maxss', 'sqrtss', 'comiss', 'ucomiss', 'roundss')
+    base_opcode = opcode[1:] if opcode.startswith('v') else opcode
+    if base_opcode in double_conversions + scalar_double:
+        return 8
+    if base_opcode in single_conversions + scalar_single:
+        return 4
+    if opcode in ('cmpxchg16b', 'cmpxchg8b'):
+        return 16 if opcode == 'cmpxchg16b' else 8
+    vectors = re.findall(r'%(xmm|ymm|zmm)[0-9]+', instruction.operands)
+    if vectors:
+        if opcode in ('movq', 'vmovq'):
+            return 8
+        if opcode in ('movd', 'vmovd'):
+            return 4
+        packed_moves = ('movaps', 'movups', 'movapd', 'movupd', 'movdqa',
+                        'movdqu', 'movdqa32', 'movdqa64', 'movdqu8',
+                        'movdqu16', 'movdqu32', 'movdqu64')
+        packed_arithmetic = tuple(operation + kind for operation in
+                                  ('add', 'sub', 'mul', 'div', 'min', 'max',
+                                   'sqrt', 'and', 'andn', 'or', 'xor',
+                                   'shuf', 'unpckh', 'unpckl', 'blend')
+                                  for kind in ('ps', 'pd'))
+        if base_opcode in packed_moves + packed_arithmetic:
+            return max({'xmm': 16, 'ymm': 32, 'zmm': 64}[vector] for vector in vectors)
+        raise IdentityError(f'unsupported RIP vector access width: {opcode}')
+    if opcode in ('movsbl', 'movsbw', 'movsbq', 'movzbl', 'movzbw', 'movzbq'):
+        return 1
+    if opcode in ('movswl', 'movswq', 'movzwl', 'movzwq'):
+        return 2
+    if opcode in ('movslq', 'movsxd'):
+        return 4
+    if opcode in ('fldl', 'fstl', 'fstpl'):
+        return 8
+    if opcode in ('fldt', 'fstpt'):
+        return 10
+    widths = {'b': 1, 'w': 2, 'l': 4, 'q': 8}
+    scalar_opcodes = ('mov', 'add', 'sub', 'cmp', 'test', 'and', 'or', 'xor',
+                      'xadd', 'xchg', 'cmpxchg', 'imul', 'mul', 'div', 'idiv',
+                      'adc', 'sbb', 'inc', 'dec', 'neg', 'not', 'shl', 'shr',
+                      'sal', 'sar', 'rol', 'ror')
+    if opcode[-1:] in widths and opcode[:-1] in scalar_opcodes:
+        return widths[opcode[-1]]
+    registers = re.findall(r'%([A-Za-z][A-Za-z0-9]*)', instruction.operands.split('#', 1)[0])
+    registers = [register for register in registers if register != 'rip']
+    sizes = set()
+    for register in registers:
+        if re.fullmatch(r'r(?:[abcd]x|[sd]i|[sb]p|[89]|1[0-5])', register):
+            sizes.add(8)
+        elif re.fullmatch(r'e(?:[abcd]x|[sd]i|[sb]p)|r(?:[89]|1[0-5])d', register):
+            sizes.add(4)
+        elif re.fullmatch(r'[abcd]x|[sd]i|[sb]p|r(?:[89]|1[0-5])w', register):
+            sizes.add(2)
+        elif re.fullmatch(r'[abcd][lh]|[sd]il|[sb]pl|r(?:[89]|1[0-5])b', register):
+            sizes.add(1)
+        else:
+            raise IdentityError(f'unsupported RIP operand register width: {register}')
+    # Shift/rotate count registers (usually cl) do not carry the memory
+    # operand's width. Those operations require an explicit size suffix.
+    inferred_opcodes = tuple(opcode for opcode in scalar_opcodes
+                             if opcode not in ('shl', 'shr', 'sal', 'sar', 'rol', 'ror'))
+    if len(sizes) == 1 and opcode in inferred_opcodes:
+        return sizes.pop()
+    raise IdentityError(f'unsupported RIP memory access width: {opcode}')
+
+
+def target(insn, functions=None):
     match = TARGET.search(insn.operands.split('#', 1)[0])
-    return (int(match[1], 16), match[2]) if match else None
+    if not match:
+        return None
+    address, spelling = int(match[1], 16), match[2]
+    return address, functions.resolve(address, spelling) if isinstance(functions, FunctionTable) else spelling
 
 
 def assembly_edges(instructions):
@@ -229,7 +411,9 @@ def normalized(instructions, selected=None, omitted=(), image=None):
             if replacement is None:
                 # A local target must remain a local instruction identity. Never
                 # hide a changed edge behind the containing function's name.
-                if '+' in symbol:
+                if image is not None:
+                    replacement = image.code_identity(address, symbol)
+                elif '+' in symbol:
                     base, offset = symbol.rsplit('+', 1)
                     if base == symbol or not re.fullmatch(r'0x[0-9a-fA-F]+', offset):
                         raise IdentityError(f'unsupported target {symbol}')
@@ -264,7 +448,7 @@ def first_difference(left, right):
 
 
 def project_pool(instructions, active):
-    """Recognize only call; test eax,eax; je/jne, and prove it is outside cycles.
+    """Recognize a pool call, argument restores, test and conditional branch.
 
     Nondecision setup/cleanup remains in the comparison. If backend inlining
     changes the wrapper ABI or code around dispatch, that is a mismatch.
@@ -276,12 +460,26 @@ def project_pool(instructions, active):
     if len(polls) != 1:
         raise IdentityError(f'expected at most one pool dispatch, found {len(polls)}')
     at = polls[0]
-    if at + 2 >= len(instructions):
+    test_at = at + 1
+    # LLVM may restore saved integer arguments before testing the pool result.
+    # These flag-preserving moves remain computation in the comparison. Only
+    # full-width callee-saved-to-argument moves are supported: they cannot
+    # change eax, the stack, or the flags consumed by the recognized test.
+    while test_at < len(instructions):
+        restore = instructions[test_at]
+        operands = re.sub(r'\s', '', restore.operands)
+        match = re.fullmatch(r'%([a-z0-9]+),%([a-z0-9]+)', operands)
+        if (restore.mnemonic not in ('mov', 'movq') or match is None
+                or match[1] not in CALLEE_SAVED or match[2] not in ABI_ARGUMENTS):
+            break
+        test_at += 1
+    branch_at = test_at + 1
+    if branch_at >= len(instructions):
         raise IdentityError('truncated pool dispatch')
-    test, branch = instructions[at + 1:at + 3]
+    test, branch = instructions[test_at:branch_at + 1]
     if test.mnemonic not in ('test', 'testl') or re.sub(r'\s', '', test.operands) != '%eax,%eax' or branch.mnemonic not in ('je', 'jne', 'jz', 'jnz'):
         raise IdentityError('unsupported pool dispatch: expected call/test eax/je-or-jne')
-    if on_cycle(edges, at):
+    if on_cycle(edges, at) or on_cycle(edges, branch_at):
         raise IdentityError('pool dispatch is inside an assembly cycle')
     # Every return/tail exit must be dominated by the decision, not simply
     # one static occurrence. Removing its node must disconnect every exit.
@@ -292,15 +490,15 @@ def project_pool(instructions, active):
     destination = target(branch)[0]
     index = {insn.address: node for node, insn in enumerate(instructions)}
     taken = bool(active) if branch.mnemonic in ('jne', 'jnz') else not active
-    edges[at + 2] = [index[destination] if taken else at + 3]
-    return reachable(edges), {at, at + 1, at + 2}, 1
+    edges[branch_at] = [index[destination] if taken else branch_at + 1]
+    return reachable(edges), {at, test_at, branch_at}, 1
 
 
 ABI_ARGUMENTS = ('rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9')
 CALLEE_SAVED = ('rbx', 'rbp', 'r12', 'r13', 'r14', 'r15')
 
 
-def entry_shell(instructions, active, arguments=None, argument_count=6):
+def entry_shell(instructions, active, arguments=None, argument_count=6, functions=None):
     """Prove a supported x86 entry shell restores ABI before a tail transfer.
 
     Only register moves and private push/pop stack saves may surround dispatch.
@@ -371,7 +569,7 @@ def entry_shell(instructions, active, arguments=None, argument_count=6):
             left, right = left & mask, right & mask
             flags = (right == left, right < left, right <= left) if mnemonic.startswith('cmp') else ((left & right) == 0, False, (left & right) == 0)
         elif mnemonic.startswith('call'):
-            destination = target(instruction)
+            destination = target(instruction, functions)
             if not destination or destination[1].removesuffix('@plt') != 'wf__par_pool_active':
                 raise IdentityError('unsupported nontail computation in dispatch shell')
             decisions.append('pool-active')
@@ -384,7 +582,7 @@ def entry_shell(instructions, active, arguments=None, argument_count=6):
             registers['rax'] = int(active)
             flags = None
         elif mnemonic.startswith('j'):
-            destination = target(instruction)
+            destination = target(instruction, functions)
             if not destination:
                 raise IdentityError('indirect entry-shell branch')
             if mnemonic == 'jmp':
@@ -424,7 +622,7 @@ def computation_root(functions, root, active, arguments=None, argument_count=6):
         addresses = {instruction.address for instruction in instructions}
 
         def interfunction_tail(insn):
-            destination = target(insn)
+            destination = target(insn, functions)
             return (insn.mnemonic == 'jmp' and destination is not None
                     and destination[0] not in addresses
                     and destination[1].split('+', 1)[0] != current)
@@ -442,7 +640,7 @@ def computation_root(functions, root, active, arguments=None, argument_count=6):
             return current, decisions
         if argument_count > 6:
             raise IdentityError('unsupported stack-argument dispatch-shell ABI')
-        destination, counted, arguments = entry_shell(instructions, active, arguments, argument_count)
+        destination, counted, arguments = entry_shell(instructions, active, arguments, argument_count, functions)
         if destination not in functions:
             raise IdentityError(f'entry computation function missing: {destination}')
         decisions.extend(counted)
@@ -480,9 +678,49 @@ def ir_edges(blocks):
         if not lines:
             raise IdentityError(f'empty LLVM block {name}')
         terminator = lines[-1]
-        if terminator.startswith(('br ', 'switch ')):
-            if terminator.startswith('switch '):
-                raise IdentityError('unsupported multiline LLVM switch in dispatch proof')
+        if terminator == ']':
+            # LLVM prints a switch as several lines. Its final bracket is not
+            # a separate terminator, and every case edge belongs in the CFG.
+            starts = [at for at, line in enumerate(lines) if line.startswith('switch ')]
+            if len(starts) != 1:
+                raise IdentityError(f'malformed LLVM switch in {name}')
+            switch_lines = lines[starts[0]:]
+            header = re.fullmatch(r'switch (i[1-9][0-9]*) (%[\w.$]+|-?\d+|true|false), label %([\w.$-]+) \[', switch_lines[0])
+            if header is None:
+                raise IdentityError(f'malformed LLVM switch header in {name}')
+            successors, values = [header[3]], set()
+            width = int(header[1][1:])
+            if width > 64:
+                raise IdentityError(f'unsupported LLVM switch integer width in {name}')
+            selector = header[2]
+            if not selector.startswith('%'):
+                if selector in ('true', 'false') and width != 1:
+                    raise IdentityError(f'malformed LLVM switch selector in {name}')
+                value = {'true': 1, 'false': 0}.get(selector)
+                if value is None:
+                    value = int(selector)
+                if not -(1 << (width - 1)) <= value < 1 << width:
+                    raise IdentityError(f'out-of-range LLVM switch selector in {name}')
+            for case in switch_lines[1:-1]:
+                match = re.fullmatch(re.escape(header[1]) + r' (-?\d+|true|false), label %([\w.$-]+)', case)
+                if match is None or match[1] in ('true', 'false') and width != 1:
+                    raise IdentityError(f'malformed or duplicate LLVM switch case in {name}: {case}')
+                value = {'true': 1, 'false': 0}.get(match[1])
+                if value is None:
+                    value = int(match[1])
+                if not -(1 << (width - 1)) <= value < 1 << width:
+                    raise IdentityError(f'out-of-range LLVM switch case in {name}: {case}')
+                value %= 1 << width
+                if value in values:
+                    raise IdentityError(f'malformed or duplicate LLVM switch case in {name}: {case}')
+                values.add(value)
+                successors.append(match[2])
+            edges[name] = successors
+        elif terminator.startswith('switch '):
+            # The compiler currently emits multiline switches. Unknown forms
+            # must not lose their case edges by falling through to a branch.
+            raise IdentityError(f'unsupported LLVM switch form in {name}')
+        elif terminator.startswith('br '):
             edges[name] = re.findall(r'label %([\w.$-]+)', terminator)
         elif terminator.startswith(('ret ', 'unreachable')):
             edges[name] = []
@@ -547,7 +785,24 @@ def dispatch_proof(ir, wrapper):
             entry = blocks['par.region.entry']
             if not entry[-1].startswith('br i1 ') or 'label %par.region.sequential' not in entry[-1]:
                 raise IdentityError(f'unrecognized cheap-region branch: {function}')
-            if any('call ' in line and '@llvm.' not in line for line in entry[:-1]) or any(re.search(r'\b(load|store|alloca)\b', line) for line in entry[:-1]):
+            # The emitter puts private local slots in the function's entry
+            # block to preserve promotability. An unused alloca is not an
+            # observation in the cheap predicate. Its result must have no use
+            # anywhere in that predicate, including the deciding branch.
+            predicate = []
+            slots = []
+            for line in entry:
+                if re.search(r'\balloca\b', line):
+                    slot = re.fullmatch(r'(%[\w.$]+) = alloca (?:ptr|i[1-9][0-9]*), align [1-9][0-9]*', line)
+                    if slot is None:
+                        raise IdentityError(f'unsupported private entry allocation: {function}')
+                    slots.append(slot[1])
+                else:
+                    predicate.append(line)
+            if any(re.search(re.escape(slot) + r'(?![\w.$])', line)
+                   for slot in slots for line in predicate):
+                raise IdentityError(f'cheap predicate uses private entry allocation: {function}')
+            if any('call ' in line and '@llvm.' not in line for line in predicate[:-1]) or any(re.search(r'\b(load|store)\b', line) for line in predicate[:-1]):
                 raise IdentityError(f'cheap predicate observes memory or performs work: {function}')
             callers = [(caller, block) for caller, body in ir.items() for block, lines in body.items() for line in lines if re.search(r'\bcall\b.*?@' + re.escape(function) + r'\(', line)]
             timed_callers = [(caller, block) for caller, block in callers if caller == wrapper or caller in seen]
@@ -563,14 +818,14 @@ def dispatch_proof(ir, wrapper):
     return {'pool_decisions_per_timed_call': len(pools), 'outside_loops': True, 'regions': regions, 'proof': 'LLVM CFG dominance/cycle and direct-call proof; assembly pool CFG dominance/cycle proof'}
 
 
-def direct_calls(instructions, selected=None):
+def direct_calls(instructions, selected=None, functions=None):
     selected = range(len(instructions)) if selected is None else sorted(selected)
     result = set()
     addresses = {instruction.address for instruction in instructions}
     for at in selected:
         insn = instructions[at]
         if insn.mnemonic.startswith('call') or insn.mnemonic == 'jmp':
-            destination = target(insn)
+            destination = target(insn, functions)
             if not destination:
                 raise IdentityError(f'indirect call at {insn.address:x}')
             if destination[0] not in addresses:
@@ -617,7 +872,7 @@ def check_workload(name, build):
             record['actual_entry'] = {'W1': {'computation': demand_root, 'decision_trace': decisions, 'outside_loops': True}}
             if diff:
                 failure(wrapper, 'normalized timed sequential computation differs', diff)
-            pending = direct_calls(demand[demand_root]) | {demand_root}
+            pending = direct_calls(demand[demand_root], functions=demand) | {demand_root}
             if 'dispatch' in record and record['dispatch']['regions']:
                 if arguments is None:
                     raise IdentityError('cheap-region concrete timed scalar inputs unavailable')
@@ -626,16 +881,24 @@ def check_workload(name, build):
                     raise IdentityError('active timed cheap path does not select same sequential body once')
                 record['actual_entry']['W2/W4/W8'] = {'computation': active_root, 'decision_trace': active_decisions, 'outside_loops': True, 'inputs': arguments}
         except IdentityError as error:
-            failure(wrapper, str(error))
             pending = set()
             try:
-                selected, omitted, _ = project_pool(demand[wrapper], False)
+                selected, omitted, count = project_pool(demand[wrapper], False)
+                if 'dispatch' in record and count != record['dispatch']['pool_decisions_per_timed_call']:
+                    raise IdentityError('LLVM and optimized assembly dynamic pool counts disagree')
                 diff = first_difference(normalized(seq[wrapper], image=seq_image), normalized(demand[wrapper], selected, omitted, image=demand_image))
                 record['comparisons'].append({'function': wrapper, 'role': 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained', 'identical': diff is None})
                 if diff:
                     failure(wrapper, 'normalized timed sequential wrapper differs', diff)
-                pending.update(direct_calls(demand[wrapper], selected))
+                else:
+                    # Text equality after deleting a call cannot prove that
+                    # live caller-clobbered values or flags survive that call.
+                    # This projection diagnoses differences; only entry_shell
+                    # supplies the state-preservation proof needed to admit.
+                    failure(wrapper, f'wrapper CFG projection lacks entry-state preservation proof: {error}')
+                pending.update(direct_calls(demand[wrapper], selected, demand))
             except IdentityError as fallback_error:
+                failure(wrapper, str(error))
                 failure(wrapper, f'wrapper CFG projection: {fallback_error}')
         # Also inspect every selected original-function clone: inlined callees
         # are covered by the wrapper; surviving calls expand this set recursively.
@@ -660,7 +923,7 @@ def check_workload(name, build):
                 record['comparisons'].append({'function': function, 'seq_function': original, 'role': 'reachable sequential body/helper', 'identical': diff is None})
                 if diff:
                     failure(function, 'normalized sequential body differs', diff)
-                pending.update(direct_calls(demand[function]))
+                pending.update(direct_calls(demand[function], functions=demand))
             except IdentityError as error:
                 failure(function, str(error))
         if 'dispatch' in record:

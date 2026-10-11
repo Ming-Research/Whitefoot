@@ -2806,12 +2806,16 @@ whose object identity it cannot preserve. Its supported entry-shell proof
 follows concrete timed scalar inputs and requires restored arguments, saved
 registers and stack before a tail transfer. It rejects unknown instructions,
 branches and calling forms. The formal kernel adapters also contain nontail
-calls followed by Box-result unpacking. An unsupported shell remains a
-construction failure; a conservative W1 CFG comparison still retains all
-nondecision wrapper instructions and reports their first difference. Distinguish
-this checker limitation from a demonstrated differing sequential body. Neither
-is waived to obtain timing. Hosted execution must establish which supported
-shapes the actual optimized images use.
+calls followed by Box-result unpacking. A supported W1 CFG projection diagnoses
+these wrappers by retaining every nondecision instruction, following the
+inactive pool edge, and checking the dynamic pool count against the LLVM proof.
+A differing save, restore, result store or computation is reported as a
+demonstrated difference. Identical projected text alone does not prove that
+live caller-clobbered values or flags survive the removed pool call; a wrapper
+without the entry-state preservation proof remains a construction failure.
+Distinguish that checker limitation from a demonstrated differing sequential
+body. Neither is waived to obtain timing. Hosted execution must establish
+which supported shapes the actual optimized images use.
 
 Only edited-Python syntax compilation and patch-whitespace checks ran locally.
 The authored compiler regression, Python cases, compiled changed-body negative
