@@ -18,7 +18,7 @@ use super::super::model::{
 use super::super::places::WindowPart;
 use super::floats::parse_float_literal;
 use super::generics::GenericSubstitution;
-use super::{CheckStop, Checker, EffectSet, ParameterSignature, PreludeType};
+use super::{CheckStop, Checker, EffectSet, FunctionSignature, ParameterSignature, PreludeType};
 
 /// [TYPE-5]'s two sides where a type spelling that takes no type arguments
 /// carries a written `<...>` list.
@@ -2348,6 +2348,126 @@ impl<'unit> TypeContext<'unit> {
             );
         }
         Ok(paths)
+    }
+    /// One checked effect path in its canonical source spelling [EFF-1].
+    /// Keep the selected value or range type through every selector, so
+    /// fields and payloads below an indexed Box retain their declared names.
+    /// A checked path with no matching declaration is an internal resolution
+    /// failure, never a source repair containing field or payload ordinals.
+    pub(super) fn render_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<String, CheckStop> {
+        let parameter = signature
+            .parameters
+            .iter()
+            .find(|parameter| parameter.declaration == path.root)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let mut rendered = parameter.name.clone();
+        let mut selected = if parameter.mode.is_range() {
+            SelectedPlaceType::Range(parameter.ty)
+        } else {
+            SelectedPlaceType::Value(parameter.ty)
+        };
+        for step in &path.steps {
+            match *step {
+                CheckedEffectStep::Field(field) => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let field = fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push('.');
+                    rendered.push_str(&field.name);
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Deref => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let referent = self
+                        .box_content(ty)?
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(".inner");
+                    selected = SelectedPlaceType::Value(referent);
+                }
+                CheckedEffectStep::Payload { variant, field } => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let variant = variants
+                        .get(variant as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let field = variant
+                        .fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(&format!(".{}.{}", variant.name, field.name));
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Page(index)
+                | CheckedEffectStep::Index(index)
+                | CheckedEffectStep::Range { start: index, .. } => {
+                    // A range already carries T; indexing it must not select
+                    // through T again when T is itself a container [REF-4].
+                    let element = match selected {
+                        SelectedPlaceType::Range(element) => element,
+                        SelectedPlaceType::Value(ty) => {
+                            self.container_element_type(ty)?.unwrap_or(ty)
+                        }
+                        SelectedPlaceType::UnresolvedWindowElement => {
+                            return Err(SemanticCompilerFailure::InvalidResolution.into());
+                        }
+                    };
+                    let index = self.declarations.declaration_spelling(index)?;
+                    selected = match *step {
+                        CheckedEffectStep::Page(_) => {
+                            rendered.push_str(&format!(".pages[{index}]"));
+                            SelectedPlaceType::Range(element)
+                        }
+                        CheckedEffectStep::Range { end, .. } => {
+                            rendered.push_str(&format!(
+                                "[{index}..{}]",
+                                self.declarations.declaration_spelling(end)?
+                            ));
+                            SelectedPlaceType::Range(element)
+                        }
+                        _ => {
+                            rendered.push_str(&format!("[{index}]"));
+                            SelectedPlaceType::Value(element)
+                        }
+                    };
+                }
+                CheckedEffectStep::Part(part) => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    rendered.push('.');
+                    rendered.push_str(part.spelling());
+                    selected = if matches!(ty, CheckedType::Generic(declaration)
+                        if self.declarations.is_window_type_parameter(declaration)?)
+                    {
+                        SelectedPlaceType::UnresolvedWindowElement
+                    } else {
+                        SelectedPlaceType::Value(self.container_element_type(ty)?.unwrap_or(ty))
+                    };
+                }
+                CheckedEffectStep::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    selected = SelectedPlaceType::Value(CheckedType::Integer(IntegerType::U64));
+                }
+            }
+        }
+        Ok(rendered)
     }
     /// One `effect_path := epbase epsuffix*` [EFF-1], with the type its last
     /// step selects.

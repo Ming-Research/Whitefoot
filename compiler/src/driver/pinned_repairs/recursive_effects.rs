@@ -218,8 +218,10 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     // An empty child window gives the recursive node a finite leaf. The
     // forwarded formal index keeps the child path statically nameable, while
-    // the descriptor read children.len cannot cover children[index]. With no
-    // read widening, each recursive projection adds another child suffix.
+    // the descriptor read children.len cannot cover children[index].
+    // Main's observed repair prints ordinals below the index, so applying it
+    // literally fails FORM-5. Even with those names restored, substituting its
+    // unwidened row would project another child suffix on the next check.
     RepairPair {
         name: "recursive-indexed-read-row.wf",
         rejected: br#"struct Node {
@@ -282,6 +284,74 @@ fn main() -> status: std::process::ExitStatus pure {
   let root_value = Node(byte: 9_u8, children: move root_children);
   let root_node = box_new::<Node>(value: move root_value);
   let total = sum_path(root: &root_node, index: 0_u64);
+  return std::process::exit_status(code: total);
+}
+"#],
+    },
+    // Recursion forwards the same root, so no growing argument suffix can
+    // widen away the indexed Box field. Its repair must retain the field name.
+    RepairPair {
+        name: "recursive-indexed-field-row.wf",
+        rejected: br#"struct Item {
+  byte: u8;
+}
+
+fn sum_repeated(root: &Slots<Box<Item>, 1>, index: u64, remaining: u64) -> result: u8 reads(root.len) {
+  if index < root^.len {
+    let byte = root^[index].inner.byte;
+    if remaining > 0_u64 {
+      let next = remaining - 1_u64;
+      let suffix = sum_repeated(root: root, index: index, remaining: next);
+      let total = byte +wrap suffix;
+      return total;
+    } else {
+      return byte;
+    }
+  } else {
+    return 0_u8;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let item = Item(byte: 7_u8);
+  let node = box_new::<Item>(value: item);
+  let items = slots_new::<Box<Item>, 1>();
+  place_back(window: &items, value: move node);
+  let total = sum_repeated(root: &items, index: 0_u64, remaining: 1_u64);
+  return std::process::exit_status(code: total);
+}
+"#,
+        rule: "EFF-2",
+        sentences: &[
+            "\n  expected_row: reads(root[index].inner.byte), reads(root.len)\n",
+            "\n  mechanical_fix: declare the row as `reads(root[index].inner.byte), reads(root.len)`, which covers every access the body makes and no other\n",
+        ],
+        repaired: &[br#"struct Item {
+  byte: u8;
+}
+
+fn sum_repeated(root: &Slots<Box<Item>, 1>, index: u64, remaining: u64) -> result: u8 reads(root[index].inner.byte), reads(root.len) {
+  if index < root^.len {
+    let byte = root^[index].inner.byte;
+    if remaining > 0_u64 {
+      let next = remaining - 1_u64;
+      let suffix = sum_repeated(root: root, index: index, remaining: next);
+      let total = byte +wrap suffix;
+      return total;
+    } else {
+      return byte;
+    }
+  } else {
+    return 0_u8;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let item = Item(byte: 7_u8);
+  let node = box_new::<Item>(value: item);
+  let items = slots_new::<Box<Item>, 1>();
+  place_back(window: &items, value: move node);
+  let total = sum_repeated(root: &items, index: 0_u64, remaining: 1_u64);
   return std::process::exit_status(code: total);
 }
 "#],
@@ -610,6 +680,8 @@ fn recursive_repairs_are_exact_substitutions_and_acyclic_text_is_unchanged() {
                 row,
                 1,
             )
+        } else if pair.name == "recursive-indexed-field-row.wf" {
+            rejected.replacen("reads(root.len)", row, 1)
         } else if pair.name == "recursive-write-separation.wf" {
             rejected.replacen(
                 "reads(root.inner.next), reads(value), writes(root.inner.byte)",
