@@ -541,15 +541,18 @@ impl<'unit> Checker<'_, 'unit> {
             &mut effects,
             formal.is_none().then_some(signature.parameters.as_slice()),
         )?;
-        if formal.is_none() {
-            effects.calls.push(self.effect_repair_call(
+        if formal.is_none() && self.body.repair_calls.is_some() {
+            let call = self.effect_repair_call(
                 node,
                 function,
                 signature,
                 &actual_paths,
                 &actual_captures,
                 bindings,
-            )?);
+            )?;
+            if let Some(calls) = &mut self.body.repair_calls {
+                calls.push(call);
+            }
         }
         if self
             .types
@@ -997,12 +1000,12 @@ impl<'unit> Checker<'_, 'unit> {
                 if retained_reference_parameters
                     .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
                 {
-                    // Reference-row contributions are replayed by the diagnostic
-                    // equation. By-value reads remain direct body contributions.
-                    if entry.write {
-                        effects.add_projected_write(path);
-                    } else {
-                        EffectSet::add_path(&mut effects.reads, path);
+                    if !self.types.effect_repairs.is_capture() {
+                        if entry.write {
+                            effects.add_projected_write(path);
+                        } else {
+                            EffectSet::add_path(&mut effects.reads, path);
+                        }
                     }
                 } else if entry.write {
                     effects.add_write(path);

@@ -11,8 +11,41 @@ use crate::semantic::places::{CapturedValue, PlaceStep, ResolvedPlace, WindowPar
 use crate::syntax::NodeId;
 use crate::{DeclarationId, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
-/// A call's formal-rooted actuals and offset names, captured by the ordinary
-/// resolved-place walk even when its current callee row is empty.
+/// Private inputs to the same checker, never enabled for accepted programs.
+#[derive(Default)]
+pub(super) enum RepairMode {
+    #[default]
+    Ordinary,
+    Capture(HashMap<FunctionId, RepairBody>),
+    Validate(HashMap<DeclarationId, EffectSet>),
+}
+
+impl RepairMode {
+    pub(super) fn is_ordinary(&self) -> bool {
+        matches!(self, Self::Ordinary)
+    }
+
+    pub(super) fn is_capture(&self) -> bool {
+        matches!(self, Self::Capture(_))
+    }
+
+    pub(super) fn checks_row(&self, declaration: DeclarationId) -> bool {
+        match self {
+            Self::Ordinary => true,
+            Self::Capture(_) => false,
+            Self::Validate(rows) => rows.contains_key(&declaration),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct RepairBody {
+    pub(super) direct: EffectSet,
+    pub(super) calls: Vec<EffectCall>,
+}
+
+/// A call's formal-rooted actuals and offset names, captured only during
+/// a rejection replay, even when its current callee row is empty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct EffectCall {
     function: FunctionId,
@@ -35,6 +68,80 @@ struct EffectBase {
 }
 
 impl Checker<'_, '_> {
+    /// Classify the failed declaration before starting equation capture. This
+    /// source-declaration graph reads only body calls, through the ordinary
+    /// callee lookup. Calls through formal boundaries keep their fixed rows
+    /// and therefore are not repair-equation edges. No body is rechecked here.
+    pub(super) fn requires_recursive_row_repair(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<bool, CheckStop> {
+        let start = signature.declaration;
+        let mut declarations = vec![start];
+        let mut seen = HashSet::new();
+        while let Some(caller) = declarations.pop() {
+            if !seen.insert(caller) {
+                continue;
+            }
+            let Some(template) = self
+                .types
+                .function_templates
+                .iter()
+                .find(|template| template.declaration == caller)
+            else {
+                continue;
+            };
+            let context = super::CheckContext {
+                writing_module: self
+                    .types
+                    .declarations
+                    .resolved
+                    .declaration(caller)
+                    .and_then(crate::DeclarationRecord::module),
+                ..super::CheckContext::default()
+            };
+            let tree = &self.types.declarations.tree;
+            let mut pending = tree.children_with(template.node, crate::Production::Stmt)?;
+            while let Some(node) = pending.pop() {
+                let production = tree.production(node)?;
+                if matches!(
+                    production,
+                    crate::Production::InvariantStmt | crate::Production::HeaderInvariant
+                ) {
+                    continue;
+                }
+                if production == crate::Production::Call
+                    && !tree.is_constructor_call(node)?
+                    && self.types.behavior_call_key(&context, node)?.is_none()
+                {
+                    let callee = tree
+                        .first_child_with(node, crate::Production::Callee)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let usage = self.types.declarations.use_at_roles(
+                        &context,
+                        callee,
+                        &[
+                            crate::LexicalUseRole::IdentifierCallee,
+                            crate::LexicalUseRole::OperationCallee,
+                        ],
+                    )?;
+                    if let crate::ResolvedTarget::Source {
+                        declaration,
+                        class: crate::DeclarationClass::Function,
+                    } = usage.target()
+                    {
+                        if declaration == start {
+                            return Ok(true);
+                        }
+                        declarations.push(declaration);
+                    }
+                }
+                pending.extend(tree.children(node)?);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn effect_repair_call(
         &self,
         node: NodeId,
@@ -88,69 +195,91 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// Delay only the row comparison until all bodies in the view are known.
-    /// Acyclic repairs use exactly the previous row and sentence.
+    /// The ordinary pass has already established an EFF-2 rejection. Complete
+    /// the replay's structural view, then solve only its recursive component.
     pub(super) fn check_effect_rows(&mut self) -> Result<(), CheckStop> {
+        let RepairMode::Capture(bodies) = &self.types.effect_repairs else {
+            return Ok(());
+        };
+        let bodies = bodies.clone();
         for id in &self.types.view.functions {
             let signature = &self.types.signatures[id.0 as usize];
-            let Some(exhibited) = self.types.effect_bodies.get(id) else {
-                continue;
-            };
-            if Checker::effect_row_matches(&signature.declared_effects, exhibited) {
+            if !bodies.contains_key(id) {
                 continue;
             }
-            let component =
-                recursive_component(*id, &self.types.effect_bodies, &self.types.signatures);
-            let (suggested, comparison, companions) = if component.is_empty() {
-                (
-                    Checker::suggested_effect_row(exhibited),
-                    exhibited.clone(),
-                    Vec::new(),
-                )
-            } else {
-                let rows = self.recursive_repair_rows(&component)?;
-                let suggested = rows
-                    .get(&signature.declaration)
-                    .cloned()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let comparison = self.repair_exhibition(*id, &rows)?;
-                let mut companions = Vec::new();
-                for other in &component {
-                    let callee = &self.types.signatures[other.0 as usize];
-                    if callee.declaration == signature.declaration {
-                        continue;
-                    }
-                    let row = rows
-                        .get(&callee.declaration)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    // Include every changed component boundary: changing just
-                    // one side of mutual recursion need not reach a fixpoint.
-                    if row.reads != callee.declared_effects.reads
-                        || row.writes != callee.declared_effects.writes
-                    {
-                        companions.push(format!(
-                            "also declare the row of `{}` as `{}`",
-                            callee.name,
-                            self.types.render_effect_row(row, callee)?
-                        ));
+            let exhibited = self.repair_exhibition(*id, &bodies, &HashMap::new())?;
+            if Checker::effect_row_matches(&signature.declared_effects, &exhibited) {
+                continue;
+            }
+            let component = recursive_component(*id, &bodies, &self.types.signatures);
+            let mut suggested = Checker::suggested_effect_row(&exhibited);
+            let mut comparison = exhibited.clone();
+            let mut companions = Vec::new();
+            let mut validated = true;
+            if !component.is_empty() {
+                let rows = self.recursive_repair_rows(&component, &bodies)?;
+                validated = component.iter().all(|id| {
+                    self.repair_exhibition(*id, &bodies, &rows)
+                        .is_ok_and(|body| {
+                            Checker::effect_row_matches(
+                                &rows[&self.types.signatures[id.0 as usize].declaration],
+                                &body,
+                            )
+                        })
+                });
+                // Reuse the ordinary semantic checker, with all component rows
+                // substituted before signature/body checking. This checks every
+                // EFF-5 pair, including positional goals through entailment;
+                // a structural comparison alone would miss undischarged goals.
+                if validated {
+                    validated = super::check_semantics_attempt(
+                        self.types.declarations.resolved,
+                        true,
+                        None,
+                        RepairMode::Validate(rows.clone()),
+                    )
+                    .is_ok();
+                }
+                if validated {
+                    suggested = rows[&signature.declaration].clone();
+                    comparison = self.repair_exhibition(*id, &bodies, &rows)?;
+                    for other in &component {
+                        let callee = &self.types.signatures[other.0 as usize];
+                        let row = &rows[&callee.declaration];
+                        if callee.declaration != signature.declaration
+                            && (row.reads != callee.declared_effects.reads
+                                || row.writes != callee.declared_effects.writes)
+                        {
+                            companions.push(format!(
+                                "also declare the row of `{}` as `{}`",
+                                callee.name,
+                                self.types.render_effect_row(row, callee)?
+                            ));
+                        }
                     }
                 }
-                (suggested, comparison, companions)
-            };
+            }
             let (missing, extra) = self.types.effect_row_difference(
                 &comparison,
                 &suggested,
                 &signature.declared_effects,
                 signature,
             )?;
-            let expected_row = self.types.render_effect_row(&suggested, signature)?;
-            let mut mechanical_fix = format!(
-                "declare the row as `{expected_row}`, which covers every access the body makes and no other"
-            );
-            for companion in companions {
-                mechanical_fix.push_str("; ");
-                mechanical_fix.push_str(&companion);
-            }
+            // DIAG-1 permits EFF-2 to omit a repair. Neither an expected row
+            // nor an instruction to insert it is published without validation.
+            let (expected_row, mechanical_fix) = if validated {
+                let expected = self.types.render_effect_row(&suggested, signature)?;
+                let mut fix = format!(
+                    "declare the row as `{expected}`, which covers every access the body makes and no other"
+                );
+                for companion in companions {
+                    fix.push_str("; ");
+                    fix.push_str(&companion);
+                }
+                (Some(expected), Some(fix))
+            } else {
+                (None, None)
+            };
             let stop = self.types.declarations.issue_node::<()>(
                 SemanticRule::Eff2,
                 signature.effects_node,
@@ -172,24 +301,18 @@ impl Checker<'_, '_> {
     fn repair_exhibition(
         &self,
         id: FunctionId,
+        bodies: &HashMap<FunctionId, RepairBody>,
         rows: &HashMap<DeclarationId, EffectSet>,
     ) -> Result<EffectSet, CheckStop> {
-        let body = self
-            .types
-            .effect_bodies
+        let body = bodies
             .get(&id)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let mut exhibited = EffectSet::NONE;
-        for path in &body.direct_reads {
-            exhibited.add_read(path.clone());
-        }
-        for path in &body.direct_writes {
-            exhibited.add_write(path.clone());
-        }
+        let mut exhibited = body.direct.clone();
         for call in &body.calls {
+            let signature = &self.types.signatures[call.function.0 as usize];
             let row = rows
-                .get(&self.types.signatures[call.function.0 as usize].declaration)
-                .unwrap_or(&self.types.signatures[call.function.0 as usize].declared_effects);
+                .get(&signature.declaration)
+                .unwrap_or(&signature.declared_effects);
             for (write, paths) in [(false, &row.reads), (true, &row.writes)] {
                 for path in paths {
                     for projected in call.project(path)? {
@@ -208,100 +331,125 @@ impl Checker<'_, '_> {
     fn recursive_repair_rows(
         &self,
         component: &[FunctionId],
+        bodies: &HashMap<FunctionId, RepairBody>,
     ) -> Result<HashMap<DeclarationId, EffectSet>, CheckStop> {
-        let mut rows = component
+        // Parameter edges run from a callee formal to the caller formal that
+        // supplies it. A growing edge participates in recursion exactly when
+        // its caller root can reach its callee root again. Function SCCs alone
+        // are insufficient: a parameter can merely flow out of a cycle.
+        let declarations = component
+            .iter()
+            .map(|id| self.types.signatures[id.0 as usize].declaration)
+            .collect::<HashSet<_>>();
+        let mut edges: HashMap<DeclarationId, Vec<DeclarationId>> = HashMap::new();
+        for id in component {
+            for call in &bodies[id].calls {
+                if declarations
+                    .contains(&self.types.signatures[call.function.0 as usize].declaration)
+                {
+                    for argument in &call.parameters {
+                        for base in &argument.bases {
+                            edges
+                                .entry(argument.declaration)
+                                .or_default()
+                                .push(base.path.root);
+                        }
+                    }
+                }
+            }
+        }
+        let mut cyclic = HashSet::new();
+        for (from, targets) in &edges {
+            for target in targets {
+                let mut pending = vec![*target];
+                let mut seen = HashSet::new();
+                while let Some(root) = pending.pop() {
+                    if root == *from {
+                        cyclic.insert((*from, *target));
+                        break;
+                    }
+                    if seen.insert(root) {
+                        pending.extend(edges.get(&root).into_iter().flatten().copied());
+                    }
+                }
+            }
+        }
+        // Start with direct accesses and calls outside the component. Written
+        // component rows are not seeds: they may contain unexhibited writes.
+        let seeds = component
             .iter()
             .map(|id| {
-                (
-                    self.types.signatures[id.0 as usize].declaration,
-                    Checker::suggested_effect_row(&self.types.effect_bodies[id]),
-                )
+                let mut seed = bodies[id].clone();
+                seed.calls.retain(|call| {
+                    !declarations
+                        .contains(&self.types.signatures[call.function.0 as usize].declaration)
+                });
+                (*id, seed)
             })
             .collect::<HashMap<_, _>>();
-        self.close_repair_rows(component, &mut rows, true)?;
-        // Old callee declarations can seed writes the repaired bodies never
-        // exhibit. Prune writes first: they subsume reads, so removing one can
-        // expose a read that the first closure did not retain.
-        self.prune_repair_rows(component, &mut rows, true)?;
-        self.close_repair_rows(component, &mut rows, false)?;
-        // With writes settled, removing an unexhibited read uncovers no
-        // access and subsequent read projections only shrink.
-        self.prune_repair_rows(component, &mut rows, false)?;
+        let mut proposed = HashMap::new();
         for id in component {
-            if !Checker::effect_row_matches(
-                &rows[&self.types.signatures[id.0 as usize].declaration],
-                &self.repair_exhibition(*id, &rows)?,
-            ) {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            }
+            proposed.insert(
+                self.types.signatures[id.0 as usize].declaration,
+                Checker::suggested_effect_row(&self.repair_exhibition(
+                    *id,
+                    &seeds,
+                    &HashMap::new(),
+                )?),
+            );
         }
-        Ok(rows)
-    }
-
-    fn close_repair_rows(
-        &self,
-        component: &[FunctionId],
-        rows: &mut HashMap<DeclarationId, EffectSet>,
-        writes: bool,
-    ) -> Result<(), CheckStop> {
         loop {
-            let mut next = rows.clone();
+            let mut next = proposed.clone();
             for id in component {
-                let exhibited = self.repair_exhibition(*id, rows)?;
-                let row = next
-                    .get_mut(&self.types.signatures[id.0 as usize].declaration)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if writes {
-                    widen_category(&mut row.writes, &exhibited.writes);
+                let mut exhibited = self.repair_exhibition(*id, bodies, &proposed)?;
+                for call in &bodies[id].calls {
+                    let declaration = self.types.signatures[call.function.0 as usize].declaration;
+                    let Some(callee_row) = proposed.get(&declaration) else {
+                        continue;
+                    };
+                    for argument in &call.parameters {
+                        for base in &argument.bases {
+                            if base.path.steps.is_empty()
+                                || !cyclic.contains(&(argument.declaration, base.path.root))
+                            {
+                                continue;
+                            }
+                            // The complete resolved argument p.s covers p.s.q
+                            // at every depth, including all nameable payload
+                            // steps in s. Keep independent base entries; do not
+                            // merge siblings at p's prefix.
+                            // Zero-suffix edges and edges between cycles compose
+                            // these covers by the same ordinary call projection.
+                            if callee_row
+                                .writes
+                                .iter()
+                                .any(|p| p.root == argument.declaration)
+                            {
+                                exhibited.add_write(base.path.clone());
+                            }
+                            if callee_row
+                                .reads
+                                .iter()
+                                .any(|p| p.root == argument.declaration)
+                            {
+                                exhibited.add_read(base.path.clone());
+                            }
+                        }
+                    }
                 }
-                widen_category(&mut row.reads, &exhibited.reads);
-                *row = Checker::suggested_effect_row(row);
-            }
-            if *rows == next {
-                return Ok(());
-            }
-            *rows = next;
-        }
-    }
-
-    /// Removing an unexhibited entry uncovers no access in that category.
-    /// Every changed round removes an entry, so no depth or work limit is
-    /// needed. Write support is independent of read projections.
-    fn prune_repair_rows(
-        &self,
-        component: &[FunctionId],
-        rows: &mut HashMap<DeclarationId, EffectSet>,
-        writes: bool,
-    ) -> Result<(), CheckStop> {
-        loop {
-            let mut next = rows.clone();
-            for id in component {
-                let exhibited = self.repair_exhibition(*id, rows)?;
-                let row = next
-                    .get_mut(&self.types.signatures[id.0 as usize].declaration)
+                let declaration = self.types.signatures[id.0 as usize].declaration;
+                let prior = next
+                    .remove(&declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if writes {
-                    row.writes.retain(|entry| {
-                        exhibited
-                            .writes
-                            .iter()
-                            .any(|path| Checker::effect_path_covers(entry, path))
-                    });
-                } else {
-                    row.reads.retain(|entry| {
-                        exhibited
-                            .reads
-                            .iter()
-                            .chain(&exhibited.writes)
-                            .any(|path| Checker::effect_path_covers(entry, path))
-                    });
-                }
-                *row = Checker::suggested_effect_row(row);
+                next.insert(
+                    declaration,
+                    Checker::suggested_effect_row(&prior.union(exhibited)),
+                );
             }
-            if *rows == next {
-                return Ok(());
+            if proposed == next {
+                return Ok(proposed);
             }
-            *rows = next;
+            proposed = next;
         }
     }
 }
@@ -355,42 +503,18 @@ impl EffectCall {
     }
 }
 
-/// Every new root has one finite initial suffix. An uncovered path at a root
-/// already present replaces that root's entries by their common prefix. It
-/// either strictly shortens a suffix or merges finitely many sibling entries;
-/// later substitutions cannot lengthen it. Reads and writes widen separately,
-/// then ordinary EFF-1 canonicalization removes entries covered by writes.
-fn widen_category(current: &mut Vec<CheckedStatePath>, exhibited: &[CheckedStatePath]) {
-    for path in exhibited {
-        if current
-            .iter()
-            .any(|entry| Checker::effect_path_covers(entry, path))
-        {
-            continue;
-        }
-        let mut prefix = path.clone();
-        for entry in current.iter().filter(|entry| entry.root == path.root) {
-            let length = prefix
-                .steps
-                .iter()
-                .zip(&entry.steps)
-                .take_while(|(left, right)| left == right)
-                .count();
-            prefix.steps.truncate(length);
-        }
-        current.retain(|entry| entry.root != path.root);
-        current.push(prefix);
-        current.sort_unstable();
-    }
-}
-
+/// Closure terminates without a budget: growing parameter-cycle edges have
+/// one of finitely many complete argument-path covers in each access category. An
+/// uncovered path can therefore traverse only a finite acyclic parameter walk
+/// or zero-length cycle (whose offset substitutions range over finite formal
+/// names). Base paths, argument suffixes and those walks are all finite.
 /// A written row belongs to a source declaration, including all generic
 /// instances. Renamed symbolic summaries keep canonical call identities, so
 /// instance-ID cycles alone do not describe the source's recursive component.
 /// Prefer a symbolic body as the representative of each declaration.
 fn recursive_component(
     id: FunctionId,
-    bodies: &HashMap<FunctionId, EffectSet>,
+    bodies: &HashMap<FunctionId, RepairBody>,
     signatures: &[FunctionSignature],
 ) -> Vec<FunctionId> {
     let mut representatives: HashMap<DeclarationId, FunctionId> = HashMap::new();
