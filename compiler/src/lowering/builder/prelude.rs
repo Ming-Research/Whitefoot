@@ -73,6 +73,7 @@ impl IrBuilder<'_> {
             "shared_map_new" => self.row_shared_map_new(),
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
+            "map_scan_within" => self.row_map_scan_within(),
             "map_clear" => self.row_map_clear(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
@@ -234,6 +235,26 @@ impl IrBuilder<'_> {
             },
         )?;
         self.return_value(next)
+    }
+
+    /// The bounded scan returns the ordinary PRE-1 payload enum.
+    fn row_map_scan_within(&mut self) -> Result<(), LoweringFailure> {
+        let [map, cursor, count, limit, set] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let table = self.row_table(map)?;
+        let step = self.define(
+            self.result,
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            },
+        )?;
+        self.return_value(step)
     }
 
     /// `map_clear<V>(map: &ConcurrentHashMap<V>)`: every entry `None`, the

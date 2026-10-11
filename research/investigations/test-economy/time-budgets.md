@@ -342,6 +342,16 @@ earlier runs; reruns passed each time. A third overrun is no longer read as
 noise, so the owner approved a raise of 10 s, to 30 s, on the status board
 on 2026-10-10 (item gran-ci-runtime-macos); ubuntu stays at 20 s.
 
+**`linux-asan-ubsan` raised to 20 s.** io-hosts' completion-linux job
+builds and runs the completion runtime under AddressSanitizer and
+UndefinedBehaviorSanitizer. The stage took 9.11 s on main at `a3205af0b`
+and overran its 10-s floor on three PRs: 10.31, 10.31 and 10.0 s on
+Whitefoot#343, which grows `keyed_table.c`; 10.1, 10.3 and 10.8 s on #344
+and 10.5 s on #347, which change no C code, where an earlier commit of #347
+took 9.0 s. The stage runs at its floor on the hosted runners whatever a
+change adds, so the owner approved a raise of 10 s, to 20 s, on the status
+board on 2026-10-11 (item firn-gap-scan-bound).
+
 **`check/runtime` on macOS, raised to 20 s.** The concurrent map's test
 (`compiler/src/backend/concurrent_map_test.c`, three builds) took the stage
 to 15.3 s at `2adfc64c0`; once its locked-read and narrowed-hash builds ran

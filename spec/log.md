@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-11 v0.126: a scan bounded by the heap it may grow
+
+Rules: changed SHARE-1, PRE-1, MSR-1
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "how can map_scan give a bound a caller can rely on before it allocates?" (translated), whose option A read "add a bounded scan map_scan_within whose bound counts heap growth; when the bound cannot hold the next position it refuses and reports Needs(n); map_scan stays unchanged" (translated); and on 2026-10-11 the owner approved the item request "approve #343: the three changes of the specification (SHARE-1 adds map_scan_within, PRE-1 adds ScanStep, one sentence of MSR-1) and the two design tree decisions; also raise io-hosts' linux-asan-ubsan budget from 10 s to 20 s" (translated) with "agreed" (translated).
+
+Summary: SHARE-1's `map_scan` takes `count` only as a hint, so one call could copy any number of key bytes, and firn's chunked rewrite could not reserve memory for a scan step before taking it. SHARE-1 adds `map_scan_within`, which shares `map_scan`'s cursor, extent and order and adds a byte limit: it returns `Next(0)` when no `Some` key remains; inserts nothing and returns `Needs(bytes: n)`, the cursor unchanged, when the first nonempty position's keys alone need peak heap growth `n` above the limit, counted with fresh storage for every allocation so a retry with `limit >= n` progresses while the map is unchanged; and otherwise inserts a prefix of whole positions with its heap increase, temporary storage included, at most the limit throughout. PRE-1 declares `enum ScanStep { Next(next: u64); Needs(bytes: u64); }` and the function, placed after `map_scan` in the declaration preorder, which moves the later diagnostic ordinals. MSR-1 publishes a `KeySet`'s length from below for both scans. `map_scan` is unchanged. Selection ground: a caller that reserves memory before it scans must learn the size it needs before anything is copied, and a position's keys are inserted whole because the cursor names positions, not keys.
+
 ## 2026-10-10 v0.125: an empty contiguous runtime window allocates nothing
 
 Rules: changed OP-13, STOR-1, STOR-3, TYPE-9
