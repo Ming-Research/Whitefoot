@@ -961,7 +961,11 @@ impl Input<'_, '_> {
     /// Replays a finite owned projection against its actual operand type and
     /// returns the type it reaches. Element and range storage are not
     /// aggregate ownership projections.
-    fn owned_path_type(&self, mut ty: CheckedType, path: &[PlaceStep]) -> Option<CheckedType> {
+    pub(super) fn owned_path_type(
+        &self,
+        mut ty: CheckedType,
+        path: &[PlaceStep],
+    ) -> Option<CheckedType> {
         for step in path {
             let CheckedType::Nominal(nominal) = ty else {
                 return None;
