@@ -98,6 +98,65 @@ impl Input<'_, '_> {
         }
     }
 
+    /// A result's integer data must be terms at the written set destination
+    /// [CALL-4, ENT-2]. Resolving a reference alias to indexed storage does
+    /// not add a subscript to its written spelling.
+    pub(super) fn set_result_integer_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        projections: &[GoalProjection],
+    ) -> bool {
+        let offsets = match target {
+            CheckedSetTarget::Place(_) => return true,
+            CheckedSetTarget::Storage(place)
+                if !place
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+            {
+                return true;
+            }
+            CheckedSetTarget::Storage(place) => place.subscripted_term(),
+            CheckedSetTarget::RangeIndex(place) => place.subscripted_term(),
+        };
+        if offsets != Some(SubscriptedTerm::Represented) {
+            return false;
+        }
+        let Some((GoalProjection::Field(last), prefix)) = projections.split_last() else {
+            if !projections.is_empty() {
+                return false;
+            }
+            let term = match target {
+                CheckedSetTarget::Storage(place) => {
+                    place.readonly_field_term(self.context.nominals)
+                }
+                CheckedSetTarget::RangeIndex(place) => {
+                    place.readonly_field_term(self.context.nominals)
+                }
+                CheckedSetTarget::Place(_) => unreachable!("plain places returned above"),
+            };
+            return term == Some(SubscriptedTerm::Represented);
+        };
+        let path = prefix
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        let Some(CheckedType::Nominal(nominal)) = self.owned_path_type(target.ty(), &path) else {
+            return false;
+        };
+        let Some(CheckedNominalKind::Struct { fields }) = self
+            .context
+            .nominals
+            .get(nominal.0 as usize)
+            .map(|nominal| &nominal.kind)
+        else {
+            return false;
+        };
+        fields
+            .get(*last as usize)
+            .is_some_and(|field| field.readonly)
+    }
+
     /// [OWN-1] whether a value of this type is read without being consumed,
     /// so a place of it is an ordinary goal datum. A symbolic parameter
     /// contributes exactly the capability granted by its written bound.
