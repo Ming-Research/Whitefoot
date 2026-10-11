@@ -17,6 +17,7 @@ defaults:
 
 jobs:
   inspect:
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -57,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Ming-Research/Snowghost-wf
-          ref: 15e8d4a
+          ref: 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579
           submodules: true
           path: sg
       - name: Build layout_oracle before and after #345 and compare out-of-line calls
