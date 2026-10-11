@@ -1,0 +1,62 @@
+enum Phase {
+  Before();
+  After();
+}
+
+fn borrow_only(phase: &Phase) -> result: unit pure {
+  let held = &phase^;
+  return unit;
+}
+
+fn owned(phase: Phase) -> result: Bool pure {
+  match phase {
+    Before() => {
+      return False();
+    }
+    After() => {
+      return True();
+    }
+  }
+}
+
+fn borrowed(phase: &Phase) -> result: Bool reads(phase) {
+  match &phase^ {
+    Before() => {
+      return False();
+    }
+    After() => {
+      return True();
+    }
+  }
+}
+
+fn advance(phase: &Phase) -> result: unit writes(phase) {
+  match &phase^ {
+    Before() => {
+      set phase^ = Phase::After();
+    }
+    After() => {
+      set phase^ = Phase::After();
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let phase = Phase::Before();
+  borrow_only(phase: &phase);
+  let before = borrowed(phase: &phase);
+  if before {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let copied = owned(phase: phase);
+  if copied {
+    return std::process::exit_status(code: 2_u8);
+  }
+  advance(phase: &phase);
+  let after = borrowed(phase: &phase);
+  if after {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 3_u8);
+}

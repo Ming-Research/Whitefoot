@@ -1,0 +1,17 @@
+fn present(items: &[Option<u8>], index: &u64) -> result: Bool reads(items), reads(index) {
+  if index^ < items^.len {
+    match &items^[index^] {
+      None() => {
+        return False();
+      }
+      Some(value: inner) => {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

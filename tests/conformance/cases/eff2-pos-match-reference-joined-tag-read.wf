@@ -1,0 +1,19 @@
+fn byte(first: &Option<u8>, second: &Option<u8>, flag: Bool) -> result: u8 reads(first), reads(second) {
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  match &selected^ {
+    None() => {
+      return 0_u8;
+    }
+    Some(value: inner) => {
+      return inner^;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
