@@ -1,0 +1,22 @@
+alias Packet = pkg::packets::Packet;
+
+fn replace_identity(number: &u64) -> result: unit writes(number) {
+  set number^ = 3_u64;
+  return unit;
+}
+
+fn update_map(map: &ConcurrentHashMap<Packet>, key: &[u8]) -> result: unit reads(key), writes(map) {
+  let entry_ref = &map^[key];
+  match entry_ref^ {
+    Some(value: packet) => {
+      replace_identity(number: &packet^.id);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -2500,7 +2500,9 @@ fn field_prefix(path: &[CheckedPlaceStep]) -> Option<Vec<u32>> {
     path.iter()
         .map(|step| match step {
             CheckedPlaceStep::Field(field) => Some(*field),
-            CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Subscript(_) => None,
+            CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Subscript(_)
+            | CheckedPlaceStep::Measure(_) => None,
         })
         .collect()
 }
