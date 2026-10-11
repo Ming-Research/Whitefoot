@@ -2312,6 +2312,7 @@ mod range_argument_kill_tests {
                 let event = KillEvent::Write {
                     element: matches!(path.last(), Some(PlaceStep::Index(_))),
                     place: place(path),
+                    relocation: false,
                     source: crate::NodePath { components: vec![] },
                     narrowed: None,
                 };
