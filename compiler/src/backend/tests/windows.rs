@@ -1721,28 +1721,49 @@ fn main() -> status: std::process::ExitStatus pure {
 /// [REF-1, PRE-1, MSR-2] a measure borrow reaches its real descriptor word,
 /// including the distinct Ring-head and Entries-count positions. Derived
 /// observations never reach this projection. Type-constant fields use
-/// immutable target storage, checked separately below.
+/// immutable target storage, checked separately below. The Entries row reads
+/// only its descriptor but must retain its implicit `Option<u8>` element
+/// nominal through signature preflight and ordinary activation [SHARE-2].
 #[test]
 fn measure_references_project_actual_descriptor_words() {
     let cases = [
-        ("Box<Array<u8>>", "source^.inner", "len", 0),
-        ("Slots<u8, 4>", "source^", "len", 0),
-        ("Ring<u8, 4>", "source^", "len", 0),
-        ("Ring<u8, 4>", "source^", "head", 1),
-        ("Box<Slots<u8>>", "source^.inner", "len", 0),
-        ("Box<Slots<u8>>", "source^.inner", "cap", 1),
-        ("Box<Ring<u8>>", "source^.inner", "len", 0),
-        ("Box<Ring<u8>>", "source^.inner", "cap", 1),
-        ("Box<Ring<u8>>", "source^.inner", "head", 2),
-        ("Box<Segments<u8>>", "source^.inner", "len", 0),
-        ("Box<Paged<u8>>", "source^.inner", "len", 0),
-        ("Box<Paged<u8>>", "source^.inner", "cap", 1),
-        ("KeySet", "source^", "len", 0),
-        ("Entries<u8>", "source^", "len", 2),
+        ("&Box<Array<u8>>", "source^.inner", "len", 0),
+        ("&Slots<u8, 4>", "source^", "len", 0),
+        ("&Ring<u8, 4>", "source^", "len", 0),
+        ("&Ring<u8, 4>", "source^", "head", 1),
+        ("&Box<Slots<u8>>", "source^.inner", "len", 0),
+        ("&Box<Slots<u8>>", "source^.inner", "cap", 1),
+        ("&Box<Ring<u8>>", "source^.inner", "len", 0),
+        ("&Box<Ring<u8>>", "source^.inner", "cap", 1),
+        ("&Box<Ring<u8>>", "source^.inner", "head", 2),
+        ("&Box<Segments<u8>>", "source^.inner", "len", 0),
+        ("&Box<Paged<u8>>", "source^.inner", "len", 0),
+        ("&Box<Paged<u8>>", "source^.inner", "cap", 1),
+        ("&KeySet", "source^", "len", 0),
+        ("&Entries<u8>", "source^", "len", 2),
+        ("&Array<u8>", "source^", "len", 0),
+        ("&Slots<u8>", "source^", "len", 0),
+        ("&Slots<u8>", "source^", "cap", 1),
+        ("&Ring<u8>", "source^", "len", 0),
+        ("&Ring<u8>", "source^", "cap", 1),
+        ("&Ring<u8>", "source^", "head", 2),
+        ("&Segments<u8>", "source^", "len", 0),
+        ("&Paged<u8>", "source^", "len", 0),
+        ("&Paged<u8>", "source^", "cap", 1),
+        ("Slots<u8, 4>", "source", "len", 0),
+        ("Ring<u8, 4>", "source", "head", 1),
+        ("Box<Array<u8>>", "source.inner", "len", 0),
+        ("Box<Slots<u8>>", "source.inner", "cap", 1),
+        ("Box<Ring<u8>>", "source.inner", "head", 2),
     ];
     for (ty, place, measure, expected_field) in cases {
+        let effects = if ty.starts_with('&') {
+            "reads(source)"
+        } else {
+            "pure"
+        };
         let source = format!(
-            "fn peek(n: &u64) -> result: u64 reads(n) {{\n  return n^;\n}}\n\nfn observe(source: &{ty}) -> result: u64 reads(source) {{\n  return peek(n: &{place}.{measure});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn peek(n: &u64) -> result: u64 reads(n) {{\n  return n^;\n}}\n\nfn observe(source: {ty}) -> result: u64 {effects} {{\n  return peek(n: &{place}.{measure});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir(source.as_bytes(), |program| {
             let function = program
@@ -1750,6 +1771,12 @@ fn measure_references_project_actual_descriptor_words() {
                 .iter()
                 .find(|function| function.name() == "observe")
                 .expect("observer");
+            if ty.starts_with('&') {
+                assert!(
+                    matches!(function.parameters()[0].1, IrType::Address(_)),
+                    "{ty}: borrow parameters carry their actual descriptor address"
+                );
+            }
             let (result, address, projection) = function
                 .blocks()
                 .iter()
@@ -1770,6 +1797,12 @@ fn measure_references_project_actual_descriptor_words() {
             let Some(IrType::Address(base)) = function.value_type(address) else {
                 panic!("descriptor owner address")
             };
+            if let IrType::Entries { element } = base.ty() {
+                let Some(IrType::Nominal(option)) = program.element(element) else {
+                    panic!("Entries retains its implicit Option element")
+                };
+                assert!(program.nominal(option).is_some());
+            }
             assert_eq!(
                 projection.descriptor_field(base.ty()),
                 Some(expected_field),
@@ -1788,6 +1821,200 @@ fn measure_references_project_actual_descriptor_words() {
             "{ty}.{measure}: {body}"
         );
     }
+}
+
+/// [REF-1, TYPE-9] a runtime Array reference addresses its Box's header,
+/// matching the address supplied by its caller. It must never promote a
+/// value copy of the unsized block into a local address [STOR-1].
+#[test]
+fn runtime_array_reference_parameters_keep_descriptor_addresses() {
+    let source = super::system::corpus_source("ref1-pos-runtime-array-and-capacity-references");
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        super::system::with_mutated_ir_lowering(&source, overlap, |program| {
+            let array_length = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "array_length")
+                .expect("runtime Array reader");
+            assert!(matches!(
+                array_length.parameters()[0].1,
+                IrType::Address(crate::IrAddressed::Buffer { .. })
+            ));
+            for caller in program.functions() {
+                for instruction in caller
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                {
+                    match instruction {
+                        IrInstruction::Define {
+                            operation: IrOperation::AddressOf { referent, .. },
+                            ..
+                        } => assert!(
+                            !matches!(referent.ty(), IrType::Buffer { .. }),
+                            "an unsized Array header is already addressed in Box storage"
+                        ),
+                        IrInstruction::Define {
+                            operation:
+                                IrOperation::Call {
+                                    function,
+                                    arguments,
+                                },
+                            ..
+                        } => {
+                            let callee = &program.functions()[*function as usize];
+                            for (argument, (_, expected)) in
+                                arguments.iter().zip(callee.parameters())
+                            {
+                                assert_eq!(caller.value_type(*argument), Some(*expected));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            crate::emit_llvm(program).expect("actual runtime descriptor pointers emit");
+        });
+    }
+}
+
+/// [REF-1, GIVE-1, REF-4] aliases and value-if arms deliver the selected
+/// runtime Array header address. Range formation and element reads must use
+/// that same allocation after the reference is passed to another callable.
+#[test]
+fn runtime_array_reference_joins_keep_element_backing() {
+    let source = br#"fn inspect_join(array: &Array<u8>) -> result: u8 reads(array) {
+  let part = &array^[0_u64..array^.len];
+  if part^.len > 0_u64 {
+    return part^[0_u64];
+  } else {
+    return 0_u8;
+  }
+}
+
+fn choose_join(first: &Array<u8>, second: &Array<u8>, pick: Bool) -> result: u8 reads(first), reads(second) {
+  let chosen = if pick {
+    give &first^;
+  } else {
+    give &second^;
+  };
+  let alias = chosen;
+  return inspect_join(array: alias);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first_owner = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
+  let second_owner = box_array_filled::<u8>(count: 6_u64, value: 9_u8);
+  let seen = choose_join(first: &first_owner.inner, second: &second_owner.inner, pick: true);
+  if seen == 7_u8 {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        super::system::with_mutated_ir_lowering(source, overlap, |program| {
+            let choose = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "choose_join")
+                .expect("reference join");
+            let passed = choose
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::Call {
+                                function,
+                                arguments,
+                            },
+                        ..
+                    } if program.functions()[*function as usize].name() == "inspect_join" => {
+                        Some(arguments[0])
+                    }
+                    _ => None,
+                })
+                .expect("joined reference argument");
+            assert!(matches!(
+                choose.value_type(passed),
+                Some(IrType::Address(crate::IrAddressed::Buffer { .. }))
+            ));
+            assert!(choose.blocks().iter().any(|block| {
+                block
+                    .parameters()
+                    .iter()
+                    .any(|(parameter, _)| *parameter == passed)
+            }));
+            let inspect = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "inspect_join")
+                .expect("range and element reader");
+            assert!(inspect.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+                matches!(instruction, IrInstruction::Define { operation: IrOperation::SliceFromBuffer { buffer }, .. } if *buffer == inspect.parameters()[0].0)
+            }));
+            crate::emit_llvm(program).expect("joined descriptor address and range emit");
+        });
+    }
+}
+
+/// [PAR-2, MSR-1] a runtime Array's fixed lifetime length remains available
+/// to scheduling through its header reference, including when a helper's
+/// counted extent contributes to an outer split's work estimate.
+#[test]
+fn runtime_array_reference_lengths_reach_work_estimates() {
+    fn contains_length(work: &crate::IrWorkEstimate, expected: crate::IrValueId) -> bool {
+        use crate::IrWorkEstimate as Work;
+        match work {
+            Work::Length(value) => *value == expected,
+            Work::Sum(parts) => parts.iter().any(|part| contains_length(part, expected)),
+            Work::Product(left, right) | Work::Difference(left, right) => {
+                contains_length(left, expected) || contains_length(right, expected)
+            }
+            Work::Quotient(value, _) => contains_length(value, expected),
+            _ => false,
+        }
+    }
+    let source = br#"fn sum_runtime(source: &Array<u64>) -> result: u64 reads(source) {
+  let total = 0_u64;
+  for (index in 0_u64..source^.len) {
+    set total = total +wrap source^[index];
+  }
+  return total;
+}
+
+fn repeat_runtime(source: &Array<u64>, output: &[u64]) -> result: unit reads(source), writes(output) {
+  for (index in 0_u64..output^.len) {
+    set output^[index] = sum_runtime(source: source);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let input_owner = box_array_filled::<u64>(count: 17_u64, value: 1_u64);
+  let output_owner = array_filled::<u64, 4>(value: 0_u64);
+  let copied = repeat_runtime(source: &input_owner.inner, output: &output_owner[0_u64..4_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::system::with_parallel_ir(source, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "repeat_runtime")
+            .expect("outer split consumer");
+        let source = function.parameters()[0].0;
+        assert!(function.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+            matches!(instruction, IrInstruction::Define { operation: IrOperation::LoopSplit { work: Some(work), captures, .. }, .. } if captures.contains(&source) && contains_length(work, source))
+        }), "the source header length remains in the dynamic work estimate");
+        let module = crate::emit_llvm(program)
+            .expect("runtime Array work estimate emits")
+            .into_string();
+        assert!(emitted_function(&module, "repeat_runtime").contains("load i64"));
+    });
 }
 
 const TYPE_CONSTANT_REFERENCES: &[u8] =
