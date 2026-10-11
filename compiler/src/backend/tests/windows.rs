@@ -287,6 +287,23 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
         for row in ["append", "split_off"] {
             let body = emitted_prelude_row(&module, row);
             let lines = body.lines().collect::<Vec<_>>();
+            let mut in_transfer = false;
+            let element_transfer = lines
+                .iter()
+                .map(|line| {
+                    if line.starts_with("  ; layout-bounded transfer from ") {
+                        in_transfer = true;
+                    }
+                    let inside = in_transfer;
+                    if line.starts_with("  ; end layout-bounded transfer from ") {
+                        in_transfer = false;
+                    }
+                    inside
+                })
+                .collect::<Vec<_>>();
+            let header_store = |index: usize| {
+                !element_transfer[index] && lines[index].trim().starts_with("store i64 ")
+            };
             let zero = lines
                 .iter()
                 .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
@@ -321,27 +338,30 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
                     .all(|line| !line.contains("store ") && !line.contains("@llvm.mem")),
                 "{body}"
             );
-            assert_eq!(body.matches("  store i64 ").count(), 2, "{body}");
+            assert_eq!(
+                (0..lines.len())
+                    .filter(|&index| header_store(index))
+                    .count(),
+                2,
+                "{body}"
+            );
             let commit = lines
                 .iter()
                 .position(|line| line.ends_with(".commit:"))
                 .expect("positive transfer commits its headers");
             assert!(
-                lines[..commit]
-                    .iter()
-                    .all(|line| !line.trim().starts_with("store i64 ")),
+                (0..commit).all(|index| !header_store(index)),
                 "header stores occur only after positive transfer: {body}"
             );
             assert_eq!(
-                lines[commit + 1..done]
-                    .iter()
-                    .filter(|line| line.trim().starts_with("store i64 "))
+                (commit + 1..done)
+                    .filter(|&index| header_store(index))
                     .count(),
                 2,
                 "{body}"
             );
             assert!(
-                body.contains("@llvm.memmove"),
+                body.contains("@llvm.memmove") || element_transfer.contains(&true),
                 "positive transfers still move their elements: {body}"
             );
         }
@@ -501,11 +521,40 @@ fn main() -> status: std::process::ExitStatus pure {
     // A byte tag and five prefix bytes put the copied window at [8, 24).
     // A stale synthetic u32 tag instead puts it at [16, 32), so these
     // intervals discriminate the initializer's layout from target emission.
+    // BytePrefix's own construction initializes its five-byte value; the
+    // enum's two byte intervals still exclude exactly the copied window.
+    let prefix_zero = format!("store {} zeroinitializer", nominal_type("BytePrefix"));
     assert_eq!(
         zero_stores("byte_choice"),
-        ["store [8 x i8] zeroinitializer", "store [16 x i8] zeroinitializer"]
+        [
+            prefix_zero.as_str(),
+            "store [8 x i8] zeroinitializer",
+            "store [16 x i8] zeroinitializer"
+        ]
     );
     let byte_choice = emitted_body(&module, "byte_choice");
+    let prefix_destination = byte_choice
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{prefix_zero}, ptr "))
+        })
+        .expect("the prefix has its own zero initializer");
+    assert_ne!(prefix_destination, "%wf.result", "{byte_choice}");
+    assert!(
+        byte_choice.lines().any(|line| {
+            let Some(definition) = line
+                .trim()
+                .strip_prefix(&format!("{prefix_destination} = "))
+            else {
+                return false;
+            };
+            definition.starts_with("alloca ")
+                || (definition.starts_with("getelementptr ")
+                    && definition.contains(", ptr %wf.frame,"))
+        }),
+        "the prefix initializer addresses local backing, not the enum result: {byte_choice}"
+    );
     for offset in [0, 24] {
         assert!(byte_choice.lines().any(|line| {
             line.contains("getelementptr inbounds i8, ptr %wf.result")
@@ -1271,7 +1320,7 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         (build, build_body, "build", 3),
         (checksum, checksum_body, "checksum", 2),
     ] {
-        register_result_type(&llvm, function, &["i32", "i64", "i32"]);
+        register_result_type(&llvm, function, &["i8", "i64", "i8"]);
         let header = function.lines().next().expect("helper signature");
         assert!(
             header.contains(&format!(" @wf_{name}(ptr noalias nonnull ")),
@@ -1302,7 +1351,7 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         }
         // The body's destination still receives the tag, u64 success
         // payload and three-variant PoolError, each written on its route.
-        assert_scalar_result_fields(&llvm, body, &["i32", "i64", "i32"]);
+        assert_scalar_result_fields(&llvm, body, &["i8", "i64", "i8"]);
     }
     for definition in [build, build_body] {
         assert!(
@@ -1522,7 +1571,26 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("captured pointer definition")
         .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
-    assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
+    // Bounded copies of Columns load both Box fields too. Count reads of
+    // the captured field address, whose result the target chain below uses;
+    // the two Columns GEPs above still forbid reevaluating that projection.
+    let load_prefix = " = load ptr, ptr ";
+    let field = update[captured + load_prefix.len()..]
+        .lines()
+        .next()
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap();
+    assert_eq!(
+        update
+            .lines()
+            .filter_map(|line| line.split_once(load_prefix))
+            .filter(|(_, operand)| operand.split(',').next() == Some(field))
+            .count(),
+        1,
+        "the target's Box pointer is loaded once: {update}"
+    );
     let address = update[captured..rhs]
         .lines()
         .find_map(|line| {
