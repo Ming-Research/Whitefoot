@@ -1,7 +1,8 @@
 //! Checked access roles preserve conservative reads and storage transitions.
 
 use super::{
-    compile, compile_and_run, compile_rejection, emitted_body, emitted_function, emitted_prelude_row,
+    compile, compile_and_run, compile_rejection, emitted_body, emitted_function,
+    emitted_prelude_row,
 };
 
 #[test]
@@ -70,8 +71,7 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("scope attachment");
     assert!(
         copy.lines().any(|line| {
-            line.contains("load i8, ptr ")
-                && line.ends_with(&format!(", !alias.scope {scope}"))
+            line.contains("load i8, ptr ") && line.ends_with(&format!(", !alias.scope {scope}"))
         }),
         "the source byte read must be separated from header writes too: {copy}"
     );
@@ -94,7 +94,9 @@ fn main() -> status: std::process::ExitStatus pure {
         "the write excludes the actual source scope"
     );
     assert!(
-        !copy.lines().any(|line| line.contains("call ") && line.contains("@wf_place_back")),
+        !copy
+            .lines()
+            .any(|line| line.contains("call ") && line.contains("@wf_place_back")),
         "the access fact belongs to writes, not to a whole call: {copy}"
     );
     assert!(
@@ -381,9 +383,8 @@ fn runtime_copy_accesses_distinguish_control_words_from_source_stores() {
     let llvm = compile(COPY);
     let copy = emitted_function(&llvm, "copy_windows");
     assert!(
-        copy.lines().any(|line| {
-            line.contains("load ptr, ptr ") && line.ends_with("!tbaa !13")
-        }),
+        copy.lines()
+            .any(|line| { line.contains("load ptr, ptr ") && line.ends_with("!tbaa !13") }),
         "projecting through the source Box slot has its own role: {copy}"
     );
     assert!(
@@ -432,9 +433,9 @@ fn runtime_copy_accesses_distinguish_control_words_from_source_stores() {
     }
     let write = emitted_function(&llvm, "write_word");
     assert!(
-        write.lines().any(|line| {
-            line.contains("store i64 ") && line.ends_with("!tbaa !12")
-        }),
+        write
+            .lines()
+            .any(|line| { line.contains("store i64 ") && line.ends_with("!tbaa !12") }),
         "an exact source numeric store carries the scalar role: {write}"
     );
     let output = compile_and_run(&llvm);
@@ -469,9 +470,9 @@ fn main() -> status: std::process::ExitStatus pure {
         "an inline window can be nested in an aggregate or element: {append}"
     );
     assert!(
-        append.lines().any(|line| {
-            line.contains("store i8 ") && line.ends_with("!tbaa !12")
-        }),
+        append
+            .lines()
+            .any(|line| { line.contains("store i8 ") && line.ends_with("!tbaa !12") }),
         "an exact source element write still carries scalar data: {append}"
     );
 }
@@ -514,9 +515,7 @@ fn paged_directory_reads_stay_distinct_from_field_stores() {
     assert_eq!(
         change
             .lines()
-            .filter(|line| {
-                line.contains("load ptr, ptr ") && line.ends_with("!tbaa !20")
-            })
+            .filter(|line| { line.contains("load ptr, ptr ") && line.ends_with("!tbaa !20") })
             .count(),
         2,
         "each field path rereads the directory before optimization: {change}"
@@ -524,25 +523,23 @@ fn paged_directory_reads_stay_distinct_from_field_stores() {
     assert_eq!(
         change
             .lines()
-            .filter(|line| {
-                line.trim().starts_with("store i64 ") && line.ends_with("!tbaa !12")
-            })
+            .filter(|line| { line.trim().starts_with("store i64 ") && line.ends_with("!tbaa !12") })
             .count(),
         2,
         "both exact field stores use source scalar data: {change}"
     );
     let allocate = emitted_prelude_row(&llvm, "box_paged_new");
     assert!(
-        allocate.lines().any(|line| {
-            line.trim().starts_with("store ptr ") && line.ends_with("!tbaa !20")
-        }),
+        allocate
+            .lines()
+            .any(|line| { line.trim().starts_with("store ptr ") && line.ends_with("!tbaa !20") }),
         "directory writes agree with directory reads: {allocate}"
     );
     let append = emitted_prelude_row(&llvm, "place_back");
     assert!(
-        append.lines().any(|line| {
-            line.contains("load i64, ptr ") && line.ends_with("!tbaa !19")
-        }),
+        append
+            .lines()
+            .any(|line| { line.contains("load i64, ptr ") && line.ends_with("!tbaa !19") }),
         "Paged's length has its own role: {append}"
     );
     let output = compile_and_run(&llvm);
@@ -775,9 +772,13 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let replace = emitted_function(&llvm, "replace_choice");
     let transfers: Vec<_> = replace
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| line.contains("call void @llvm.memmove.p0.p0.i64("))
+        .match_indices("  ; layout-bounded transfer from ")
+        .map(|(start, _)| {
+            (
+                start,
+                super::layout_transfers::transfer_region(&replace[start..]),
+            )
+        })
         .collect();
     // WIN-3 releases the displaced affine owner. Preserve it before the
     // replacement, then release that exact snapshot after the commit.
@@ -786,33 +787,28 @@ fn main() -> status: std::process::ExitStatus pure {
         2,
         "one displaced-owner capture and one incoming replacement: {replace}"
     );
-    let (capture_index, capture) = transfers[0];
-    let (replacement_index, replacement) = transfers[1];
-    let old_snapshot = capture
-        .trim()
-        .strip_prefix("call void @llvm.memmove.p0.p0.i64(ptr ")
-        .and_then(|arguments| arguments.split_once(", ptr %v0,"))
-        .map(|(destination, _)| destination)
-        .expect("the first transfer captures the old target value");
+    let (capture_index, (capture, old_source, old_snapshot)) = transfers[0];
+    let (replacement_index, (replacement, incoming_source, destination)) = transfers[1];
+    assert_eq!(old_source, "%v0", "capture the old target: {replace}");
     assert!(
         old_snapshot.starts_with("%wf.slot.")
             && replace.lines().any(|line| {
-                line.trim().starts_with(&format!(
-                    "{old_snapshot} = alloca %wf.t.{choice}, align "
-                ))
+                line.trim()
+                    .starts_with(&format!("{old_snapshot} = alloca %wf.t.{choice}, align "))
             }),
         "the displaced Choice has private complete storage: {replace}"
     );
-    assert!(
-        replacement.contains("(ptr %v0, ptr %wf.arg.v1,"),
+    assert_eq!(
+        (incoming_source, destination),
+        ("%wf.arg.v1", "%v0"),
         "copy the incoming value directly into the target: {replace}"
     );
     for transfer in [capture, replacement] {
         assert!(
-            transfer.contains(&format!(
-                "i64 ptrtoint (ptr getelementptr (%wf.t.{choice}, ptr null, i32 1) to i64), i1 false)"
-            )),
-            "both transfers copy the complete selected Choice representation: {replace}"
+            transfer.contains("load i32")
+                && transfer.contains("store i32")
+                && transfer.contains("call void @llvm.memmove.p0.p0.i64("),
+            "capture scalar granules and the byte-preserving owner overlay: {replace}"
         );
         assert!(
             !transfer.contains("!tbaa"),
@@ -820,23 +816,35 @@ fn main() -> status: std::process::ExitStatus pure {
         );
     }
     assert!(
-        !replace.contains("; layout-bounded transfer ") && !replace.contains("@llvm.memcpy."),
-        "neither boundary transfer adds granules or another copy: {replace}"
+        !replace.contains("@llvm.memcpy."),
+        "overlapping storage stays admitted: {replace}"
     );
     let drops: Vec<_> = replace
         .lines()
-        .enumerate()
-        .filter(|(_, line)| line.contains("call void @wf.drop.t."))
+        .filter(|line| line.contains("call void @wf.drop.t."))
         .collect();
-    assert_eq!(drops.len(), 1, "release exactly the displaced owner: {replace}");
-    let (drop_index, drop) = drops[0];
+    assert_eq!(
+        drops.len(),
+        1,
+        "release exactly the displaced owner: {replace}"
+    );
+    let drop = drops[0];
     assert_eq!(
         drop.trim(),
         format!("call void @wf.drop.t.{choice}(ptr {old_snapshot})"),
         "release the captured old Choice, not the replacement: {replace}"
     );
+    let drop_index = replace.find(drop).expect("the release is in this body");
+    let capture_end = capture_index
+        + replace[capture_index..]
+            .find("  ; end layout-bounded transfer ")
+            .unwrap();
+    let replacement_end = replacement_index
+        + replace[replacement_index..]
+            .find("  ; end layout-bounded transfer ")
+            .unwrap();
     assert!(
-        capture_index < replacement_index && replacement_index < drop_index,
+        capture_end < replacement_index && replacement_end < drop_index,
         "capture the old owner, commit its replacement, then release the old owner: {replace}"
     );
     let local = emitted_function(&llvm, "replace_local_number");
@@ -847,9 +855,13 @@ fn main() -> status: std::process::ExitStatus pure {
         .unwrap_or_else(|| panic!("the local value reaches the target: {local}"));
     let (transfer, _, destination) =
         super::layout_transfers::transfer_region(&local[target_start..]);
-    assert_eq!(destination, "%v0", "the local value reaches the target: {local}");
+    assert_eq!(
+        destination, "%v0",
+        "the local value reaches the target: {local}"
+    );
     assert!(
-        transfer.contains("load i32") && transfer.contains("store i32")
+        transfer.contains("load i32")
+            && transfer.contains("store i32")
             && transfer.contains("call void @llvm.memmove.p0.p0.i64("),
         "observe scalar granules and byte-preserving overlaid owner storage: {local}"
     );
@@ -859,17 +871,16 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let write = emitted_function(&llvm, "write_payload");
     assert!(
-        write.lines().any(|line| {
-            line.contains("store i64 ") && line.ends_with("!tbaa !12")
-        }),
+        write
+            .lines()
+            .any(|line| { line.contains("store i64 ") && line.ends_with("!tbaa !12") }),
         "a scalar payload write participates in the sibling relation: {write}"
     );
     for name in ["write_payload", "read_payload"] {
         let body = emitted_function(&llvm, name);
         assert!(
-            body.lines().any(|line| {
-                line.contains("load ptr, ptr ") && line.ends_with("!tbaa !13")
-            }),
+            body.lines()
+                .any(|line| { line.contains("load ptr, ptr ") && line.ends_with("!tbaa !13") }),
             "the reused payload is also accessed as a Box owner: {body}"
         );
     }
@@ -908,7 +919,10 @@ fn storage_alias_definitions_survive_cached_fragment_roundtrips() {
                 .is_some_and(|index| index >= 22)
         })
         .collect();
-    assert!(!owner_definitions.is_empty(), "the fixture emits owner scopes");
+    assert!(
+        !owner_definitions.is_empty(),
+        "the fixture emits owner scopes"
+    );
     for granularity in [
         crate::FragmentGranularity::Function,
         crate::FragmentGranularity::Module,
@@ -932,7 +946,8 @@ fn storage_alias_definitions_survive_cached_fragment_roundtrips() {
             }
             if fragment.contains("call void @llvm.experimental.noalias.scope.decl(") {
                 assert!(
-                    fragment.contains("declare void @llvm.experimental.noalias.scope.decl(metadata)"),
+                    fragment
+                        .contains("declare void @llvm.experimental.noalias.scope.decl(metadata)"),
                     "a scoped function's fragment must retain the intrinsic declaration: {fragment}"
                 );
             }

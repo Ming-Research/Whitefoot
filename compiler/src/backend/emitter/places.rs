@@ -189,12 +189,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     .and_then(|slot| self.storage.read_through(slot))
                     .is_none()
                 {
-                    self.load_place_result(
-                        result,
-                        ty,
-                        &self.value_name(*address),
-                        Some(TransferSource::Address(*address)),
-                    )?;
+                    self.load_place_result(result, ty, &self.value_name(*address))?;
                 }
             }
             IrOperation::ConstructStruct { nominal, fields } => {
@@ -266,12 +261,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     &source,
                     *field as usize,
                 )?;
-                self.load_place_result(
-                    result,
-                    ty,
-                    &address,
-                    Some(TransferSource::Value(*aggregate)),
-                )?;
+                self.load_place_result(result, ty, &address)?;
                 if *consume_root {
                     writeln!(self.output, "  ; ownership-consuming projection")
                         .map_err(|_| BackendFailure::TextEmission)?;
@@ -301,12 +291,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 let source = self.value_place(*aggregate)?;
                 let address = self.variant_field_pointer(*nominal, *variant, *field, &source)?;
-                self.load_place_result(
-                    result,
-                    ty,
-                    &address,
-                    Some(TransferSource::Value(*aggregate)),
-                )?;
+                self.load_place_result(result, ty, &address)?;
             }
             IrOperation::InsertStruct {
                 aggregate,
@@ -331,33 +316,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // copy may follow the base's.
                     let destination = self.value_place(result)?;
                     let source = self.value_place(*aggregate)?;
-                    self.copy_storage_from(
-                        ty,
-                        &source,
-                        &destination,
-                        TransferSource::Value(*aggregate),
-                    )?;
+                    self.copy_storage(ty, &source, &destination)?;
                     let field_address =
                         self.aggregate_field_pointer(ty, &destination, *field as usize)?;
                     let replacement = self.value_place(*value)?;
-                    self.copy_storage_from(
-                        field_type,
-                        &replacement,
-                        &field_address,
-                        TransferSource::Value(*value),
-                    )?;
+                    self.copy_storage(field_type, &replacement, &field_address)?;
                     return Ok(true);
                 }
                 // Read the replacement before a coalesced destination write.
                 let replacement = self.value_operand(*value)?;
                 let destination = self.value_place(result)?;
                 let source = self.value_place(*aggregate)?;
-                self.copy_storage_from(
-                    ty,
-                    &source,
-                    &destination,
-                    TransferSource::Value(*aggregate),
-                )?;
+                self.copy_storage(ty, &source, &destination)?;
                 let field_address =
                     self.aggregate_field_pointer(ty, &destination, *field as usize)?;
                 {
@@ -724,12 +694,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let mut source = self.value_place(*argument)?;
             if snapshots.contains(position) {
                 let snapshot = self.entry_slot(FunctionSlot::EdgeSnapshot(*parameter))?;
-                self.copy_storage_from(
-                    *ty,
-                    &source,
-                    &snapshot,
-                    TransferSource::Value(*argument),
-                )?;
+                self.copy_storage(*ty, &source, &snapshot)?;
                 source = snapshot;
             }
             sources.push(source);
@@ -737,14 +702,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // Cleanup still reads predecessor snapshots. A phi destination may
         // reuse their storage only after those final reads have completed.
         self.emit_drops(drops)?;
-        for ((_, parameter, ty, argument), source) in moves.iter().zip(sources) {
+        for ((_, parameter, ty, _), source) in moves.iter().zip(sources) {
             let destination = self.value_place(*parameter)?;
-            self.copy_storage_from(
-                *ty,
-                &source,
-                &destination,
-                TransferSource::Value(*argument),
-            )?;
+            self.copy_storage(*ty, &source, &destination)?;
         }
         for (parameter, ty, operand) in transfers {
             let destination = self.value_place(parameter)?;
@@ -997,7 +957,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let source = self.value_name(address);
             self.snapshot_copies.insert(slot);
             let destination = self.slot_place(slot)?;
-            self.copy_storage_from(ty, &source, &destination, TransferSource::Address(address))?;
+            self.copy_storage(ty, &source, &destination)?;
         }
         Ok(())
     }
@@ -1057,6 +1017,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
+        // Producer fields can have been stored separately in another function.
+        // Retain the same layout boundaries for incoming and heap values as
+        // for local values; inline profitability is a separate decision.
+        if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
+            .map_err(BackendFailure::TargetLayout)?
+        {
+            return self.copy_granules(&granules, source, destination);
+        }
         let llvm = self.output.type_name(self.program, ty)?;
         // Whole storage retains overlap-safe byte transfer. Only the closed
         // OP-11 row proves equal-or-disjoint targets and permits memcpy.
@@ -1073,28 +1041,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  call void @llvm.{operation}.p0.p0.i64(ptr {destination}, ptr {source}, i64 ptrtoint (ptr getelementptr ({llvm}, ptr null, i32 1) to i64), i1 false)"
         )
         .map_err(|_| BackendFailure::TextEmission)
-    }
-
-    /// Only a locally field-written source selects bounded expansion. The
-    /// destination and nominal kind make no profitability distinction; an
-    /// unknown, incoming or external source retains the ordinary intrinsic.
-    pub(super) fn copy_storage_from(
-        &mut self,
-        ty: IrType,
-        source: &str,
-        destination: &str,
-        origin: TransferSource,
-    ) -> Result<(), BackendFailure> {
-        if source == destination {
-            return Ok(());
-        }
-        if self.has_local_transfer_source(origin)
-            && let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
-                .map_err(BackendFailure::TargetLayout)?
-        {
-            return self.copy_granules(&granules, source, destination);
-        }
-        self.copy_storage(ty, source, destination)
     }
 
     /// Capture the entire source before writing the destination, including
@@ -1187,7 +1133,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
         if is_stored_aggregate(self.program, ty)? {
             let source = self.value_place(value)?;
-            return self.copy_storage_from(ty, &source, destination, TransferSource::Value(value));
+            return self.copy_storage(ty, &source, destination);
         }
         {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
@@ -1270,14 +1216,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         result: IrValueId,
         ty: IrType,
         address: &str,
-        origin: Option<TransferSource>,
     ) -> Result<(), BackendFailure> {
         if self.storage.slot(result).is_some() {
             let destination = self.value_place(result)?;
-            return match origin {
-                Some(origin) => self.copy_storage_from(ty, address, &destination, origin),
-                None => self.copy_storage(ty, address, &destination),
-            };
+            return self.copy_storage(ty, address, &destination);
         }
         {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;

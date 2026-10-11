@@ -138,7 +138,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.storage.slot(result).is_some() {
             let source = self.value_place(run)?;
             let destination = self.value_place(result)?;
-            self.copy_storage_from(ty, &source, &destination, TransferSource::Value(run))?;
+            self.copy_storage(ty, &source, &destination)?;
             Ok(result)
         } else {
             Ok(run)
@@ -397,7 +397,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let offset = self.value_name(offset);
         let physical = self.wrap_offset(shape, run_type, run, &head, &offset)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.load_place_result(result, ty, &format!("%{element_pointer}"), None)
+        self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 
     /// [OP-10] capture the old physical slot, move the descriptor and return
@@ -425,7 +425,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
         self.move_run_boundary(shape, run_type, run, row)?;
-        self.load_place_result(result, ty, &format!("%{element_pointer}"), None)
+        self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 
     /// [OP-10] place an element, then move the boundary.
@@ -616,7 +616,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 storage_alias::runtime_word(run_type, field),
                 owner_alias
             )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            .map_err(|_| BackendFailure::TextEmission)?;
             return Ok(format!("%{word}"));
         }
         writeln!(
@@ -1136,7 +1136,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         self.output.open_block(oom);
         self.output.symbol("wf_resource_abort");
-        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
         self.output.open_block(init.clone());
         let block_address = format!("%{fresh}");
         let length_address = self.aggregate_field_pointer(
@@ -1281,7 +1284,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         self.output.open_block(oom);
         self.output.symbol("wf_resource_abort");
-        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
         self.output.open_block(init);
         let fresh_block = format!("%{fresh}");
         let fresh_capacity_address =
@@ -1326,7 +1332,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 "  call void @{helper}(ptr {})",
                 self.value_name(value)
             )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         let pointer = self.value_name(value);
         let bytes = cleanup::allocation_bytes(

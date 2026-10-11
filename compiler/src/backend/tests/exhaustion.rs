@@ -744,7 +744,11 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
             // STOR-1 removes the initial capacity-zero allocation in grow.
-            super::owned_places::allocation_observer_by_process(if shape == "grow" { 1 } else { 2 })
+            super::owned_places::allocation_observer_by_process(if shape == "grow" {
+                1
+            } else {
+                2
+            })
         );
         let directory = test_directory();
         let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
@@ -979,7 +983,8 @@ fn expose_large_frame_spine(module: &str) -> String {
         .lines()
         .map(|line| {
             if line.starts_with("define i64 @wf_read_pad(") {
-                line.replace(" #0 align 64 {", " noinline #0 align 64 {")
+                super::owned_places::without_optional_inline(line)
+                    .replace(" #0 align 64 {", " noinline #0 align 64 {")
             } else {
                 line.to_owned()
             }
@@ -1066,7 +1071,12 @@ fn ablate_large_frame_probe(module: &str) -> String {
             if line.starts_with("define void @wf_array_filled$instance$") {
                 fills += 1;
                 line.strip_suffix(" #0 align 64 {")
-                    .map(|head| format!("{head} noinline #0 align 64 {{"))
+                    .map(|head| {
+                        format!(
+                            "{} noinline #0 align 64 {{",
+                            super::owned_places::without_optional_inline(head)
+                        )
+                    })
                     .unwrap_or_else(|| line.to_owned())
             } else {
                 line.to_owned()

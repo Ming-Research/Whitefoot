@@ -51,6 +51,11 @@
 
 use super::{compile, compile_and_run, compile_link_and_run};
 
+/// Remove the optional cost policy, preserving mandatory dispatch attributes.
+pub(super) fn without_optional_inline(header: &str) -> String {
+    header.replace(crate::backend::emitter::inlining::ATTRIBUTE, "")
+}
+
 /// Retain the ordinary emitted call boundaries for a second execution. This
 /// changes only optimization permission, so a passing inlined body cannot hide
 /// a broken aggregate argument or result ABI. Mandatory-inline dispatch headers
@@ -60,6 +65,7 @@ pub(super) fn retain_calls(module: &str) -> String {
     let result = module
         .lines()
         .map(|line| {
+            let line = without_optional_inline(line);
             if line.starts_with("define ")
                 && line.contains(" @wf_")
                 && !line.contains(" @wf__")
@@ -79,7 +85,7 @@ pub(super) fn retain_calls(module: &str) -> String {
 
 #[test]
 fn retained_calls_preserve_mandatory_inline_dispatch_headers() {
-    let module = "define i64 @wf_reader(ptr %input) {\n  ret i64 7\n}\n\
+    let module = "define i64 @wf_reader(ptr %input) alwaysinline \"wf-inline-policy\"=\"bounded-ir\" {\n  ret i64 7\n}\n\
                   define internal i64 @wf_reader.dispatch(ptr %input) alwaysinline {\n  ret i64 7\n}\n\
                   define internal i64 @wf_reader.arm.0(ptr %input) {\n  ret i64 7\n}\n";
     let retained = retain_calls(module);

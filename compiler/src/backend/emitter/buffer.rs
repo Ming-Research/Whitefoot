@@ -394,7 +394,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let address = self.value_name(buffer);
         let index = self.value_name(offset);
         let element_pointer = self.buffer_element_pointer(block, &address, &index)?;
-        self.load_place_result(result, ty, &element_pointer, None)
+        self.load_place_result(result, ty, &element_pointer)
     }
 
     /// Emits the proof-preserving wide probe: how many upcoming byte-walk
@@ -528,7 +528,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                         self.output,
                         "  %{combined} = or <16 x i1> %{previous}, %{equal}"
                     )
-                .map_err(|_| BackendFailure::TextEmission)?;
+                    .map_err(|_| BackendFailure::TextEmission)?;
                     combined
                 }
             });

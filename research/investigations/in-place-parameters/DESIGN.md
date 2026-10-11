@@ -893,9 +893,11 @@ some captures independently; this experiment addresses copies that remain.
 
 ### Original emission rule approved with #345
 
-The original rule below records the approved experiment; the proposed
-[producer-sensitive selection](#producer-sensitive-transfer-selection) narrows
-when its unchanged layout plan is used.
+The original rule below records the approved experiment. The later
+[producer-sensitive selection](#producer-sensitive-transfer-selection) narrowed
+its application and failed downstream acceptance; the current
+[bounded-inlining proposal](#restoring-granules-with-bounded-inlining) restores
+this layout rule and treats inline cost separately.
 
 Target layout owns transfer planning alongside variant and aggregate layout.
 Structs recursively transfer scalar leaves with their original LLVM types and
@@ -1894,6 +1896,10 @@ no local build, test, formatter, optimizer or check was run.
 
 ## Producer-sensitive transfer selection
 
+Historical failed candidate, implemented in `31e6e5e84` and its fixture
+follow-ups through `e9d765cd6`. The selection and narrowed expectations below
+are superseded by [restoring granules with bounded inlining](#restoring-granules-with-bounded-inlining); they remain here to explain the failed experiment.
+
 Question: does retaining one intrinsic for transfers without function-local
 field-producer provenance restore Halo and Snowghost inlining without losing
 more of #345's forwarding benefit than it gains? Compare the same sources
@@ -2072,3 +2078,343 @@ CI gates, analysis cost and downstream profitability remain unverified.
 No local build, test, formatter, optimizer or check ran, and no board or
 approval log was changed. The final prose clarification marks the earlier
 union-only test policy as historical; it changes no additional decision.
+
+## Restoring granules with bounded inlining
+
+### Question, rejected round and evidence boundary
+
+Can source-independent layout granules retain #345's forwarding gains while
+Whitefoot selects small functions for inlining before those transfers expand?
+This is a proposed backend experiment, not a measured performance repair or a
+language change. It retains the ordinary-loop read-through fix `7a76c286c`,
+storage-role TBAA, and the repaired whole-root owner scopes. The owner requested
+implementation on the existing [transfer-cost PR](https://github.com/Ming-Research/Whitefoot/pull/357)
+without local builds, tests or measurements; the criteria below precede any
+candidate measurement.
+
+The failed [Halo acceptance run](https://github.com/Ming-Research/Halo-wf/actions/runs/38164457072)
+compared Halo source `d77f9193844cd5cac457a7a71e306c07f4529640` with
+`wf-78223721f77d` and `wf-exp-e9d765cd6067` on the i9-14900K, clang 22.1.8,
+full LTO, pinned to core 2. The supplied `astra357/manifest.txt` identifies
+both binaries and a byte-identical control twin. `upgrade-6.json` and
+`twin-6.json` contain six interleaved pairs for each cell. The following
+values use their `ratio` field, the ratio of medians, consistently; the
+median of individual pair ratios would instead give integer-table 1.035.
+
+| Halo kernel | Failed candidate/control | Twin/control |
+| --- | ---: | ---: |
+| fib | 1.014 | 1.009 |
+| loop | 1.077 | 1.000 |
+| integer-table | 1.033 | 1.000 |
+| string-key | 1.300 | 0.976 |
+| concat | 1.174 | 1.001 |
+| sort | 1.019 | 1.001 |
+| binary-trees | 0.827 | 0.995 |
+
+The three supplied `perf-<kernel>-<side>-<repeat>.csv` files per cell give
+median `ld_blocks_store_forward` counts of 14,592,276 → 13,511,751 for fib
+and 21,211,579 → 11,677,890 for integer-table. The owner's earlier 7062
+comparison reported approximately 8.2M and 2.3M respectively: the local
+producer policy relinquished most of those forwarding gains. The 7062
+counts are supplied prior results, not contained in these e9d CSVs.
+
+Read-only disassembly on this round confirms 74 direct `heap.table_get`
+calls in the supplied 7062 hosted image versus one in the exact e9d timed
+image. Restoring inlining alone therefore already failed the acceptance
+criterion. The hosted 7062 image is supporting machine-code evidence from
+the same Halo source, not an additional 14900K timing sample. No sampled
+instruction addresses accompany the aggregate performance counters. The
+requested `cmp357` directory was unavailable; this analysis uses `astra357`,
+`concat345`, `ir357` and `sg345`.
+
+### Which transfers need their boundaries
+
+A forwarding hazard occurs when a consumer load spans separate recent
+producer stores. A function boundary does not remove that dependency, and
+being in heap storage does not establish that a value was written widely.
+Conversely, a wide load from older data does not by itself demonstrate a
+forwarding stall. The available evidence establishes the following concrete
+sites and limits, rather than a complete per-kernel stall attribution.
+
+In e9d `enter_lua`, instructions `0x2f266` through `0x2f2ca` construct an
+80-byte Frame at stack offset `0x88` with separate stores at relative offsets
+0, 8, 16, 24, 32, 40, 48, 52, 56, 64 and 72. Offsets 32 and 48 are u32,
+offset 52 is u8, and the others are eight-byte fields. The call at `0x2f2dd`
+passes this storage to `push_frame`. Its loads at `0x2f608` through `0x2f61c`
+read five 16-byte regions starting at 64, 0, 16, 32 and 48. In particular,
+regions 32–47 and 48–63 span narrow stores and intervening bytes. The
+7062 `push_frame` instead loads 32/u32, 40/u64, 48/u32, 52/u8 and 72/u64
+at `0x30008` through `0x30018`. This is a concrete cross-call reason to keep
+granules, especially for fib's repeated frame pushes. Even 7062 combines
+regions beginning at 0, 16 and 56, so it does not establish perfect boundary
+preservation.
+
+The normal numeric ForLoop path in e9d `run.body.arm.66` writes each Value
+as a separate eight-byte tag/handle word and eight-byte numeric payload:
+
+```asm
+0x6c647: movq  $3, (%rcx)
+0x6c64e: movsd %xmm0, 8(%rcx)
+0x6c657: movq  $3, (%rax,%rdi)
+0x6c65f: movsd %xmm0, 8(%rax,%rdi)
+```
+
+A later 16-byte snapshot of that storage can cross those producer stores,
+including in another dispatch arm or called helper. The actual hot consuming
+PCs are not in the counter files. A separate immediate narrow-store/wide-load
+sequence in this arm's Step/error handling is not evidence of the normal
+loop benchmark's stalled load and is not used for that claim.
+
+By contrast, the two heap snapshot result transfers in 7062 `table_get`
+are already wide `movupd` loads (`0x20c7a`, `0x20cc0`) followed by the wide
+result store (`0x20ccc`), despite their earlier 4+4+8-byte granules. Here the
+early expansion demonstrably adds inline cost without preserving narrow
+final accesses. The saved `ir357/tg.ll` already writes these snapshots
+directly into `%wf.result`; there is no intermediate result to eliminate.
+The removed key capture was different: `node_find` already reads it in
+place, so the ordinary-loop consumer fix eliminates that transfer entirely.
+
+| Kernel | Transfer conclusion supported by the artifacts | Remaining attribution |
+| --- | --- | --- |
+| fib | Restore incoming Frame granules across `enter_lua` → `push_frame`; local-producer eligibility cannot represent this producer. | Fraction of the counter increase due to Frame versus Value. |
+| integer-table | Retain narrow Value boundaries and the removed redundant key capture. The heap-result granules also add inline cost, even when LLVM later widens them. | Which consuming Value load contributes how many stalls. |
+| string-key | Generic/specialized table paths move Value; `table_get_str` retains wide node-result transfers in both images and three direct call sites. | The 30% loss is not attributed to one copy or to granules alone. |
+| loop | ForLoop's separate eight-byte stores give a concrete producer boundary for later Value transfers. | Which normal-path consumer stalls, and how much explains 7.7%. |
+| sort | e9d `sort_array_run` contains wide heap Value loads, including `0x451bc`, then a local snapshot store. | Whether a particular load meets recent narrow stores rather than old data. |
+| concat | Byte copying is scalar payload access, not an aggregate-granule issue; retain the independent TBAA and whole-root scope repair. Stack Value copies remain possible forwarding sites. | The residual 17.4% loss after the reported loop improvement is unexplained by the supplied counters. |
+
+Snowghost's saved `slb-*.ll` and inline remarks establish a separate cost
+site: the ten-u32 Links transfer in `set_links.body` becomes ten loads, ten
+stores and eighteen address GEPs. Its body cost increases by 95; wrapper
+calls move from 0 to 45 or 5 to 50 against threshold 45. That is evidence
+for decoupling inlining from transfer expansion, not proof that Links never
+needs forwarding protection. `next_glyphs` has a real local loop and calls
+two helpers, so a leaf-only or acyclic-only policy would miss it.
+
+### Candidate and alternatives
+
+Restore the original source-independent bounded-transfer rule, including
+incoming values, heap snapshots, entry captures and public union results.
+Remove the function-local producer classifier instead of keeping it as a
+second path. Retain the existing target plan, 128-byte/16-granule bounds,
+original scalar types, pointer/Bool byte intervals and complete capture
+before destination stores. Keep all copy-elimination and alias-scope work.
+This preserves #345's emitted opportunities; LLVM may still recombine them.
+
+Select ordinary small functions for LLVM `alwaysinline` using Whitefoot IR
+before memory transfers expand. The proposed local budget is 64 units and
+the selected-callee expansion budget is 256 units. A unit represents an IR
+instruction or terminator; constructors additionally charge written fields.
+Block-argument forwarding does not inflate the measure. Each selected callee
+is charged at every call site, so a chain or repeated fan-out cannot bypass
+the expansion bound. Calls to unselected functions remain ordinary calls.
+These are provisional code-growth budgets, not LLVM threshold conversions
+or empirically selected optima. The selection uses no program/function names,
+profile kernel identity or target inline-cost constants.
+
+Recursive call-graph components, waiting, bodies that emit overlap scheduling,
+potentially split bodies, cleanup and unsupported operations with larger hidden
+expansion are excluded. Sequential clones use the same sequential-world
+selection as ordinary sequential lowering: retained overlap annotations do not
+exclude them, and their call edges, expansion costs and loop summaries follow
+the sequential targets.
+Bounded ordinary CFG loops remain eligible. Small register-result bodies whose own CFG and selected inline expansion
+remain acyclic, together with their public wrappers, may inline early; bodies
+with local or selected-callee loops retain the separate-optimization protection required by
+[result-register lowering](../result-registers/DESIGN.md#lowering).
+The previous unconditional ban on early body fusion is narrowed only for
+bodies whose selected expansion remains acyclic. This is a proposed design
+change, not a new safety fact.
+
+The intended effect is to keep granules at Frame/Value boundaries while
+making the selected table and layout helpers independent of LLVM's 225/45
+cost cliffs. Saved raw `%v` definitions number 53 in table_get, 47 in
+next_glyphs and 39 in set_glyph_class; these include phis and omit some
+operations and are not eligibility measurements. Actual emitted attributes,
+selected-callee costs and full-LTO call sites must establish whether the
+chosen policy covers these functions. If it does not, the proposal fails its
+first structural criterion; the budgets must not silently be increased to
+fit benchmark names.
+
+Alternatives considered:
+
+- **Merge adjacent fields:** adjacency does not prove common producer store
+  width. Caller constructions and mutations must all support the merged
+  region, and LLVM can rewrite their widths afterward. No such whole-program
+  reaching-write analysis exists here; the Frame witness rejects local-only
+  evidence. Keep this as a future target-aware opportunity.
+- **One packed aggregate load/store:** LLVM 22's
+  [aggregate load/store combining](https://raw.githubusercontent.com/llvm/llvm-project/release/22.x/llvm/lib/Transforms/InstCombine/InstCombineLoadStoreAlloca.cpp)
+  unpacks padding-free structs. Both `{i32,i32,i64}` and ten-u32 Links qualify,
+  so compact frontend syntax does not delay scalarization past the inliner.
+  Adding artificial padding would change the transfer representation without
+  establishing either late expansion or machine widths.
+- **`inlinehint` or threshold tuning:** LLVM's
+  [inline-cost analysis](https://raw.githubusercontent.com/llvm/llvm-project/release/22.x/llvm/lib/Analysis/InlineCost.cpp)
+  applies the cold-site cap after the hint bonus. A hint does not resolve the
+  observed cold threshold; globally raising thresholds also couples unrelated
+  functions to one toolchain's cost constants. `alwaysinline` instead makes
+  a bounded frontend choice, with code growth and early fusion as explicit risks.
+- **Late expansion:** the current driver hands LLVM to clang directly at
+  `-O2`; ordinary builds use full LTO and cached fragments use ThinLTO. There
+  is no owned opt/pass-plugin pipeline. A proper late pass would require a
+  durable pseudo-operation and insertion in every supported pipeline, with
+  version-compatible LLVM integration. An early opt expansion followed by
+  unrestricted LTO does not provide that ordering. An always-inline helper
+  expands early too: LLVM's
+  [pipeline builder](https://raw.githubusercontent.com/llvm/llvm-project/release/22.x/llvm/lib/Passes/PassBuilderPipelines.cpp)
+  places AlwaysInliner before the regular cost inliner. Reopen late lowering
+  if machine access recombination defeats this experiment.
+- **Direct destination construction:** retain existing result coalescing and
+  read-through opportunities, but table_get's independent heap snapshots
+  already target the final destination. Removing those transfers would need
+  a different value/ABI or stability mechanism; it does not fix this cost
+  without further architecture work.
+
+### Falsifier and required CI experiment
+
+Before any new performance run, build the same downstream sources with
+78223721f77d, 7062f3ac4ac7, e9d765cd6 and this candidate using the same clang,
+settings and runner. The e9d comparison diagnoses the policy rollback;
+acceptance remains against the original controls, not that failed candidate.
+Run ordinary project gates first. Inspect actual full-LTO remarks and final
+disassembly, not only `default<O3>` output. Reject this proposal if the
+representative table_get, set_links, next_glyphs and set_glyph_class sites
+remain out of line, if the unnecessary key capture returns, or if the concat
+byte loop again reloads source length and destination capacity per byte.
+Inspect previously narrow Frame/Value source loads, code text size and stack
+spills as separate observations; forced early inlining can change each.
+
+Use the established 14900K CI harness with a byte-identical control twin and
+interleaved same-source pairs. Start with one pair to establish cost and
+spread, then the existing three/six-pair progression only as needed. Halo
+concat must be no slower than 78223721f77d beyond range plus twin noise;
+other kernels must retain 7062's gains. Forwarding counts must not rise
+relative to 7062 beyond repeat/twin variation. Snowghost word/sentence edit,
+html5 style and apollo11 layout cells must be no slower than 78223721f77d
+and must keep prior gains. Any failed cell rejects acceptance even if calls
+inline and the byte loop looks better. Record all cells and counter spreads;
+do not substitute a geometric mean or a better binary-trees result.
+
+If aggregate counts improve without the required timings, the remaining
+cost hypothesis fails and requires a new profile. To attribute exact stalls,
+collect a supported sampled load/store-forwarding profile or a targeted
+same-source diagnostic through CI; the present counter CSVs cannot supply
+per-PC causality. Compile-time/code-size growth and other admitted targets
+also need inspection. No claim here assumes that the 64/256 policy is optimal
+or that frontend scalar loads survive every LLVM pipeline.
+
+### Backend coverage and validation status
+
+The maintained `layout_transfers` tests again require exact typed source
+loads and destination stores for incoming Frame/Value/TenWords, the
+128-byte boundary, heap snapshots and public results. Local constructor and
+field-update cases remain. Pointer/Bool overlay tests now check both incoming
+and local sources; the native C equal-pointer and partial-overlap oracle
+again extracts the incoming Frame transfer. Handler-word tests retain their
+exact intervals and private-capture-before-write requirement. Storage-role
+replacement tests still require old-owner capture, replacement commit and
+release of that same captured owner, with whole transfers untagged.
+The e9d producer policy emits intrinsics where the restored incoming/heap
+assertions require granules, so those assertions distinguish it by source
+inspection. Their before/after failures have not been executed this round.
+
+New `backend/tests/inlining.rs` coverage combines forced-inline headers and
+retained transfer granules; checks scalar loops, direct and callee-introduced
+register-result loops, host-optimized call removal and native expected values;
+and checks serialization, both fragment granularities, rename invariance,
+and waiting/overlap exclusions. The policy module tests local/expanded
+limits, repeated-call accounting, retained large callees, mutual/self
+recursion, constructor charges and an unsupported operation. The existing
+split-dispatch fixture now also excludes optional mandatory inlining on the
+enclosing function. Positive attribute assertions fail on e9d, which has no
+such policy; actual baseline execution remains unperformed.
+
+The emitted string attribute `"wf-inline-policy"="bounded-ir"` identifies the
+optional frontend decision. Retained-call test helpers strip it together
+with its `alwaysinline` before adding `noinline`, preserving the existing
+mandatory dispatcher contract. The old result-ABI test's module-wide ban on
+`alwaysinline` is intentionally replaced by direct and transitive loop-body
+exclusions. No test's native expected result, admission verdict or required
+call-boundary observation is relaxed.
+
+On 2026-10-11, the exact new WF fixture was extracted to scratch and accepted
+by the explicitly authorized released `rel-7062/whitefootc --check` with exit
+0 and no output. This checks source admission with the old compiler, not the
+candidate backend. Direct `rustfmt --edition 2024 --config skip_children=true`
+authored formatting for the changed Rust files. No Cargo, Make, local test
+suite, LLVM optimizer experiment, native benchmark or performance measurement
+ran. Candidate Rust compilation, emitted LLVM verification, new backend tests,
+native outputs, supported-target gates and all downstream acceptance cells
+remain unverified; changes remain an uncommitted worktree candidate.
+
+Found along the way: inspection caught that a locally acyclic register-result
+body could inherit a loop from a selected scalar callee. The final plan
+propagates that cyclicity with the expanded cost and preserves separate body
+optimization in that case; `pair_via_loop` covers it. Exact sampled-PC
+attribution and late preservation of machine transfer widths remain deferred
+research gaps under the experiment's rejection criteria, not claims of this
+implementation. There is no specification change, and no status-board or
+approval-log write in this round.
+
+A fresh independent read-only completion review using `gpt-6.1-sol` at high
+effort inspected `0f779c7f4..e9d765cd6` plus the final working diff and new
+files, with deeper review of this round's changes. It covered checklist groups
+A/D/C/T/V and G1–G3/DC1–DC4, affected consumers and the relevant design
+ancestors, and found no remaining concrete defect within that scope after the
+integration and transitive-cycle repairs. The earlier branch's semantic and
+alias changes were inspected against their relevant contracts; this round
+changes no conformance source, manifest, specification or approval log.
+Compilation, executed correctness, complete alias soundness, design readiness
+and performance remain unverified rather than review passes. The review ran
+no suite and supplied no new timing evidence. Work stops at the requested
+implementation/report boundary; the candidate is ready for CI evaluation,
+not for a performance acceptance or merge claim.
+
+
+### Library-test follow-up: fragment mode and sequential-world selection
+
+The owner ran the uncommitted candidate's gate-profile library suite and
+reported 2,488 passes and two failures. The serialization/fragment witness
+called ordinary `emit_llvm`, which selects whole-program handler-word layout;
+`split_module` correctly refused that module at the `expect("split")` call.
+The witness now uses the production `compile_for_emission` path with
+`fragments=true` before emission and compares original versus decoded
+fragments at both granularities, including exact definition counts and both
+selected and protected inline attributes. The split restriction is unchanged.
+
+The exact-byte sequential-clone witness found an actual emission inconsistency:
+ordinary sequential `oct` received the bounded-inline attributes, but its
+`--par` sequential clone did not, because the plan examined retained overlap
+annotations instead of the emitted world. The clone exists to receive every
+transformation of ordinary sequential lowering, so excluding it based on
+scheduling it does not emit would violate that contract. A separate sequential
+plan now erases overlap eligibility barriers throughout its call graph and
+follows the sequential chunk target for an outlined loop; the overlapped
+plan follows the splitter and retains its scheduling exclusions. Selected
+callee costs and introduced-loop summaries are recomputed in that same world.
+The clone emitter uses the sequential plan; ordinary overlapped definitions
+retain their own plan. The existing byte-for-byte clone assertion is preserved.
+Synthesized helpers and outlined-loop bodies remain subject to their existing
+unsupported-cost exclusions.
+
+The owner explicitly authorized up to three invocations of the complete
+`local-lib` command on this MacBook to validate these repairs; no performance
+measurement or wider local gate was authorized.
+
+On the uncommitted candidate based on `e9d765cd6`, one invocation of
+`perl .github/run-check.pl local-lib cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib`
+completed with exit 0: 2,490 passed, zero failed, ignored or filtered out.
+The wrapper reported 50.23 seconds, including compilation; this is local
+correctness evidence under the owner's explicit exception, not a performance
+measurement. Both formerly failing witnesses and the emitted-world policy
+coverage ran in that suite. No further local suite invocation was needed.
+CI gates and downstream 14900K performance acceptance remain unverified.
+
+An independent read-only follow-up review by `gpt-6.1-sol` at high effort
+inspected these repairs, their direct consumers and updated decisions, finding
+none within scope. It confirmed that the exact-byte parallel-clone assertion
+is unchanged, the loop target follows the emitted world, and neither repaired
+witness weakens its expectations. The reviewer ran no commands that build,
+test or check the candidate and treated the local suite result as supplied
+validation evidence; broader gates, readiness and performance remain pending.

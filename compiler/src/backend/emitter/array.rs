@@ -214,6 +214,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.element_address_index(ty, &self.value_name(offset))?,
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        self.load_place_result(result, ty, &format!("%{element_pointer}"), None)
+        self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 }

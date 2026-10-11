@@ -378,7 +378,9 @@ fn retain_classifier(module: &str) -> String {
             if line.starts_with("define ") && line.contains(" @wf_classify(") {
                 format!(
                     "{} noinline {{\n",
-                    line.strip_suffix(" {").expect("classifier header")
+                    super::owned_places::without_optional_inline(
+                        line.strip_suffix(" {").expect("classifier header")
+                    )
                 )
             } else {
                 format!("{line}\n")
@@ -748,6 +750,15 @@ fn main() -> status: std::process::ExitStatus pure {
     let module = retain_classifier(&emit(source.as_bytes()));
     // These assertions prevent an accidentally unsplit fixture from passing.
     for name in ["local", "crossing"] {
+        let enclosing = emitted_function(&module, name);
+        assert!(
+            !enclosing
+                .lines()
+                .next()
+                .expect("header")
+                .contains("alwaysinline"),
+            "a potentially split function keeps ordinary inline policy: {enclosing}"
+        );
         assert!(
             module.contains(&format!("; dispatch: wf_{name}: split:")),
             "{module}"
@@ -1521,9 +1532,10 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("ordinary-loop consumer");
         let successors = |block: usize| match reader.blocks()[block].terminator() {
             IrTerminator::Jump { target, .. } => vec![target.index()],
-            IrTerminator::Match { targets, .. } => {
-                targets.iter().map(|target| target.block().index()).collect()
-            }
+            IrTerminator::Match { targets, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };
         assert!(
@@ -1675,8 +1687,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let early_read = destination
         .lines()
         .position(|line| {
-            line.contains("getelementptr ")
-                && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
+            line.contains("getelementptr ") && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
         })
         .expect("the first loop reads through the original input");
     let row_gep = destination
@@ -1711,7 +1722,11 @@ fn main() -> status: std::process::ExitStatus pure {
         "capture must separate the two loops at the result write: {destination}"
     );
     assert!(
-        !destination.lines().nth(later_read).unwrap().contains("ptr %wf.arg.v0"),
+        !destination
+            .lines()
+            .nth(later_read)
+            .unwrap()
+            .contains("ptr %wf.arg.v0"),
         "the second loop reads the persistent snapshot: {destination}"
     );
     let main = super::emitted_body(&module, "main");
