@@ -182,6 +182,10 @@ impl<'a> Terms<'a> {
                     };
                     referent
                 }
+                GoalProjection::Measure(_) => {
+                    place.scalar = true;
+                    CheckedType::Integer(crate::semantic::model::IntegerType::U64)
+                }
                 GoalProjection::Field(field) => {
                     let CheckedType::Nominal(nominal) = ty else {
                         return None;

@@ -1635,6 +1635,9 @@ impl<'program> Walker<'program> {
                     path.push(CheckedRangeProjection::BoxContent);
                 }
             }
+            CheckedPlaceStep::Measure(_) => {
+                *projection = None;
+            }
             CheckedPlaceStep::Subscript(subscript) => {
                 let _ = self.int(state, &subscript.offset);
                 *projection = None;
