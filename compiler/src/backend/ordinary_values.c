@@ -21,9 +21,13 @@
 #include <shellapi.h>
 #else
 #include <fcntl.h>
+#include <locale.h>
 #include <signal.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #endif
 
 static const void *wf_value_pointer(const wf_value *value) {
@@ -82,6 +86,126 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
                wf_value_pointer(value), (size_t)bytes);
     }
     result->ok.value = start + bytes;
+}
+
+/* GNU strerror_r reports unknown codes by returning fabricated text. Its
+ * XSI entry instead reports EINVAL, which distinguishes an unavailable host
+ * description from a description whose bytes happen to say "Unknown error".
+ * _GNU_SOURCE selects the GNU declaration, so name glibc's XSI entry here. */
+#if !defined(_WIN32) && defined(__GLIBC__)
+extern int __xpg_strerror_r(int code, char *buffer, size_t length);
+#endif
+
+static void wf_description_copy(wf_copy_result *result, const char *text,
+                                size_t length, wf_view *destination,
+                                uint64_t start, uint64_t end) {
+    if (length > end - start) {
+        result->tag = 1;
+        result->err.error.tag = 0;
+        result->err.error.required = length;
+        return;
+    }
+    if (length != 0) memcpy(wf_window(destination, start), text, length);
+    result->tag = 0;
+    result->ok.value = start + length;
+}
+
+void wf__body_error_copy_description(wf_copy_result *result,
+                                     const wf_io_error *error,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end) {
+    static const char *const fixed[] = {
+        "Not found", "Permission denied", "Already exists", "Not a directory",
+        "Is a directory", "Directory not empty", "Read-only resource",
+        "Resource busy", "Invalid input", "Invalid path", "Unsupported operation",
+        "Timed out", "Deadline passed", "Cancelled", "Broken pipe",
+        "Write returned zero bytes", "Unexpected end of input", "Connection refused",
+        "Connection reset", "Connection aborted", "Not connected", "Address in use",
+        "Address unavailable", "Resource exhausted", "File too large", "No space left",
+        "Quota exceeded", "Cross-device operation", "Device failure", "Other I/O error"
+    };
+    const uint32_t tag = error->tag;
+    const uint32_t code = tag == WF_IO_DEADLINE_PASSED || tag == WF_IO_CANCELLED
+        ? 0 : error->code;
+    _Static_assert(sizeof(fixed) / sizeof(fixed[0]) == WF_IO_OTHER + 1,
+                   "ordinary error description table");
+    memset(result, 0, sizeof(*result));
+    /* Every failure before the final copy leaves destination untouched. */
+    result->tag = 1;
+    result->err.error.tag = 1;
+    if (tag > WF_IO_OTHER) return;
+    if (code == 0) {
+        wf_description_copy(result, fixed[tag], strlen(fixed[tag]),
+                            destination, start, end);
+        return;
+    }
+#if defined(_WIN32)
+    WCHAR *wide = NULL;
+    DWORD units = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                                FORMAT_MESSAGE_FROM_SYSTEM |
+                                FORMAT_MESSAGE_IGNORE_INSERTS,
+                                NULL, code, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                                (LPWSTR)&wide, 0, NULL);
+    if (units == 0) return;
+    while (units != 0 && (wide[units - 1] == L'\r' || wide[units - 1] == L'\n'))
+        units--;
+    if (units > INT_MAX) {
+        LocalFree(wide);
+        return;
+    }
+    if (units == 0) {
+        LocalFree(wide);
+        wf_description_copy(result, "", 0, destination, start, end);
+        return;
+    }
+    int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                   (int)units, NULL, 0, NULL, NULL);
+    if (bytes <= 0) {
+        LocalFree(wide);
+        return;
+    }
+    char *text = malloc((size_t)bytes);
+    if (text != NULL) {
+        /* Convert privately: even an unexpected conversion failure must not
+         * write part of the description into the caller's destination. */
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                (int)units, text, bytes, NULL, NULL) == bytes)
+            wf_description_copy(result, text, (size_t)bytes, destination, start, end);
+        free(text);
+    }
+    LocalFree(wide);
+#else
+    if (code > INT_MAX) return;
+    /* One private immutable locale per call avoids global initialization or
+     * mutation, and keeps all description lookup independent of setlocale. */
+    locale_t c_locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    if (c_locale == (locale_t)0) return;
+    const char *text = strerror_l((int)code, c_locale);
+    if (text != NULL) {
+        const size_t length = strlen(text);
+        char local[128];
+        /* Measure before validation: macOS strerror_r may write a truncated
+         * string and return ERANGE when its buffer is too short. Neither that
+         * scratch string nor an unknown-code string ever reaches destination. */
+        char *validation = length < sizeof(local) ? local
+            : length < SIZE_MAX ? malloc(length + 1) : NULL;
+        if (validation != NULL) {
+            locale_t previous = uselocale(c_locale);
+            if (previous != (locale_t)0) {
+#if defined(__GLIBC__)
+                const int status = __xpg_strerror_r((int)code, validation, length + 1);
+#else
+                const int status = strerror_r((int)code, validation, length + 1);
+#endif
+                (void)uselocale(previous);
+                if (status == 0)
+                    wf_description_copy(result, text, length, destination, start, end);
+            }
+            if (validation != local) free(validation);
+        }
+    }
+    freelocale(c_locale);
+#endif
 }
 
 #if !defined(_WIN32)

@@ -1,4 +1,4 @@
-# Kernel Specification v0.127
+# Kernel Specification v0.128
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2595,6 +2595,67 @@ A name given with a root to a `std::fs` operation denotes an entry directly belo
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 
+A runtime-produced `IoError` with a nonzero `code` carries the failed condition's host error code: an `errno` value on POSIX hosts, and a Windows system error code, including Winsock codes, on Windows. Windows native `NTSTATUS` failures are converted to that system error-code namespace; equivalent socket conditions may be normalized to a common system code before classification. A runtime-synthesized condition in a variant with a `code` field carries zero. In a runtime-produced variant with an `origin` field, that field identifies the failed operation class, with the following meanings; it is independent of the error variant and is not an additional code to format.
+
+| `origin` | Failed operation class |
+|---|---|
+| 0 | Runtime-synthesized condition |
+| 1 | Open |
+| 2 | Read, receive, directory iteration or stop observation |
+| 3 | Write or send |
+| 4 | Status query during open |
+| 5 | Listen or stop-listener acquisition |
+| 6 | Accept |
+| 7 | Connect |
+| 8 | Close |
+| 9 | Synchronization, truncation or namespace operation |
+
+`error_copy_description` selects a description by the following table. Its selection ignores `origin`. The host text is host-version dependent.
+
+| Error | Description bytes |
+|---|---|
+| `DeadlinePassed` or `Cancelled` | The fixed text in the table below |
+| A variant carrying `code` zero | The fixed text in the table below |
+| A variant carrying nonzero `code`, on POSIX | The host's `strerror_l` text for that code in a private immutable C locale, with no change to the process locale |
+| A variant carrying nonzero `code`, on Windows | The system message returned by `FormatMessageW` with `FORMAT_MESSAGE_FROM_SYSTEM` and `FORMAT_MESSAGE_IGNORE_INSERTS`, language identifier `0x0409` (US English), converted to UTF-8 with all trailing CR and LF characters removed |
+
+The fixed texts are ASCII bytes, without the table's backticks:
+
+| Variant | Fixed text |
+|---|---|
+| `NotFound` | `Not found` |
+| `PermissionDenied` | `Permission denied` |
+| `AlreadyExists` | `Already exists` |
+| `NotDirectory` | `Not a directory` |
+| `IsDirectory` | `Is a directory` |
+| `DirectoryNotEmpty` | `Directory not empty` |
+| `ReadOnly` | `Read-only resource` |
+| `ResourceBusy` | `Resource busy` |
+| `InvalidInput` | `Invalid input` |
+| `InvalidPath` | `Invalid path` |
+| `Unsupported` | `Unsupported operation` |
+| `TimedOut` | `Timed out` |
+| `DeadlinePassed` | `Deadline passed` |
+| `Cancelled` | `Cancelled` |
+| `BrokenPipe` | `Broken pipe` |
+| `WriteZero` | `Write returned zero bytes` |
+| `UnexpectedEnd` | `Unexpected end of input` |
+| `ConnectionRefused` | `Connection refused` |
+| `ConnectionReset` | `Connection reset` |
+| `ConnectionAborted` | `Connection aborted` |
+| `NotConnected` | `Not connected` |
+| `AddressInUse` | `Address in use` |
+| `AddressUnavailable` | `Address unavailable` |
+| `ResourceExhausted` | `Resource exhausted` |
+| `FileTooLarge` | `File too large` |
+| `NoSpace` | `No space left` |
+| `QuotaExceeded` | `Quota exceeded` |
+| `CrossDevice` | `Cross-device operation` |
+| `DeviceFailure` | `Device failure` |
+| `Other` | `Other I/O error` |
+
+For a description of byte length n, a window of length at least n receives all n bytes beginning at `start` and returns `Ok(start + n)`; every byte outside that copied range is unchanged, and no terminating NUL is written. A shorter window returns `DescriptionTooSmall(required: n)` and leaves the entire destination unchanged. A code the host cannot describe, or failure to obtain or encode the selected description, returns `DescriptionUnavailable` and leaves the entire destination unchanged.
+
 `std::time`, the record `time/module.wfm`:
 
 ```
@@ -2701,10 +2762,22 @@ public enum IoError {
   Other(public code: u32, public origin: u8);
 }
 
+public enum DescriptionError {
+  DescriptionTooSmall(public required: u64);
+  DescriptionUnavailable();
+}
+
 public enum ReadStop {
   ReadEnd();
   ReadFailed(public error: IoError);
 }
+
+public fn error_copy_description(error: &IoError, destination: &[u8], start: u64, end: u64) -> result: Result<u64, DescriptionError> reads(error), writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the description of error under PRE-2.";
 
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 
