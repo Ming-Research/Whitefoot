@@ -771,7 +771,7 @@ fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
         })
         .unwrap_or_else(|| panic!("missing emitted function {name}"));
     let function_end = module[function_start..]
-        .find("\n}\n\n")
+        .find("\n}\n")
         .map(|offset| function_start + offset + 3)
         .expect("source function definition must close");
     &module[function_start..function_end]

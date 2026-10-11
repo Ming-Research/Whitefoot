@@ -275,11 +275,8 @@ fn a_module_that_writes_a_resource_record_and_hands_a_call_out_is_latched() {
          {module}"
     );
     assert!(module.contains("@.wf_resource_record.latch"));
-    // KEPT AS WRITTEN for the lowering port: whether a v0.60 construction
-    // still emits an inline null test that calls `@wf_resource_abort()`, or
-    // whether the trusted base's own allocator terminates and the generated
-    // module carries no refusal edge at all, is the lowering port's decision
-    // under [STOR-8]. Re-derive this symbol and the latch symbol from it.
+    // Allocation refusal can live in the monomorphized construction helper.
+    // The worker-reachable clone's complete refusal chain is checked below.
     assert!(
         module.contains("call void @wf_resource_abort()"),
         "the fixture must reach a resource record: {module}"
@@ -295,11 +292,31 @@ fn a_module_that_writes_a_resource_record_and_hands_a_call_out_is_latched() {
         call_grain: crate::CallGrain::Every,
         sequential_refusal: false,
     }] {
-        let combined = super::emit_lowered(HEAP_RECORD_LANE, overlap);
-        let clone = super::parallel::function_body(&combined, "@wf__par_seq_build");
-        assert!(clone.contains("call void @wf_resource_abort()"),
-            "the worker-reachable canonical allocator must keep the shared abort boundary: {clone}");
-        assert!(!clone.contains("@wf__par_seq_resource_abort"), "{clone}");
+        let inputs = [crate::SourceInput::new("test.wf", HEAP_RECORD_LANE)];
+        let combined = crate::compile_with_overlap(&inputs, crate::CompilerLimits::default(), overlap).unwrap();
+        let reaches_shared_abort = |module: &crate::backend::LlvmModule| {
+            let mut pending = vec!["wf__par_seq_build".to_owned()];
+            let mut visited = std::collections::BTreeSet::new();
+            while let Some(name) = pending.pop() {
+                if !visited.insert(name.clone()) || name == "wf_resource_abort" {
+                    continue;
+                }
+                if let Some(entity) = module.model.entities.iter().find(|entity| entity.name == name) {
+                    pending.extend(entity.references.symbols.iter().cloned());
+                }
+            }
+            visited.contains("wf_resource_abort")
+        };
+        assert!(reaches_shared_abort(&combined),
+            "the worker-reachable canonical allocator closure must keep the shared abort boundary: {combined}");
+        // An unreachable shared abort elsewhere in the module cannot satisfy
+        // the observation: erase its incoming closure edges and see it fail.
+        let mut severed = combined.clone();
+        for entity in &mut severed.model.entities {
+            entity.references.symbols.remove("wf_resource_abort");
+        }
+        assert!(!reaches_shared_abort(&severed));
+        assert!(!combined.contains("@wf__par_seq_resource_abort"), "{combined}");
         let abort = super::parallel::function_body(&combined, "@wf_resource_abort");
         assert!(abort.contains("call void @wf_resource_record_abort("), "{abort}");
         let writer = super::parallel::function_body(&combined, "@wf_resource_record_abort");

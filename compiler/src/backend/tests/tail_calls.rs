@@ -9,6 +9,19 @@ use super::{
 use crate::{IrNominalKind, IrTerminator, IrType, OverlapLowering, emit_llvm};
 
 #[test]
+fn emitted_transfer_body_stops_before_an_adjacent_canonical_caller() {
+    // Canonical closure definitions need no blank line between them. A later
+    // caller must not become part of the transfer body's self-call count.
+    let transfer = "define i64 @wf__par_seq_accumulate(i64 %v0) {\nentry:\n  br label %bb1\nbb1:\n  %v1 = phi i64 [ %v0, %entry ], [ %v2, %bb1 ]\n  %v2 = add i64 %v1, 1\n  br label %bb1\n}\n";
+    let caller = "define i64 @wf__par_seq_main() {\nentry:\n  %v0 = call i64 @wf__par_seq_accumulate(i64 0)\n  ret i64 %v0\n}\n";
+    let module = format!("{transfer}{caller}\n");
+    let body = emitted_body(&module, "_par_seq_accumulate");
+    assert_eq!(body, transfer);
+    assert_eq!(body.matches("@wf__par_seq_accumulate(").count(), 1);
+    assert_eq!(emitted_function(&module, "_par_seq_main"), caller);
+}
+
+#[test]
 fn musttail_is_a_backedge_before_host_optimization_in_both_worlds() {
     let source = include_bytes!("../../../../tests/conformance/cases/fn10-pos-self-transfer.wf");
     assert_self_tail_lowering(source);
@@ -22,7 +35,16 @@ fn unmarked_self_calls_share_the_guaranteed_transfer_lowering() {
 }
 
 fn assert_self_tail_lowering(source: &[u8]) {
-    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+    for overlap in [
+        OverlapLowering::Off,
+        OverlapLowering::On,
+        OverlapLowering::Demand {
+            ablation: crate::DemandAblation::None,
+            budget: crate::RecursionBudget::RuntimeDerived,
+            call_grain: crate::CallGrain::Every,
+            sequential_refusal: false,
+        },
+    ] {
         let module = with_mutated_ir_lowering(source, overlap, |program| {
             let exchange = program
                 .functions()
@@ -55,9 +77,23 @@ fn assert_self_tail_lowering(source: &[u8]) {
         });
         let mut names = vec!["sum", "exchange", "swap_pairs", "accumulate"];
         if overlap == OverlapLowering::On {
-            // Only functions that can reach an offer need a sequential clone.
-            // Accumulate offers ordinary calls before its self-tail edge.
-            names.push("_par_seq_accumulate");
+            // The eager control must still offer ordinary calls before the
+            // self-tail edge, and therefore must retain its second world.
+            assert!(module.lines().any(|line| {
+                line.starts_with("define ") && line.contains(" @wf__par_seq_accumulate(")
+            }));
+        }
+        for clone in [
+            "_par_seq_sum",
+            "_par_seq_exchange",
+            "_par_seq_swap_pairs",
+            "_par_seq_accumulate",
+        ] {
+            if module.lines().any(|line| {
+                line.starts_with("define ") && line.contains(&format!(" @wf_{clone}("))
+            }) {
+                names.push(clone);
+            }
         }
         for name in names {
             // A register-returned result's transfer lives in the internal

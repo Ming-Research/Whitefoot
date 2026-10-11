@@ -306,7 +306,9 @@ fn a_pruned_only_entry_does_not_name_an_unemitted_world() {
 }
 "#;
     let module = emit_lowered(source, DEMAND);
-    assert!(module.contains("@wf__par_chunk_"));
+    assert_eq!(module, emit_lowered(source, OverlapLowering::Off),
+        "a module with all offers pruned must run the original in-place loop");
+    assert!(!module.contains("@wf__par_chunk_"), "{module}");
     assert!(!module.contains("@wf__par_seq_main"), "{module}");
     assert!(!module.contains("@wf__par_pool_active"), "{module}");
     assert!(!module.contains("@wf__par_slice_"), "{module}");

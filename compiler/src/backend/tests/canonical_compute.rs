@@ -37,8 +37,9 @@ fn helper(seed: u64, count: u64) -> result: u64 pure {
 }
 
 fn paired(seed: u64, count: u64) -> result: u64 pure {
+  let next_seed = seed +wrap 1_u64;
   let first = helper(seed: seed, count: count);
-  let second = helper(seed: seed +wrap 1_u64, count: count);
+  let second = helper(seed: next_seed, count: count);
   return first +wrap second;
 }
 "#;
@@ -109,9 +110,9 @@ fn canonical_source_closure_precedes_loop_synthesis_and_preserves_parallel_bodie
 
 #[test]
 fn demand_with_every_offer_pruned_is_the_ordinary_module() {
-    let source = br#"fn folded(seed: u64, count: u64) -> result: u64 pure {
+    let source = br#"fn folded(seed: u64) -> result: u64 pure {
   let total = seed;
-  for (i in 0_u64..count) {
+  for (i in 0_u64..3_u64) {
     set total = total +wrap i;
   }
   return total;
@@ -120,6 +121,11 @@ fn demand_with_every_offer_pruned_is_the_ordinary_module() {
     with_mutated_ir_lowering(source, demand(), |program| {
         assert!(program.functions().iter().any(|f| f.synthesis().is_some()),
             "the witness must have optional extraction before pruning");
+        let folded = program.functions().iter().find(|f| f.name() == "folded").unwrap();
+        assert!(folded.blocks().iter().flat_map(|b| b.instructions()).any(|instruction|
+            matches!(instruction, IrInstruction::Define {
+                operation: IrOperation::LoopSplit { weight: 0, .. }, ..
+            })), "the fixture's bounded site must actually be pruned");
         let module = crate::backend::emitter::emit_llvm(program).unwrap();
         assert_eq!(module.as_str(), emit_lowered(source, OverlapLowering::Off));
         assert!(!module.contains("@wf__par_chunk_"));
@@ -135,13 +141,17 @@ fn canonical_aggregate_closure_keeps_public_entries_destination_bodies_and_depen
 }
 
 fn make(seed: u64) -> result: Pair pure {
-  return Pair(left: seed, right: seed +wrap 3_u64);
+  let right = seed +wrap 3_u64;
+  return Pair(left: seed, right: right);
 }
 
 fn paired(seed: u64) -> result: Pair pure {
+  let next_seed = seed +wrap 1_u64;
   let first = make(seed: seed);
-  let second = make(seed: seed +wrap 1_u64);
-  return Pair(left: first.left +wrap second.left, right: first.right +wrap second.right);
+  let second = make(seed: next_seed);
+  let left = first.left +wrap second.left;
+  let right = first.right +wrap second.right;
+  return Pair(left: left, right: right);
 }
 
 fn main() -> status: std::process::ExitStatus pure {

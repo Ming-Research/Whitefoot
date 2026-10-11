@@ -2002,25 +2002,38 @@ fn budget_symbols(module: &str) -> Vec<String> {
 fn without_clones(module: &str) -> String {
     let mut kept = String::with_capacity(module.len());
     let mut rest = module;
-    while let Some(offset) = rest.find("\ndefine ") {
-        let (before, definition) = rest.split_at(offset + 1);
+    while let Some(offset) = rest.match_indices("define ").find_map(|(offset, _)| {
+        (offset == 0 || rest.as_bytes()[offset - 1] == b'\n').then_some(offset)
+    }) {
+        let (before, definition) = rest.split_at(offset);
         kept.push_str(before);
         let end = definition
             .find("\n}\n")
             .map(|at| at + 3)
             .expect("a definition must close");
         let (definition, remainder) = definition.split_at(end);
-        if !definition
-            .lines()
-            .next()
-            .is_some_and(|header| header.contains(" @wf__par_seq_"))
-        {
+        let header = definition.lines().next().expect("a definition has a header");
+        let (_, signature) = header.split_once(" @").expect("a definition has a symbol");
+        let (name, _) = signature.split_once('(').expect("a definition has parameters");
+        let name = name.trim_matches('"');
+        if !name.starts_with("wf__par_seq_") && !name.starts_with("wf__par_seq.") {
             kept.push_str(definition);
         }
         rest = remainder;
     }
     kept.push_str(rest);
     kept
+}
+
+#[test]
+fn removing_canonical_definitions_handles_adjacent_entities_and_byte_zero() {
+    let module = concat!(
+        "define i64 @wf__par_seq_first() {\n  ret i64 1\n}\n",
+        "define private i64 @\"wf__par_seq.second\"() {\n  ret i64 2\n}\n",
+        "define i64 @wf__par_seq_third() {\n  ret i64 3\n}\n",
+        "define i64 @wf_kept() {\n  ret i64 4\n}\n",
+    );
+    assert_eq!(without_clones(module), "define i64 @wf_kept() {\n  ret i64 4\n}\n");
 }
 
 /// The definition that carries `symbol`'s emitted body: its own definition,
