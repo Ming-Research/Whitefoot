@@ -15,7 +15,7 @@ mod aggregate;
 use aggregate::RangeOperand;
 
 use crate::syntax::NodeId;
-use crate::syntax::terminal::FixedTerminal;
+use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::syntax::views::PlaceSuffix;
 use crate::{
     DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production, ResolvedTarget,
