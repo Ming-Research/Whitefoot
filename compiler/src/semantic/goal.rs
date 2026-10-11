@@ -3,7 +3,8 @@ use crate::{DeclarationId, NodePath};
 use super::model::{
     BindingId, CheckedBooleanOperation, CheckedConst, CheckedConversionMode, CheckedElement,
     CheckedFloatOperation, CheckedIntegerOperation, CheckedMeasure, CheckedNumericType,
-    CheckedType, CheckedValue, FunctionId, MeasuredKind,
+    CheckedPlaceStep, CheckedSetTarget, CheckedType, CheckedValue, FunctionId, MeasuredKind,
+    SubscriptedTerm,
 };
 
 /// One function requirement, split into predicate and occurrence identity.
@@ -81,6 +82,35 @@ pub(crate) enum GoalExpression {
 }
 
 impl GoalExpression {
+    /// The written-place annotations of one interned admission view. They
+    /// do not change the exact typed predicate identity [ENT-2, FN-8].
+    pub(crate) fn same_admission_view(&self, other: &Self) -> bool {
+        if self != other {
+            return false;
+        }
+        match (self, other) {
+            (Self::Datum(left), Self::Datum(right)) => {
+                match (left.admission(), right.admission()) {
+                    (Some(left), Some(right)) => left.same_view(right),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
+            (
+                Self::Operation {
+                    arguments: left, ..
+                },
+                Self::Operation {
+                    arguments: right, ..
+                },
+            ) => left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| left.same_admission_view(right)),
+            _ => false,
+        }
+    }
+
     pub(crate) const fn ty(&self) -> CheckedType {
         match self {
             Self::Datum(datum) => datum.ty(),
@@ -96,6 +126,7 @@ impl GoalExpression {
         let Self::Datum(datum) = &mut self else {
             return None;
         };
+        let prior_type = datum.ty();
         let projections = datum.projections_mut();
         // [ENT-2] extending a page referent selects storage below it; its
         // page step no longer identifies the borrow's captured extent.
@@ -103,6 +134,12 @@ impl GoalExpression {
             *offset = offset.goal_identity();
         }
         projections.push(projection);
+        if let Some(admission) = datum.admission_mut() {
+            if admission.written.is_none() && admission.root_type.is_none() {
+                admission.root_type = Some(prior_type);
+            }
+            admission.projections.push(projection);
+        }
         datum.set_ty(ty);
         Some(self)
     }
@@ -123,6 +160,7 @@ pub(crate) enum GoalDatum {
         declaration: DeclarationId,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
+        admission: GoalAdmission,
     },
     /// One caller place after lexical resolution. Borrow and reborrow actuals
     /// use their ultimate referent root rather than the temporary holder.
@@ -130,6 +168,7 @@ pub(crate) enum GoalDatum {
         root: BindingId,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
+        admission: GoalAdmission,
     },
     /// One already-evaluated value that source cannot safely name again.
     ///
@@ -148,6 +187,20 @@ pub(crate) enum GoalDatum {
 }
 
 impl GoalDatum {
+    pub(crate) const fn admission(&self) -> Option<&GoalAdmission> {
+        match self {
+            Self::Place { admission, .. } | Self::NamedConst { admission, .. } => Some(admission),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn admission_mut(&mut self) -> Option<&mut GoalAdmission> {
+        match self {
+            Self::Place { admission, .. } | Self::NamedConst { admission, .. } => Some(admission),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn ty(&self) -> CheckedType {
         match self {
             Self::Parameter { ty, .. }
@@ -177,6 +230,107 @@ impl GoalDatum {
             Self::Literal(_) => unreachable!("a literal cannot carry a place projection"),
         }
     }
+}
+
+/// Written-place provenance for L0 admission at the complete projected
+/// endpoint [ENT-2]. A default annotation denotes only its current admitted
+/// endpoint; extending it records the prior type and every appended step.
+/// This annotation is outside exact goal identity [FN-8]; admission views
+/// compare its contents separately before sharing numeric metadata.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GoalAdmission {
+    pub(crate) written: Option<Box<CheckedSetTarget>>,
+    pub(crate) root_type: Option<CheckedType>,
+    pub(crate) root_is_range: bool,
+    pub(crate) projections: Vec<GoalProjection>,
+}
+
+impl GoalAdmission {
+    pub(crate) fn written(target: CheckedSetTarget) -> Self {
+        Self {
+            written: Some(Box::new(target)),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn plain(ty: CheckedType) -> Self {
+        Self {
+            root_type: Some(ty),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn plain_range(ty: CheckedType) -> Self {
+        Self {
+            root_is_range: true,
+            ..Self::plain(ty)
+        }
+    }
+
+    fn same_view(&self, other: &Self) -> bool {
+        self.root_type == other.root_type
+            && self.root_is_range == other.root_is_range
+            && self.written_view() == other.written_view()
+            && self
+                .projections
+                .iter()
+                .copied()
+                .map(admission_projection)
+                .eq(other.projections.iter().copied().map(admission_projection))
+    }
+
+    fn written_view(&self) -> Option<(CheckedType, Vec<GoalProjection>, Option<SubscriptedTerm>)> {
+        let target = self.written.as_deref()?;
+        let (path, offsets) = match target {
+            CheckedSetTarget::Place(_) => (Vec::new(), None),
+            CheckedSetTarget::Storage(place) => (
+                place
+                    .path
+                    .iter()
+                    .map(CheckedPlaceStep::goal_projection)
+                    .collect(),
+                place.subscripted_term(),
+            ),
+            CheckedSetTarget::RangeIndex(place) => {
+                (place.goal_projections(), place.subscripted_term())
+            }
+        };
+        // Source occurrence paths and capture sites are diagnostic identity,
+        // not a different admission view of the same typed predicate [ENT-2].
+        let indexed = matches!(target, CheckedSetTarget::RangeIndex(_))
+            || path
+                .iter()
+                .any(|step| matches!(step, GoalProjection::Subscript(_)));
+        Some((
+            target.ty(),
+            if indexed {
+                path.into_iter().map(admission_projection).collect()
+            } else {
+                Vec::new()
+            },
+            indexed.then_some(offsets).flatten(),
+        ))
+    }
+}
+
+fn admission_projection(projection: GoalProjection) -> GoalProjection {
+    match projection {
+        GoalProjection::Subscript(offset) => GoalProjection::Subscript(offset.goal_identity()),
+        GoalProjection::Page(offset) => GoalProjection::Page(offset.goal_identity()),
+        other => other,
+    }
+}
+
+impl PartialEq for GoalAdmission {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for GoalAdmission {}
+
+impl std::hash::Hash for GoalAdmission {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// Structural identity for an already-evaluated, occurrence-local value.
@@ -336,4 +490,52 @@ pub(crate) enum GoalOperation {
         element: CheckedElement,
         constant: Option<CheckedConst>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::IntegerType;
+    use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
+
+    #[test]
+    fn range_of_arrays_keeps_run_kind_when_appending_element_projection() {
+        let array = CheckedType::Array {
+            element: CheckedElement(0),
+            length: CheckedConst::Value(1),
+        };
+        let offset = GoalProjection::Subscript(CapturedValue::new(
+            CaptureId::source(0),
+            CapturedTerm::Literal(0),
+        ));
+        let base = |admission| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: Vec::new(),
+                ty: array,
+                admission,
+            })
+        };
+        let range = base(GoalAdmission::plain_range(array))
+            .with_projection(offset, array)
+            .unwrap();
+        let own = base(GoalAdmission::default())
+            .with_projection(offset, CheckedType::Integer(IntegerType::U8))
+            .unwrap();
+        let GoalExpression::Datum(range) = range else {
+            unreachable!()
+        };
+        let GoalExpression::Datum(own) = own else {
+            unreachable!()
+        };
+        let range = range.admission().unwrap();
+        let own = own.admission().unwrap();
+        assert_eq!(range.root_type, Some(array));
+        assert!(range.root_is_range);
+        assert_eq!(range.projections, vec![offset]);
+        assert_eq!(own.root_type, Some(array));
+        assert!(!own.root_is_range);
+        assert_eq!(own.projections, vec![offset]);
+        assert!(!range.same_view(own));
+    }
 }

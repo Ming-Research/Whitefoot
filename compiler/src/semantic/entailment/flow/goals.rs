@@ -110,6 +110,7 @@ impl Input<'_, '_> {
                     .map(|step| goal_projection_of_step(&step))
                     .collect::<Option<Vec<_>>>()?,
                 ty: expression.ty(),
+                admission: GoalAdmission::default(),
             }));
         }
         let build_operation = |row, type_arguments, const_arguments, result, arguments: Vec<_>| {
@@ -132,6 +133,7 @@ impl Input<'_, '_> {
                     declaration: *declaration,
                     projections: Vec::new(),
                     ty: value.ty(),
+                    admission: GoalAdmission::default(),
                 }))
             }
             CheckedExpression::Binding { binding, ty, .. } if self.is_copy(*ty) => {
@@ -139,6 +141,7 @@ impl Input<'_, '_> {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
+                    admission: GoalAdmission::default(),
                 }))
             }
             CheckedExpression::Project {
@@ -151,6 +154,7 @@ impl Input<'_, '_> {
                 root: *binding,
                 projections: fields.iter().copied().map(GoalProjection::Field).collect(),
                 ty: *ty,
+                admission: GoalAdmission::default(),
             })),
             // [ENT-2] a holder exact here is read at its proof path, which
             // reaches this arm only when that path starts at a named const.
@@ -162,6 +166,7 @@ impl Input<'_, '_> {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
+                    admission: GoalAdmission::default(),
                 })),
             },
             CheckedExpression::BoxDeref {
@@ -367,16 +372,6 @@ impl Input<'_, '_> {
                     {
                         return None;
                     }
-                    // [ENT-2] a field datum owes admission at its written
-                    // place before proof-path resolution. Selected index
-                    // rows below retain their non-L0 value identity.
-                    if !self.set_integer_place_admitted(
-                        &CheckedSetTarget::Storage(root.clone()),
-                        &[],
-                    )
-                    {
-                        return None;
-                    }
                     return self.goal_container_place(root);
                 };
                 let base = CheckedContainerRoot {
@@ -541,6 +536,7 @@ impl Input<'_, '_> {
                     declaration,
                     projections: Vec::new(),
                     ty,
+                    admission: GoalAdmission::default(),
                 }))
             }
         }
@@ -552,7 +548,12 @@ impl Input<'_, '_> {
         &self,
         root: &CheckedContainerRoot,
     ) -> Option<GoalExpression> {
-        self.goal_place_datum(&root.proof_place(), root.ty)
+        let mut expression = self.goal_place_datum(&root.proof_place(), root.ty)?;
+        let GoalExpression::Datum(datum) = &mut expression else {
+            unreachable!("a storage place is a goal datum")
+        };
+        *datum.admission_mut()? = GoalAdmission::written(CheckedSetTarget::Storage(root.clone()));
+        Some(expression)
     }
 
     /// The Goal datum one [ENT-2] proof path names, at a binding or at a
@@ -572,6 +573,7 @@ impl Input<'_, '_> {
                 declaration: self.context.constant_declaration(id)?,
                 projections,
                 ty,
+                admission: GoalAdmission::default(),
             }),
         })
     }
@@ -594,68 +596,6 @@ impl Input<'_, '_> {
             ty = fields.get(*field as usize)?.ty;
         }
         Some(ty)
-    }
-
-    pub(super) fn goal_projection_type(
-        &self,
-        input: CheckedType,
-        projection: GoalProjection,
-    ) -> Option<CheckedType> {
-        match projection {
-            GoalProjection::Deref => match input {
-                CheckedType::Nominal(nominal) => {
-                    match self.context.nominals.get(nominal.0 as usize)?.kind {
-                        CheckedNominalKind::Box { referent, .. } => Some(referent),
-                        _ => Some(input),
-                    }
-                }
-                // Borrow holders retain the referent type in checked form.
-                _ => Some(input),
-            },
-            GoalProjection::Field(field) => {
-                let CheckedType::Nominal(nominal) = input else {
-                    return None;
-                };
-                let CheckedNominalKind::Struct { fields } =
-                    &self.context.nominals.get(nominal.0 as usize)?.kind
-                else {
-                    return None;
-                };
-                fields.get(field as usize).map(|field| field.ty)
-            }
-            GoalProjection::Payload { variant, field } => {
-                let CheckedType::Nominal(nominal) = input else {
-                    return None;
-                };
-                let CheckedNominalKind::Enum { variants } =
-                    &self.context.nominals.get(nominal.0 as usize)?.kind
-                else {
-                    return None;
-                };
-                variants
-                    .iter()
-                    .find(|candidate| candidate.tag == variant)?
-                    .fields
-                    .get(field as usize)
-                    .map(|field| field.ty)
-            }
-            // [OP-4] a subscript selects the base's element type, which
-            // [MSR-1] admits in a measure place and [WIN-1] gives the one
-            // slot a run holds.
-            GoalProjection::Subscript(_) => element_type(input, self.context.elements),
-            // [REF-4, TYPE-8] a range step selects the run of T elements the
-            // range names, and `&[T]` is a reference kind and not a type, so
-            // that run's checked image is its element type, exactly as a
-            // `&[T]` parameter's is.
-            GoalProjection::Range(_) | GoalProjection::Page(_) => {
-                element_type(input, self.context.elements)
-            }
-            // [MSR-1] the same element selection a written subscript makes;
-            // the offset is what the reader substitutes, not the type.
-            GoalProjection::FormalSubscript { .. } | GoalProjection::FormalPage { .. } => {
-                element_type(input, self.context.elements)
-            }
-        }
     }
 
     pub(super) fn goal_place_path(&self, datum: &GoalDatum) -> Option<ResolvedPlace> {
@@ -733,10 +673,17 @@ impl Input<'_, '_> {
                         other => Some(*other),
                     })
                     .collect::<Option<Vec<_>>>()?;
+                let mut admission = if parameter.mode.is_range() {
+                    GoalAdmission::plain_range(parameter.ty)
+                } else {
+                    GoalAdmission::plain(parameter.ty)
+                };
+                admission.projections = projections.clone();
                 Some(GoalExpression::Datum(GoalDatum::Place {
                     root: binding,
                     projections,
                     ty: *ty,
+                    admission,
                 }))
             }
             GoalExpression::Datum(GoalDatum::EvaluatedValue { .. }) => None,
@@ -769,6 +716,7 @@ impl Input<'_, '_> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let CheckedValue::Integer {
                     ty: value_type,
@@ -800,6 +748,7 @@ impl Vocabulary {
             root,
             projections,
             ty: CheckedType::Bool,
+            ..
         }) = self.goals.expression(member)
         else {
             return None;
@@ -1062,6 +1011,7 @@ impl Reasoning<'_, '_, '_> {
                 root,
                 projections,
                 ty,
+                ..
             }) => {
                 let Some(origin) = state.goal_origins.get(root).copied() else {
                     return expression.clone();
@@ -1078,7 +1028,9 @@ impl Reasoning<'_, '_, '_> {
                 );
                 expanding.remove(root);
                 for projection in projections {
-                    let Some(result) = self.input.goal_projection_type(expanded.ty(), *projection)
+                    let Some(result) = self
+                        .input
+                        .goal_expression_projection_type(&expanded, *projection)
                     else {
                         return expression.clone();
                     };
@@ -1279,6 +1231,7 @@ impl Reasoning<'_, '_, '_> {
             root,
             projections,
             ty: CheckedType::Bool,
+            ..
         }) = expression
             && projections.is_empty()
         {
@@ -1369,7 +1322,13 @@ impl Reasoning<'_, '_, '_> {
         event: FlowEventId,
     ) {
         for (member, member_sign) in self.signed_boolean_decomposition(parent, sign, state) {
-            state.establish_goal(member, member_sign, &mut self.vocabulary.derivations, event);
+            state.establish_goal(
+                member,
+                member_sign,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+                event,
+            );
             let Some(relation) = self
                 .vocabulary
                 .goals
@@ -1509,6 +1468,7 @@ impl Reasoning<'_, '_, '_> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let CheckedValue::Integer {
                     ty: value_type,
@@ -1525,6 +1485,14 @@ impl Reasoning<'_, '_, '_> {
             }
             GoalExpression::Datum(datum) => {
                 let fragment = fragment_type(datum.ty())?;
+                // [ENT-2] opaque value identity does not admit its integer
+                // endpoint to L0. Check the written place after every owned
+                // projection, including synthesized struct equality fields.
+                if let Some(admission) = datum.admission()
+                    && !self.input.goal_integer_place_admitted(admission)
+                {
+                    return None;
+                }
                 let path = self.input.goal_place_path(datum)?;
                 Some(
                     self.vocabulary
@@ -1876,6 +1844,7 @@ pub(super) fn goal_binding_place(
         root: binding,
         projections: projections.into_iter().collect(),
         ty,
+        admission: GoalAdmission::default(),
     })
 }
 

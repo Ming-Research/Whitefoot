@@ -105,6 +105,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Positive,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -120,6 +121,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Negative,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );

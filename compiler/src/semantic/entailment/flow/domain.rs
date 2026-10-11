@@ -4,6 +4,14 @@
 
 use super::*;
 
+struct ProjectionEndpoint {
+    ty: CheckedType,
+    run: bool,
+    indexed: bool,
+    readonly: bool,
+    represented: bool,
+}
+
 impl Input<'_, '_> {
     /// CONST-2's total field selection substitutes the immutable initializer.
     /// Preserve that known scalar while reads still carry the constant's
@@ -98,60 +106,211 @@ impl Input<'_, '_> {
         }
     }
 
-    /// Integer data must be terms at the written set destination followed by
-    /// its owned projections [CALL-4, MSR-3, ENT-2]. Resolving a reference
-    /// alias to indexed storage does not add a subscript to its written
-    /// spelling.
+    /// Integer data must be terms at the written destination followed by
+    /// its projections [CALL-4, MSR-3, ENT-2]. Resolving a reference alias
+    /// to indexed storage does not add a subscript to its written spelling.
     pub(super) fn set_integer_place_admitted(
         &self,
         target: &CheckedSetTarget,
         projections: &[PlaceStep],
     ) -> bool {
-        let offsets = match target {
-            CheckedSetTarget::Place(_) => return true,
-            CheckedSetTarget::Storage(place)
-                if !place
+        self.written_integer_place_admitted(target, false, projections)
+    }
+
+    pub(super) fn goal_integer_place_admitted(&self, admission: &GoalAdmission) -> bool {
+        let projections = admission
+            .projections
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        if let Some(target) = admission.written.as_deref() {
+            return self.written_integer_place_admitted(
+                target,
+                admission.root_is_range,
+                &projections,
+            );
+        }
+        let Some(ty) = admission.root_type else {
+            // This endpoint was already admitted. Any extension records its
+            // prior type, so an untyped default cannot hide a new subscript.
+            return projections.is_empty();
+        };
+        self.typed_integer_place_admitted(
+            ty,
+            admission.root_is_range,
+            false,
+            true,
+            false,
+            &projections,
+        )
+    }
+
+    fn written_integer_place_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        root_is_range: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let (indexed, offsets, readonly) = match target {
+            CheckedSetTarget::Place(_) => (false, None, None),
+            CheckedSetTarget::Storage(place) => (
+                place
                     .path
                     .iter()
-                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
-            {
-                return true;
-            }
-            CheckedSetTarget::Storage(place) => place.subscripted_term(),
-            CheckedSetTarget::RangeIndex(place) => place.subscripted_term(),
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
+            CheckedSetTarget::RangeIndex(place) => (
+                true,
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
         };
-        if offsets != Some(SubscriptedTerm::Represented) {
+        self.typed_integer_place_admitted(
+            target.ty(),
+            root_is_range,
+            indexed,
+            !indexed || offsets == Some(SubscriptedTerm::Represented),
+            readonly == Some(SubscriptedTerm::Represented),
+            projections,
+        )
+    }
+
+    /// The written type and run kind survive proof-path alias resolution.
+    /// A Page/Range selects a run image; the next Index selects its element,
+    /// even when that element itself is an indexed container [ENT-2, REF-4].
+    fn typed_integer_place_admitted(
+        &self,
+        ty: CheckedType,
+        run: bool,
+        indexed: bool,
+        represented: bool,
+        base_readonly: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let Some(endpoint) = self.projection_endpoint(
+            ProjectionEndpoint {
+                ty,
+                run,
+                indexed,
+                readonly: base_readonly,
+                represented,
+            },
+            projections,
+        ) else {
             return false;
+        };
+        endpoint.represented
+            && (!endpoint.indexed || (endpoint.readonly && fragment_type(endpoint.ty).is_some()))
+    }
+
+    pub(super) fn goal_expression_projection_type(
+        &self,
+        expression: &GoalExpression,
+        projection: GoalProjection,
+    ) -> Option<CheckedType> {
+        let GoalExpression::Datum(datum) = expression else {
+            return None;
+        };
+        let mut endpoint = ProjectionEndpoint {
+            ty: datum.ty(),
+            run: false,
+            indexed: false,
+            readonly: false,
+            represented: true,
+        };
+        if let Some(admission) = datum.admission() {
+            endpoint.ty = admission
+                .written
+                .as_deref()
+                .map(CheckedSetTarget::ty)
+                .or(admission.root_type)
+                .unwrap_or(datum.ty());
+            endpoint.run = admission.root_is_range;
+            let suffix = admission
+                .projections
+                .iter()
+                .map(|projection| projection.place_step())
+                .collect::<Vec<_>>();
+            endpoint = self.projection_endpoint(endpoint, &suffix)?;
         }
-        let Some((PlaceStep::Field(last), prefix)) = projections.split_last() else {
-            if !projections.is_empty() {
-                return false;
+        if endpoint.ty != datum.ty() {
+            return None;
+        }
+        self.projection_endpoint(endpoint, &[projection.place_step()])
+            .map(|endpoint| endpoint.ty)
+    }
+
+    fn projection_endpoint(
+        &self,
+        mut endpoint: ProjectionEndpoint,
+        projections: &[PlaceStep],
+    ) -> Option<ProjectionEndpoint> {
+        let represented = |offset: &CapturedValue| {
+            matches!(
+                offset.term,
+                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+            )
+        };
+        for step in projections {
+            endpoint.readonly = false;
+            match step {
+                PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
+                    endpoint.indexed = true;
+                    endpoint.represented &= represented(offset);
+                    let segment =
+                        !endpoint.run && matches!(endpoint.ty, CheckedType::Segments { .. });
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = segment || matches!(step, PlaceStep::Page(_));
+                }
+                PlaceStep::Range(range) => {
+                    endpoint.represented &= represented(&range.start) && represented(&range.end);
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = true;
+                }
+                PlaceStep::Field(field) => {
+                    let CheckedType::Nominal(nominal) = endpoint.ty else {
+                        return None;
+                    };
+                    let CheckedNominalKind::Struct { fields } =
+                        &self.context.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    let field = fields.get(*field as usize)?;
+                    endpoint.ty = field.ty;
+                    endpoint.readonly = field.readonly;
+                    endpoint.run = false;
+                }
+                PlaceStep::Deref => {
+                    if let Some(next) = self.owned_path_type(endpoint.ty, &[*step]) {
+                        endpoint.ty = next;
+                        endpoint.run = false;
+                    }
+                    // Borrow images already carry their referent type.
+                }
+                PlaceStep::Payload { .. } => {
+                    endpoint.ty = self.owned_path_type(endpoint.ty, &[*step])?;
+                    endpoint.run = false;
+                }
+                _ => return None,
             }
-            let term = match target {
-                CheckedSetTarget::Storage(place) => {
-                    place.readonly_field_term(self.context.nominals)
-                }
-                CheckedSetTarget::RangeIndex(place) => {
-                    place.readonly_field_term(self.context.nominals)
-                }
-                CheckedSetTarget::Place(_) => unreachable!("plain places returned above"),
-            };
-            return term == Some(SubscriptedTerm::Represented);
-        };
-        let Some(CheckedType::Nominal(nominal)) = self.owned_path_type(target.ty(), prefix) else {
-            return false;
-        };
-        let Some(CheckedNominalKind::Struct { fields }) = self
-            .context
-            .nominals
-            .get(nominal.0 as usize)
-            .map(|nominal| &nominal.kind)
-        else {
-            return false;
-        };
-        fields
-            .get(*last as usize)
-            .is_some_and(|field| field.readonly)
+        }
+        Some(endpoint)
+    }
+
+    fn integer_projection_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        match ty {
+            CheckedType::Segments { element } | CheckedType::Entries { element } => {
+                self.context.elements.get(element.index()).copied()
+            }
+            _ => element_type(ty, self.context.elements),
+        }
     }
 
     /// [OWN-1] whether a value of this type is read without being consumed,

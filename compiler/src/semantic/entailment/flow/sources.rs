@@ -300,6 +300,7 @@ impl Judging<'_, '_, '_> {
         state.establish_goal(
             goal,
             super::super::state::GoalSign::Positive,
+            &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
             event,
         );
@@ -2566,7 +2567,7 @@ impl Reasoning<'_, '_, '_> {
             let parent = state
                 .facts
                 .opaque_proofs
-                .get(&(goal, sign))
+                .get(&(self.vocabulary.goals.canonical(goal), sign))
                 .copied()
                 .expect("every S4 decomposition member is established");
             let parent = self.vocabulary.derivations.intern(
