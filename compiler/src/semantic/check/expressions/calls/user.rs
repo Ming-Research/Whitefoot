@@ -26,7 +26,8 @@ use super::super::super::generics::{
 };
 use super::super::super::references::InvalidationEvent;
 use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
+    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature,
+    TypedExpression,
 };
 
 /// One entry of a call's substituted effect row [EFF-5].
@@ -474,10 +475,8 @@ impl<'unit> Checker<'_, 'unit> {
             .substitution
             .clone();
         for (key, argument) in actual_substitution.entries() {
-            if let (
-                GenericParameterKey::Source(parameter),
-                GenericArgument::Type(ty),
-            ) = (key, argument)
+            if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                (key, argument)
             {
                 self.check_type_parameter_placement(node, *parameter, *ty, &function.substitution)?;
             }
@@ -534,7 +533,27 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
-        self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        self.project_call_effects(
+            node,
+            function,
+            &substituted,
+            bindings,
+            &mut effects,
+            formal.is_none().then_some(signature.parameters.as_slice()),
+        )?;
+        if formal.is_none() && self.body.repair_calls.is_some() {
+            let call = self.effect_repair_call(
+                node,
+                function,
+                signature,
+                &actual_paths,
+                &actual_captures,
+                bindings,
+            )?;
+            if let Some(calls) = &mut self.body.repair_calls {
+                calls.push(call);
+            }
+        }
         if self
             .types
             .declarations
@@ -966,6 +985,7 @@ impl<'unit> Checker<'_, 'unit> {
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
+        retained_reference_parameters: Option<&[ParameterSignature]>,
     ) -> Result<(), CheckStop> {
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
@@ -977,7 +997,17 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if entry.write {
+                if retained_reference_parameters
+                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                {
+                    if !self.types.effect_repairs.is_capture() {
+                        if entry.write {
+                            effects.add_projected_write(path);
+                        } else {
+                            EffectSet::add_path(&mut effects.reads, path);
+                        }
+                    }
+                } else if entry.write {
                     effects.add_write(path);
                 } else {
                     effects.add_read(path);

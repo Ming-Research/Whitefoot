@@ -224,6 +224,7 @@ impl Checker<'_, '_> {
             functions[id.0 as usize] = Some(checked);
             cursor += 1;
         }
+        self.check_effect_rows()?;
         functions
             .into_iter()
             .map(|function| {

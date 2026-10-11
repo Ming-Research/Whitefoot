@@ -774,7 +774,11 @@ fn effect_mismatch(source: &str) -> (String, Vec<String>, Vec<String>) {
         else {
             panic!("unexpected kind {:?}", issue.kind());
         };
-        (expected_row.clone(), missing.clone(), extra.clone())
+        (
+            expected_row.clone().expect("validated row repair"),
+            missing.clone(),
+            extra.clone(),
+        )
     })
 }
 
@@ -963,4 +967,68 @@ fn main() -> status: std::process::ExitStatus pure {
         "reads(window[from]), reads(window.len), writes(window[to])"
     );
     assert_complete(source.replace("ROW", &expected).as_bytes());
+}
+
+/// Recursive writes widen to the complete argument suffix in their category,
+/// subsume reads below it, retain sibling writes, and leave a different
+/// parameter's entry in EFF-1 written order.
+#[test]
+fn a_recursive_write_repair_is_canonical_and_carries_out_eff2() {
+    let source = r#"enum Node {
+  Leaf(byte: u8);
+  Branch(next: Box<Node>);
+}
+
+fn store(root: &Box<Node>, value: &u8) -> result: unit reads(value), writes(root.inner.Leaf.byte) {
+  match &root^.inner {
+    Leaf(byte: stored_byte) => {
+      set stored_byte^ = value^;
+      return unit;
+    }
+    Branch(next: stored_child) => {
+      return store(root: stored_child, value: value);
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let (expected, missing, extra) = effect_mismatch(source);
+    assert_eq!(
+        expected,
+        "reads(value), writes(root.inner.Leaf.byte), writes(root.inner.Branch.next)"
+    );
+    assert_eq!(missing, ["writes(root.inner.Branch.next)"]);
+    assert!(extra.is_empty(), "{extra:?}");
+    let repaired = source.replacen("reads(value), writes(root.inner.Leaf.byte)", &expected, 1);
+    assert_complete(repaired.as_bytes());
+}
+
+/// Removing an unsupported write can expose reads it previously subsumed.
+/// The recursive diagnostic must restore those reads before publishing rows.
+#[test]
+fn recursive_repair_restores_reads_after_pruning_unexhibited_writes() {
+    let source = r#"fn first(value: &u8) -> result: u8 reads(value) {
+  return second(value: value);
+}
+
+fn second(value: &u8) -> result: u8 writes(value) {
+  let copied = value^;
+  return first(value: &copied);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let (expected, _, _) = effect_mismatch(source);
+    assert_eq!(expected, "reads(value)");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Eff2, |kind| {
+        matches!(kind, SemanticIssueKind::EffectMismatch { mechanical_fix, .. }
+            if mechanical_fix.as_deref() == Some("declare the row as `reads(value)`, which covers every access the body makes and no other; also declare the row of `second` as `reads(value)`"))
+    });
+    let repaired = source.replacen("writes(value)", &expected, 1);
+    assert_complete(repaired.as_bytes());
 }
