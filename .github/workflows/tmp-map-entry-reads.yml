@@ -1,0 +1,183 @@
+# Temporary reserve-reclamation hot-path experiment for Whitefoot#355.
+# Remove before the branch is ready. Research only; no gate or ratio verdict.
+# Question: does the reclamation change slow short single-entry statements?
+# Compare head with base under the same head driver, compiler and placement;
+# an independently built base twin measures base/base noise. A head slowdown
+# consistently beyond twin/base variation rejects the no-regression proposal.
+# This is the pre-measurement comparison and falsifier, not a claimed result.
+# Tool, topology, build, execution or stage-budget failures fail the job;
+# timing ratios do not.
+# research-boundary: manual-only
+name: tmp-map-entry-reads
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base runtime revision (full commit SHA or ref)
+        type: string
+        required: true
+        default: "7062f3ac4ac798034b8e6ba07908468392917b4a"
+      head:
+        description: Changed runtime revision (full commit SHA or ref; also supplies the shared driver)
+        type: string
+        required: true
+        default: "claude/reserve-reclaim"
+  # A push only registers the workflow for dispatch; the job runs on dispatch.
+  push:
+    branches: [claude/reserve-reclaim]
+    paths: [.github/workflows/tmp-map-entry-reads.yml]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-map-entry-reads-14900k
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base }}
+          path: map-base
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head }}
+          path: map-head
+          persist-credentials: false
+
+      - name: Record host and verify four distinct performance cores
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/map-entry-reads-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$out"
+          echo "MAP_RESULTS=$out" >> "$GITHUB_ENV"
+          # Temporary stage budgets belong to this experiment and expire
+          # with the workflow. Measurement contains nine nominal 12 s runs.
+          cat > "$out/time-budgets.txt" <<'BUDGETS'
+          label linux
+          map-entry-reads/build-base 30
+          map-entry-reads/build-twin 30
+          map-entry-reads/build-head 30
+          map-entry-reads/measure 150
+          BUDGETS
+          cat "$out/time-budgets.txt"
+          touch "$out/time-budget-record.txt"
+          echo "WHITEFOOT_TIME_BUDGET_FILE=$out/time-budgets.txt" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/time-budget-record.txt" >> "$GITHUB_ENV"
+          for tool in clang make perl python3 lscpu taskset; do
+            command -v "$tool"
+          done
+          clang --version | tee "$out/compiler.txt"
+          lscpu | tee "$out/host.txt"
+          lscpu -e | tee "$out/topology.txt"
+          lscpu --json --extended=CPU,CORE,SOCKET,ONLINE,MAXMHZ > "$out/topology.json"
+          python3 - "$out" <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+
+          out = pathlib.Path(sys.argv[1])
+          host = (out / "host.txt").read_text()
+          if not re.search(r"Model name:.*\bi9-14900K\b", host):
+              raise SystemExit("Expected i9-14900K; refusing to guess P-core placement")
+          rows = json.loads((out / "topology.json").read_text())["cpus"]
+          if len(rows) != 32 or any(r["online"] not in (True, "yes") for r in rows):
+              raise SystemExit("Require all 32 logical CPUs online for topology validation")
+          groups = {}
+          for row in rows:
+              groups.setdefault((row["socket"], row["core"]), []).append(row)
+          pairs = [g for g in groups.values() if len(g) == 2]
+          singles = [g for g in groups.values() if len(g) == 1]
+          if len(groups) != 24 or len(pairs) != 8 or len(singles) != 16:
+              raise SystemExit("Require native 8 SMT P-core pairs and 16 E-core singles")
+          # SMT identifies P cores on this validated model; reported maximum
+          # frequency independently checks that classification, not CPU IDs.
+          pmax = [float(r["maxmhz"]) for g in pairs for r in g]
+          emax = [float(r["maxmhz"]) for g in singles for r in g]
+          if min(emax) <= 0 or min(pmax) <= max(emax):
+              raise SystemExit("MAXMHZ does not independently separate P and E cores")
+          allowed = os.sched_getaffinity(0)
+          candidates = [min(int(r["cpu"]) for r in g if int(r["cpu"]) in allowed)
+                        for g in pairs if any(int(r["cpu"]) in allowed for r in g)]
+          if len(candidates) < 4:
+              raise SystemExit("Runner affinity does not allow four distinct P cores")
+          cpus = ",".join(map(str, sorted(candidates)[:4]))
+          print(f"Selected one logical CPU on each of four P cores: {cpus}")
+          print(f"P MAXMHZ range {min(pmax)}..{max(pmax)}; E {min(emax)}..{max(emax)}")
+          (out / "placement.txt").write_text(f"CPUS={cpus}\n")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"MAP_CPUS={cpus}\n")
+          PY
+          git -C map-base rev-parse HEAD > "$out/base-revision.txt"
+          git -C map-head rev-parse HEAD > "$out/head-revision.txt"
+          sha256sum map-head/research/experiments/concurrent-map-bench/entry_reads.c \
+            > "$out/driver-sha256.txt"
+
+      - name: Build the same head driver against base, base twin and head
+        run: |
+          set -euo pipefail
+          bench="$GITHUB_WORKSPACE/map-head/research/experiments/concurrent-map-bench"
+          for variant in base twin head; do
+            runtime="$GITHUB_WORKSPACE/map-base/compiler/src/backend"
+            if test "$variant" = head; then
+              runtime="$GITHUB_WORKSPACE/map-head/compiler/src/backend"
+            fi
+            perl map-head/.github/run-check.pl "map-entry-reads/build-$variant" \
+              make -C "$bench" BUILD="$MAP_RESULTS/$variant" \
+              RUNTIME_BACKEND="$runtime" "$MAP_RESULTS/$variant/entry-reads" \
+              2>&1 | tee "$MAP_RESULTS/build-$variant.txt"
+          done
+
+      - name: Measure three rotated base, head and twin rounds
+        run: |
+          set -euo pipefail
+          # The existing harness runs 1/2/4 threads, five 0.4 s samples of
+          # each mode, on one map/key. Both modes exercise held=0 exits.
+          # A short first round is the timing sample; this fixed panel adds
+          # two rotations. It does not run the full research matrix.
+          perl map-head/.github/run-check.pl map-entry-reads/measure bash -s <<'SH' \
+            2>&1 | tee "$MAP_RESULTS/measure.txt"
+          set -euo pipefail
+          round=0
+          for order in "base head twin" "head twin base" "twin base head"; do
+            round=$((round + 1))
+            for variant in $order; do
+              echo "round=$round variant=$variant cpus=$MAP_CPUS elements=0 outside=0"
+              taskset -c "$MAP_CPUS" "$MAP_RESULTS/$variant/entry-reads" 0 0 \
+                > "$MAP_RESULTS/$variant-$round.txt" 2>&1
+              cat "$MAP_RESULTS/$variant-$round.txt"
+            done
+          done
+          SH
+
+      - name: Report stage-budget verdict
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -n "${WHITEFOOT_TIME_BUDGET_RECORD:-}" && \
+             test -f "$WHITEFOOT_TIME_BUDGET_RECORD"; then
+            perl map-head/.github/run-check.pl --budget-verdict \
+              "$WHITEFOOT_TIME_BUDGET_RECORD" \
+              2>&1 | tee "$MAP_RESULTS/time-budget-verdict.txt"
+          fi
+
+      - name: Upload host, build and measurement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-entry-reads-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/map-entry-reads-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error

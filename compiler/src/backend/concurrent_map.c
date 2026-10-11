@@ -169,16 +169,18 @@ typedef struct chunk {
     struct chunk *older;
 } chunk;
 
-/* One thread's use of the map: the table it is in; the cells it claimed and
- * the keys it added less those it removed, summed only when a claim may cross
- * the threshold; whether it is inside a keyed statement, which a statement
- * over the whole map waits out; how long its keyed statement has waited for
- * cells and may wait before it holds the map; and its entries' free memory.
+/* One thread's use of the map: its published table address, an integer
+ * token that may outlive the allocation and is never dereferenced; the
+ * cells it claimed and the keys it added less those it removed, summed only
+ * when a claim may cross the threshold; whether it is inside a keyed
+ * statement, which a statement over the whole map waits out; how long its
+ * keyed statement has waited for cells and may wait before it holds the
+ * map; and its entries' free memory.
  * Then whether it holds the whole map; the hold whose cells it is locking,
  * which a probe of one of its keys may meet; and the memory of an earlier
  * hold's keys, kept for the next. */
 struct wf_cmap_user {
-    _Alignas(64) _Atomic(table *) in;
+    _Alignas(64) _Atomic uintptr_t in;
     _Atomic int64_t used;
     _Atomic int64_t live;
     _Atomic int active;
@@ -426,21 +428,57 @@ static void totals(wf_cmap *map, int64_t *used, int64_t *live) {
     *live = l;
 }
 
-/* Detaches the moved tables no user is in, newest first, under map->lock.
- * A table is retired after the map's current table has changed, and a user
- * publishes its table before it checks that the table is still current, all
- * sequentially consistent: either this scan sees the user in the table, or
- * the user sees that the table is no longer current. A publication cleared
- * at statement exit follows its final table access (clear_publication). */
+/* Detaches unprotected retired tables, newest first, under map->lock.
+ * Entry users keep their publication between statements, so a matching
+ * publication protects a table only while the user is active. Read the
+ * publication before active: a different publication follows the user's
+ * last access to this table, and the publication/recheck handshake makes
+ * a user publishing it after this scan observe its retirement.
+ *
+ * For a matching publication, let A be the keyed user's SC active=1 store,
+ * C its SC current-table read (use_current's fast path or switch_table's
+ * recheck), R the SC store that replaces this table as current, and S this
+ * scan's SC active load. A user able to access the old table has A<C<R<S.
+ * Thus S cannot read the inactive value preceding A: it sees an active
+ * value, or a later active=0 release store after the last table access and
+ * any move the statement finishes. Reusing a cached publication therefore
+ * needs the SC current read even when no new publication store is needed.
+ * If S sees inactivity and the next statement's A follows S, R<S<A<C:
+ * that statement's SC current read cannot return the retired table.
+ *
+ * A whole hold has no active mark. Snapshot the gate once, SC: if closed,
+ * retain every retired table. Every retirement considered here precedes
+ * that snapshot under map->lock. A hold closing the gate afterward can
+ * only begin with the newer current table; a hold the snapshot misses
+ * because it already reopened the gate has finished its table accesses.
+ * Reads under outer ownership or shared-state exclusion, including scans,
+ * may take no map gate or user publication: that exclusion keeps their
+ * current table stable, and this scan detaches only retired tables.
+ * Word-map users have no statement activity protocol: their matching
+ * publications always protect until switch_table or wf_cmap_leave, using
+ * the original SC publication/current-recheck handshake alone. slot_size
+ * is immutable after construction, zero for word maps and nonzero for
+ * entry maps, so this distinction needs no separate atomic flag. */
 static table *detach_retired_locked(wf_cmap *map) {
+    if (atomic_load_explicit(&map->gate, memory_order_seq_cst) != 0)
+        return NULL;
     int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
     table *kept = NULL, **tail = &kept;
     table *ready = NULL, **ready_tail = &ready;
     for (table *r = atomic_load_explicit(&map->retired, memory_order_relaxed), *older; r != NULL; r = older) {
         older = r->older;
         int in_use = 0;
-        for (int i = 0; i < n && !in_use; i++)
-            in_use = atomic_load_explicit(&map->users[i].in, memory_order_seq_cst) == r;
+        for (int i = 0; i < n && !in_use; i++) {
+            wf_cmap_user *u = &map->users[i];
+            if (atomic_load_explicit(&u->in, memory_order_seq_cst) != (uintptr_t)r)
+                continue;
+#ifdef WF_CMAP_IGNORE_ACTIVITY
+            /* The negative reserve test restores the idle executor pin. */
+            in_use = 1;
+#else
+            in_use = map->slot_size == 0 || atomic_load_explicit(&u->active, memory_order_seq_cst) != 0;
+#endif
+        }
         if (in_use) {
             *tail = r;
             tail = &r->older;
@@ -496,7 +534,7 @@ static table *switch_table(wf_cmap_user *u) {
     wf_cmap *map = u->map;
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
     for (;;) {
-        atomic_store_explicit(&u->in, t, memory_order_seq_cst);
+        atomic_store_explicit(&u->in, (uintptr_t)t, memory_order_seq_cst);
         table *now = atomic_load_explicit(&map->current, memory_order_seq_cst);
         if (now == t)
             break;
@@ -508,35 +546,10 @@ static table *switch_table(wf_cmap_user *u) {
 }
 
 static inline table *use_current(wf_cmap_user *u) {
-    table *t = atomic_load_explicit(&u->map->current, memory_order_acquire);
-    if (__builtin_expect(atomic_load_explicit(&u->in, memory_order_relaxed) == t, 1))
+    table *t = atomic_load_explicit(&u->map->current, memory_order_seq_cst);
+    if (__builtin_expect(atomic_load_explicit(&u->in, memory_order_relaxed) == (uintptr_t)t, 1))
         return t;
     return switch_table(u);
-}
-
-/* A persistent executor user must not pin a table after its outermost
- * statement ends. Clear only after its last table access and any move it
- * finishes, before giving up keyed or whole-map exclusion. Inner accesses
- * under an enclosing hold keep the publication until that hold ends.
- * This clear, switch_table's publication and current-table recheck, and
- * detach_retired_locked's scan are sequentially consistent: a scan either
- * sees the protected table, sees a clear or later publication to another
- * table after the last access to the old one, or precedes publication, in
- * which case the user's current-table recheck sees the retirement. The
- * next access after clearing must publish and recheck again; clearing
- * never makes an old table pointer safe to reuse. */
-static void clear_publication(wf_cmap_user *u) {
-#ifndef WF_CMAP_KEEP_PUBLICATION
-    atomic_store_explicit(&u->in, NULL, memory_order_seq_cst);
-#else
-    /* The negative reserve test restores the idle executor pin. */
-    (void)u;
-#endif
-}
-
-static void leave_keyed(wf_cmap_user *u) {
-    clear_publication(u);
-    atomic_store_explicit(&u->active, 0, memory_order_release);
 }
 
 /* Places a key moved from an older table. Only movers write a table that is
@@ -1187,7 +1200,7 @@ void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t len
     int r = lock_entry(u, tag, key, length, &c, &t);
     entry->upgraded = r == IMPATIENT;
     if (r == IMPATIENT) {
-        leave_keyed(u);
+        atomic_store_explicit(&u->active, 0, memory_order_release);
         wf_cmap_hold(u);
         u->patience = UINT64_MAX;
         r = lock_entry(u, tag, key, length, &c, &t);
@@ -1222,7 +1235,7 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
         if (entry->upgraded)
             wf_cmap_unhold(u);
         else if (!held)
-            leave_keyed(u);
+            atomic_store_explicit(&u->active, 0, memory_order_release);
         return;
     }
     /* Counted before the unlock: a mover waiting for this cell sums the
@@ -1252,7 +1265,7 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
     if (entry->upgraded)
         wf_cmap_unhold(u);
     else if (!held)
-        leave_keyed(u);
+        atomic_store_explicit(&u->active, 0, memory_order_release);
 }
 
 /* Finds key, whose hash is tag, without claiming an absent entry: FOUND
@@ -1370,7 +1383,7 @@ static void *access_existing_entry(wf_cmap_user *u, const unsigned char *key, ui
     int r = read_entry(u, tag, key, length, &c, &t, exclusive);
     entry->upgraded = r == IMPATIENT || (r == ABSENT && stable_absence && !held);
     if (entry->upgraded) {
-        leave_keyed(u);
+        atomic_store_explicit(&u->active, 0, memory_order_release);
         wf_cmap_hold(u);
         u->patience = UINT64_MAX;
         r = read_entry(u, tag, key, length, &c, &t, exclusive);
@@ -1397,7 +1410,7 @@ void wf_cmap_unread_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held) {
     if (entry->upgraded)
         wf_cmap_unhold(u);
     else if (!held)
-        leave_keyed(u);
+        atomic_store_explicit(&u->active, 0, memory_order_release);
 }
 
 /* Statements over the whole map take turns by ticket, so that one that
@@ -1430,7 +1443,6 @@ void wf_cmap_hold(wf_cmap_user *u) {
 }
 
 void wf_cmap_unhold(wf_cmap_user *u) {
-    clear_publication(u);
     u->holding = 0;
     atomic_store_explicit(&u->map->gate, 0, memory_order_seq_cst);
     atomic_fetch_add_explicit(&u->map->hold_serving, 1, memory_order_release);
@@ -2230,7 +2242,7 @@ void wf_cmap_hold_take(wf_cmap_user *u, wf_cmap_holding *hold) {
             u->waited = 0;
             u->patience = WF_CMAP_PATIENCE(u);
             if (!read_set(u, hold)) {
-                leave_keyed(u);
+                atomic_store_explicit(&u->active, 0, memory_order_release);
                 wf_cmap_hold(u);
                 hold->whole = 1;
             }
@@ -2255,7 +2267,7 @@ void wf_cmap_hold_take(wf_cmap_user *u, wf_cmap_holding *hold) {
         u->waited = 0;
         u->patience = WF_CMAP_PATIENCE(u);
         if (!lock_set(u, hold)) {
-            leave_keyed(u);
+            atomic_store_explicit(&u->active, 0, memory_order_release);
             wf_cmap_hold(u);
             hold->whole = 1;
             lock_whole(u, hold, leaders);
@@ -2435,7 +2447,7 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
             if (hold->map->whole_hold == hold) hold->map->whole_hold = NULL;
             wf_cmap_unhold(u);
         } else if (!hold->held && hold->count != 0) {
-            leave_keyed(u);
+            atomic_store_explicit(&u->active, 0, memory_order_release);
         }
         if (hold->keys != NULL) give_keys(u, hold->keys, hold->room);
         wf_cmap_hold_begin(hold, hold->map);
@@ -2472,7 +2484,7 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
                 map->whole_hold = NULL;
             wf_cmap_unhold(u);
         } else if (!hold->held && hold->count != 0)
-            leave_keyed(u);
+            atomic_store_explicit(&u->active, 0, memory_order_release);
     }
     if (hold->keys != NULL)
         give_keys(u != NULL ? u : WF_CMAP_CURRENT_USER(hold->map), hold->keys, hold->room);
@@ -2508,7 +2520,7 @@ static void fold_users(wf_cmap *map) {
         u->cursor = NULL;
         u->room = 0;
         memset(u->free, 0, sizeof u->free);
-        atomic_store_explicit(&u->in, NULL, memory_order_relaxed);
+        atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_relaxed);
     }
 }
 
@@ -3090,7 +3102,7 @@ void wf_cmap_leave(wf_cmap_user *u) {
                               memory_order_relaxed);
     atomic_store_explicit(&u->used, 0, memory_order_relaxed);
     atomic_store_explicit(&u->live, 0, memory_order_relaxed);
-    atomic_store_explicit(&u->in, NULL, memory_order_release);
+    atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_release);
     atomic_store(&u->busy, 0);
 }
 
