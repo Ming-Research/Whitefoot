@@ -1,0 +1,25 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn make() -> result: Pair pure contract {
+  ensures result.left == 1_u64;
+} {
+  return Pair(left: 1_u64, right: 2_u64);
+}
+
+fn consume(value: u64) -> result: unit pure contract {
+  requires value == 1_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Pair(left: 0_u64, right: 0_u64);
+  let pairs = array_filled::<Pair, 1>(value: initial);
+  set pairs[0_u64] = make();
+  let value = pairs[0_u64].left;
+  let done = consume(value: value);
+  return std::process::exit_status(code: 0_u8);
+}

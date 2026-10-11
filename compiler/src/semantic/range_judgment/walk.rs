@@ -18,6 +18,8 @@ use crate::NodePath;
 
 mod aggregate;
 mod ordinary;
+#[cfg(test)]
+mod tests;
 mod type_invariants;
 mod windows;
 
@@ -2451,7 +2453,20 @@ impl<'program> Walker<'program> {
                 }
                 _ => self.opaque_of(*referent),
             },
-            CheckedExpression::BufferMeasure { .. } => self.opaque_of(expression.ty()),
+            CheckedExpression::BufferMeasure { measure, root } => {
+                let target = self.path_target(state, PlaceRoot::Binding(root.binding), &root.path);
+                match self.target_measure(
+                    state,
+                    &target,
+                    CheckedType::Buffer {
+                        element: root.element,
+                    },
+                    *measure,
+                ) {
+                    Some(value) => Value::Int(value),
+                    None => self.opaque_of(expression.ty()),
+                }
+            }
             CheckedExpression::BoxTake { binding, path, .. } => {
                 let _ = self.path_target(state, PlaceRoot::Binding(*binding), path);
                 self.opaque_of(expression.ty())
