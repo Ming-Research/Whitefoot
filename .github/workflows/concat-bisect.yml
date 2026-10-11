@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           make toolchain
           out="$PWD/build/bisect-out"; mkdir -p "$out"
-          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-e9d765cd6067; do
+          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-a92354b8c160; do
             echo "release = $release" > whitefoot.pin
             make compiler
             make toolchain-check
@@ -66,8 +66,8 @@ jobs:
           set -euo pipefail
           make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-e9d765cd6067; do
-            if [ "$release" = wf-exp-e9d765cd6067 ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-a92354b8c160; do
+            if [ "$release" = wf-exp-a92354b8c160 ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
             echo "release = $release" > whitefoot.pin
             make -s compiler
             if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
@@ -78,7 +78,7 @@ jobs:
           done
           git checkout -- whitefoot.pin renderer
           join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-layout-wf-9497f0a54fec.txt" "$out/calls-layout-wf-exp-b8cf83108946.txt" > "$out/j1.txt"
-          join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-e9d765cd6067.txt" \
+          join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1.txt" "$out/calls-layout-wf-exp-a92354b8c160.txt" \
             | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | grep -vE 'plt|wf__' | head -80
       - uses: actions/upload-artifact@v4
         with:
