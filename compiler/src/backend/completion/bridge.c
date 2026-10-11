@@ -3246,6 +3246,12 @@ static int wf_shared_lendable(wf_shared *shared, int exact) {
             == (granted->shared_write != 0u ? WF_SHARED_WRITER : 1u);
 }
 
+#ifdef WF_SHARED_TAKE_WITNESS
+/* Private to the witness translation unit, which includes this source.
+ * Counts failed probes only; production builds have neither hook nor call. */
+static void wf_shared_take_witness_missed(void *object);
+#endif
+
 /* [SHARE-2] The object of a statement that already holds a keyed table's
  * entries, which keeps its driver until it ends, so the statement spins
  * rather than parks.  Every holder of an object is a running
@@ -3273,6 +3279,9 @@ void wf__shared_take(void *object, uint32_t write) {
                 return;
             }
         }
+#ifdef WF_SHARED_TAKE_WITNESS
+        wf_shared_take_witness_missed(object);
+#endif
         /* A holder runs its block to the end, but a host may preempt its
          * thread, so after a while this one gives up its processor. */
         wf_shared_spin(&spins);

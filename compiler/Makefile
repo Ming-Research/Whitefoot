@@ -487,6 +487,25 @@ $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
 
+# Phase-1 count witness: built only when explicitly requested, never by the
+# gate or completion-test-images. The witness includes bridge.c with one
+# macro-only counter hook; compatible support objects retain their usual
+# construction. The temporary dispatch workflow owns trials and interprets
+# exit 2 as a recorded bound failure, not a broken runtime harness.
+SHARED_TAKE_WITNESS_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_take_witness.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_take_witness.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/shared-take-witness: $(SHARED_TAKE_WITNESS_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+.PHONY: shared-take-witness-build shared-take-witness
+shared-take-witness-build: $(COMPLETION_TMP)/shared-take-witness
+# A direct invocation preserves the witness's raw verdict (including exit 2).
+SHARED_TAKE_WITNESS_ARGS ?= 1 256 1
+shared-take-witness: $(COMPLETION_TMP)/shared-take-witness
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-take-witness" $(SHARED_TAKE_WITNESS_ARGS)
+
 # Cancellation runtime probe uses the private bridge/ordinary bodies in its
 # own translation unit to control park/fire interleavings. Other native
 # objects are the default-route probe's existing compatible construction.
