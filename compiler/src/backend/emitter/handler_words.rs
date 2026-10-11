@@ -145,6 +145,7 @@ fn census(
         HashSet::new()
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
+    let owner_scopes = storage_alias::OwnerScopePlan::new(program);
     let mut result = DispatchLayoutPlan::default();
     for (ordinal, function) in program.functions().iter().enumerate() {
         let reachable = dispatch::reachable(function)?;
@@ -164,6 +165,7 @@ fn census(
                 grain: None,
                 window_address_facts: WindowAddressFacts::Emit,
                 dispatch_layout,
+                owner_scopes: &owner_scopes,
             },
         )?;
         let (_, symbol, _, abi, _) = emitter.body_abi()?;

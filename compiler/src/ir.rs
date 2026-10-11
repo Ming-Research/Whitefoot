@@ -1930,6 +1930,16 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `reads` entry.
+    /// EFF-1 covers their complete supplied state, including every descendant
+    /// header word; absence of writes is a separate fact above. Narrow rows
+    /// need not cover every implicit descriptor access.
+    pub(crate) whole_read_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `writes` entry.
+    /// Together with another formal's complete read coverage, EFF-5 separates
+    /// each actual header store from every read carrying that formal's scope.
+    /// Compiler-synthesized functions receive neither complete-state fact.
+    pub(crate) whole_write_reference_parameters: Vec<IrValueId>,
     /// Original reference formals whose every declared write lies below the
     /// referent's `Box` content (a path starting with `.inner`), copied from
     /// checked effects, so a call cannot replace the box the formal reaches.

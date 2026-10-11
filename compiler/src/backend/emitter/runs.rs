@@ -466,7 +466,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         row: IrBoundary,
     ) -> Result<(), BackendFailure> {
         let length = self.run_word(run_type, run, shape.length_field())?;
-        let head = self.window_origin(shape, run_type, run)?;
         // The new descriptor words. A back operation leaves `head` where it
         // was; a front operation moves it by one, modulo the capacity.
         let new_length = self.next_temporary()?;
@@ -480,13 +479,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // touched: a front placement's is the slot it wrote, and a front
         // removal's is one past the slot it read.
         let new_head = if row.front() {
-            if row.places() {
+            Some(if row.places() {
                 self.boundary_slot(shape, run_type, run, row)?
             } else {
+                let head = self.window_origin(shape, run_type, run)?;
                 self.wrap_offset(shape, run_type, run, &head, "1")?
-            }
+            })
         } else {
-            head
+            None
         };
         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let owner_alias = if shape.capacity.is_none() {
@@ -506,7 +506,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // Only a `Ring` stores a window origin [WIN-1]; a `Slots` window
         // begins at slot zero and no operation moves it, so a front
         // operation over one is no row of [OP-10] this emitter can serve.
-        if let Some(field) = shape.head_field() {
+        if let Some(new_head) = new_head {
+            let field = shape.head_field().ok_or(BackendFailure::InvalidIr)?;
             let head_address =
                 self.aggregate_field_pointer(run_type, &destination, field as usize)?;
             writeln!(
@@ -515,9 +516,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 storage_alias::runtime_word(run_type, field),
                 owner_alias
             )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        } else if row.front() {
-            return Err(BackendFailure::InvalidIr);
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(())
     }

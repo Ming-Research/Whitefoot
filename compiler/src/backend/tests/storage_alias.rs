@@ -122,9 +122,199 @@ fn main() -> status: std::process::ExitStatus pure {
         Some("EFF-5"),
         "the scope exclusion rests on checked argument disjointness"
     );
+    for (before, after) in [
+        (
+            "reads(source), writes(destination)",
+            "reads(source.bytes), writes(destination)",
+        ),
+        (
+            "reads(source), writes(destination)",
+            "reads(source), writes(destination.inner.next), writes(destination.inner.len)",
+        ),
+    ] {
+        let narrowed = std::str::from_utf8(source)
+            .expect("test source")
+            .replace(before, after);
+        let narrow_llvm = compile(narrowed.as_bytes());
+        let narrow_copy = emitted_function(&narrow_llvm, "copy_owners");
+        assert!(
+            !narrow_copy.contains("!alias.scope") && !narrow_copy.contains("!noalias"),
+            "both complete-state read and write coverage are required: {narrow_copy}"
+        );
+    }
     // Incorrect exclusions or primitive expansion can leave the destination
     // length below 16 (code 1) or corrupt a copied byte (code 2). Zero-trip
     // calls exercise two owners of the shared empty header too.
+    for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
+        let output = compile_and_run(module);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
+
+#[test]
+fn ring_head_read_can_share_an_owner_with_a_back_append() {
+    let source = br#"fn observe_and_append(source: &Box<Ring<u8>>, target: &Box<Ring<u8>>) -> result: u64 reads(source.inner.head), writes(target.inner.next), writes(target.inner.len) contract {
+  requires target^.inner.len < target^.inner.cap;
+  ensures target^.inner.len == entry(target)^.inner.len + 1_u64;
+} {
+  let observed = source^.inner.head;
+  place_back(window: &target^.inner, value: 7_u8);
+  return observed;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let window = box_ring_new::<u8>(capacity: 17_u64);
+  place_back(window: &window.inner, value: 7_u8);
+  for (
+    i in 0_u64..16_u64,
+    invariant length: window.inner.len == 1_u64
+  ) {
+    let observed = observe_and_append(source: &window, target: &window);
+    if observed != i {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if window.inner.head != i {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if window.inner.len != 2_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    if window.inner[0_u64] != 7_u8 {
+      return std::process::exit_status(code: 4_u8);
+    }
+    if window.inner[1_u64] != 7_u8 {
+      return std::process::exit_status(code: 5_u8);
+    }
+    let removed = take_front(window: &window.inner);
+    if removed != 7_u8 {
+      return std::process::exit_status(code: 6_u8);
+    }
+  }
+  if window.inner.head != 16_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let final_value = take_back(window: &window.inner);
+  if final_value != 7_u8 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  if window.inner.head != 16_u64 {
+    return std::process::exit_status(code: 9_u8);
+  }
+  if window.inner.len != 0_u64 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let observe = emitted_function(&llvm, "observe_and_append");
+    let head_reads = observe
+        .lines()
+        .filter(|line| line.contains("load i64, ptr ") && line.contains("!tbaa !18"))
+        .collect::<Vec<_>>();
+    assert!(
+        !head_reads.is_empty(),
+        "the narrow head read must remain: {observe}"
+    );
+    assert!(
+        head_reads.iter().all(|line| !line.contains("!alias.scope")),
+        "a head-only row cannot scope every generated descendant access: {observe}"
+    );
+    assert!(
+        !observe.contains("!noalias"),
+        "partial write coverage cannot exclude another owner's complete scope: {observe}"
+    );
+    for row in ["place_back", "take_back"] {
+        let body = emitted_prelude_row(&llvm, row);
+        assert!(
+            body.lines()
+                .any(|line| line.contains("store i64 ") && line.ends_with("!tbaa !16")),
+            "the back operation must still update Ring length: {body}"
+        );
+        assert!(
+            !body
+                .lines()
+                .any(|line| line.contains("store i64 ") && line.contains("!tbaa !18")),
+            "a back operation must not rewrite the unchanged Ring head: {body}"
+        );
+    }
+    // The same Box reaches both formals. A stale head produces code 1 or 2;
+    // corrupt boundary or element updates produce codes 3 through 10. The IR
+    // assertions additionally catch metadata UB even when an unchanged-value
+    // head rewrite happens not to change this native execution's result.
+    for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
+        let output = compile_and_run(module);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
+
+#[test]
+fn a_filled_range_read_can_share_an_owner_with_a_back_append() {
+    let source = br#"fn append_range_length(source: &Box<Slots<u64>>, target: &Box<Slots<u64>>, lo: u64, hi: u64) -> result: unit reads(source.inner[lo..hi]), writes(target.inner.next), writes(target.inner.len) contract {
+  requires lo <= hi;
+  requires hi <= source^.inner.len;
+  requires target^.inner.len < target^.inner.cap;
+  ensures target^.inner.len == entry(target)^.inner.len + 1_u64;
+} {
+  let run = &source^.inner[lo..hi];
+  let count = run^.len;
+  place_back(window: &target^.inner, value: count);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let window = box_slots_new::<u64>(capacity: 18_u64);
+  place_back(window: &window.inner, value: 11_u64);
+  place_back(window: &window.inner, value: 22_u64);
+  for (
+    i in 2_u64..18_u64,
+    invariant length: window.inner.len == i
+  ) {
+    append_range_length(source: &window, target: &window, lo: 0_u64, hi: i);
+    if window.inner[i] != i {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if window.inner[0_u64] != 11_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if window.inner[1_u64] != 22_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+  }
+  if window.inner.len != 18_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  for (i in 2_u64..18_u64) {
+    if window.inner[i] != i {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let append = emitted_function(&llvm, "append_range_length");
+    let lengths = append
+        .lines()
+        .filter(|line| line.contains("load i64, ptr ") && line.contains("!tbaa !15"))
+        .collect::<Vec<_>>();
+    assert!(
+        !lengths.is_empty(),
+        "range formation currently loads the complete source window length: {append}"
+    );
+    assert!(
+        lengths.iter().all(|line| !line.contains("!alias.scope")),
+        "the implicit full-length load is outside reads(source.inner[lo..hi]): {append}"
+    );
+    assert!(
+        !append.contains("!noalias"),
+        "the source header can be the written target header: {append}"
+    );
+    // WIN-2 separates the filled prefix from next, but not the implicit
+    // descriptor access from the len write. Native execution checks every
+    // appended count (codes 1/5), the prefix (2/3), and final length (4).
+    // The preliminary full-length load is later replaced by hi - lo: the
+    // metadata absence, not a predicted native miscompile, detects the old UB.
     for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
         let output = compile_and_run(module);
         assert_eq!(output.status.code(), Some(0), "{output:?}");

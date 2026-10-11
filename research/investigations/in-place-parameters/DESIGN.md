@@ -1582,6 +1582,18 @@ require the public union intrinsic. Omitting that internal copy leaves
 fixture admission and emitted results await CI.
 
 
+The added consumed-union witness makes aliasing concrete rather than merely
+permitting it in the ABI: both the unchanged-result call and the
+write-then-observe call must pass identical input and result pointers. It
+checks that the unchanged public transfer is an untagged `memmove`, and
+that a capture precedes construction in the aliased public destination.
+Across 32 Number seeds, an omitted or late capture observes the replacement
+Function(99) as 100 instead of the original first seed 7 (exit 2); exits 1
+and 3 check the unchanged result and replacement respectively. Both normal
+optimized and retained-call native forms are wired through the shared
+helper. This adds executed overlap coverage without changing the existing
+result/input alias contract; admission and execution await CI.
+
 ## Readonly-owner access scopes
 
 Question: after storage-role TBAA hoists Halo's source pointer, do access
@@ -1631,7 +1643,8 @@ separate these loaded pointers. LLVM's
 [pointer based-on rules](https://llvm.org/docs/LangRef.html#pointer-aliasing-rules)
 do not make a loaded pointer based on the address of its owner slot.
 
-GitHub API access to the requested pinned Halo source failed in this round.
+GitHub API access to the requested pinned Halo source failed again during
+the per-word repair (`error connecting to api.github.com`).
 A saved read-only source copy has the matching `concat_batch_copy` loop:
 `reads(vm), reads(stack), writes(bytes)`; it reads
 `vm^.heap.strings.inner[si].payload.bytes.inner` and appends into
@@ -1657,30 +1670,75 @@ additional lifetime mapping and matching exits.
 
 ### Proposed access mapping and implementation
 
-The narrow mapping uses the checked `readonly_reference_parameters` already
-retained from EFF-2's declared rows. Eligible functions are ordinary,
-synchronous and unsplit, with at least one readonly ordinary reference and
-one other ordinary reference that may write. Ranges, runs, waiting and
-overlapping functions, alias-permitting rows and missing source signatures
-receive no scopes. A module-wide plan assigns collision-free numbered
-metadata nodes after the fixed TBAA nodes; each activation declares its
-readonly scopes with `llvm.experimental.noalias.scope.decl`, so LLVM has
-the scope lifetime when inlining or duplicating a loop.
+The former mapping incorrectly treated the absence of declared writes through
+one formal as coverage of every physical load through it, and treated every
+boundary store through another formal as a declared write. A fresh review of
+`4260c8688` found two admitted same-owner counterexamples. With
+`reads(source.inner.head), writes(target.inner.next), writes(target.inner.len)`,
+EFF-5 permits the same Ring Box for both arguments: head and next/len are
+disjoint [WIN-2]. The back operation nevertheless emitted:
+
+```rust
+"  store i64 {new_head}, ptr {head_address}{}{}",
+storage_alias::runtime_word(run_type, field),
+owner_alias
+```
+
+That unchanged head rewrite was excluded from the reader's scope even though
+both accesses touched the same word. The repair removes head stores from
+back placement and removal, rather than annotating an undeclared write.
+Likewise `reads(source.inner[lo..hi])` beside writes of `target.inner.next`
+and `target.inner.len` permits sharing when the range is already filled
+[WIN-2, EFF-5]. `SliceFromRun` loads the whole descriptor length before
+forming its range count; the old `run_word` attached `owner_alias.read(run)`
+to this implicit load although the declared range read excludes the length
+word. The conformance case `eff5-pos-two-arguments-range-beside-append`
+establishes the permitted sharing independently of the backend.
+
+The revised mapping requires complete-state declared coverage. Lowering
+retains separate whole-read and whole-write formal sets only for ordinary
+reference parameters with a declared effect path rooted at that parameter
+and with no suffix. A scoped reader must also remain readonly (no declared
+write rooted there). EFF-1 states that a bare parameter names the complete
+state it supplies: reads(root) covers every observed descendant, and
+writes(root) covers every accessed descendant. Thus each exact physical
+word in a tagged typed projection is covered, including a supporting
+header load. An excluded runtime boundary store must have one whole-write
+formal origin. EFF-5 compares these effects from different arguments and
+rejects overlapping read/write state; OWN-7 supplies the path comparison.
+Partial rows receive no scopes or exclusions, even when an individual
+access could be proved separate with a more detailed path mapping. This is
+an equivalent sufficient per-word criterion, not a claim that every read
+through a readonly reference is exhibited in its row.
+
+Eligible functions remain ordinary, synchronous and unsplit, with at least
+one qualifying whole-state readonly reference and one whole-state writing
+reference. Ranges, runs, waiting and overlapping functions, alias-permitting
+rows and missing source signatures receive no scopes. A module-wide plan
+assigns collision-free numbered metadata nodes after the fixed TBAA nodes;
+each activation declares its readonly scopes with
+`llvm.experimental.noalias.scope.decl`, so LLVM has the scope lifetime when
+inlining or duplicating a loop.
 
 A finite provenance propagation carries formal roots through typed
 `ProjectAddress` operations and incoming block arguments. A use gets a fact
 only when its origins are exactly one formal; unknown definitions explicitly
 contribute an unknown origin, and mixed joins keep their uncertainty.
-Scalar loads and runtime header reads through a readonly root receive
-`!alias.scope`. Runtime window boundary-header stores through a different,
-writing root receive `!noalias` listing the readonly scopes. Reads never
-receive that exclusion. This states EFF-5's actual read/write separation,
-not allocation identity: read/read sharing of empty headers is allowed,
-and the shared empty header is never written [STOR-1, OP-10]. Source typed
-paths and reference validity [REF-1, REF-2], exact row coverage [EFF-2],
-and OWN-7's effect-path separation remain the premises. Scalar read scopes
-are needed as well as header scopes: otherwise a source byte load could
-still alias a delayed destination-length store.
+Reads never receive write-side exclusions. STOR-1's shared empty header is
+immutable, so two read collections can still share it while no admitted
+boundary store writes it. Source typed paths and reference validity
+[REF-1, REF-2] remain premises. Scalar read scopes are needed as well as
+header scopes: otherwise a source byte load could still alias a delayed
+destination-length store.
+
+A full per-word effect-path mapper could retain more facts for narrow rows,
+but would need to distinguish explicit measure reads, implicit range
+support, and every boundary's physical writes. It is unnecessary for the
+observed concat row, whose source reads and destination writes are complete
+roots. Withholding partial-row facts closes the correctness defect without
+changing source spelling, effect rules, allocation semantics or runtime
+checks. Blanket owner scopes and owner-pointer attributes still assert a
+stronger contract than the language supplies.
 
 Only the selected runtime header stores carry exclusions. Whole-value
 construction/replacement/transfers, public result writes, owned by-value
@@ -1709,6 +1767,40 @@ under one owner; readonly-root scopes concern reads versus another
 reference root's boundary-header writes. The latter does not add scopes to
 Paged directory entries or general element writes, so no additional claim
 about Snowghost's same-owner Paged field-store reload is established here.
+
+### Physical-access audit and concat preservation
+
+All owner-scope attachment sites use the revised complete-state gates:
+
+| Attachment site | Exact physical access and coverage |
+| --- | --- |
+| `operations::emit_load` | Scalar or Box-owner word reached by a typed projection of one whole-read readonly formal; EFF-1 covers that exact word and every reached descendant. No source store gets an owner exclusion here. |
+| `runs::emit_run_measure` Array length branch | The Array header length word below the whole-read formal; partial length-only rows receive no scope. |
+| `runs::run_word` | Runtime Array/Slots/Ring/Paged length, capacity, Ring head or Paged directory-capacity word. Explicit measures and implicit slice/boundary/projection support loads use the same gate: only complete-state read coverage licenses a scope. Fixed-capacity inline descriptors remain unscoped. |
+| `runs::move_run_boundary` length store | Slots/Ring/Paged length word below a whole-write formal; the excluded scope belongs to another whole-read formal, so EFF-5 would reject sharing of that word. |
+| `runs::move_run_boundary` Ring head store | Only front operations now store the changed head, under the same whole-write gate. Back operations emit no head store. |
+
+Paged directory entries, generic element stores, whole-value transfers,
+result construction and opaque calls gain no owner exclusions. Their
+existing storage-role TBAA policy remains separate from these scoped
+read/write facts; no new claim about Paged directory relocation follows
+from this repair. Module scope declarations and definitions contain no
+memory access of their own. Unknown/mixed origins and owned input/result
+storage remain outside the mapping.
+
+In the saved Halo loop, the source length and byte addresses descend from
+`vm` and the destination length store descends from `bytes`.
+`reads(vm)` covers the source header and payload word accesses;
+`writes(bytes)` covers the destination length word. These are the complete
+bare roots that the new gates retain. Therefore the source length/byte
+loads still carry the vm scope and the destination length store still
+excludes it after the single-primitive call expansion. Destination reads
+receive no write-side exclusion; same-owner destination length recurrence
+remains intact, while capacity/length roles are separated by the existing
+TBAA. The stricter mapping removes neither half of the intended source-read
+versus destination-length-store fact. This is IR-emission reasoning, not
+new emitted Halo IR or evidence that LLVM hoists/unrolls the loop. The
+pinned remote source remains unavailable in this session.
 
 The scope definitions currently travel through the shared module header,
 which the existing fragment splitter and cache serialize. The scope plan
@@ -1744,23 +1836,51 @@ The existing cached-module and function/module-fragment roundtrip witness
 also checks the scope definitions and intrinsic declaration. None of these
 fixtures or checks was run locally.
 
+The new same-Box Ring witness appends and takes from the front for 16
+iterations, checking each observed/current head, length and both byte values;
+its final back take must preserve head 16. IR assertions require the explicit
+head read to remain unscoped and both back primitives to update length but
+emit no head store. The Slots range witness appends its current filled-prefix
+range count for 16 iterations and checks counts 2 through 17, unchanged
+prefix values 11/22 and final length 18. Its implicit header length loads must
+be unscoped and its partial-row function must carry no exclusions. Each
+executes normal optimized and retained-call native forms. The metadata/head
+store assertions deterministically fail on the old emission; these native
+programs are semantic oracles, not evidence that the old metadata must
+produce a particular wrong output (the unchanged store and overwritten
+preliminary range length may optimize away). Separate whole-read/partial-write
+and partial-read/whole-write variants of the positive copy fixture require no
+scopes, so omitting either new coverage gate fails independently.
+
 Remaining uncertainties are fixture admission, LLVM verification on both
 native toolchains, final full-LTO cost and inlining, header promotion and
 unrolling, and same-source Halo/Snowghost timing. No inference here treats
 O3 IR as the actual full-LTO optimization result, or attributes Snowghost's
 slowdown without its own evidence. No language/specification contract was
-changed. The scoped mapping deliberately covers only known readonly roots
-and runtime boundary stores; provenance across opaque calls or general
-writes remains a compiler information gap rather than a source restriction.
+changed. The scoped mapping deliberately covers only known whole-state
+readonly roots and whole-state-covered runtime boundary stores; provenance
+across opaque calls or general writes remains a compiler information gap
+rather than a source restriction.
 
 
-A fresh read-only completion review inspected all eleven changed files from
-`4753d28fb` through this working tree, including emitters and their retained
+The previous round's read-only completion review inspected the changes
+from `4753d28fb` through `4260c8688`, including emitters and their retained
 checker facts, primitive expansion, fixtures, cache/fragment transport,
 specification premises, design ancestors and the research additions. It
-found no remaining issue after a local indentation repair. Applicable
+found no remaining issue after a local indentation repair; the subsequent
+Astra review of `4260c8688` supplied the two physical-access counterexamples
+above, superseding that round's alias-soundness conclusion. Applicable
 repository, citation, case and design-correspondence checks passed inspection;
 fixture admission/native outputs, target LLVM verification and activation
 handling, the complete alias argument beyond local inspection, and actual
 optimization/performance remain unverified. No build, test, check, formatter
 or optimizer was run locally, and no board or approval log was changed.
+
+
+A fresh independent read-only completion review of the per-word repair,
+configured as GPT-6 Astra with high effort, inspected all eleven changed
+files against `4260c8688`, the attachment sites, provenance, constructors,
+fixtures and design/specification correspondence. It found no issue within
+that inspection scope. Fixture admission, negative-control failures, native
+execution, LLVM scope handling, CI gates and performance remain unverified;
+no local build, test, formatter, optimizer or check was run.

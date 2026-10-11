@@ -399,6 +399,132 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn union_results_preserve_consumed_inputs_when_the_destination_aliases_them() {
+    let source = br#"nocopy enum AliasedSnapshot {
+  Number(n: u64);
+  Function(id: u64);
+  Native(id: u64);
+  Empty();
+}
+
+fn observe_snapshot(value: AliasedSnapshot) -> result: u64 pure {
+  match move value {
+    Number(n: number) => {
+      return number;
+    }
+    Function(id: function_id) => {
+      return function_id +wrap 1_u64;
+    }
+    Native(id: native_id) => {
+      return native_id +wrap 2_u64;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn unchanged_snapshot(value: AliasedSnapshot) -> result: AliasedSnapshot pure {
+  return move value;
+}
+
+fn replace_snapshot(value: AliasedSnapshot, observed: &u64) -> result: AliasedSnapshot writes(observed) {
+  let replacement = AliasedSnapshot::Function(id: 99_u64);
+  let original = observe_snapshot(value: move value);
+  set observed^ = original;
+  return move replacement;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (round in 0_u64..32_u64) {
+    let seed = round +wrap 7_u64;
+    let unchanged_input = AliasedSnapshot::Number(n: seed);
+    let unchanged = unchanged_snapshot(value: move unchanged_input);
+    let unchanged_observed = observe_snapshot(value: move unchanged);
+    if unchanged_observed != seed {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let replacement_input = AliasedSnapshot::Number(n: seed);
+    let original_observed = 0_u64;
+    let replacement = replace_snapshot(value: move replacement_input, observed: &original_observed);
+    let replacement_observed = observe_snapshot(value: move replacement);
+    if original_observed != seed {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if replacement_observed != 100_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    let unchanged = emitted_function(&module, "unchanged_snapshot");
+    let result_transfer = unchanged
+        .lines()
+        .find(|line| line.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"))
+        .expect("whole union return keeps the overlap-safe intrinsic");
+    assert!(
+        !result_transfer.contains("!tbaa")
+            && !result_transfer.contains("!alias.scope")
+            && !result_transfer.contains("!noalias"),
+        "the result/input overlap must remain admitted: {result_transfer}"
+    );
+    let replacement = emitted_function(&module, "replace_snapshot");
+    let capture = replacement
+        .lines()
+        .position(|line| {
+            ((line.contains("@llvm.memmove.") || line.contains("@llvm.memcpy."))
+                && line.contains(", ptr %wf.arg.v0, i64 "))
+                || line.contains("; end layout-bounded transfer from %wf.arg.v0 to ")
+        })
+        .expect("preserve the incoming snapshot before an aliased result write");
+    let write = replacement
+        .lines()
+        .position(|line| {
+            line.trim_start().starts_with("store ") && line.contains(", ptr %wf.result")
+        })
+        .expect("construct the new variant directly in the public result");
+    let read = replacement
+        .lines()
+        .position(|line| line.contains("@wf_observe_snapshot("))
+        .expect("observe the original after constructing the replacement");
+    assert!(capture < write && write < read, "{replacement}");
+    assert!(
+        !replacement.contains("@wf_observe_snapshot(ptr %wf.arg.v0)"),
+        "the later observation must use the captured snapshot: {replacement}"
+    );
+    let main = super::emitted_body(&module, "main");
+    for name in ["unchanged_snapshot", "replace_snapshot"] {
+        let call = main
+            .lines()
+            .find(|line| line.contains(&format!("@wf_{name}(")))
+            .expect("main calls the union-result callee");
+        let arguments = call
+            .split_once(&format!("@wf_{name}("))
+            .unwrap()
+            .1
+            .split(')')
+            .next()
+            .unwrap()
+            .split(", ")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments[0], arguments[1],
+            "the union destination really aliases the consumed input: {call}"
+        );
+    }
+    // An incorrect overlap promise can corrupt the unchanged Number result
+    // (code 1). A missing/late capture reads Function(99) as 100 instead of
+    // the original Number(7) in the first iteration (code 2); code 3 checks
+    // that the replacement itself survives the original-input observation.
+    for native in [module.clone(), super::owned_places::retain_calls(&module)] {
+        let output = super::compile_and_run(&native);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
+
+#[test]
 fn union_pointer_and_one_bit_intervals_use_byte_capture() {
     with_ir(SOURCE, |program| {
         for triple in [

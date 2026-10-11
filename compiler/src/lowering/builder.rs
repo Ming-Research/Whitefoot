@@ -505,6 +505,25 @@ fn lower_function<'program>(
         {
             builder.readonly_reference_parameters.push(value);
         }
+        // A bare effect root covers every descendant [EFF-1]. Retain this
+        // stronger fact separately from readonly: a range or measure-only
+        // row need not cover every physical descriptor access used to lower it.
+        if parameter.mode == CheckedMode::Reference {
+            if function
+                .declared_state_reads
+                .iter()
+                .any(|path| path.root == parameter.declaration && path.steps.is_empty())
+            {
+                builder.whole_read_reference_parameters.push(value);
+            }
+            if function
+                .declared_state_writes
+                .iter()
+                .any(|path| path.root == parameter.declaration && path.steps.is_empty())
+            {
+                builder.whole_write_reference_parameters.push(value);
+            }
+        }
         if parameter.mode == CheckedMode::Reference
             && function
                 .declared_state_writes
@@ -706,6 +725,8 @@ struct IrBuilder<'program> {
     bindings: HashMap<BindingId, IrValueId>,
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
+    whole_read_reference_parameters: Vec<IrValueId>,
+    whole_write_reference_parameters: Vec<IrValueId>,
     box_keeping_reference_parameters: Vec<IrValueId>,
     source_calls: Vec<IrSourceCall>,
     values: Vec<IrType>,
@@ -816,6 +837,8 @@ impl<'program> IrBuilder<'program> {
             bindings: HashMap::new(),
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
             box_keeping_reference_parameters: Vec::new(),
             source_calls: Vec::new(),
             values: Vec::new(),
@@ -893,6 +916,8 @@ impl<'program> IrBuilder<'program> {
             name,
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
+            whole_read_reference_parameters: self.whole_read_reference_parameters,
+            whole_write_reference_parameters: self.whole_write_reference_parameters,
             box_keeping_reference_parameters: self.box_keeping_reference_parameters,
             source_signature: None,
             source_calls: self.source_calls,

@@ -126,15 +126,19 @@ pub(super) fn runtime_word(ty: IrType, field: u32) -> &'static str {
     role.attachment()
 }
 
-/// Each readonly formal has a scope, but only writes through another formal
-/// exclude it. Read/read aliasing (including the shared empty header) remains
-/// possible. EFF-2 supplies readonly roots; EFF-5 separates another argument's
-/// writes. Result destinations and by-value inputs make no such promise.
+/// A scope requires a readonly formal with a bare-root declared read; an
+/// exclusion requires a different formal with a bare-root declared write.
+/// EFF-1 covers every physical descendant word in both sets, so EFF-5 rejects
+/// sharing for each load/store pair. Narrow rows need not cover implicit
+/// accesses such as a range's preliminary full-length load. Read/read sharing
+/// (including the shared empty header) remains possible. Result destinations
+/// and by-value inputs make no such promise.
 #[derive(Default)]
 pub(super) struct OwnerAliases {
     roots: HashMap<IrValueId, BTreeSet<usize>>,
     reads: BTreeMap<usize, usize>,
     writes: Option<usize>,
+    writing_formals: BTreeSet<usize>,
 }
 
 fn readonly_formals(function: &IrFunction) -> Vec<usize> {
@@ -151,7 +155,7 @@ fn readonly_formals(function: &IrFunction) -> Vec<usize> {
         .any(|(index, (value, ty))| {
             matches!(ty, IrType::Address(_))
                 && signature.parameters().get(index) == Some(&crate::IrSourceMode::Reference)
-                && !function.readonly_reference_parameters.contains(value)
+                && function.whole_write_reference_parameters.contains(value)
         })
     {
         return Vec::new();
@@ -163,7 +167,8 @@ fn readonly_formals(function: &IrFunction) -> Vec<usize> {
         .filter_map(|(index, (value, ty))| {
             (matches!(ty, IrType::Address(_))
                 && signature.parameters().get(index) == Some(&crate::IrSourceMode::Reference)
-                && function.readonly_reference_parameters.contains(value))
+                && function.readonly_reference_parameters.contains(value)
+                && function.whole_read_reference_parameters.contains(value))
             .then_some(index)
         })
         .collect()
@@ -239,6 +244,17 @@ impl OwnerAliases {
         let mut result = Self {
             reads: reads.clone(),
             writes: Some(*writes),
+            writing_formals: function
+                .parameters()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (value, _))| {
+                    function
+                        .whole_write_reference_parameters
+                        .contains(value)
+                        .then_some(index)
+                })
+                .collect(),
             ..Self::default()
         };
         // Unknown provenance is an explicit member, so a phi cannot acquire a
@@ -322,7 +338,7 @@ impl OwnerAliases {
 
     pub(super) fn write(&self, value: IrValueId) -> String {
         match self.root(value) {
-            Some(root) if root != usize::MAX && !self.reads.contains_key(&root) => self
+            Some(root) if self.writing_formals.contains(&root) => self
                 .writes
                 .map_or_else(String::new, |scope| format!(", !noalias !{scope}")),
             _ => String::new(),
