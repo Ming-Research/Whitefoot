@@ -1,0 +1,17 @@
+fn exactly_seven(word: &u64) -> result: u64 reads(word) contract {
+  requires word^ == 7_u64;
+} {
+  return word^;
+}
+
+fn observe_reborrow(rows: &[Array<Array<u8, 7>, 4>]) -> result: u64 reads(rows) contract {
+  requires 0_u64 < rows^.len;
+} {
+  doc "FN-8, MSR-1, REF-1, REF-4: an ordinary reborrow of rows^ forms a single reference to the outer Array. Indexing that single referent selects an inner Array whose length seven discharges the borrowed-word requirement.";
+  let row = &rows^;
+  return exactly_seven(word: &row^[0_u64].len);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

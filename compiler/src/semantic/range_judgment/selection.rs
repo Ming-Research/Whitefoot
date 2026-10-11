@@ -477,7 +477,9 @@ pub(super) fn term(expression: &CheckedExpression) -> bool {
 fn offsets(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &CheckedExpression> {
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-        CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
     })
 }
 
@@ -508,7 +510,9 @@ fn range_path(path: &[CheckedPlaceStep], mut below_element: bool) -> bool {
             below_element = true;
             admitted
         }
-        CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => true,
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => true,
     })
 }
 

@@ -417,6 +417,15 @@ impl<'a> SnapshotFacts<'a> {
             .then_some(value);
         }
         match self.definitions[value]? {
+            IrOperation::ProjectAddress {
+                address,
+                projection: crate::IrPlaceStep::Measure { measure },
+            } if matches!(self.function.value_type(*address), Some(IrType::Address(base)) if measure.type_constant(base.ty()).is_some()) =>
+            {
+                // [STOR-7] this pointer names shared immutable target storage,
+                // not an allocation belonging to its source owner.
+                None
+            }
             IrOperation::ProjectAddress { address, .. } | IrOperation::Load { address, .. } => {
                 self.root(index(*address), visiting)
             }

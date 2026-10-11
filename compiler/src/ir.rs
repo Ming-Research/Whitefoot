@@ -774,6 +774,53 @@ pub enum IrMeasure {
     Head,
 }
 
+impl IrMeasure {
+    /// A declared [PRE-1, MSR-1] measure fixed by the source type.
+    /// Its readonly reference may share immutable target storage [STOR-7].
+    pub(crate) const fn type_constant(self, ty: IrType) -> Option<u64> {
+        match (self, ty) {
+            (Self::Length, IrType::Array { length, .. }) => Some(length),
+            (
+                Self::Capacity,
+                IrType::Window {
+                    capacity: Some(capacity),
+                    ..
+                },
+            ) => Some(capacity),
+            _ => None,
+        }
+    }
+
+    /// The actual descriptor word of a declared [PRE-1, MSR-2] measure.
+    /// Type-constant fields use immutable target storage instead, and
+    /// [MSR-1] derived observations never name addressable descriptor storage.
+    pub(crate) const fn descriptor_field(self, ty: IrType) -> Option<u32> {
+        match (self, ty) {
+            (Self::Length, IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeySet)
+            | (Self::Length, IrType::Window { .. }) => Some(0),
+            (Self::Length, IrType::Entries { .. }) => Some(2),
+            (Self::Capacity, IrType::Window { capacity: None, .. }) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: Some(_),
+                    ..
+                },
+            ) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: None,
+                    ..
+                },
+            ) => Some(2),
+            _ => None,
+        }
+    }
+}
+
 /// Which of [BLK-3]'s four boundary operations one run operation is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrBoundary {
@@ -802,6 +849,9 @@ impl IrBoundary {
 pub enum IrPlaceStep {
     /// A field of directly stored nominal content.
     Field { nominal: IrNominalId, field: u32 },
+    /// A declared readonly [PRE-1, MSR-2] field, using immutable target
+    /// storage when its value is fixed by the source type.
+    Measure { measure: IrMeasure },
     /// The allocation payload reached through a stored Box owner slot.
     BoxReferent { nominal: IrNominalId },
     /// One payload field of an enum in directly addressed storage.

@@ -1,0 +1,5 @@
+public fn replace_identity(number: &u64) -> result: unit writes(number) doc "Replaces the referenced number.";
+
+public fn update_map(map: &ConcurrentHashMap<pkg::packets::Packet>, key: &[u8]) -> result: unit reads(key), writes(map) doc "Attempts to replace a readonly packet identity in a map entry.";
+
+public fn main() -> status: std::process::ExitStatus pure doc "Runs the program.";

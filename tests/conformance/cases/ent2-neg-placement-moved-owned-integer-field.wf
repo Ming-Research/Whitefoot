@@ -1,0 +1,15 @@
+nocopy struct Cell {
+  value: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit writes(cells) {
+  let source = Cell(value: 1_u8);
+  set cells^[0_u64] = move source;
+  let ref = &cells^[0_u64];
+  let value = ref^.value + 254_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
