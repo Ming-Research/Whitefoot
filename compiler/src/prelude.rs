@@ -411,6 +411,14 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/map_scan_within.wf",
+        PreludeSource::Function,
+        r#"fn map_scan_within<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, limit: u64, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+};
+"#,
+    ),
+    (
         "prelude/map_clear.wf",
         PreludeSource::Function,
         r#"fn map_clear<V: drop>(map: &ConcurrentHashMap<V>) -> result: unit writes(map);
