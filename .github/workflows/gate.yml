@@ -34,8 +34,8 @@ permissions:
 # A ready event and a push to the same branch share one group, so the later
 # run, which covers both platforms whenever the pull request is ready, wins.
 # If a push run asks GitHub before the ready state is visible, it runs Linux
-# only and Gate on both platforms is absent for that head: the merge check
-# refuses it and a manual run qualifies it.
+# only and Gate on both platforms is skipped, not passed, for that head: a
+# merge requires that job's success, and a manual run qualifies the head.
 concurrency:
   group: gate-${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
@@ -321,7 +321,7 @@ jobs:
           for group in $groups; do
             for os in ubuntu-24.04 macos-15; do
               name="$group ($os)"
-              conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name { print $3; exit }')
+              conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name && found == "" { found = $3 } END { print found }')
               if [ "$conclusion" = success ]; then
                 echo "ok      $name"
               else
