@@ -139,6 +139,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/DecisionCell.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct DecisionCell {
+}
+"#,
+    ),
+    (
         "prelude/box_new.wf",
         PreludeSource::Function,
         r#"fn box_new<T>(value: T) -> result: Box<T> pure;
@@ -462,6 +469,36 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/release.wf",
         PreludeSource::Function,
         r#"fn release<T: drop>(value: T) -> result: unit pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_new.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_new() -> result: DecisionCell pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_share.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
+"#,
+    ),
+    (
+        "prelude/decision_cell_read.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_written.wf",
+        PreludeSource::Function,
+        r#"fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_killed.wf",
+        PreludeSource::Function,
+        r#"fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
 "#,
     ),
 ];

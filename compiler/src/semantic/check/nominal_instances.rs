@@ -11,7 +11,7 @@ use crate::{
 
 use super::super::model::{
     CheckedConstructor, CheckedElement, CheckedField, CheckedNominal, CheckedNominalKind,
-    CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, NominalId,
+    CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, IntegerType, NominalId,
 };
 use super::generics::GenericSubstitution;
 use super::{
@@ -785,6 +785,18 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
+                    if template.name == "DecisionCell"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Shared {
+                        state: CheckedType::Integer(IntegerType::U32),
+                        shape: CheckedShared::Object,
+                    }
+                }
+                DeclarationRole::Struct
                     if template.name == "Frozen"
                         && self
                             .types
@@ -1129,7 +1141,8 @@ impl<'unit> Checker<'_, 'unit> {
                 PreludeType::Overflow
                 | PreludeType::DivError
                 | PreludeType::NarrowError
-                | PreludeType::ScanStep => prelude,
+                | PreludeType::ScanStep
+                | PreludeType::DecisionState => prelude,
             };
             if substituted == prelude {
                 return Ok(CheckedType::Nominal(id));
@@ -1965,6 +1978,7 @@ impl<'unit> TypeContext<'unit> {
                 "Frozen" => OpaqueStruct::Frozen,
                 "Shared" => OpaqueStruct::Shared,
                 "SharedRead" => OpaqueStruct::SharedRead,
+                "DecisionCell" => OpaqueStruct::DecisionCell,
                 "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             });

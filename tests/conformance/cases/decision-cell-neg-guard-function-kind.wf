@@ -1,0 +1,14 @@
+fn was_written<T: drop, fn attempt(cell: &T) -> result: DecisionState reads(cell)>(cell: &T) -> result: Bool reads(cell) {
+  let winner = attempt(cell: cell);
+  let written = Written();
+  return winner == written;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  let target = shared_new::<u8>(value: 0_u8);
+  atomic byte = &target when was_written::<DecisionCell, fn claim_written>(cell: &cell) {
+    set byte^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

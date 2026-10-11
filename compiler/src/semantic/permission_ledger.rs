@@ -309,6 +309,11 @@ pub(crate) fn denied_detail<Source: LedgerSource>(
             statement_name(*side),
             source.spelling(call)?
         ),
+        Denial::DecisionCell { side, call } => format!(
+            "{} contains the decision-cell boundary call {}",
+            statement_name(*side),
+            source.spelling(call)?
+        ),
     };
     Ok(format!("condition {condition}: {reason}"))
 }

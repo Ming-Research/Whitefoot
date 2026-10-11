@@ -277,6 +277,7 @@ impl<'unit> Checker<'_, 'unit> {
                             | crate::BuiltinPreludeId::DIV_ERROR_TYPE
                             | crate::BuiltinPreludeId::NARROW_ERROR_TYPE
                             | crate::BuiltinPreludeId::SCAN_STEP
+                            | crate::BuiltinPreludeId::DECISION_STATE
                     ) =>
                 {
                     if targs.is_some() {
@@ -294,6 +295,7 @@ impl<'unit> Checker<'_, 'unit> {
                         crate::BuiltinPreludeId::DIV_ERROR_TYPE => PreludeType::DivError,
                         crate::BuiltinPreludeId::NARROW_ERROR_TYPE => PreludeType::NarrowError,
                         crate::BuiltinPreludeId::SCAN_STEP => PreludeType::ScanStep,
+                        crate::BuiltinPreludeId::DECISION_STATE => PreludeType::DecisionState,
                         _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                     };
                     return Ok(CheckedType::Nominal(self.types.prelude_nominal(ty)?));
@@ -1858,6 +1860,7 @@ impl<'unit> TypeContext<'unit> {
                     Some(PreludeType::DivError) => (27, None),
                     Some(PreludeType::NarrowError) => (28, None),
                     Some(PreludeType::ScanStep) => (29, None),
+                    Some(PreludeType::DecisionState) => (30, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)

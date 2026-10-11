@@ -262,7 +262,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test decision-cell-test cancel-test driver-service-test driver-service-native-test completion-native-test completion-fork-capsule-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -487,6 +487,18 @@ $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
 
+# The decision-cell probe uses private driver identities, with the production
+# bridge included in its translation unit and all other runtime objects reused.
+DECISION_CELL_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(filter-out $(COMPLETION_DIR)/bridge.c,$(COMPLETION_RUNTIME_SOURCES))) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/decision_cell_test.o
+$(COMPLETION_TMP)/objects/bridge-default-probe/completion/decision_cell_test.o: $(COMPLETION_DIR)/bridge.c
+$(COMPLETION_TMP)/decision-cell-test: $(DECISION_CELL_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+decision-cell-test: $(COMPLETION_TMP)/decision-cell-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/decision-cell-test"
+
 # Cancellation runtime probe uses the private bridge/ordinary bodies in its
 # own translation unit to control park/fire interleavings. Other native
 # objects are the default-route probe's existing compatible construction.
@@ -582,7 +594,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
-	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
+	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/decision-cell-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
 	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
@@ -829,7 +841,7 @@ completion-windows-wine:
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: concurrent-map-test-sanitized concurrent-map-test-tsan
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test \
+	docs completion-test completion-test-images completion-native-test completion-fork-capsule-test concurrent-map-test shared-object-test decision-cell-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

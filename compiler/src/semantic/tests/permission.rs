@@ -31,6 +31,45 @@ use super::super::permission::{
 use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
+/// Read/read footprints cannot reorder two control verdicts, including a
+/// helper whose signature carries the cell inside an aggregate. Before the
+/// boundary judgment these pairs were eligible once the new rows resolved.
+#[test]
+fn decision_cell_boundaries_keep_direct_and_wrapped_claims_in_order() {
+    let source = br#"struct VerdictHolder {
+  cell: DecisionCell;
+}
+
+fn wrapped(holder: &VerdictHolder) -> result: DecisionState reads(holder) {
+  return claim_written(cell: &holder^.cell);
+}
+
+fn decide(cell: &DecisionCell, holder: &VerdictHolder) -> result: unit reads(cell), reads(holder) {
+  let written = claim_written(cell: cell);
+  let killed = claim_killed(cell: cell);
+  let nested = wrapped(holder: holder);
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  let cell = decision_cell_new();
+  let other = decision_cell_share(cell: &cell);
+  let holder = VerdictHolder(cell: move other);
+  return decide(cell: &cell, holder: &holder);
+}
+"#;
+    let table = permission_of(source);
+    for (first, second) in [
+        ("claim_written", "claim_killed"),
+        ("claim_killed", "wrapped"),
+    ] {
+        assert!(matches!(
+            denial(pair_of(&table, "decide", first, second), 3),
+            Denial::DecisionCell { .. }
+        ));
+    }
+}
+
 #[test]
 fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
     // PAR-1 records pairs with at least one call, so each write is a helper
@@ -276,6 +315,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .map(|function| PermissionSignature {
                     name: function.name.clone(),
+                    decision_cell: false,
                     parameter_declarations: function
                         .parameters
                         .iter()

@@ -968,6 +968,52 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    pub(super) fn emit_decision_cell_new(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        nominal: IrNominalId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Nominal(nominal) || self.nominal(nominal)?.name() != "DecisionCell" {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__decision_cell_new"]);
+        writeln!(
+            self.output,
+            "  {} = call ptr @wf__decision_cell_new()",
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    pub(super) fn emit_decision_cell(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+        winner: Option<u32>,
+    ) -> Result<(), BackendFailure> {
+        if !matches!(ty, IrType::Nominal(id) if self.nominal(id)?.name() == "DecisionState")
+            || !matches!(self.value_type(object), Some(IrType::Nominal(id)) if self.nominal(id)?.name() == "DecisionCell")
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let entry = match winner {
+            None => "wf__decision_cell_read",
+            Some(1) => "wf__claim_written",
+            Some(2) => "wf__claim_killed",
+            _ => return Err(BackendFailure::InvalidIr),
+        };
+        self.names(&[entry]);
+        writeln!(
+            self.output,
+            "  {} = call i32 @{entry}(ptr {})",
+            self.value_name(result),
+            self.value_name(object),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// An acquire or a watch: the runtime answers 0 when this context holds
     /// the object at once and 1 when it has parked the frame, which then
     /// suspends until the runtime makes the context ready. A resumed acquire

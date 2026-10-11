@@ -1224,6 +1224,11 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A guard calls a boundary that can reach a one-shot decision cell [SHARE-2].
+    AtomicGuardDecisionCell {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// A spawn failed its position or its callee's condition [WAIT-3].
     InvalidSpawn {
         /// The failed condition.

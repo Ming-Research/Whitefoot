@@ -19,6 +19,7 @@ mod containers;
 /// The §9.1 cost census, every case of which compiles `wfgrep`.
 mod cost_shape;
 mod counted_ranges;
+mod decision_cell;
 mod deterministic_target;
 mod division_obligations;
 mod effect_attributes;

@@ -1,0 +1,23 @@
+struct VerdictHolder {
+  verdict: DecisionCell;
+}
+
+fn is_open(holder: &VerdictHolder) -> result: Bool reads(holder) {
+  let seen = decision_cell_read(cell: &holder^.verdict);
+  let open = Open();
+  return seen == open;
+}
+
+fn forward(holder: &VerdictHolder) -> result: Bool reads(holder) {
+  return is_open(holder: holder);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  let initial = VerdictHolder(verdict: move cell);
+  let target = shared_new::<VerdictHolder>(value: move initial);
+  atomic holder = &target when forward(holder: holder) {
+    let verdict = decision_cell_read(cell: &holder^.verdict);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

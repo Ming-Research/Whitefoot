@@ -376,6 +376,17 @@ void wf__shared_share(void *object);
 int wf__shared_release(void *object);
 void wf__shared_free(void *object);
 
+/* [PRE-1, SHARE-3] An opaque decision cell retains the ordinary shared
+ * header's handle count; its private state is not an atomic-statement unit.
+ * Share/release/free use the shared-handle functions above. Reading and each
+ * claim have their own sequentially consistent effect point, without taking
+ * a shared hold, registering a guard watch, or waiting for another context. */
+enum { WF_DECISION_OPEN = 0, WF_DECISION_WRITTEN = 1, WF_DECISION_KILLED = 2 };
+void *wf__decision_cell_new(void);
+uint32_t wf__decision_cell_read(void *cell);
+uint32_t wf__claim_written(void *cell);
+uint32_t wf__claim_killed(void *cell);
+
 /* An atomic statement [SHARE-2, SHARE-3]: `wf__shared_acquire` returns zero
  * when the running context now holds the object, for writing when `write` is
  * nonzero and for reading otherwise, and nonzero when it waits, after which
