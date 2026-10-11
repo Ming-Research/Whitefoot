@@ -6,25 +6,18 @@
 name: v2h-step
 
 on:
-  workflow_dispatch:
-    inputs:
-      runner:
-        description: GitHub-hosted or the owner's i9-14900K
-        type: choice
-        options: [github, 14900k]
-        default: github
-      rounds:
-        description: CoreMark launches per engine
-        type: string
-        default: "7"
-      prev:
-        description: Commit whose gen.py is the baseline
-        type: string
-        required: true
+  push:
+    branches: [claude/v2h-brtable-bounds]
+
+# A commit message containing [14900k] runs on the owner's i9-14900K with 7
+# launches per engine; otherwise a hosted runner checks the job with 2.
+env:
+  PREV: 89ddad8866e24aacadfb42217a594ad58996cff7
+  ROUNDS: ${{ contains(github.event.head_commit.message, '[14900k]') && '7' || '2' }}
 
 jobs:
   v2h-step:
-    runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ contains(github.event.head_commit.message, '[14900k]') && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +44,7 @@ jobs:
           set -eo pipefail
           out="$RUNNER_TEMP/v2h-step"
           mkdir -p "$out/prev-gen"
-          prev="${{ inputs.prev }}"
+          prev="$PREV"
           [ -n "$prev" ] || { echo "prev must name the earlier gen.py commit"; exit 1; }
           echo "prev $prev, head $(git rev-parse HEAD)"
           cargo fetch --locked --manifest-path compiler/Cargo.toml
@@ -88,5 +81,5 @@ jobs:
           engines=(step="$out/wasm-step" prev="$out/wasm-prev" twin="$out/wasm-twin")
           engines+=(wasmi="$RUNNER_TEMP/wasmi/bin/wasmi" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
           python3 "$probe" --module coremark.wasm --iterations 2000 \
-            --launches "${{ inputs.rounds }}" --tsv "$out/run.tsv" "${engines[@]}"
+            --launches "$ROUNDS" --tsv "$out/run.tsv" "${engines[@]}"
           cat "$out/run.tsv"
