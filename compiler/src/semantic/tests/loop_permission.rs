@@ -1908,6 +1908,38 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
+#[test]
+fn borrowed_match_dispatch_through_a_cross_element_alias_is_denied() {
+    let source = br#"enum Flag {
+  Off();
+  On();
+}
+
+fn update(flags: &Array<Flag, 4>) -> result: unit writes(flags) {
+  for @items (i in 0_u64..3_u64) {
+    set flags^[i] = Flag::On();
+    let next = i + 1_u64;
+    let selected = &flags^[next];
+    match &selected^ {
+      Off() => {
+      }
+      On() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let judged = only_loop(&table, "update");
+    assert!(matches!(denial(judged, 2), LoopDenial::SharedWrite { .. }));
+    assert_eq!(judged.actualization, None);
+}
+
 /// A read row on the mapped root is an access overlapping that root, and it
 /// descends from no proved element map, so the read counts do not balance and
 /// condition 2 denies.
