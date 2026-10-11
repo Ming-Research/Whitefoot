@@ -1008,7 +1008,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1152,7 +1152,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1194,7 +1194,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1383,8 +1383,20 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
-    /// [PROV-6] the operand of a destructuring consume: an ordinary consuming place use, judged by [OWN-1] exactly as
-    /// every other consuming position is.
+    /// [OWN-1, DIAG-1] struct destructuring uses the same copy spelling as
+    /// every other place use; name the complete repaired form at that site.
+    fn copy_move_repair(&self, use_node: NodeId) -> Result<&'static str, CheckStop> {
+        Ok(
+            if self.types.declarations.tree.production(use_node)? == Production::LetStmt {
+                "remove `move` from the destructuring: let N(f: a, ...) = p;"
+            } else {
+                "use the copy place without `move`"
+            },
+        )
+    }
+
+    /// [PROV-6] the operand of struct destructuring, judged by [OWN-1]
+    /// as an ordinary copying or consuming place use.
     pub(super) fn check_consumed_place(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -1401,7 +1413,7 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
             PlaceUseOptions {
                 explicit_move,
-                context: PlaceUseContext::InspectReferent,
+                context: PlaceUseContext::Ordinary,
                 loop_depth,
             },
         )

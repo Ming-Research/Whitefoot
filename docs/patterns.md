@@ -272,6 +272,25 @@ runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>` cannot be moved out of
 its cell; leave it there, or empty a boxed window and consume it with
 `free_empty` [TYPE-9, OP-14].
 
+To end ownership before the enclosing function returns, pass the value to
+`release::<T>(value: move value)`. Its ordinary `T: drop` bound admits affine
+and copy values; a copy argument is passed bare [PRE-1, OWN-1, PROV-6].
+
+Struct destructuring uses the same copy/move spelling [GRAM-4, PROV-6]:
+
+```whitefoot
+struct ScanResult {
+  size: u64;
+  accepted: Bool;
+}
+
+fn result_size(input: ScanResult) -> result: u64 pure {
+  let ScanResult(size: count, accepted: built) = input;
+  let original = input.size;
+  return original;
+}
+```
+
 Use one `Box` for independently owned heap storage. Do not add a second
 descriptor object around a runtime-capacity shape; the cell already owns that
 shape.

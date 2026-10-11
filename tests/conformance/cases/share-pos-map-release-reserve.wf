@@ -1,6 +1,6 @@
 const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
 
-fn release(store: &Shared<ConcurrentHashMap<Box<u64>>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
+fn reclaim_reserve(store: &Shared<ConcurrentHashMap<Box<u64>>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
   doc "Release reserve through a callee that only reads the map handle.";
   let freed = std::process::release_map_reserve::<Box<u64>>(map: store, meter: meter);
   return freed;
@@ -24,7 +24,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     set t^[b] = Some<Box<u64>>(value: move second);
   }
   let freed = std::process::release_map_reserve::<Box<u64>>(map: &store, meter: &meter);
-  let again = release(store: &store, meter: &meter);
+  let again = reclaim_reserve(store: &store, meter: &meter);
   let other = shared_share::<ConcurrentHashMap<Box<u64>>>(shared: &store);
   let through = std::process::release_map_reserve::<Box<u64>>(map: &other, meter: &meter);
   let count = 9_u64;

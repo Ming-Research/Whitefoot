@@ -2899,8 +2899,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
     // `map_scan`, `map_clear`, `key_set_new`,
     // `key_set_insert` and `key_set_read_key` [SHARE-1] and `free_empty`
-    // [OP-14], each with its type, const and value parameters in declared
-    // order and then its range postconditions' names and bound variables
+    // [OP-14] and `release` [PRE-1], each with its type, const and value
+    // parameters in declared order and then its range postconditions' names and bound variables
     // [RANGE-1].
     assert_eq!(first[51].1, "Bool");
     assert_eq!(first[73].1, "Int");
@@ -2948,12 +2948,16 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[213].1, "key_set_insert");
     assert_eq!(first[216].1, "key_set_read_key");
     assert_eq!(first[220].1, "free_empty");
-    // PRE-1 v0.123: 51 opaque records + 22 enum records + four built-in
-    // records + 146 function/parameter/range records = 223. Frozen adds four
-    // opaque records and frozen_new/frozen_share add three each. Count every
+    assert_eq!(first[223].1, "release");
+    assert_eq!(first[224].1, "T");
+    assert_eq!(first[225].1, "value");
+    // PRE-1 v0.126: 51 opaque records + 22 enum records + four built-in
+    // records + 149 function/parameter/range records = 226. Frozen adds four
+    // opaque records and frozen_new/frozen_share add three each; release adds
+    // its function, T and value, three records. Count every
     // declaration in the specification preorder, including owner-local ones.
-    assert_eq!(first.len(), 223);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
+    assert_eq!(first.len(), 226);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("value"));
     assert!(
         first
             .iter()
@@ -2965,11 +2969,11 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 223, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 226, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
-    let source = b"fn free_empty() -> result: unit pure {\n  return unit;\n}\n";
+    let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
     with_resolution_sources(
         &[SourceInput::new("collision.wf", source)],
         true,
@@ -2982,9 +2986,9 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             // PRE-1: 51 opaque records + 22 enum records + Int, Float,
-            // Eq, Run + 143 preceding function/parameter/range records.
+            // Eq, Run + 146 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 220)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 223)
             );
         },
     );

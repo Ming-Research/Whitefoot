@@ -8,6 +8,8 @@ Decision: `move` written on a copy value is a hard error and a copy value is use
 
 Decision: A generic body's consuming spelling is checked once against its type parameter's bound, written or absent, and not rejected again when a concrete argument is copy, a `move` of a value whose parameter was bounded `drop` or left unbounded denoting a copy at such an instance, because rechecking the spelling per concrete type would contradict authoring a generic body once against its bound, instead of per-instance rechecking.
 
+Decision: Proposed: Struct destructuring uses a bare copy place and copies its bound fields while leaving its source live, with affine and linear operands retaining the explicit `move` spelling, because structural copy otherwise makes a struct of copy fields impossible to destructure and OWN-1's instruction to remove `move` produces a grammar rejection, instead of admitting redundant `move` on copy values or keeping destructuring confined to noncopy structs.
+
 Rejected:
 - Replaced decision, that only resource-free primitives and tag-only enums copy on use while every other owned composite is affine: rejected because it was a starting simplification rather than a principle, it made a small value struct of copy fields uncopyable, and it let a declaration remove drop while copy could be neither removed nor obtained; its successor is the structural decision above.
 - Every enum affine regardless of payload, including Bool: rejected because it bought zero safety and forced integer-flag workarounds that cost a measured 1.6 to 1.8 times on scanner kernels, an owned Bool being unable to be loop-carried state or to flow through boolean dataflow, so that the recurrence vectorized at width two by four instead of sixteen.

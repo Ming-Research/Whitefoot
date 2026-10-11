@@ -1,0 +1,18 @@
+struct Parcel<T: copy> {
+  payload: T;
+}
+
+fn unpack<T: copy>(input: Parcel<T>) -> result: T pure {
+  let Parcel(payload: taken) = input;
+  let Parcel(payload: again) = input;
+  return again;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let parcel = Parcel<u64>(payload: 7_u64);
+  let taken = unpack::<u64>(input: parcel);
+  if taken != parcel.payload {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -75,7 +75,7 @@ fn a_linear_window_reaches_no_scope_exit_however_short_it_is_proved() {
   value: u64;
 }
 
-fn release(run: Slots<Token, 4>) -> result: unit pure contract {
+fn finish(run: Slots<Token, 4>) -> result: unit pure contract {
   requires run.len == 0_u64;
 } {
   return unit;
@@ -91,7 +91,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // An affine element type keeps its ordinary derived release on the same
     // edge, symbolic capacity included [STOR-3].
     assert_complete(
-        br#"fn release<const n: u64>(run: Slots<u64, n>) -> result: unit pure {
+        br#"fn finish<const n: u64>(run: Slots<u64, n>) -> result: unit pure {
   return unit;
 }
 
@@ -105,7 +105,7 @@ fn main() -> status: std::process::ExitStatus pure {
   value: u64;
 }
 
-fn release(run: Slots<Token, 4>) -> result: unit pure {
+fn finish(run: Slots<Token, 4>) -> result: unit pure {
   return unit;
 }
 

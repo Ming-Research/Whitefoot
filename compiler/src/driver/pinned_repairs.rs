@@ -1857,7 +1857,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "empty-run-release-over-a-parameter.wf",
-        rejected: br#"fn release(window: Box<Slots<u8>>) -> result: unit pure {
+        rejected: br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure {
   free_empty(window: move window);
   return unit;
 }
@@ -1869,9 +1869,9 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-14",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `release`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
+            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `finish`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
         ],
-        repaired: &[br#"fn release(window: Box<Slots<u8>>) -> result: unit pure contract {
+        repaired: &[br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure contract {
   requires window.inner.len == 0_u64;
 } {
   free_empty(window: move window);

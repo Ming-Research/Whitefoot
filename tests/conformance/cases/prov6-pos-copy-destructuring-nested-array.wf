@@ -1,0 +1,37 @@
+struct Inner {
+  stamp: u64;
+}
+
+struct Composite {
+  nested: Inner;
+  values: Array<u64, 4>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let seed = Inner(stamp: 7_u64);
+  let initial = array_filled::<u64, 4>(value: 11_u64);
+  let original = Composite(nested: seed, values: initial);
+  let Composite(nested: copied, values: elements) = original;
+  set copied.stamp = 13_u64;
+  set elements[0_u64] = 17_u64;
+  if original.nested.stamp != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if original.values[0_u64] != 11_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let Composite(nested: again, values: retained) = original;
+  if again.stamp != 7_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if retained[0_u64] != 11_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if copied.stamp != 13_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if elements[0_u64] != 17_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

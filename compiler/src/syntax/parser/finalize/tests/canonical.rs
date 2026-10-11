@@ -5,7 +5,8 @@ use super::super::{
     CanonicalResourceFailure, FinalizeOutcome, audit_canonical, finalize,
 };
 use super::support::{
-    CANONICAL_LIMITS, FINALIZE_LIMITS, reaches_canonical_syntax, rendered_bytes, with_parsed,
+    CANONICAL_LIMITS, FINALIZE_LIMITS, reaches_canonical_syntax, rendered_bytes, token_spellings,
+    with_parsed,
 };
 
 fn audit_source(source: &[u8], audit: impl FnOnce(CanonicalOutcome)) {
@@ -335,13 +336,14 @@ fn canonical_audit_resource_edges_are_explicit_and_deterministic() {
     });
 }
 
-/// Asserts that a source is canonical and that no single-byte trivia edit is.
+/// Asserts that a source is canonical and no token-preserving trivia edit is.
 ///
 /// The renderer is held to the same fixtures: canonical bytes must render to
 /// themselves, so every layout rule pinned here is pinned in both directions.
 fn only_these_trivia_bytes_render(canonical: &[u8]) {
     assert!(reaches_canonical_syntax(canonical));
     assert_eq!(rendered_bytes(canonical).as_deref(), Some(canonical));
+    let canonical_tokens = token_spellings(canonical).expect("canonical tokens");
     let trivia_positions: Vec<_> = canonical
         .iter()
         .enumerate()
@@ -351,18 +353,8 @@ fn only_these_trivia_bytes_render(canonical: &[u8]) {
     for position in trivia_positions {
         let mut removed = canonical.to_vec();
         removed.remove(position);
-        assert!(
-            !reaches_canonical_syntax(&removed),
-            "removing canonical trivia at byte {position} unexpectedly stayed canonical: {:?}",
-            String::from_utf8_lossy(&removed)
-        );
-
         let mut duplicated = canonical.to_vec();
         duplicated.insert(position, canonical[position]);
-        assert!(
-            !reaches_canonical_syntax(&duplicated),
-            "duplicating canonical trivia at byte {position} unexpectedly stayed canonical"
-        );
 
         let mut replaced = canonical.to_vec();
         replaced[position] = if canonical[position] == b' ' {
@@ -370,23 +362,40 @@ fn only_these_trivia_bytes_render(canonical: &[u8]) {
         } else {
             b' '
         };
-        assert!(
-            !reaches_canonical_syntax(&replaced),
-            "replacing canonical trivia at byte {position} unexpectedly stayed canonical"
-        );
-
         // Whatever a mutation derives, rendering it lands on canonical bytes
         // and stays there. A mutation that keeps the token stream renders back
         // to `canonical`; one that changes it renders that other program. The
         // fixed point is what holds for both, so it is what is asserted.
         for mutation in [&removed, &duplicated, &replaced] {
+            let same_tokens = token_spellings(mutation).as_ref() == Some(&canonical_tokens);
+            if same_tokens {
+                assert!(
+                    !reaches_canonical_syntax(mutation),
+                    "changing canonical trivia at byte {position} unexpectedly stayed canonical: {:?}",
+                    String::from_utf8_lossy(mutation)
+                );
+            }
             let Some(rendered) = rendered_bytes(mutation) else {
                 continue;
             };
+            if same_tokens {
+                assert_eq!(rendered.as_slice(), canonical);
+            }
             assert!(reaches_canonical_syntax(&rendered));
             assert_eq!(rendered_bytes(&rendered).as_ref(), Some(&rendered));
         }
     }
+}
+
+/// Removing the separator between `move` and its operand changes the tokens:
+/// `movetaken` is a valid bare place, not a noncanonical explicit move.
+#[test]
+fn copy_and_consuming_destructuring_keep_distinct_canonical_tokens() {
+    let consuming = b"fn probe() -> result: unit pure {\n  let Tree(left: kept, ..) = move taken;\n  return unit;\n}\n";
+    let copy = b"fn probe() -> result: unit pure {\n  let Tree(left: kept, ..) = movetaken;\n  return unit;\n}\n";
+    assert_ne!(token_spellings(consuming), token_spellings(copy));
+    only_these_trivia_bytes_render(consuming);
+    only_these_trivia_bytes_render(copy);
 }
 
 #[test]

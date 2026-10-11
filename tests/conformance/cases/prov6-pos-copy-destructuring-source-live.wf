@@ -1,0 +1,26 @@
+struct ScanResult {
+  size: u64;
+  accepted: Bool;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let accepted = True();
+  let rebuilt = ScanResult(size: 7_u64, accepted: accepted);
+  let ScanResult(size: count, accepted: built) = rebuilt;
+  if count != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let expected = True();
+  if built != expected {
+    return std::process::exit_status(code: 2_u8);
+  }
+  set rebuilt.size = 9_u64;
+  let ScanResult(size: again, ..) = rebuilt;
+  if again != 9_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if count != 7_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

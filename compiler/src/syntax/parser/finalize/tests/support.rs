@@ -77,6 +77,34 @@ pub(super) fn source_offsets(classified: &ClassifiedBundle) -> Vec<usize> {
     classified.source_offsets.clone()
 }
 
+/// Exact token spellings, excluding trivia, for layout mutation comparisons.
+pub(super) fn token_spellings(source: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let inputs = [SourceInput::new("generated.wf", source)];
+    let bundle = SourceBundle::with_limits(&inputs, SOURCE_LIMITS)
+        .expect("generated source envelope must remain valid");
+    let lexed = match lex(&bundle, LEX_LIMITS) {
+        LexOutcome::Complete(lexed) => lexed,
+        LexOutcome::SourceIssue(_) => return None,
+        other => panic!("generated source must not hit a non-source lex outcome: {other:?}"),
+    };
+    Some(
+        lexed
+            .lexemes()
+            .iter()
+            .filter_map(|lexeme| match lexeme {
+                crate::lexer::Lexeme::Token(token) => Some(
+                    lexed
+                        .source_bundle()
+                        .span_bytes(token.span())
+                        .expect("validated token span")
+                        .to_vec(),
+                ),
+                crate::lexer::Lexeme::Trivia(_) => None,
+            })
+            .collect(),
+    )
+}
+
 /// Renders one source's canonical bytes, or `None` when it reaches no tree.
 ///
 /// Rendering is defined on any source that parses, canonical or not, which is

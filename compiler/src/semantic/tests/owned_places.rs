@@ -58,7 +58,7 @@
 
 use crate::{SemanticIssueKind, SemanticRule};
 
-use super::{assert_accepts, assert_rule_at, assert_rule_kind};
+use super::{assert_accepts, assert_rule_at, assert_rule_kind, with_semantics};
 
 /// [OWN-1] one consuming use kills the whole binding that rooted the place, so
 /// a proved-distinct candidate index pair does not keep a later subscript
@@ -265,4 +265,150 @@ fn moving_an_array_or_window_element_still_reports_a_hole() {
             )
         });
     }
+}
+
+/// Struct destructuring follows the ordinary written copy/move judgment.
+#[test]
+fn copy_destructuring_preserves_its_source_and_noncopy_requires_move() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/prov6-pos-copy-destructuring-source-live.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/prov6-pos-copy-destructuring-reference.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/prov6-pos-generic-copy-destructuring.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_accepts(source);
+    }
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/own1-neg-affine-destructuring-without-move.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/own1-neg-linear-destructuring-without-move.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/own1-neg-affine-destructuring-reference-without-move.wf").as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Own1, |kind| {
+            matches!(kind, SemanticIssueKind::BareAffineUse { .. })
+        });
+    }
+    assert_rule_kind(
+        include_bytes!(
+            "../../../../tests/conformance/cases/own1-neg-copy-destructuring-with-move.wf"
+        ),
+        SemanticRule::Own1,
+        |kind| {
+            matches!(kind, SemanticIssueKind::MoveOfCopy { mechanical_fix }
+            if *mechanical_fix == "remove `move` from the destructuring: let N(f: a, ...) = p;")
+        },
+    );
+}
+
+/// Structural copy includes nested structs and fixed arrays; mutating either
+/// copied field cannot consume or change the original composite.
+#[test]
+fn copy_destructuring_preserves_nested_copy_struct_and_array_fields() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/prov6-pos-copy-destructuring-nested-array.wf"
+    ));
+}
+
+/// A drop-bound generic forwards an explicitly moved parameter to release,
+/// including at a concrete copy instance where the written bound owns spelling.
+#[test]
+fn a_generic_drop_bound_can_forward_its_parameter_to_release() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/pre1-pos-release-generic-drop-forwarding.wf"
+    ));
+}
+
+/// Release uses the ordinary drop bound and the ordinary call's move.
+#[test]
+fn release_consumes_drop_values_and_cannot_release_linear_values() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/pre1-pos-release-box.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/pre1-pos-release-copy.wf").as_slice(),
+    ] {
+        assert_accepts(source);
+    }
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/own1-neg-use-after-release.wf"),
+        SemanticRule::Own1,
+        |kind| matches!(kind, SemanticIssueKind::UseAfterMove { .. }),
+    );
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/pre1-neg-release-linear.wf"),
+        SemanticRule::Prov6,
+        |kind| matches!(kind, SemanticIssueKind::LinearityBoundMismatch { .. }),
+    );
+}
+
+/// PRE-1's supplied release body retains exactly the ordinary source
+/// function's component cleanup, before lowering; copy instantiations carry
+/// no cleanup. This catches a scalar drop and a whole-struct no-op drop.
+#[test]
+fn release_retains_the_ordinary_checked_scope_exit() {
+    let source = br#"struct Holder {
+  left: Box<u64>;
+  right: Box<u64>;
+}
+
+fn finish(value: Holder) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = box_new::<u64>(value: 1_u64);
+  let right = box_new::<u64>(value: 2_u64);
+  let held = Holder(left: move left, right: move right);
+  release::<Holder>(value: move held);
+  release::<u64>(value: 7_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        use crate::semantic::model::{CheckedExpression, CheckedStatement, CheckedValue};
+        let crate::SemanticOutcome::Complete(checked) = outcome else {
+            panic!("ordinary release instances must check: {outcome:?}");
+        };
+        let cleanup = |function: &crate::semantic::model::CheckedFunction| {
+            let body = function.body.as_ref().expect("supplied checked body");
+            let [
+                CheckedStatement::Return {
+                    value: CheckedExpression::Constant(CheckedValue::Unit),
+                    drops,
+                    ..
+                },
+            ] = body.as_slice()
+            else {
+                panic!("release is an ordinary unit return: {body:?}");
+            };
+            drops
+                .iter()
+                .map(|drop| (drop.fields.clone(), drop.ty))
+                .collect::<Vec<_>>()
+        };
+        let finish = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "finish")
+            .expect("ordinary source consuming function");
+        let ordinary = cleanup(finish);
+        assert_eq!(ordinary.len(), 3);
+        assert_eq!(ordinary[0].0, vec![0]);
+        assert_eq!(ordinary[1].0, vec![1]);
+        assert!(ordinary[2].0.is_empty());
+        let releases = checked
+            .data
+            .executable_functions()
+            .filter(|function| function.name == "release")
+            .map(cleanup)
+            .collect::<Vec<_>>();
+        assert_eq!(releases.len(), 2);
+        assert!(releases.contains(&ordinary));
+        assert!(releases.iter().any(Vec::is_empty));
+    });
 }

@@ -689,9 +689,8 @@ impl<'program> Walker<'program> {
                             &location.child(Step::Field(*ordinal)),
                             *ty,
                         ) {
-                            // A field of storage that is not handed over is
-                            // a copy; a statement form that always consumes
-                            // its operand [OWN-1] never reaches this arm.
+                            // Copy destructuring copies the selected field's
+                            // facts to independent storage [OWN-1, PROV-6].
                             Value::Owned(source) if copied => self.copied(&mut state, &source),
                             other => other,
                         },
