@@ -421,9 +421,23 @@ def computation_root(functions, root, active, arguments=None, argument_count=6):
         seen.add(current)
         instructions = functions[current]
         has_pool = any(target(insn) and target(insn)[1].removesuffix('@plt') == 'wf__par_pool_active' for insn in instructions if insn.mnemonic.startswith('call'))
-        has_clone_tail = any(insn.mnemonic == 'jmp' and target(insn) and target(insn)[1].startswith('wf__par_seq_') and canonical_symbol(target(insn)[1].split('+')[0]) != canonical_symbol(current) for insn in instructions) and not current.startswith('wf__par_seq_')
-        # Recognize a simple seq adapter tail jump as well.
-        simple_tail = len(instructions) == 1 and instructions[0].mnemonic == 'jmp'
+        addresses = {instruction.address for instruction in instructions}
+
+        def interfunction_tail(insn):
+            destination = target(insn)
+            return (insn.mnemonic == 'jmp' and destination is not None
+                    and destination[0] not in addresses
+                    and destination[1].split('+', 1)[0] != current)
+
+        # An ordinary entry selects its own sequential clone: canonical names
+        # deliberately coincide, but these are distinct machine functions.
+        # A sequential function's recursive backedge remains computation.
+        has_clone_tail = not current.startswith('wf__par_seq_') and any(
+            interfunction_tail(insn) and target(insn)[1].startswith('wf__par_seq_')
+            for insn in instructions)
+        # Recognize a simple seq adapter transfer, but never strip a local or
+        # self-recursive jump merely because the body has one instruction.
+        simple_tail = len(instructions) == 1 and interfunction_tail(instructions[0])
         if not (has_pool or has_clone_tail or simple_tail):
             return current, decisions
         if argument_count > 6:

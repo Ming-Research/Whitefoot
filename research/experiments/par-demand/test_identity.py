@@ -104,6 +104,32 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual((root, observed), ('wf__par_seq_body', trace))
             self.assertIsNone(first_difference(normalized(computation), normalized(demand[root])))
 
+    def test_renamed_region_can_select_an_unrelated_sequential_clone(self):
+        region = insns([('cmp', '$0x53b4,%rsi'),
+                        ('ja', '10c <wf_renamed+0xc>'),
+                        ('jmp', '600 <wf__par_seq_body>'), ('ret', '')])
+        computation = insns([('lea', '7(%rdx),%rax'), ('ret', '')])
+        functions = {'wf_renamed': region, 'wf__par_seq_body': computation}
+        self.assertEqual(computation_root(functions, 'wf_renamed', True,
+                                          {'rsi': 3}, 3),
+                         ('wf__par_seq_body', ['cheap-region']))
+
+    def test_sequential_recursive_tail_remains_computation(self):
+        function = insns([('test', '%rdi,%rdi'),
+                          ('je', '110 <wf__par_seq_body+0x10>'),
+                          ('sub', '$1,%rdi'),
+                          ('jmp', '100 <wf__par_seq_body>'), ('ret', '')])
+        functions = {'wf__par_seq_body': function}
+        self.assertEqual(computation_root(functions, 'wf__par_seq_body', False,
+                                          {'rdi': 3}, 1),
+                         ('wf__par_seq_body', []))
+
+    def test_single_recursive_tail_is_not_an_adapter_shell(self):
+        for name in ('wf_body', 'wf__par_seq_body'):
+            function = insns([('jmp', '100 <' + name + '>')])
+            self.assertEqual(computation_root({name: function}, name, False),
+                             (name, []))
+
     def test_test_instruction_ja_and_jbe_use_zero_flag(self):
         for mnemonic, expected in [('ja', 'wf__par_seq_zero'), ('jbe', 'wf__par_seq_nonzero')]:
             function = insns([('test', '%rsi,%rsi'), (mnemonic, '110 <body+0x10>'), ('jmp', '600 <wf__par_seq_zero>'), ('nop', ''), ('jmp', '700 <wf__par_seq_nonzero>')])
