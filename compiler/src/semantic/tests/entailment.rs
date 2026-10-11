@@ -5707,6 +5707,108 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A capacity's implicit component keeps its const parameter's narrower
+/// type. Equal explicit witnesses before give must not create a redundant
+/// delivery root, and the receiving invariant still sees the closed fact.
+#[test]
+fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
+    let source = br#"fn probe<const n: u8>(values: &Slots<u8, n>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+  let picked = if a {
+    let capacity = values^.cap;
+    let d = x;
+    if b {
+      invariant one: values^.cap <= d + 255_u64;
+    } else {
+      invariant two: values^.cap <= d + 255_u64;
+    }
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: values^.cap <= picked + 255_u64;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let received = summary
+        .source_proofs
+        .iter()
+        .find(|proof| proof.name == "received")
+        .expect("the receiver has its own invariant judgment");
+    assert!(
+        received.check.discharged(),
+        "implicit omission preserves the receiving judgment: {received:?}"
+    );
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(
+                relation,
+                Relation::Bound { left, bound: 255, .. }
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Capacity, _))
+            )
+        }),
+        "the capacity's implicit upper bound needs no delivery root"
+    );
+}
+
+/// S16 directly establishes the carrier's exact type upper bound. Its source
+/// proof wins the implicit witness before give, without an intervening join.
+#[test]
+fn delivery_implicit_omission_does_not_need_a_prior_join() {
+    let source = br#"fn probe(x: u8, side: Bool) -> result: u8 pure {
+  let picked = if side {
+    let d = x;
+    invariant upper: d <= 255_u8;
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: picked <= 255_u8;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    for name in ["upper", "received"] {
+        let proof = summary
+            .source_proofs
+            .iter()
+            .find(|proof| proof.name == name)
+            .expect("each written invariant has its own judgment");
+        assert!(proof.check.discharged(), "{name}: {proof:?}");
+    }
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: 0, .. })
+    )));
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(relation, Relation::Bound { right: ZERO, bound: 255, .. })
+        }),
+        "the directly established type bound needs no delivery root"
+    );
+}
+
 fn computed_grid_delivery(expression: &str) -> String {
     format!(
         "fn pick_line(lines: &Box<Slots<u64, 8>>, flag: Bool) -> result: u64 reads(lines) {{

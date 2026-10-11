@@ -22,7 +22,7 @@ use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
 use super::super::state::{
     DerivationId, DerivationNode, DistinctKey, FactState, FlowEventId, FlowEventKind,
-    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between,
+    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between, implicit_derives,
     zero_distinct_candidate,
 };
 use super::super::term::{
@@ -1790,11 +1790,10 @@ impl Vocabulary {
             );
         }
         let mut image = FactState::new();
-        let mut explicit = HashMap::new();
         let carried = closed
             .delivery_relations()
             .into_iter()
-            .filter(|(relation, parent)| {
+            .filter(|(relation, _)| {
                 // No fact on the fresh receiver takes part in selecting c -> x
                 // [ENT-5]: its only relations in the edge's state are implicit.
                 // A self-bound `c - c` says nothing about x, whichever proof
@@ -1802,9 +1801,17 @@ impl Vocabulary {
                 relation.terms().contains(&context.carrier)
                     && !relation.terms().contains(&context.receiver)
                     && !matches!(relation, Relation::Bound { left, right, .. } if left == right)
-                    && self
-                        .derivations
-                        .depends_on_explicit_relation(*parent, &mut explicit)
+                    // A universally implicit relation is reconstructed at
+                    // the same-typed receiver, regardless of which equal
+                    // witness the source closure selected [ENT-4, DIAG-2].
+                    && !implicit_derives(
+                        &self.terms,
+                        &substitute_delivery_relation(
+                            relation,
+                            context.carrier,
+                            context.receiver,
+                        ),
+                    )
             })
             .collect::<Vec<_>>();
         // [ENT-5] the join reads every image as closed. A bound between the
