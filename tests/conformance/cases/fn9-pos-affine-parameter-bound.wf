@@ -5,7 +5,8 @@ fn advance(base: u64, limit: u64) -> after: u64 pure contract {
   ensures after <= base + limit;
 } {
   doc "An ordinary user function proves a result bound by one datum plus one parameter, which was outside FN-9's former one-datum fragment.";
-  return base + 1_u64;
+  let advanced = base + 1_u64;
+  return advanced;
 }
 
 fn account(before: u64, left: u64) -> remaining: u64 pure contract {

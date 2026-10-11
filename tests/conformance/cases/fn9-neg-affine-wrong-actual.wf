@@ -4,7 +4,8 @@ fn advance(base: u64, limit: u64) -> after: u64 pure contract {
   ensures base <= after;
   ensures after <= base + limit;
 } {
-  return base + 1_u64;
+  let advanced = base + 1_u64;
+  return advanced;
 }
 
 fn account(before: u64, limit: u64, left: u64) -> remaining: u64 pure contract {
