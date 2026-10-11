@@ -1,0 +1,61 @@
+# Temporary: checker work counters for the many-arm join (board item lm-c3).
+# Removed before any branch built on it is ready.
+name: probe-join-counters
+
+on:
+  push:
+    branches: [claude/check-join-counters]
+    paths: [.github/workflows/probe-join-counters.yml]
+
+jobs:
+  counters:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compiler
+        run: cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+      - name: Generate inputs
+        run: |
+          mkdir -p $RUNNER_TEMP/in
+          for n in 10 20 40 80 160 320 640; do
+            python3 research/investigations/check-time/series-gen.py $n > $RUNNER_TEMP/in/plain-$n.wf
+          done
+          python3 research/experiments/match-dispatch/wasm/gen.py $RUNNER_TEMP/in/nat.wf
+          sha256sum $RUNNER_TEMP/in/*.wf
+      - name: Record counters and time
+        run: |
+          bin=$GITHUB_WORKSPACE/compiler/target/gate/whitefootc
+          mkdir -p $RUNNER_TEMP/out
+          printf 'input\tseconds\tjoins\tjoin_passes\tinputs_sum\tunion_rows_max\tpairs_evaluated\tpairs_retained\tparent_references\tjoin_interns\tfunction_interns\tclosure_rows_sum\tsnapshot_cells_sum\n' > $RUNNER_TEMP/out/summary.tsv
+          for f in $RUNNER_TEMP/in/plain-*.wf $RUNNER_TEMP/in/nat.wf; do
+            name=$(basename $f .wf)
+            work=$RUNNER_TEMP/out/$name.tsv
+            start=$(date +%s.%N)
+            WHITEFOOT_CHECK_WORK=$work "$bin" --check "$f" > /dev/null
+            status=$?
+            end=$(date +%s.%N)
+            echo "$name exit $status"
+            awk -F'\t' -v name=$name -v secs=$(echo "$end - $start" | bc) '
+              $4=="function" && $6=="joins" {joins+=$7}
+              $4=="function" && $6=="join_passes" {passes+=$7}
+              $4=="function" && $6=="intern_calls" {fint+=$7}
+              $4=="join" && $6=="inputs" {inputs+=$7}
+              $4=="join" && $6=="union_rows" {if ($7>urmax) urmax=$7}
+              $4=="join" && $6=="pairs_evaluated" {pe+=$7}
+              $4=="join" && $6=="pairs_retained" {pr+=$7}
+              $4=="join" && $6=="parent_references" {pref+=$7}
+              $4=="join" && $6=="intern_calls" {jint+=$7}
+              $4=="closure" && $6=="rows_sum" {crows+=$7}
+              $4=="snapshot" && $6=="cells_sum" {scells+=$7}
+              END {printf "%s\t%.2f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", name, secs, joins, passes, inputs, urmax, pe, pr, pref, jint, fint, crows, scells}
+            ' $work >> $RUNNER_TEMP/out/summary.tsv
+          done
+          column -t -s $'\t' $RUNNER_TEMP/out/summary.tsv
+      - name: Largest joins of the 320-arm input
+        run: |
+          awk -F'\t' '$4=="join" {k=$2" "$3" "$5; v[k]=v[k]" "$6"="$7} END {for (k in v) print k, v[k]}' $RUNNER_TEMP/out/plain-320.tsv | sort -t= -k3 -n | tail -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: join-counters
+          path: ${{ runner.temp }}/out
