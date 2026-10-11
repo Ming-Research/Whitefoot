@@ -749,7 +749,11 @@ impl Reasoning<'_, '_, '_> {
         {
             let mut base = path.clone();
             base.path.pop();
-            let (ty, run) = measure_base?;
+            // Alias resolution fixes the measure's identity; only its
+            // standing bound needs the written container's type.
+            let Some((ty, run)) = measure_base else {
+                return Some(self.vocabulary.intern_measure(measure, &base));
+            };
             return Some(self.place_measure_term(
                 measure,
                 base,
