@@ -320,7 +320,7 @@ impl FunctionEmitter<'_, '_> {
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
         self.output.symbol("llvm.memmove.p0.p0.i64");
         self.output.symbol("wf__heap_give");
-        writeln!(self.output, "  %{tag}.first.pointer = load ptr, ptr {directory}\n  %{tag}.first.len = load i64, ptr {cell}\n  %{tag}.first.copied = mul nuw i64 %{tag}.first.len, {stride}\n  %{tag}.first.old.bytes = mul nuw i64 {old_extent}, {stride}\n  %{tag}.first.old.empty = icmp eq i64 %{tag}.first.old.bytes, 0\n  %{tag}.first.old.nonzero = select i1 %{tag}.first.old.empty, i64 1, i64 %{tag}.first.old.bytes\n  call void @llvm.memmove.p0.p0.i64(ptr {fresh}, ptr %{tag}.first.pointer, i64 %{tag}.first.copied, i1 false)\n  call void @wf__heap_give(ptr %{tag}.first.pointer, i64 %{tag}.first.old.nonzero)\n  store ptr {fresh}, ptr {directory}\n  br label %{tag}.first.done")
+        writeln!(self.output, "  %{tag}.first.pointer = load ptr, ptr {directory}\n  %{tag}.first.len = load i64, ptr {cell}\n  %{tag}.first.copied = mul nuw i64 %{tag}.first.len, {stride}\n  %{tag}.first.old.bytes = mul nuw i64 {old_extent}, {stride}\n  %{tag}.first.old.zero = icmp eq i64 %{tag}.first.old.bytes, 0\n  %{tag}.first.old.nonzero = select i1 %{tag}.first.old.zero, i64 1, i64 %{tag}.first.old.bytes\n  call void @llvm.memmove.p0.p0.i64(ptr {fresh}, ptr %{tag}.first.pointer, i64 %{tag}.first.copied, i1 false)\n  call void @wf__heap_give(ptr %{tag}.first.pointer, i64 %{tag}.first.old.nonzero)\n  store ptr {fresh}, ptr {directory}\n  br label %{tag}.first.done")
             .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.first.done"));
         Ok(())
