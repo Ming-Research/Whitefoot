@@ -45,15 +45,17 @@ fn every_integer_pair_has_uniform_conversion_interfaces() {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1
         );
         assert_eq!(expected.len(), 64);
-        for (function, (source_type, destination_type)) in
-            checked.data.functions.iter().zip(expected)
+        for (function, (source_type, destination_type)) in checked
+            .data
+            .executable_functions()
+            .filter(|function| function.body.is_some())
+            .zip(expected)
         {
             let [
                 CheckedStatement::Let { value: exact, .. },

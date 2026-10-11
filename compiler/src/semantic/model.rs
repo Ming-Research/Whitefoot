@@ -2815,9 +2815,8 @@ pub(crate) enum CheckedStatement {
         value: CheckedExpression,
     },
     /// [GRAM-4, CALL-4] `let (a, b) = f(...);`. One evaluation of a call whose
-    /// callee declares an ordered result list, or the source consumes a
-    /// struct or cell. Binders follow field order for products; a cell's
-    /// sole binder receives its referent.
+    /// callee declares an ordered result list, or struct destructuring
+    /// copies or consumes a struct [PROV-6]. Binders retain field ordinals.
     DestructuringLet {
         node_path: NodePath,
         /// Each binder, its selected value type, and the field or result
@@ -2827,9 +2826,9 @@ pub(crate) enum CheckedStatement {
         bindings: Vec<(BindingId, CheckedType, u32)>,
         /// [WIN-3, STOR-3] the compiler-derived release of every field a
         /// final `..` covers, in declaration order, rooted at the consumed
-        /// value. A result list covers nothing and carries none.
+        /// value. Copy destructuring and result lists carry no releases.
         covered: Vec<CheckedProjectedDrop>,
-        /// The consumed product or cell nominal [CALL-4, TYPE-6, S39].
+        /// The destructured struct or result-list nominal [PROV-6, CALL-4].
         nominal: NominalId,
         value: CheckedExpression,
     },

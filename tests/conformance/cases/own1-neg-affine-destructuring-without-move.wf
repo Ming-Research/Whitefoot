@@ -1,0 +1,9 @@
+nocopy struct Parcel {
+  payload: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let parcel = Parcel(payload: 7_u64);
+  let Parcel(payload: taken) = parcel;
+  return std::process::exit_status(code: 0_u8);
+}

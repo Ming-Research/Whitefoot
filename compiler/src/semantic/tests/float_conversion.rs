@@ -97,14 +97,16 @@ fn every_float_endpoint_pair_has_uniform_exact_checked_and_defined_interfaces() 
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1
         );
-        for (function, (expected_source, expected_destination, destination_name)) in
-            checked.data.functions.iter().zip(expected)
+        for (function, (expected_source, expected_destination, destination_name)) in checked
+            .data
+            .executable_functions()
+            .filter(|function| function.body.is_some())
+            .zip(expected)
         {
             let [
                 CheckedStatement::Let { value: exact, .. },
