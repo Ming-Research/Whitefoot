@@ -1,5 +1,5 @@
 # Temporary: checker work counters for the many-arm join (board item lm-c3).
-# Removed before any branch built on it is ready.
+# Removed before any branch built on it is ready. Round: implicit-bound join.
 name: probe-join-counters
 
 on:
