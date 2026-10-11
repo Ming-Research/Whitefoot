@@ -1738,7 +1738,7 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         // The same shape with exactly two payload variants has OP-9 ceiling
         // 20 rather than 28, and still admits one word in a 16-byte value.
         // This is a layout-only nominal probe; no altered function is emitted.
-        let mut halo_two = selected.clone();
+        let mut halo_two = selected.clone().into_owned();
         if let crate::IrNominalKind::Enum { variants } = &mut halo_two.nominals[cell.id().index()].kind {
             variants.truncate(2);
         }
