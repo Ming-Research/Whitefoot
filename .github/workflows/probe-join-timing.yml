@@ -1,0 +1,108 @@
+# Temporary: same-source check time of the implicit-bound join on the
+# owner's i9-14900K (board item lm-c3). Base = merge base with main, twin = a
+# byte copy of base, head = this branch. Reserved through the coordinator
+# session before each push of this file. Removed before the branch is ready.
+name: probe-join-timing
+
+on:
+  push:
+    branches: [claude/check-join-counters]
+    paths: [.github/workflows/probe-join-timing.yml]
+
+env:
+  ROUNDS: '6'
+  HALO_REF: 3ec418a72d0d0c3f59ca2e73bcdc8c44c6c33d64
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build base and head
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          mkdir -p "$RUNNER_TEMP/pkg/bin"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --bin whitefootc --locked
+          CARGO_TARGET_DIR="$RUNNER_TEMP/head-target" cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked
+          cp "$RUNNER_TEMP/base-target/gate/whitefootc" "$RUNNER_TEMP/pkg/bin/base"
+          cp "$RUNNER_TEMP/pkg/bin/base" "$RUNNER_TEMP/pkg/bin/twin"
+          cp "$RUNNER_TEMP/head-target/gate/whitefootc" "$RUNNER_TEMP/pkg/bin/head"
+          printf 'base=%s\nhead=%s\n' "$base" "$(git rev-parse HEAD)" > "$RUNNER_TEMP/pkg/identity.txt"
+          mkdir -p "$RUNNER_TEMP/pkg/in"
+          for n in 160 320 640; do
+            python3 research/investigations/check-time/series-gen.py $n > "$RUNNER_TEMP/pkg/in/plain-$n.wf"
+          done
+          python3 research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/pkg/in/nat.wf"
+          (cd "$RUNNER_TEMP/pkg" && sha256sum bin/* in/* > SHA256SUMS && cat SHA256SUMS)
+          tar -czf "$RUNNER_TEMP/pkg.tar.gz" -C "$RUNNER_TEMP/pkg" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: join-timing-pkg
+          path: ${{ runner.temp }}/pkg.tar.gz
+
+  timing:
+    needs: build
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Halo-wf
+          ref: ${{ env.HALO_REF }}
+          path: halo
+      - uses: actions/download-artifact@v4
+        with:
+          name: join-timing-pkg
+          path: ${{ runner.temp }}/dl-${{ github.run_id }}
+      - name: Interleaved timing
+        run: |
+          set -uo pipefail
+          work=$(mktemp -d "$RUNNER_TEMP/jt.XXXXXX")
+          tar -xzf "$RUNNER_TEMP/dl-$GITHUB_RUN_ID/pkg.tar.gz" -C "$work"
+          (cd "$work" && sha256sum -c --quiet SHA256SUMS)
+          cmp "$work/bin/base" "$work/bin/twin"
+          cat "$work/identity.txt"; uname -a; lscpu | grep -E "Model name|^CPU\(s\)"
+          halo=$GITHUB_WORKSPACE/halo/lib/halo
+          out="$work/times.tsv"
+          printf 'round\tinput\tbinary\tseconds\texit\n' > "$out"
+          run() {
+            input=$1; bin=$2; shift 2
+            start=$(date +%s.%N)
+            "$@" > /dev/null 2>&1
+            code=$?
+            end=$(date +%s.%N)
+            printf '%s\t%s\t%s\t%.3f\t%s\n' "$round" "$input" "$bin" "$(echo "$end - $start" | bc)" "$code" >> "$out"
+          }
+          orders=("base twin head" "twin head base" "head base twin")
+          for round in $(seq 1 $ROUNDS); do
+            order=${orders[$(( (round - 1) % 3 ))]}
+            for input in plain-160 plain-320 plain-640 nat halo-vm; do
+              for bin in $order; do
+                b="$work/bin/$bin"
+                if [ "$input" = halo-vm ]; then
+                  (cd "$halo" && run "$input" "$bin" "$b" --check --graph modules.wfg --check-module pkg::vm)
+                else
+                  run "$input" "$bin" "$b" --check "$work/in/$input.wf"
+                fi
+              done
+            done
+          done
+          cat "$out"
+          python3 - "$out" <<'PY'
+          import sys, statistics, collections
+          rows=[l.rstrip('\n').split('\t') for l in open(sys.argv[1])][1:]
+          t=collections.defaultdict(list); codes=collections.defaultdict(set)
+          for r,i,b,s,e in rows:
+              t[(i,b)].append(float(s)); codes[(i,b)].add(e)
+          print('input\tbase_med\ttwin_med\thead_med\ttwin/base\thead/base\thead_range\texits(base/twin/head)')
+          for i in ['plain-160','plain-320','plain-640','nat','halo-vm']:
+              m={b:statistics.median(t[(i,b)]) for b in ['base','twin','head']}
+              h=t[(i,'head')]
+              print(f"{i}\t{m['base']:.3f}\t{m['twin']:.3f}\t{m['head']:.3f}\t{m['twin']/m['base']:.3f}\t{m['head']/m['base']:.3f}\t{min(h):.3f}-{max(h):.3f}\t{sorted(codes[(i,'base')])}/{sorted(codes[(i,'twin')])}/{sorted(codes[(i,'head')])}")
+          PY
