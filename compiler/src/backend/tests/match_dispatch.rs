@@ -1549,10 +1549,15 @@ fn make_cell_into(target: &Cell) -> result: u32 writes(target) {
   set target^ = value;
   match value {
     Add(value: v, extra: e) => {
-      let extra = cvt::<u8, u32>(e^);
-      return v^ +wrap extra;
+      let extra = cvt::<u8, u32>(e);
+      return v +wrap extra;
     }
-    _ => { return 0_u32; }
+    Halt(..) => {
+      return 0_u32;
+    }
+    Sub(..) => {
+      return 0_u32;
+    }
   }
 }
 
@@ -1583,13 +1588,24 @@ fn main() -> status: ExitStatus pure {
   let copied = copy_cell(cell: &first);
   let internal_copy = Cell::Halt(value: 0_u32, extra: 0_u8);
   let made = make_cell_into(target: &internal_copy);
-  if made != 9_u32 { return exit_status(code: 3_u8); }
+  if made != 9_u32 {
+    return exit_status(code: 3_u8);
+  }
   match internal_copy {
     Add(value: v, extra: e) => {
-      if v^ != 7_u32 { return exit_status(code: 4_u8); }
-      if e^ != 2_u8 { return exit_status(code: 4_u8); }
+      if v != 7_u32 {
+        return exit_status(code: 4_u8);
+      }
+      if e != 2_u8 {
+        return exit_status(code: 4_u8);
+      }
     }
-    _ => { return exit_status(code: 4_u8); }
+    Halt(..) => {
+      return exit_status(code: 4_u8);
+    }
+    Sub(..) => {
+      return exit_status(code: 4_u8);
+    }
   }
   copy_cell_into(cell: &copied, target: &internal_copy);
   push(code: &code, cell: internal_copy);

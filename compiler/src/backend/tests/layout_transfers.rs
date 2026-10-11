@@ -203,8 +203,21 @@ fn make_value_into(target: &Value) -> result: u32 writes(target) {
   let value = Value::H1(h: 7_u32);
   set target^ = value;
   match value {
-    H1(h: h) => { return h^; }
-    _ => { return 0_u32; }
+    H1(h: handle) => {
+      return handle;
+    }
+    Nil() => {
+      return 0_u32;
+    }
+    Num(..) => {
+      return 0_u32;
+    }
+    H2(..) => {
+      return 0_u32;
+    }
+    H3(..) => {
+      return 0_u32;
+    }
   }
 }
 
@@ -236,15 +249,35 @@ fn make_large_into(target: &Large) -> result: u8 writes(target) {
 
 fn observe_overlay(value: &Overlay) -> result: u32 reads(value) {
   match value^ {
-    Bits(lo: lo, hi: hi) => { return lo^; }
-    _ => { return 0_u32; }
+    Bits(lo: low, hi: high) => {
+      return low^;
+    }
+    Owner(..) => {
+      return 0_u32;
+    }
+    Flag(..) => {
+      return 0_u32;
+    }
   }
 }
 
 fn observe_value(value: &Value) -> result: u32 reads(value) {
   match value^ {
-    H1(h: h) => { return h^; }
-    _ => { return 0_u32; }
+    H1(h: handle) => {
+      return handle^;
+    }
+    Nil() => {
+      return 0_u32;
+    }
+    Num(..) => {
+      return 0_u32;
+    }
+    H2(..) => {
+      return 0_u32;
+    }
+    H3(..) => {
+      return 0_u32;
+    }
   }
 }
 
@@ -252,7 +285,9 @@ fn return_local_value(seed: u32) -> result: Value pure {
   let inner = Value::H1(h: seed);
   let holder = Wrapped(prefix: 19_u64, value: inner);
   let observed = observe_value(value: &holder.value);
-  if observed != seed { return Value::Nil(); }
+  if observed != seed {
+    return Value::Nil();
+  }
   return holder.value;
 }
 
@@ -279,30 +314,64 @@ fn make_overlay_into(target: &Overlay) -> result: u32 writes(target) {
 fn main() -> status: std::process::ExitStatus pure {
   let target = TenWords(a: 0_u32, b: 0_u32, c: 0_u32, d: 0_u32, e: 0_u32, f: 0_u32, g: 0_u32, h: 0_u32, i: 0_u32, j: 0_u32);
   let observed = make_ten_into(target: &target);
-  if observed != 1_u32 { return std::process::exit_status(code: 1_u8); }
+  if observed != 1_u32 {
+    return std::process::exit_status(code: 1_u8);
+  }
   let returned = return_ten(value: &target);
   let copied = TenWords(a: 0_u32, b: 0_u32, c: 0_u32, d: 0_u32, e: 0_u32, f: 0_u32, g: 0_u32, h: 0_u32, i: 0_u32, j: 0_u32);
   copy_ten(target: &copied, value: returned);
-  if copied.a != 1_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.b != 2_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.c != 3_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.d != 4_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.e != 5_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.f != 6_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.g != 7_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.h != 8_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.i != 9_u32 { return std::process::exit_status(code: 2_u8); }
-  if copied.j != 10_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.a != 1_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.b != 2_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.c != 3_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.d != 4_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.e != 5_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.f != 6_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.g != 7_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.h != 8_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.i != 9_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if copied.j != 10_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
   let local_result = return_local_value(seed: 37_u32);
   let observed_result = observe_value(value: &local_result);
-  if observed_result != 37_u32 { return std::process::exit_status(code: 3_u8); }
+  if observed_result != 37_u32 {
+    return std::process::exit_status(code: 3_u8);
+  }
   let updated = update_local_ten(source: &target, target: &copied, replacement: 41_u32);
-  if updated != 41_u32 { return std::process::exit_status(code: 4_u8); }
-  if copied.a != 41_u32 { return std::process::exit_status(code: 4_u8); }
-  if copied.j != 10_u32 { return std::process::exit_status(code: 4_u8); }
+  if updated != 41_u32 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if copied.a != 41_u32 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if copied.j != 10_u32 {
+    return std::process::exit_status(code: 4_u8);
+  }
   let unchanged = copy_local_ten(source: &target, target: &copied);
-  if unchanged != 1_u32 { return std::process::exit_status(code: 5_u8); }
-  if copied.a != 1_u32 { return std::process::exit_status(code: 5_u8); }
+  if unchanged != 1_u32 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if copied.a != 1_u32 {
+    return std::process::exit_status(code: 5_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;

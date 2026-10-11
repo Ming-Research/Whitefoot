@@ -643,6 +643,13 @@ fn replace_choice(target: &Choice, value: Choice) -> result: unit writes(target)
   return unit;
 }
 
+fn replace_local_number(target: &Choice, value: u64) -> result: u64 writes(target) {
+  let local = Choice::Number(value: value);
+  let observed = read_payload(target: &local);
+  set target^ = move local;
+  return observed;
+}
+
 fn write_payload(target: &Choice, value: u64) -> result: unit writes(target) {
   match target^ {
     Owner(value: cell) => {
@@ -721,6 +728,14 @@ fn main() -> status: std::process::ExitStatus pure {
     if last_observed != last {
       return std::process::exit_status(code: 6_u8);
     }
+    let copied = replace_local_number(target: &target, value: round);
+    if copied != round {
+      return std::process::exit_status(code: 7_u8);
+    }
+    let local_observed = read_payload(target: &target);
+    if local_observed != round {
+      return std::process::exit_status(code: 8_u8);
+    }
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -759,10 +774,40 @@ fn main() -> status: std::process::ExitStatus pure {
         "variant construction changes storage role: {make}"
     );
     let replace = emitted_function(&llvm, "replace_choice");
-    let (transfer, _, _) = super::layout_transfers::transfer_region(replace);
+    let transfers: Vec<_> = replace
+        .lines()
+        .filter(|line| line.contains("call void @llvm.memmove.p0.p0.i64("))
+        .collect();
+    assert_eq!(transfers.len(), 1, "one incoming whole-value copy: {replace}");
+    assert!(
+        transfers[0].contains("(ptr %v0, ptr %wf.arg.v1,"),
+        "copy the incoming value directly into the target: {replace}"
+    );
+    assert!(
+        transfers[0].contains(&format!(
+            "i64 ptrtoint (ptr getelementptr (%wf.t.{choice}, ptr null, i32 1) to i64), i1 false)"
+        )),
+        "the intrinsic copies the complete selected Choice representation: {replace}"
+    );
+    assert!(
+        !replace.contains("; layout-bounded transfer "),
+        "an incoming source retains its whole intrinsic: {replace}"
+    );
+    assert!(
+        !transfers[0].contains("!tbaa"),
+        "whole-value transition clobbers all roles: {replace}"
+    );
+    let local = emitted_function(&llvm, "replace_local_number");
+    let (transfer, _, destination) = super::layout_transfers::transfer_region(local);
+    assert_eq!(destination, "%v0", "the local value reaches the target: {local}");
+    assert!(
+        transfer.contains("load i32") && transfer.contains("store i32")
+            && transfer.contains("call void @llvm.memmove.p0.p0.i64("),
+        "observe scalar granules and byte-preserving overlaid owner storage: {local}"
+    );
     assert!(
         !transfer.contains("!tbaa"),
-        "whole-value transition clobbers all roles: {replace}"
+        "bounded whole-value transitions also clobber all roles: {local}"
     );
     let write = emitted_function(&llvm, "write_payload");
     assert!(
@@ -784,6 +829,9 @@ fn main() -> status: std::process::ExitStatus pure {
     // bytes could become an invalid owner, or the restored Number could still
     // expose the old pointer. The six checks observe both transitions and the
     // writes on either side in each iteration, rather than only their IR.
+    // The local constructor is observed before transfer (code 7), preventing
+    // destination routing, and the transferred payload is observed after it
+    // (code 8), so bounded transfers exercise the same storage-role barrier.
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
