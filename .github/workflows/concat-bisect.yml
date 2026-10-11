@@ -17,6 +17,7 @@ defaults:
 
 jobs:
   inspect:
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -68,6 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           git log --oneline -1
+          make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
           for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
             echo "release = $release" > whitefoot.pin
