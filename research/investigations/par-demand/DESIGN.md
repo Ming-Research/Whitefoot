@@ -2982,7 +2982,7 @@ the owner chooses that boundary and the acceptable dispatch cost.
 
 ### Canonical sequential lowering before loop synthesis
 
-The common first step for the construction alternatives is to preserve the
+The common first step for demand's construction alternatives is to preserve the
 non-parallel lowering before any parallel synthesis. The question is whether
 each sequential computation reached by W1 dispatch, cheap-region selection,
 budget exhaustion or sequential refusal has the same pre-optimization LLVM
@@ -2994,7 +2994,7 @@ synthesized chunk call in an original sequential function, a changed parallel
 body, a lost dependency or a changed ordinary callable ABI rejects this step.
 The compiler cases run in CI; no local build or execution qualifies it.
 
-The proposed implementation retains a separately lowered `Off` program made
+The proposed demand implementation retains a separately lowered `Off` program made
 from the same checked program, selected entry roots and target before the
 existing parallel builder runs. It emits that program with the ordinary
 sequential emitter, then imports the computation's recorded definition,
@@ -3007,11 +3007,47 @@ source helpers reached below a selected root belong to this closure even if
 their offers were pruned. Synthesized variants required only for captured-ABI
 worker fallback remain separate from it.
 
-This replaces two former assumptions in the proposed design tree: that
+For demand only, this replaces two former assumptions in the proposed design tree: that
 upward hand-out reachability alone found every body requiring a sequential
 variant, and that an outlined sequential chunk would inline back to the
 non-parallel input. The parallel leaf still loops over a subrange; this step
 does not select a common native object or an LLVM inlining boundary.
+
+The registered `legacy-identity` control remains unchanged: `--par` emission
+must match the pre-prototype compiler at `ac5f1498a` byte for byte on its nine
+sources. Canonical construction is therefore limited to demand, with no
+retained `Off` graph in eager modes. `--par` keeps the transformed-graph clones,
+upward clone set and whole-function clone emission. Extending canonical
+construction to `--par` requires a separate qualified comparison across Halo,
+Firn and Snowghost builds; experiment 6 does not move that baseline.
+
+The hosted control at `bb29a0dfc` reported `parallel/tree.wf` first and stopped
+there. The broader On effects below are code deductions from the canonical
+importer and the legacy LLVM definitions, not nine newly measured failures.
+The earlier hosted artifacts at `968ed23c8` record all nine legacy pairs as
+byte-identical to `ac5f1498a`. Every source has sequential clone roots: the
+broader construction moved those original-function definitions from the
+ordinary clone emission into the canonical import after module attributes,
+so it changed module bytes even where a body's instructions could agree.
+
+| Registered source | Additional effect of the reverted canonical On construction |
+| --- | --- |
+| `parallel/tree.wf` | Expanded the recursive closure to ordinary helpers such as `mix`, `leaf` and `branch`, redirecting formerly shared calls to new sequential variants. |
+| `parallel/range_fold.wf` | Replaced `folded`'s captured chunk call with its in-place loop and added canonical `mix` and output helpers. |
+| `parallel/indexed_reductions.wf` | Restored the histogram, extrema and product loops inside their source variants rather than calling synthesized reduction chunks; retained aggregate destination bodies and added construction helpers. |
+| `compute/mandelbrot.wf` | Restored the rendering map inside `render_points` and added the previously shared `escape_count` to the canonical closure. |
+| `compute/records.wf` | Restored the output map inside `summarize_records` and added `record_summary` and `validate_record`, including destination-form bodies. |
+| `compute/fir.wf` | Restored the output and tap loops inside `filter` rather than entering a captured outer chunk, and added allocation/fill helpers. |
+| `compute/stencil.wf` | Restored source row and grid loops and the two row phases inside their source variants; the time-step dependency remained sequential. |
+| `compute/prefix.wf` | Restored source sum/block phases and added previously shared `scan_block`, preserving its sequential scan recurrence. |
+| `compute/histogram.wf` | Restored source counting/merging phases and added previously shared `count_block`, keeping colliding scatter sequential inside that helper. |
+
+This inspection predicts changes for all nine sources under the reverted
+broad scope; it establishes neither optimized machine-code differences nor
+performance. The unchanged [registered control](../../experiments/par-demand/legacy_identity.py)
+must establish current On byte identity in CI. Internal compiler cases guard
+the absence of a retained canonical graph and the original chunk-based
+construction; they do not replace the independent old-revision comparison.
 
 **Resource-support boundary.** The resource-record latch exists because
 parallel callers can fail concurrently. A canonical sequential function can

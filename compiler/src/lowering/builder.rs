@@ -66,18 +66,19 @@ pub(crate) fn lower_checked_from(
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,
 ) -> Result<IrProgram, LoweringFailure> {
-    // Keep the ordinary source graph before optional loop synthesis changes
-    // its function boundaries. Both worlds read the same checked evidence and
-    // physical roots; retaining it repeats lowering, never source acceptance.
-    let canonical_sequential = if overlap == OverlapLowering::Off {
-        None
-    } else {
+    // Demand retains the ordinary graph before optional synthesis changes
+    // function boundaries. Other policies keep their original construction.
+    // Both demand worlds read the same checked evidence and physical roots;
+    // retaining it repeats lowering, never source acceptance.
+    let canonical_sequential = if matches!(overlap, OverlapLowering::Demand { .. }) {
         Some(Box::new(lower_checked_in_world(
             &checked,
             OverlapLowering::Off,
             target,
             roots,
         )?))
+    } else {
+        None
     };
     let mut program = lower_checked_in_world(&checked, overlap, target, roots)?;
     program.canonical_sequential = canonical_sequential;

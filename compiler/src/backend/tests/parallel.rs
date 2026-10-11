@@ -1453,25 +1453,24 @@ fn the_sequential_clone_is_the_sequential_lowering() {
     let sequential = fold_module(false);
     let overlapped = fold_module(true);
 
-    // The canonical closure includes source helpers with no retained offer.
-    // Their ordinary computation is kept independent of optional synthesis.
+    // The closure, spelled out: every function from which a handed-out call is
+    // reachable. `pair`, `quad`, and `oct` hand out their sibling
+    // constructors, `fold` its recursion, and `main` its four `oct` calls.
+    // `leaf`, `branch`, `mix`, `low_byte`, and `spell` reach no hand-out at
+    // all, so both worlds call the one copy of each and neither needs a clone.
     let mut cloned: Vec<_> = clone_symbols(&overlapped);
     cloned.sort_unstable();
-    for expected in [
-            "@wf__par_seq_branch",
+    assert_eq!(
+        cloned,
+        [
             "@wf__par_seq_fold",
-            "@wf__par_seq_leaf",
-            "@wf__par_seq_low_byte",
             "@wf__par_seq_main",
-            "@wf__par_seq_mix",
             "@wf__par_seq_oct",
             "@wf__par_seq_pair",
             "@wf__par_seq_quad",
-            "@wf__par_seq_spell",
-        ] {
-        assert!(cloned.iter().any(|name| name == expected),
-            "the canonical source closure must define {expected}:\n{overlapped}");
-    }
+        ],
+        "the clone set must be the closure of the eligible calls:\n{overlapped}"
+    );
 
     for symbol in &cloned {
         let clone = function_body(&overlapped, symbol);
@@ -1543,8 +1542,9 @@ fn the_bootstrap_selects_one_world_once() {
         );
     }
 
-    // The canonical source closure never reaches an overlapped definition.
-    // External runtime declarations keep their original binding.
+    // No clone reaches the overlapped world. A clone may still call a function
+    // that has no clone — that copy is shared because its lowering is the same
+    // either way — so the forbidden targets are exactly the cloned ones.
     let cloned = clone_symbols(&overlapped);
     for symbol in &cloned {
         let body = function_body(&overlapped, symbol);

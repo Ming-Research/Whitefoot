@@ -347,9 +347,10 @@ fn emit_module(
             .emit()?,
         );
     }
-    // A source function's sequential world is emitted independently from the
-    // ordinary graph retained before compute lowering. Synthesized chunks still
-    // need their captured-ABI sequential variants for worker fallback.
+    // Demand's source-function sequential world is independently emitted from
+    // its retained ordinary graph. Other policies keep their existing clones
+    // of the compute graph. Demand's synthesized chunks still need their
+    // captured-ABI sequential variants for worker fallback.
     let mut clones = if thunks.is_used() {
         sequential_clone_set(program)
     } else if frontiers.is_used() {

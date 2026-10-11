@@ -1958,9 +1958,9 @@ impl IrFunction {
 #[derive(Clone, Debug)]
 pub struct IrProgram {
     /// The ordinary lowering from the same checked input, before any optional
-    /// loop extraction or call outlining. Compute worlds retain this graph
-    /// for their sequential source-function closure; the ordinary graph has
-    /// no second world of its own.
+    /// loop extraction or call outlining. Demand retains this graph for its
+    /// sequential source-function closure; other policies retain their
+    /// original construction and carry no canonical graph.
     pub(crate) canonical_sequential: Option<Box<Self>>,
     /// Function-entry cheap-region predicates: every (span, iteration price)
     /// must be below the demand work floor before entering the existing

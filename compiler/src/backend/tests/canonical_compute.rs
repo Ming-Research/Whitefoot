@@ -1,4 +1,4 @@
-//! Canonical computation before optional synthesis, with independent Off IR.
+//! Demand's canonical computation and ordinary par's original construction.
 
 use super::{emit_lowered, parallel::function_body, system::with_mutated_ir_lowering};
 use crate::{CallGrain, IrConstant, IrInstruction, IrOperation, OverlapLowering, RecursionBudget};
@@ -54,58 +54,77 @@ fn demand() -> OverlapLowering {
 }
 
 #[test]
+fn ordinary_parallel_keeps_its_original_graph_and_chunk_based_sequential_clone() {
+    with_mutated_ir_lowering(SOURCE, OverlapLowering::On, |program| {
+        assert!(program.canonical_sequential.is_none(), "ordinary par must not retain a canonical graph");
+        let module = crate::backend::emitter::emit_llvm(program).unwrap();
+        let mut legacy = program.clone();
+        legacy.canonical_sequential = None;
+        // This guards the internal construction; the hosted legacy_identity.py
+        // comparison against ac5f1498a supplies independent byte-identity evidence.
+        assert_eq!(module, crate::backend::emitter::emit_llvm(&legacy).unwrap(),
+            "ordinary par must use the construction without a canonical graph");
+        let helper = function_body(&module, "@wf__par_seq_helper");
+        assert!(helper.contains("call i64 @wf__par_seq__par_chunk_"),
+            "the control must exercise ordinary par's original chunk-based clone: {helper}");
+        assert!(function_body(&module, "@wf_helper").contains("call i64 @wf__par_split_budget("));
+        let ordinary = emit_lowered(SOURCE, OverlapLowering::Off);
+        assert_ne!(helper.replace("@wf__par_seq_", "@wf_"), function_body(&ordinary, "@wf_helper"),
+            "this fixture must distinguish the original construction from canonical in-place lowering");
+    });
+}
+
+#[test]
 fn canonical_source_closure_precedes_loop_synthesis_and_preserves_parallel_bodies() {
     let ordinary = emit_lowered(SOURCE, OverlapLowering::Off);
-    for overlap in [OverlapLowering::On, demand()] {
-        with_mutated_ir_lowering(SOURCE, overlap, |program| {
-            let canonical = program.canonical_sequential.as_deref().expect("retained Off graph");
-            assert!(canonical.canonical_sequential.is_none());
-            assert!(program.functions().iter().any(|f| f.synthesis().is_some()));
-            let mut legacy = program.clone();
-            legacy.canonical_sequential = None;
-            let legacy_module = crate::backend::emitter::emit_llvm(&legacy).unwrap();
-            let before = crate::backend::emitter::emit_llvm(program).expect("both worlds emit");
-            for entity in legacy_module.model.entities.iter().filter(|entity|
-                !entity.name.starts_with("wf__par_seq_")) {
-                assert!(before.model.entities.contains(entity),
-                    "canonical import must preserve the previous parallel definition {}", entity.name);
-            }
-            for name in ["paired", "helper"] {
-                let clone = function_body(&before, &format!("@wf__par_seq_{name}"));
-                assert_eq!(clone.replace("@wf__par_seq_", "@wf_"),
-                    function_body(&ordinary, &format!("@wf_{name}")),
-                    "{name} must be the complete ordinary computation, not a synthesized chunk call");
-                assert!(!clone.contains("@wf__par_chunk_"));
-                assert!(!clone.contains("@wf__par_seq__par_chunk_"));
-            }
-            assert!(function_body(&before, "@wf__par_seq_paired")
-                .contains("call i64 @wf__par_seq_helper("));
-            let reference = program.canonical_sequential.as_deref_mut().expect("retained Off graph");
-            let ordinary_module = crate::backend::emitter::emit_llvm(reference).unwrap();
-            assert!(ordinary_module.model.entities.iter().any(|entity|
-                entity.global && entity.name.starts_with(".wf_const.")), "the fixture must expose rodata");
-            for constant in ordinary_module.model.entities.iter().filter(|entity|
-                entity.global && entity.name.starts_with(".wf_const.")) {
-                assert!(before.model.entities.contains(constant), "ordinary constants keep their values");
-            }
-            assert_eq!(before.model.attributes, ordinary_module.model.attributes);
-            let helper = reference.functions.iter_mut().find(|f| f.name() == "helper").unwrap();
-            let changed = helper.blocks.iter_mut().flat_map(|b| &mut b.instructions)
-                .find_map(|instruction| match instruction {
-                    IrInstruction::Define { operation: IrOperation::Constant(IrConstant::Integer { bits, .. }), .. } => Some(bits),
-                    _ => None,
-                }).expect("the loop has an integer constant");
-            *changed = changed.wrapping_add(1);
-            let after = crate::backend::emitter::emit_llvm(program).expect("mutated canonical graph emits");
-            assert_ne!(function_body(&before, "@wf__par_seq_helper"),
-                function_body(&after, "@wf__par_seq_helper"));
-            for entity in before.model.entities.iter().filter(|entity|
-                !entity.name.starts_with("wf__par_seq_") && !entity.name.starts_with(".wf__par_seq")) {
-                assert!(after.model.entities.contains(entity),
-                    "canonical computation must not change the parallel definition {}", entity.name);
-            }
-        });
-    }
+    with_mutated_ir_lowering(SOURCE, demand(), |program| {
+        let canonical = program.canonical_sequential.as_deref().expect("retained Off graph");
+        assert!(canonical.canonical_sequential.is_none());
+        assert!(program.functions().iter().any(|f| f.synthesis().is_some()));
+        let mut legacy = program.clone();
+        legacy.canonical_sequential = None;
+        let legacy_module = crate::backend::emitter::emit_llvm(&legacy).unwrap();
+        let before = crate::backend::emitter::emit_llvm(program).expect("both worlds emit");
+        for entity in legacy_module.model.entities.iter().filter(|entity|
+            !entity.name.starts_with("wf__par_seq_")) {
+            assert!(before.model.entities.contains(entity),
+                "canonical import must preserve the previous parallel definition {}", entity.name);
+        }
+        for name in ["paired", "helper"] {
+            let clone = function_body(&before, &format!("@wf__par_seq_{name}"));
+            assert_eq!(clone.replace("@wf__par_seq_", "@wf_"),
+                function_body(&ordinary, &format!("@wf_{name}")),
+                "{name} must be the complete ordinary computation, not a synthesized chunk call");
+            assert!(!clone.contains("@wf__par_chunk_"));
+            assert!(!clone.contains("@wf__par_seq__par_chunk_"));
+        }
+        assert!(function_body(&before, "@wf__par_seq_paired")
+            .contains("call i64 @wf__par_seq_helper("));
+        let reference = program.canonical_sequential.as_deref_mut().expect("retained Off graph");
+        let ordinary_module = crate::backend::emitter::emit_llvm(reference).unwrap();
+        assert!(ordinary_module.model.entities.iter().any(|entity|
+            entity.global && entity.name.starts_with(".wf_const.")), "the fixture must expose rodata");
+        for constant in ordinary_module.model.entities.iter().filter(|entity|
+            entity.global && entity.name.starts_with(".wf_const.")) {
+            assert!(before.model.entities.contains(constant), "ordinary constants keep their values");
+        }
+        assert_eq!(before.model.attributes, ordinary_module.model.attributes);
+        let helper = reference.functions.iter_mut().find(|f| f.name() == "helper").unwrap();
+        let changed = helper.blocks.iter_mut().flat_map(|b| &mut b.instructions)
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define { operation: IrOperation::Constant(IrConstant::Integer { bits, .. }), .. } => Some(bits),
+                _ => None,
+            }).expect("the loop has an integer constant");
+        *changed = changed.wrapping_add(1);
+        let after = crate::backend::emitter::emit_llvm(program).expect("mutated canonical graph emits");
+        assert_ne!(function_body(&before, "@wf__par_seq_helper"),
+            function_body(&after, "@wf__par_seq_helper"));
+        for entity in before.model.entities.iter().filter(|entity|
+            !entity.name.starts_with("wf__par_seq_") && !entity.name.starts_with(".wf__par_seq")) {
+            assert!(after.model.entities.contains(entity),
+                "canonical computation must not change the parallel definition {}", entity.name);
+        }
+    });
 }
 
 #[test]
@@ -164,49 +183,60 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 1_u8);
 }
 "#;
-    for overlap in [OverlapLowering::On, demand()] {
-        with_mutated_ir_lowering(source, overlap, |program| {
-            let ordinary = crate::backend::emitter::emit_llvm(
-                program.canonical_sequential.as_deref().unwrap()).unwrap();
-            let combined = crate::backend::emitter::emit_llvm(program).unwrap();
-            let mut pending = vec!["wf_paired".to_owned()];
-            let mut visited = std::collections::BTreeSet::new();
-            while let Some(name) = pending.pop() {
-                if !visited.insert(name.clone()) {
-                    continue;
-                }
-                let Some(reference) = ordinary.model.entities.iter().find(|entity| entity.name == name) else {
-                    let declaration = ordinary.model.declarations.get(&name).expect("recorded external dependency");
-                    assert_eq!(combined.model.declarations.get(&name), Some(declaration), "external binding {name}");
-                    assert_metadata(&ordinary.model, &combined.model, &declaration.references);
-                    continue;
-                };
-                assert!(!reference.global && reference.linkage != crate::backend::emission::Linkage::Weak,
-                    "the aggregate fixture's computation closure must consist of ordinary functions");
-                let clone_name = format!("wf__par_seq_{}", name.strip_prefix("wf_").unwrap());
-                let clone = combined.model.entities.iter().find(|entity| entity.name == clone_name)
-                    .unwrap_or_else(|| panic!("missing closure function {clone_name}"));
-                for (actual, expected) in [(&clone.header, &reference.header),
-                    (&clone.hidden_header, &reference.hidden_header),
-                    (&clone.declaration, &reference.declaration), (&clone.body, &reference.body)] {
-                    assert_eq!(actual.replace("@wf__par_seq_", "@wf_"), *expected,
-                        "complete canonical entity {name}");
-                }
-                assert_eq!(clone.references.types, reference.references.types);
-                assert_eq!(clone.references.attributes, reference.references.attributes);
-                assert_metadata(&ordinary.model, &combined.model, &reference.references);
-                assert_metadata(&ordinary.model, &combined.model, &reference.declaration_references);
-                assert_eq!(clone.declaration_references, reference.declaration_references);
-                assert_eq!(clone.references.symbols.iter().map(|name|
-                    name.replacen("wf__par_seq_", "wf_", 1)).collect::<std::collections::BTreeSet<_>>(),
-                    reference.references.symbols);
-                pending.extend(reference.references.symbols.iter().cloned());
+    with_mutated_ir_lowering(source, OverlapLowering::On, |program| {
+        assert!(program.canonical_sequential.is_none(), "ordinary par must not retain a canonical graph");
+        let module = crate::backend::emitter::emit_llvm(program).unwrap();
+        let mut legacy = program.clone();
+        legacy.canonical_sequential = None;
+        // An internal construction guard; independent old-revision byte identity
+        // is checked by the hosted legacy_identity.py control.
+        assert_eq!(module, crate::backend::emitter::emit_llvm(&legacy).unwrap(),
+            "ordinary par's aggregate construction must not import a canonical graph");
+    });
+    let output = super::compile_and_run(&emit_lowered(source, OverlapLowering::On));
+    assert!(output.status.success(), "ordinary par's aggregate program must return 15/21: {output:?}");
+    let overlap = demand();
+    with_mutated_ir_lowering(source, overlap, |program| {
+        let ordinary = crate::backend::emitter::emit_llvm(
+            program.canonical_sequential.as_deref().unwrap()).unwrap();
+        let combined = crate::backend::emitter::emit_llvm(program).unwrap();
+        let mut pending = vec!["wf_paired".to_owned()];
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
             }
-            for required in ["wf_paired", "wf_paired.body", "wf_make", "wf_make.body"] {
-                assert!(visited.contains(required), "both public and destination forms must be reached: {visited:?}");
+            let Some(reference) = ordinary.model.entities.iter().find(|entity| entity.name == name) else {
+                let declaration = ordinary.model.declarations.get(&name).expect("recorded external dependency");
+                assert_eq!(combined.model.declarations.get(&name), Some(declaration), "external binding {name}");
+                assert_metadata(&ordinary.model, &combined.model, &declaration.references);
+                continue;
+            };
+            assert!(!reference.global && reference.linkage != crate::backend::emission::Linkage::Weak,
+                "the aggregate fixture's computation closure must consist of ordinary functions");
+            let clone_name = format!("wf__par_seq_{}", name.strip_prefix("wf_").unwrap());
+            let clone = combined.model.entities.iter().find(|entity| entity.name == clone_name)
+                .unwrap_or_else(|| panic!("missing closure function {clone_name}"));
+            for (actual, expected) in [(&clone.header, &reference.header),
+                (&clone.hidden_header, &reference.hidden_header),
+                (&clone.declaration, &reference.declaration), (&clone.body, &reference.body)] {
+                assert_eq!(actual.replace("@wf__par_seq_", "@wf_"), *expected,
+                    "complete canonical entity {name}");
             }
-        });
-        let output = super::compile_and_run(&emit_lowered(source, overlap));
-        assert!(output.status.success(), "the complete canonical program must return 15/21: {output:?}");
-    }
+            assert_eq!(clone.references.types, reference.references.types);
+            assert_eq!(clone.references.attributes, reference.references.attributes);
+            assert_metadata(&ordinary.model, &combined.model, &reference.references);
+            assert_metadata(&ordinary.model, &combined.model, &reference.declaration_references);
+            assert_eq!(clone.declaration_references, reference.declaration_references);
+            assert_eq!(clone.references.symbols.iter().map(|name|
+                name.replacen("wf__par_seq_", "wf_", 1)).collect::<std::collections::BTreeSet<_>>(),
+                reference.references.symbols);
+            pending.extend(reference.references.symbols.iter().cloned());
+        }
+        for required in ["wf_paired", "wf_paired.body", "wf_make", "wf_make.body"] {
+            assert!(visited.contains(required), "both public and destination forms must be reached: {visited:?}");
+        }
+    });
+    let output = super::compile_and_run(&emit_lowered(source, overlap));
+    assert!(output.status.success(), "the complete canonical program must return 15/21: {output:?}");
 }

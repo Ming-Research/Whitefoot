@@ -77,22 +77,24 @@ fn assert_self_tail_lowering(source: &[u8]) {
         });
         let mut names = vec!["sum", "exchange", "swap_pairs", "accumulate"];
         if overlap == OverlapLowering::On {
-            // The eager control must still offer ordinary calls before the
-            // self-tail edge, and therefore must retain its second world.
-            assert!(module.lines().any(|line| {
-                line.starts_with("define ") && line.contains(" @wf__par_seq_accumulate(")
-            }));
+            // Only functions that can reach an offer need a sequential clone.
+            // Accumulate offers ordinary calls before its self-tail edge.
+            names.push("_par_seq_accumulate");
         }
-        for clone in [
-            "_par_seq_sum",
-            "_par_seq_exchange",
-            "_par_seq_swap_pairs",
-            "_par_seq_accumulate",
-        ] {
-            if module.lines().any(|line| {
-                line.starts_with("define ") && line.contains(&format!(" @wf_{clone}("))
-            }) {
-                names.push(clone);
+        if matches!(overlap, OverlapLowering::Demand { .. }) {
+            // Ordinary calls before the self-tail edge also require Demand's
+            // canonical accumulate body; its absence must not skip the check.
+            names.push("_par_seq_accumulate");
+            for clone in [
+                "_par_seq_sum",
+                "_par_seq_exchange",
+                "_par_seq_swap_pairs",
+            ] {
+                if module.lines().any(|line| {
+                    line.starts_with("define ") && line.contains(&format!(" @wf_{clone}("))
+                }) {
+                    names.push(clone);
+                }
             }
         }
         for name in names {

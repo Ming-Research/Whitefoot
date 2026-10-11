@@ -425,9 +425,10 @@ pub(super) fn retained_demand_splitters(program: &IrProgram) -> HashSet<u32> {
 /// still executes at the original join.
 ///
 /// This is the set of world entrances and captured-ABI worker fallbacks.
-/// Emission extends it forwards through independently lowered ordinary source
-/// calls: a helper with no retained offer may still have been transformed by
-/// optional loop synthesis and cannot be shared with the canonical world.
+/// Demand emission extends it forwards through independently lowered ordinary
+/// source calls: a helper with no retained offer may still have been transformed
+/// by optional loop synthesis and cannot be shared with the canonical world.
+/// Other policies keep the clone set over their original compute graph.
 /// Both sets depend on graph edges, never function names or workload shapes.
 ///
 /// Empty when no hand-out is reachable from any definition, including every
@@ -517,10 +518,10 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
         }
     }
 
-    // A chunk needs its captured-ABI sequential variant for workers' budget
-    // and refusal fallbacks. Canonical source functions retain their original
-    // in-place loops and never call this synthesized variant. A splitter only
-    // schedules work, so a sequential splitter has no caller.
+    // A chunk needs its sequential variant for workers' budget and refusal
+    // fallbacks. Ordinary par source clones call that variant at split sites;
+    // demand's canonical source functions instead retain their in-place loops.
+    // A splitter only schedules work, so a sequential splitter has no caller.
     reachable
         .iter()
         .copied()

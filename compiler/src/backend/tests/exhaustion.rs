@@ -286,45 +286,44 @@ fn a_module_that_writes_a_resource_record_and_hands_a_call_out_is_latched() {
         "a module that writes a record on more than one thread must take the \
          shared latch: {module}"
     );
-    for overlap in [crate::OverlapLowering::On, crate::OverlapLowering::Demand {
+    let overlap = crate::OverlapLowering::Demand {
         ablation: crate::DemandAblation::None,
         budget: crate::RecursionBudget::RuntimeDerived,
         call_grain: crate::CallGrain::Every,
         sequential_refusal: false,
-    }] {
-        let inputs = [crate::SourceInput::new("test.wf", HEAP_RECORD_LANE)];
-        let combined = crate::compile_with_overlap(&inputs, crate::CompilerLimits::default(), overlap).unwrap();
-        let reaches_shared_abort = |module: &crate::backend::LlvmModule| {
-            let mut pending = vec!["wf__par_seq_build".to_owned()];
-            let mut visited = std::collections::BTreeSet::new();
-            while let Some(name) = pending.pop() {
-                if !visited.insert(name.clone()) || name == "wf_resource_abort" {
-                    continue;
-                }
-                if let Some(entity) = module.model.entities.iter().find(|entity| entity.name == name) {
-                    pending.extend(entity.references.symbols.iter().cloned());
-                }
+    };
+    let inputs = [crate::SourceInput::new("test.wf", HEAP_RECORD_LANE)];
+    let combined = crate::compile_with_overlap(&inputs, crate::CompilerLimits::default(), overlap).unwrap();
+    let reaches_shared_abort = |module: &crate::backend::LlvmModule| {
+        let mut pending = vec!["wf__par_seq_build".to_owned()];
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) || name == "wf_resource_abort" {
+                continue;
             }
-            visited.contains("wf_resource_abort")
-        };
-        assert!(reaches_shared_abort(&combined),
-            "the worker-reachable canonical allocator closure must keep the shared abort boundary: {combined}");
-        // An unreachable shared abort elsewhere in the module cannot satisfy
-        // the observation: erase its incoming closure edges and see it fail.
-        let mut severed = combined.clone();
-        for entity in &mut severed.model.entities {
-            entity.references.symbols.remove("wf_resource_abort");
+            if let Some(entity) = module.model.entities.iter().find(|entity| entity.name == name) {
+                pending.extend(entity.references.symbols.iter().cloned());
+            }
         }
-        assert!(!reaches_shared_abort(&severed));
-        assert!(!combined.contains("@wf__par_seq_resource_abort"), "{combined}");
-        let abort = super::parallel::function_body(&combined, "@wf_resource_abort");
-        assert!(abort.contains("call void @wf_resource_record_abort("), "{abort}");
-        let writer = super::parallel::function_body(&combined, "@wf_resource_record_abort");
-        assert!(writer.contains("%latch = call ptr @wf__floor_record_latch()")
-            && writer.contains("cmpxchg ptr %latch"),
-            "the entire clone refusal chain must arbitrate with the parallel writer: {writer}");
-        assert!(!combined.contains("define private void @wf__par_seq_resource_record_abort("));
+        visited.contains("wf_resource_abort")
+    };
+    assert!(reaches_shared_abort(&combined),
+        "the worker-reachable canonical allocator closure must keep the shared abort boundary: {combined}");
+    // An unreachable shared abort elsewhere in the module cannot satisfy
+    // the observation: erase its incoming closure edges and see it fail.
+    let mut severed = combined.clone();
+    for entity in &mut severed.model.entities {
+        entity.references.symbols.remove("wf_resource_abort");
     }
+    assert!(!reaches_shared_abort(&severed));
+    assert!(!combined.contains("@wf__par_seq_resource_abort"), "{combined}");
+    let abort = super::parallel::function_body(&combined, "@wf_resource_abort");
+    assert!(abort.contains("call void @wf_resource_record_abort("), "{abort}");
+    let writer = super::parallel::function_body(&combined, "@wf_resource_record_abort");
+    assert!(writer.contains("%latch = call ptr @wf__floor_record_latch()")
+        && writer.contains("cmpxchg ptr %latch"),
+        "the entire clone refusal chain must arbitrate with the parallel writer: {writer}");
+    assert!(!combined.contains("define private void @wf__par_seq_resource_record_abort("));
 }
 
 /// One program reaching every allocation form the emitter lowers: a filled

@@ -3,6 +3,13 @@
 
 use super::{compile_and_run, emit, emitted_body};
 
+const CANONICAL_DEMAND: crate::OverlapLowering = crate::OverlapLowering::Demand {
+    ablation: crate::DemandAblation::None,
+    budget: crate::RecursionBudget::RuntimeDerived,
+    call_grain: crate::CallGrain::Every,
+    sequential_refusal: false,
+};
+
 /// A four-instruction interpreter written as a `loop` whose body is one
 /// `match`, each looping arm ending in `continue`:
 /// `Add 3; Dec; Jnz 0; Halt` with a count of 1000 returns 3000. `RESULT`
@@ -1588,7 +1595,7 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
   return first +wrap second;
 }
 "#);
-    super::system::with_mutated_ir_lowering(source.as_bytes(), crate::OverlapLowering::On, |program| {
+    super::system::with_mutated_ir_lowering(source.as_bytes(), CANONICAL_DEMAND, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
         let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
         let ordinary = crate::backend::emitter::prepare_dispatch_layout(
@@ -1617,7 +1624,7 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
   return combined +wrap value;
 }
 "#);
-    super::system::with_mutated_ir_lowering(source.as_bytes(), crate::OverlapLowering::On, |program| {
+    super::system::with_mutated_ir_lowering(source.as_bytes(), CANONICAL_DEMAND, |program| {
         // The original fixture's main also offers Cell-valued work. Remove
         // those unrelated offers so this witness transfers only the u32 pair.
         for function in &mut program.functions {
@@ -1640,7 +1647,7 @@ fn paired_cell(cell: &Cell) -> result: u32 reads(cell) {
 
 #[test]
 fn canonical_private_handler_layout_does_not_disable_parallel_computation() {
-    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, CANONICAL_DEMAND, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
         let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, false).unwrap();
         let ordinary = crate::backend::emitter::prepare_dispatch_layout(
@@ -1666,7 +1673,7 @@ fn canonical_private_handler_layout_does_not_disable_parallel_computation() {
 
 #[test]
 fn canonical_world_keeps_the_explicit_fragment_dispatch_mode() {
-    super::system::with_mutated_ir_lowering(HANDLER_CELLS, crate::OverlapLowering::On, |program| {
+    super::system::with_mutated_ir_lowering(HANDLER_CELLS, CANONICAL_DEMAND, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
         let parallel = crate::backend::emitter::prepare_dispatch_layout(program, target, true).unwrap();
         let ordinary = crate::backend::emitter::prepare_dispatch_layout(
