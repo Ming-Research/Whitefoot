@@ -36,8 +36,11 @@ permissions:
 # If a push run asks GitHub before the ready state is visible, it runs Linux
 # only and Gate on both platforms is skipped, not passed, for that head: a
 # merge requires that job's success, and a manual run qualifies the head.
+# Each main commit gets its own group: a release needs the gate of that exact
+# commit, and a group keeps only one pending run, so a shared main group would
+# cancel the run of every merge but the last of a quick succession.
 concurrency:
-  group: gate-${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: gate-${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
