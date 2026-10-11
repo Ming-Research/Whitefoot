@@ -3238,3 +3238,193 @@ hosted construction and queue time, and assume the sample's throughput
 persists. No experiment-6 sizing duration exists yet; sizing chooses rounds,
 not a fixed duration. The timing command retains its 90-minute timeout and
 the runner job its 120-minute timeout; neither is a performance prediction.
+
+
+### Experiment 6 results at d8adf2c2a
+
+[Compute-bench run 38179220701](https://github.com/Ming-Research/Whitefoot/actions/runs/38179220701) measured revision `d8adf2c2a3b9519b94a920cc7e58397d1d511077` on 2026-10-11. The hosted build ran 22:08-22:15 UTC; native i9-14900K timing ran 22:15:50-22:42:56 UTC (27 minutes 6 seconds). These timestamps are the run record supplied with the artifact, not timings inferred from workload samples. Both jobs succeeded; execution success does not select an experimental verdict. Evidence is the run's `par-demand-results-14900k` artifact: `summary.json`, `measurements.tsv`, `sizing-e6/`, `identity.json`, `sequential-identity.json`, `entry-dispatch-measurements.json`, image files and host records. Field paths below identify that frozen artifact; no local measurement or native execution was performed for this reading.
+
+`identity.json` records a clean revision, Linux on MBSDESKTOP, six separate sizing rounds and 30 frozen decisive rounds, with one further 30-round attempt for spine W4, spine W8 and fir W1. Pins are W1 {2}, W2 {2,4}, W4 {2,4,6,8}, W8 {2,4,6,8,10,12,14,1}, retaining the CPU-1 sharing caveat. Seq, par and shifted seq use off-never-request; demand, previous, unversioned and twin use on. Inputs and repetitions are the registered manifest, retained in `identity.json.manifest`; startup call 0 is separate and call 1 decides. Paired intervals retain 10,000 bootstrap draws, seed 20261010 and 95% coverage. Build-host records identify Ubuntu clang 18.1.3; measurement-host identifies Intel Core i9-14900K. The measurement-host shell's `rounds=10` is an unused default environment value; the authoritative frozen count is 30 in `identity.json.rounds` and `summary.json.decisive_rounds`.
+
+**Registered verdict: rejected, not qualified for adoption.** E6-keep rejects spine W4/W8, and the retained par criterion rejects fir W1. E6-identity is supported under D. Recursion recovery remains undecided despite meeting its numerical target: every cell lacks the registered optimized hot-site inspection. The saved reducer consequently reports 3 failed, 7 void and 28 inconclusive cells, with no qualified timing passes. There is no `inspection.json` in the artifact; neither constructing new inspection after seeing the result nor borrowing identity's different proof supplies that missing attribution for this reading.
+
+The seven initial twin exclusions are large_helper W1/W8, records W8, fir W4, stencil W4, prefix W4 and histogram W1 (`summary.json.cells[workload,width].initial.twin_wall_ratio.interval`). Their cells and floor readings are void. All six twin intervals in the three rerun cells include 1. The registered one-rerun limit stands; no extra attempt is introduced. Numerical success without inspection is UNDECIDED, twin exclusion is VOID (undecided), and persistent registered rejection is **FAIL**. Entries below are median [95% interval], except counts, widths and envelope endpoints. Source fields remain authoritative when rounding is near a bound.
+
+**Recursion recovery and retention of existing par speedups.** E6-recursion is undecided: the W8 interval meets 1.05, but the retained hot-site inspection obligation is missing. The retained E6-par bound is rejected by fir W1 in both attempts. Other shown numerical passes remain undecided for missing inspection; VOID rows cannot support a verdict. Controls with no applicable par rule are omitted here and remain in the artifact.
+
+| Workload / width (identifier / threads; baseline = n/a; ideal = n/a) | Demand / par wall (ratio; baseline = par image at same width; ideal upper CI <= 1.05) | Verdict (category; baseline = registered E6-par/recursion rule; ideal = supported) |
+| --- | --- | --- |
+| recursion W1 | 1.004893 [0.990815, 1.043269] | UNDECIDED |
+| recursion W4 | 1.023093 [0.994274, 1.029245] | UNDECIDED |
+| recursion W8 | 0.996933 [0.984322, 1.002980] | UNDECIDED |
+| large_helper W1 | 1.000235 [1.000120, 1.000336] | VOID |
+| large_helper W4 | 0.515925 [0.515363, 0.516335] | UNDECIDED |
+| large_helper W8 | 0.277544 [0.277244, 0.278039] | VOID |
+| mandelbrot W4 | 1.006865 [1.003100, 1.009530] | UNDECIDED |
+| mandelbrot W8 | 1.008187 [1.003523, 1.010954] | UNDECIDED |
+| records W4 | 0.993205 [0.989393, 0.997003] | UNDECIDED |
+| records W8 | 0.994315 [0.977797, 1.017640] | VOID |
+| fir W1 | **FAIL 1.052447 [1.050722, 1.054529]; rerun 1.052762 [1.050590, 1.054853]** | FAIL |
+| fir W4 | 0.658110 [0.652399, 0.674690] | VOID |
+| fir W8 | 0.495685 [0.489460, 0.498396] | UNDECIDED |
+| stencil W2 | 1.004510 [0.987279, 1.017654] | UNDECIDED |
+| stencil W4 | 1.002198 [0.988890, 1.015943] | VOID |
+| stencil W8 | 1.002483 [0.997954, 1.008585] | UNDECIDED |
+| prefix W4 | 1.002956 [0.992833, 1.013570] | VOID |
+| prefix W8 | 1.017278 [1.008572, 1.022347] | UNDECIDED |
+| histogram W1 | 1.019498 [1.017429, 1.025198] | VOID |
+| histogram W2 | 0.992506 [0.986508, 0.996873] | UNDECIDED |
+| histogram W4 | 0.990270 [0.962115, 1.013545] | UNDECIDED |
+| histogram W8 | 1.011934 [0.983660, 1.034089] | UNDECIDED |
+
+Source: `summary.json.cells[workload,width].initial.rules["E6-par"].{median,interval,status}`, `.rerun.rules["E6-par"]` where present, and `.verdicts["E6-par"]`. The recursion W8 row is the unconditional E6-recursion comparison.
+
+
+**Preservation against both controls.** E6-keep is rejected by spine W4 and W8 against previous demand; both attempts lie wholly above 1.05 and both twins include 1. All other preservation verdicts are undecided, including numerical passes, because inspection is missing or the twin voids the cell. Small_constant W4/W8 additionally have intervals straddling 1.05. No missing inspection is supplied retrospectively by the identity gate.
+
+| Workload / width (identifier / threads; baseline = n/a; ideal = n/a) | Demand / unversioned wall (ratio; baseline = unversioned image, same width; ideal upper CI <= 1.05) | Demand / previous wall (ratio; baseline = request-gated previous image, same width; ideal upper CI <= 1.05) | Verdicts, unversioned / previous (categories; baseline = E6-keep; ideal = supported / supported) |
+| --- | --- | --- | --- |
+| small_constant W1 | 1.005863 [0.988528, 1.035520] | 1.001803 [0.988563, 1.020226] | UNDECIDED / UNDECIDED |
+| small_constant W4 | 1.014327 [0.976611, 1.075592] | 1.004902 [0.927074, 1.108640] | UNDECIDED / UNDECIDED |
+| small_constant W8 | 0.980231 [0.928369, 1.095703] | 0.967384 [0.880205, 1.023857] | UNDECIDED / UNDECIDED |
+| small_split W1 | 1.000042 [0.999644, 1.000601] | 0.999743 [0.999409, 1.000385] | UNDECIDED / UNDECIDED |
+| small_split W4 | 0.914259 [0.911753, 0.916225] | 1.000050 [0.999592, 1.000559] | UNDECIDED / UNDECIDED |
+| small_split W8 | 0.912307 [0.899808, 0.914623] | 0.999833 [0.999234, 1.000712] | UNDECIDED / UNDECIDED |
+| recursion W1 | 1.009996 [0.978460, 1.039036] | 1.008445 [0.981249, 1.037289] | UNDECIDED / UNDECIDED |
+| recursion W4 | 1.007964 [0.995674, 1.033425] | 0.982662 [0.948137, 1.002928] | UNDECIDED / UNDECIDED |
+| recursion W8 | 1.001239 [0.996377, 1.011697] | 0.928796 [0.905733, 0.956744] | UNDECIDED / UNDECIDED |
+| spine W1 | 1.000694 [0.999313, 1.002177] | 0.999901 [0.997518, 1.001261] | UNDECIDED / UNDECIDED |
+| spine W4 | 0.999996 [0.990567, 1.007289]; rerun 0.999606 [0.988919, 1.006974] | **FAIL 1.289710 [1.268600, 1.301329]; rerun 1.292912 [1.282670, 1.301292]** | UNDECIDED / FAIL |
+| spine W8 | 1.002082 [0.993890, 1.006549]; rerun 1.003421 [0.998602, 1.008466] | **FAIL 1.279648 [1.267138, 1.285284]; rerun 1.297710 [1.283602, 1.307440]** | UNDECIDED / FAIL |
+| hot_helper W1 | 0.999914 [0.999783, 1.000051] | 0.999942 [0.999835, 1.000044] | UNDECIDED / UNDECIDED |
+| hot_helper W4 | 1.000124 [0.999925, 1.000254] | 0.999906 [0.999731, 1.000101] | UNDECIDED / UNDECIDED |
+| hot_helper W8 | 1.000028 [0.999920, 1.000207] | 0.999916 [0.999661, 1.000037] | UNDECIDED / UNDECIDED |
+| large_helper W1 | 1.000167 [0.999904, 1.000287] | 1.000028 [0.999963, 1.000208] | VOID / VOID |
+| large_helper W4 | 1.000228 [0.998421, 1.002393] | 1.000533 [0.998756, 1.001253] | UNDECIDED / UNDECIDED |
+| large_helper W8 | 1.000351 [0.998363, 1.002020] | 0.999573 [0.998802, 1.001845] | VOID / VOID |
+| mandelbrot W1 | 1.001813 [0.998209, 1.002898] | 0.999234 [0.998121, 1.002221] | UNDECIDED / UNDECIDED |
+| mandelbrot W4 | 0.999111 [0.995064, 1.000604] | 0.997668 [0.993924, 1.002002] | UNDECIDED / UNDECIDED |
+| mandelbrot W8 | 1.000191 [0.998424, 1.002330] | 0.999688 [0.994891, 1.004761] | UNDECIDED / UNDECIDED |
+| records W1 | 1.000958 [0.999952, 1.003349] | 1.002178 [0.999600, 1.003844] | UNDECIDED / UNDECIDED |
+| records W4 | 1.000300 [0.995224, 1.003100] | 0.998479 [0.994253, 1.003195] | UNDECIDED / UNDECIDED |
+| records W8 | 1.003859 [0.978639, 1.018964] | 0.992838 [0.982610, 1.006171] | VOID / VOID |
+| fir W1 | 0.998703 [0.996273, 1.001888]; rerun 1.001118 [0.999706, 1.002371] | 1.000709 [0.997612, 1.001955]; rerun 1.000455 [0.998758, 1.001997] | UNDECIDED / UNDECIDED |
+| fir W4 | 0.999906 [0.999158, 1.001790] | 1.000382 [0.998507, 1.001363] | VOID / VOID |
+| fir W8 | 1.000043 [0.998986, 1.002325] | 1.000590 [0.998784, 1.002403] | UNDECIDED / UNDECIDED |
+| stencil W1 | 0.999834 [0.998381, 1.001361] | 0.998164 [0.996846, 1.002506] | UNDECIDED / UNDECIDED |
+| stencil W2 | 1.005057 [0.987921, 1.018349] | 0.998937 [0.991778, 1.016999] | UNDECIDED / UNDECIDED |
+| stencil W4 | 1.008793 [0.994862, 1.022593] | 1.005357 [0.993255, 1.013013] | VOID / VOID |
+| stencil W8 | 1.001216 [0.993516, 1.009861] | 1.001132 [0.994934, 1.004471] | UNDECIDED / UNDECIDED |
+| prefix W1 | 1.005280 [0.997872, 1.008594] | 1.000332 [0.994032, 1.009704] | UNDECIDED / UNDECIDED |
+| prefix W4 | 1.010273 [0.994435, 1.017529] | 1.003239 [0.992495, 1.024004] | VOID / VOID |
+| prefix W8 | 0.995392 [0.983817, 1.002991] | 0.993157 [0.985617, 1.002179] | UNDECIDED / UNDECIDED |
+| histogram W1 | 0.999706 [0.996755, 1.004071] | 0.999218 [0.996683, 1.003779] | VOID / VOID |
+| histogram W2 | 1.002140 [0.994642, 1.011326] | 0.991464 [0.979659, 1.014097] | UNDECIDED / UNDECIDED |
+| histogram W4 | 1.003632 [0.984133, 1.010912] | 1.011209 [0.988206, 1.026785] | UNDECIDED / UNDECIDED |
+| histogram W8 | 1.017903 [0.977059, 1.043411] | 1.031259 [1.002781, 1.039246] | UNDECIDED / UNDECIDED |
+
+Source: `summary.json.cells[workload,width].initial.rules["E6-keep-unversioned"/"E6-keep-previous"].{median,interval,status}`, corresponding `.rerun.rules` where shown, and `.verdicts`.
+
+
+**Construction identity and entry counts.** E6-identity is supported for all twelve covered W1 computations and small_split's active cheap paths. The D exclusions remain explicit: seven cold latched writers and nine entry adapters, not literal whole-image identity. All decisions are outside computation loops.
+
+| Workload (identifier; baseline = n/a; ideal = n/a) | Covered widths (threads; baseline = registered cells; ideal = all required) | Canonical closure verdict (category; baseline = seq normalized computation; ideal = pass) | Pool queries per timed entry (count; baseline = registered entry selection; ideal = 1, or 0 when pruned) | Cheap-region decisions per selected entry (count; baseline = invariant region selection; ideal = 1 if present, otherwise 0) |
+| --- | --- | --- | --- | --- |
+| small_constant | 1 | pass | 0 | 0 |
+| small_split | 1,2,4,8 | pass | 1 | 1 |
+| recursion | 1 | pass | 1 | 0 |
+| spine | 1 | pass | 1 | 0 |
+| hot_helper | 1 | pass | 0 | 0 |
+| large_helper | 1 | pass | 1 | 0 |
+| mandelbrot | 1 | pass | 1 | 0 |
+| records | 1 | pass | 1 | 0 |
+| fir | 1 | pass | 1 | 0 |
+| stencil | 1 | pass | 1 | 0 |
+| prefix | 1 | pass | 1 | 0 |
+| histogram | 1 | pass | 1 | 0 |
+
+Source: `sequential-identity.json.workloads[workload].{covered_widths,computation_status}`; `.entry_decisions[workload].{pool_decisions_per_timed_call,outside_loops,regions[].decisions_per_active_timed_call}`. Exclusion counts: top-level `.category_counts`.
+
+
+**Never-slower diagnostic and same-job floor.** This is diagnostic, not an additional rejection gate. Values are initial attempt intervals; fir W1 includes its mandated rerun. FAIL marks a literal interval wholly above 1 outside an available floor, or at a wider width where no floor is allowed; it is not a new experiment-rejection criterion. AT FLOOR suppresses a floor-relative failure while retaining the literal classification. A straddle is undecided. All ratios for void cells are displayed only as observations, not qualified evidence.
+
+| Workload / width (identifier / threads; baseline = n/a; ideal = n/a) | Demand / seq wall (ratio; baseline = single-thread seq image; ideal upper CI <= 1.00) | Literal diagnostic (category; baseline = 1.00 plus registered floor rule; ideal = supported or at floor) | Layout envelope (ratio bounds; baseline = shifted-seq / seq at W1 only; ideal = entire demand interval contained) |
+| --- | --- | --- | --- |
+| small_constant W1 initial | 1.005966 [0.993200, 1.015815] | UNDECIDED: straddle | [0.954632, 1.045368] at the floor |
+| small_constant W4 initial | 0.986150 [0.886090, 1.058886] | UNDECIDED: straddle | n/a at this width |
+| small_constant W8 initial | 0.990968 [0.898619, 1.051597] | UNDECIDED: straddle | n/a at this width |
+| small_split W1 initial | 1.000134 [0.999850, 1.000586] | UNDECIDED: straddle | [0.999035, 1.000965] at the floor |
+| small_split W4 initial | 1.000279 [1.000036, 1.001489] | **FAIL diagnostic only** | n/a at this width |
+| small_split W8 initial | 1.000394 [0.999077, 1.001069] | UNDECIDED: straddle | n/a at this width |
+| recursion W1 initial | 0.992952 [0.978638, 1.029725] | UNDECIDED: straddle | [0.951105, 1.048895] at the floor |
+| recursion W4 initial | 0.259064 [0.252534, 0.265631] | supported literal | n/a at this width |
+| recursion W8 initial | 0.128849 [0.127445, 0.132137] | supported literal | n/a at this width |
+| spine W1 initial | 0.996526 [0.994969, 0.998274] | supported literal | [0.994934, 1.005066] at the floor |
+| spine W4 initial | 3.694303 [3.685246, 3.720779] | **FAIL diagnostic only** | n/a at this width |
+| spine W4 rerun | 3.687732 [3.671385, 3.705936] | **FAIL diagnostic only** | n/a at this width |
+| spine W8 initial | 4.491429 [4.471548, 4.503199] | **FAIL diagnostic only** | n/a at this width |
+| spine W8 rerun | 4.490251 [4.457230, 4.517177] | **FAIL diagnostic only** | n/a at this width |
+| hot_helper W1 initial | 1.000184 [1.000077, 1.000322] | literal exceeds; AT FLOOR | [0.999583, 1.000417] at the floor |
+| hot_helper W4 initial | 1.000080 [0.999973, 1.000435] | UNDECIDED: straddle | n/a at this width |
+| hot_helper W8 initial | 1.000078 [0.999881, 1.000385] | UNDECIDED: straddle | n/a at this width |
+| large_helper W1 initial | 0.993129 [0.992437, 0.993996] | VOID (raw pass) | VOID |
+| large_helper W4 initial | 0.256536 [0.256212, 0.256909] | supported literal | n/a at this width |
+| large_helper W8 initial | 0.138079 [0.137889, 0.138299] | VOID (raw pass) | VOID |
+| mandelbrot W1 initial | 0.998149 [0.994556, 1.002658] | UNDECIDED: straddle | [0.993608, 1.006392] at the floor |
+| mandelbrot W4 initial | 0.261169 [0.260387, 0.261854] | supported literal | n/a at this width |
+| mandelbrot W8 initial | 0.137419 [0.136628, 0.138586] | supported literal | n/a at this width |
+| records W1 initial | 1.000790 [0.996790, 1.001860] | UNDECIDED: straddle | [0.996972, 1.003028] outside the floor |
+| records W4 initial | 0.272107 [0.269867, 0.272609] | supported literal | n/a at this width |
+| records W8 initial | 0.148684 [0.144757, 0.151549] | VOID (raw pass) | VOID |
+| fir W1 initial | 1.003976 [1.002556, 1.006617] | **FAIL diagnostic only** | [0.998135, 1.001865] outside the floor |
+| fir W1 rerun | 1.005104 [1.003721, 1.007085] | **FAIL diagnostic only** | [0.998296, 1.001704] outside the floor |
+| fir W4 initial | 0.248124 [0.247381, 0.248469] | VOID (raw pass) | VOID |
+| fir W8 initial | 0.129878 [0.129516, 0.130090] | supported literal | n/a at this width |
+| stencil W1 initial | 0.999125 [0.997058, 1.000734] | UNDECIDED: straddle | [0.995357, 1.004643] at the floor |
+| stencil W2 initial | 0.669962 [0.663935, 0.680522] | supported literal | n/a at this width |
+| stencil W4 initial | 0.586899 [0.552826, 0.607105] | VOID (raw pass) | VOID |
+| stencil W8 initial | 0.507113 [0.475940, 0.531152] | supported literal | n/a at this width |
+| prefix W1 initial | 1.002187 [0.994474, 1.008434] | UNDECIDED: straddle | [0.989548, 1.010452] at the floor |
+| prefix W4 initial | 0.868507 [0.851031, 0.883347] | VOID (raw pass) | VOID |
+| prefix W8 initial | 0.836449 [0.824380, 0.846769] | supported literal | n/a at this width |
+| histogram W1 initial | 1.002820 [0.997397, 1.007920] | VOID (raw inconclusive) | VOID |
+| histogram W2 initial | 0.911546 [0.898136, 0.919567] | supported literal | n/a at this width |
+| histogram W4 initial | 0.876601 [0.854238, 0.892962] | supported literal | n/a at this width |
+| histogram W8 initial | 0.858484 [0.850899, 0.879130] | supported literal | n/a at this width |
+
+Source: `summary.json.cells[workload,width].initial.literal_seq_diagnostic.{median,interval,status}` and `.initial.layout_floor.{band,status,controls}`; corresponding `.rerun` fields where labeled. Envelope follows the preregistered max-endpoint radius, not another workload's floor.
+
+
+Eight W1 readings are at the floor; records and fir are outside it; large_helper and histogram have no usable floor because their twins exclude 1. Records straddles 1, so its literal result is undecided. Fir is wholly above 1 in both attempts, outside both floors. Hot_helper's tiny literal exceedance is recorded at the floor, not a failure.
+
+**H3 and continued scaling.** Reporting H3 is supported: every cell has the registered CPU margin and interval. Its sign is not a gate. The table shows the complete initial demand sweep only; no selectively rerun widths are mixed in. Positive stencil W8 H3 does not establish continuing speedup because comparisons touching W4 are void. Histogram 8/4 straddles 1 while CPU rises, so further speedup is unestablished. The two nonvoid adjacent numerical speedups still lack surviving-work inspection for CPU attribution.
+
+| Workload / width (identifier / threads; baseline = n/a; ideal = n/a) | Demand wall (ms; baseline = same-width seq in artifact; ideal <= seq wall) | Demand process CPU (ms; baseline = same-width seq CPU; diagnostic ideal = lower for equal wall benefit, no gate) | Demand H3 margin (dimensionless; baseline = registered seq CPU/wall allowance; diagnostic ideal <= 0, no gate) | Higher / preceding demand wall (ratio; baseline = preceding sweep width; ideal upper CI < 1) | Higher / preceding demand CPU (ratio; baseline = preceding sweep width; ideal <= 1 at equal wall benefit, no gate) | Scaling qualification (category; baseline = registered sweep/twin/inspection rules; ideal = demonstrated faster, valid) |
+| --- | --- | --- | --- | --- | --- | --- |
+| stencil W1 | 72.245 [72.129, 72.340] | 72.239 [72.127, 72.335] | -0.1006 [-0.1032, -0.0992] | n/a | n/a | inconclusive; inspection missing |
+| stencil W2 | 48.388 [48.107, 49.088] | 78.634 [78.048, 80.073] | -0.0763 [-0.0876, -0.0472] | 0.6725 [0.6670, 0.6855] | 1.0948 [1.0838, 1.1207] | demonstrated faster; inspection missing |
+| stencil W4 | 39.538 [39.238, 40.083] | 103.768 [102.622, 105.791] | 0.2555 [0.1908, 0.3488] | 0.8181 [0.8098, 0.8215] | 1.3106 [1.3002, 1.3264] | void; inspection missing |
+| stencil W8 | 34.459 [34.327, 34.851] | 148.149 [146.788, 151.678] | 0.6970 [0.5352, 0.8067] | 0.8755 [0.8664, 0.8826] | 1.4344 [1.4213, 1.4632] | void; inspection missing |
+| histogram W1 | 23.112 [22.931, 23.282] | 23.112 [22.931, 23.282] | -0.0972 [-0.1029, -0.0924] | n/a | n/a | void; inspection missing |
+| histogram W2 | 21.103 [20.779, 21.418] | 23.908 [23.596, 24.246] | -0.0917 [-0.1006, -0.0739] | 0.9138 [0.9071, 0.9362] | 1.0366 [1.0283, 1.0561] | void; inspection missing |
+| histogram W4 | 20.322 [19.968, 20.502] | 26.361 [26.032, 26.528] | -0.0132 [-0.0507, 0.0087] | 0.9591 [0.9457, 0.9708] | 1.0972 [1.0841, 1.1083] | demonstrated faster; inspection missing |
+| histogram W8 | 20.622 [20.228, 20.992] | 32.624 [31.816, 32.773] | 0.1458 [0.1222, 0.1777] | 1.0182 [0.9874, 1.0471] | 1.2341 [1.2027, 1.2571] | uncertain; inspection missing |
+
+Source: `summary.json.sweep[workload].widths[width].wall_ns.demand`, `.cpu_ns.demand`, `.h3.demand`, `.validity`, `.inspection`; `.adjacent_widths[arm="demand",higher_width=width].{higher_over_lower_wall,higher_over_lower_cpu,scaling}`. ns converted to ms by division by 1,000,000. All 38 demand H3 observations remain in `.cells[].initial.h3.demand`; other arms are also retained.
+
+
+**Separate entry-dispatch cost.** All four widths reach the registered 1,048,576-entry cap without both batches meeting the precision rule. These observed distributions are therefore precision-undecided, not qualified evidence of a 1 ns bound; the 1 ns/2% nonhoistable-call rule does not apply here. First-query values include pool initialization at active widths. Process CPU includes concurrent runtime CPU; it is not an isolated instruction cost. The generic witness does not measure workload-wrapper spills/saves.
+
+| Workload / width (identifier / threads; baseline = n/a; ideal = n/a) | Dispatch minus direct wall / entry (ns/entry; baseline = direct no-query witness; diagnostic ideal = 0, no gate) | Dispatch minus direct process CPU / entry (ns/entry; baseline = direct witness; diagnostic ideal = 0, no gate) | First query wall (us; baseline = no query, 0 us; diagnostic ideal = 0, no gate) | First query process CPU (us; baseline = no query, 0 us; diagnostic ideal = 0, no gate) | Precision verdict (category; baseline = registered pilot stopping rule; ideal = sufficient) |
+| --- | --- | --- | --- | --- | --- |
+| generic witness W1 | 0.9992 [0.9955, 1.0018] | 0.9991 [0.9954, 1.0018] | 0.167 [0.164, 0.172] | 0.474 [0.470, 0.508] | UNDECIDED: calibration cap |
+| generic witness W2 | 1.0012 [1.0000, 1.0037] | 2.0613 [2.0449, 2.0658] | 62.379 [53.072, 101.112] | 62.886 [53.648, 101.527] | UNDECIDED: calibration cap |
+| generic witness W4 | 1.0007 [0.9971, 1.0062] | 4.2061 [4.1266, 4.2539] | 133.609 [127.263, 137.304] | 142.174 [137.328, 149.901] | UNDECIDED: calibration cap |
+| generic witness W8 | 1.0037 [1.0025, 1.0063] | 8.5838 [8.5335, 8.6174] | 224.190 [198.167, 243.975] | 401.589 [354.176, 488.923] | UNDECIDED: calibration cap |
+
+Source: `summary.json.entry_dispatch.widths[width].decisive.{wall_delta_ns_per_entry,cpu_delta_ns_per_entry,first_query_wall_ns,first_query_cpu_ns}` and `.precision`, `.calls_per_batch`; raw pairs in `entry-dispatch-measurements.json.decisive[width,round]`. First-query ns divided by 1,000 for us.
+
+
+The computation evidence establishes the D-qualified sequential computation boundary on these twelve sources, not literal identity of whole wrappers or concurrent cold failure support. The eager budget change numerically recovers recursion W8, but does not preserve the request-gated candidate on spine; this run cannot attribute that regression beyond the paired control and cannot claim an unconditional never-slower program. W1 fir's diagnostic lies outside its own layout envelope in both attempts, while wider spine is substantially slower than seq. Histogram's eighth worker step has no demonstrated wall benefit, and void stencil comparisons cannot establish its continued scaling condition.
+
+The next decision is how to revise the general eager-recursion policy after the spine preservation rejection and address fir's retained par failure; the current candidate has not met its adoption criteria. Missing hot-site evidence, twin validity and capped entry precision also need to be resolved for a newly registered follow-up. This result establishes no bound for other programs, machines, placements, sizes, widths beyond 1/2/4/8, or nonhoistable per-call decisions. It supplies no universal layout-causality explanation and no unconditional CPU-cost exemption.
