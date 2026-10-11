@@ -1,0 +1,19 @@
+struct Envelope {
+  next: Option<u8>;
+}
+
+fn byte(root: &Box<Envelope>) -> result: u8 reads(root.inner.next.Some.value) {
+  let selected = match &root^.inner.next {
+    None() => {
+      give 0_u8;
+    }
+    Some(value: inner) => {
+      give inner^;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

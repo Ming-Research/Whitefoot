@@ -204,6 +204,17 @@ impl<'unit> Checker<'_, 'unit> {
         let mut give_labels: Vec<String> = Vec::new();
         let mut loop_transfers = Vec::new();
         let mut effects = scrutinee.effects.clone();
+        // [EFF-2, OWN-13] dispatch observes the enum tag even when forming
+        // the scrutinee reference read no value. Attribute that observation
+        // to every resolved referent, at the most precise EFF-1 path; EFF-1
+        // has no separate tag step. Operand reads remain in scrutinee.effects.
+        if let Some(reference) = &scrutinee.reference {
+            for place in &reference.paths {
+                for path in self.effect_paths_for_place(expression_node, place, &base_bindings)? {
+                    effects.add_read(path);
+                }
+            }
+        }
         let mut all_paths_deliver = true;
         for (arm_node, variant) in arm_nodes.into_iter().zip(&resolved_variants) {
             let arm_scope = ControlScope {
