@@ -1374,7 +1374,7 @@ inter-field page-pointer reload and any speedup remain unverified.
 An independent `gpt-6-astra` high-effort architectural audit found the
 narrowed mapping sound under these emission restrictions and identified
 no specification gap. Its audit does not validate the implementation or
-establish candidate optimization. Five backend cases in
+establish candidate optimization. Backend cases in
 `compiler/src/backend/tests/storage_alias.rs` inspect the runtime byte-copy
 loop's Box/Array/Slots roles and explicit capacity and Ring measures,
 conservative numeric readers and nested inline header reads and mutations,
@@ -1399,6 +1399,61 @@ soundness, fixture admission, LLVM verification, native behavior and
 performance remain unverified. No metadata-withholding switch is required
 for acceptance: these annotations change no operation, and LLVM may ignore
 them; empirical facts-off equivalence has not been demonstrated.
+
+### Executable alias-boundary witnesses
+
+The enum transition case in `backend/tests/storage_alias.rs` now reuses one
+union enum's storage for 64 rounds: a Number payload is written and read,
+replaced with a Box-owner payload, read and written through that Box, then
+replaced with Number and written and read again. It checks all six observed
+values per round, confirms common payload placement, retains untagged
+constructor/transfer assertions and requires tagged scalar writes and
+Box-owner loads. Stale owner bytes can cause a fault or fail the Box checks
+(exit 3/4); stale pointer bytes exposed as Number fail exits 5/6. These
+observations exercise the role transition; they do not establish that every
+possible incorrect annotation necessarily changes optimized output.
+
+The Paged relocation case grows a Pair window from capacity zero to 1025
+inside one loop. Each round appends an element, writes and checks both new
+fields, and writes and checks page-zero fields through the current
+directory; a final pass checks every retained element after page zero.
+The 16-byte Pair crosses five 256-element pages and outgrows directory
+reservations of one, two and four entries. Stale directory/owner reads may
+fault, leave new fields zero instead of `i+17`/`i+29` (exits 1/2), or access
+the wrong retained page (exits 3–6).
+
+The new case in `backend/tests/read_through.rs` passes a consumed four-word
+Row to a looping destination-result callee and asserts equal result/input
+pointers at the actual call. One loop reads the original input in place;
+construction then writes the aliased result, and a second loop must read
+the persistent captured input. The case checks capture placement in IR,
+all four returned words and observations for 32 input seeds. Missing or
+late capture yields `3*7 + 3*99 = 318` instead of `6*7 = 42` on the first
+seed (exit 1). Both ordinary optimized emission and retained call boundaries
+run through the existing native helper.
+
+These cases use `compile_and_run`, whose ordinary host flags include `-O2`.
+Their source admission, IR observations and native results await CI; no
+local build, test, formatter, check, optimizer or wrong-tag mutation ran.
+
+CI on `74def15e1`, before these additional native cases, failed nine backend
+unit tests on Linux and macOS. The supplied failure extracts identify five
+fixture problems: reserved `copy`, prelude-colliding `append`, a Pair
+constructor used directly as a placement argument, and arithmetic used as
+a Number constructor argument in three read-through functions. The corrected
+fixtures use unique names and bind values before atom-only call arguments;
+the shared copy fixture also repairs the cached-fragment case. The newer
+native cases now bind nested calls and comparison arithmetic, remove a WF
+comment and use canonical arm layout, without changing their observations.
+Field/argument order and loop exits were inspected against the grammar.
+
+The other four CI failures were IR-text matches that treated a TBAA suffix
+as part of an address or instruction. The array target-preparation check,
+the shared split-loop Box reload detector and the projected-window target
+check now strip only `, !tbaa !` before exact operand matching. Their
+target identities, reload requirements, counts and ordering checks remain
+intact. Corrected fixture admission and all native and IR outcomes still
+await a new CI run; no local checks were run to substitute for it.
 
 ### Found along the way: readonly measure reference formation
 

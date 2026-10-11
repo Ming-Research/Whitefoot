@@ -1444,7 +1444,8 @@ fn destination(v: Value, cold: Bool, count: u64) -> result: Value pure {
   let hot = classify(v: v);
   if cold {
     let observed = loop_reader(v: v, count: count);
-    return Value::Number(n: hot +wrap observed);
+    let combined = hot +wrap observed;
+    return Value::Number(n: combined);
   }
   return Value::Number(n: hot);
 }
@@ -1452,14 +1453,16 @@ fn destination(v: Value, cold: Bool, count: u64) -> result: Value pure {
 fn mutation_boundary(v: Value, count: u64) -> result: Value pure {
   let hot = classify(v: v);
   let observed = mutating_loop(v: v, count: count);
-  return Value::Number(n: hot +wrap observed);
+  let combined = hot +wrap observed;
+  return Value::Number(n: combined);
 }
 
 fn split_boundary(v: Value) -> result: Value pure {
   let hot = classify(v: v);
   let again = Command::Again();
   let observed = split_reader(v: v, command: again);
-  return Value::Number(n: hot +wrap observed);
+  let combined = hot +wrap observed;
+  return Value::Number(n: combined);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1602,6 +1605,130 @@ fn main() -> status: std::process::ExitStatus pure {
         output.stdout.is_empty() && output.stderr.is_empty(),
         "{output:?}"
     );
+}
+
+#[test]
+fn looping_destination_result_preserves_its_aliased_read_through_input() {
+    let source = br#"nocopy struct Row {
+  value: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn destination(v: Row, count: u64, observed: &u64) -> result: Row writes(observed) {
+  let total = 0_u64;
+  for (i in 0_u64..count) {
+    let old = v.value;
+    set total = total +wrap old;
+  }
+  let out = Row(value: 99_u64, b: 101_u64, c: 103_u64, d: 107_u64);
+  for (i in 0_u64..count) {
+    let old = v.value;
+    set total = total +wrap old;
+  }
+  set observed^ = total;
+  return move out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (round in 0_u64..32_u64) {
+    let seed = round +wrap 7_u64;
+    let input = Row(value: seed, b: 1_u64, c: 2_u64, d: 3_u64);
+    let observed = 0_u64;
+    let result = destination(v: move input, count: 3_u64, observed: &observed);
+    let expected = seed *wrap 6_u64;
+    if observed != expected {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if result.value != 99_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if result.b != 101_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    if result.c != 103_u64 {
+      return std::process::exit_status(code: 4_u8);
+    }
+    if result.d != 107_u64 {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    let destination = emitted_function(&module, "destination");
+    let copies = incoming_copy_lines(destination);
+    assert_eq!(copies.len(), 1, "one persistent capture: {destination}");
+    let early_read = destination
+        .lines()
+        .position(|line| {
+            line.contains("getelementptr ")
+                && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
+        })
+        .expect("the first loop reads through the original input");
+    let row_gep = destination
+        .lines()
+        .nth(early_read)
+        .unwrap()
+        .split_once("getelementptr ")
+        .unwrap()
+        .1
+        .split_once(", ptr ")
+        .unwrap()
+        .0;
+    let write = destination
+        .lines()
+        .position(|line| {
+            line.trim_start().starts_with("store ") && line.contains(", ptr %wf.result")
+        })
+        .expect("the middle construction writes the caller's result");
+    let later_read = destination
+        .lines()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            (line.contains("getelementptr ")
+                && line.contains(&format!("getelementptr {row_gep}, ptr "))
+                && line.ends_with(", i32 0, i32 0"))
+            .then_some(at)
+        })
+        .last()
+        .expect("the second loop observes the input after construction");
+    assert!(
+        early_read < copies[0] && copies[0] < write && write < later_read,
+        "capture must separate the two loops at the result write: {destination}"
+    );
+    assert!(
+        !destination.lines().nth(later_read).unwrap().contains("ptr %wf.arg.v0"),
+        "the second loop reads the persistent snapshot: {destination}"
+    );
+    let main = super::emitted_body(&module, "main");
+    let call = main
+        .lines()
+        .find(|line| line.contains("@wf_destination("))
+        .expect("main calls the looping destination-result callee");
+    let arguments = call
+        .split_once("@wf_destination(")
+        .unwrap()
+        .1
+        .split(')')
+        .next()
+        .unwrap()
+        .split(", ")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arguments[0], arguments[1],
+        "the result really aliases the consumed input: {call}"
+    );
+    // A missing/late capture makes the second loop read 99, so the first
+    // iteration reports 3*7 + 3*99 = 318 rather than 6*7 = 42 (code 1).
+    // Run both optimized inlining and retained ABI boundaries: inlining must
+    // not hide an incorrect result/input snapshot, or manufacture one for us.
+    for native in [module.clone(), super::owned_places::retain_calls(&module)] {
+        let output = compile_and_run(&native);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
 }
 
 fn incoming_copy_lines(body: &str) -> Vec<usize> {

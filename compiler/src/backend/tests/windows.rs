@@ -1519,6 +1519,9 @@ fn main() -> status: std::process::ExitStatus pure {
             .lines()
             .next()
             .unwrap()
+            .split(", !tbaa !")
+            .next()
+            .unwrap()
             .ends_with(&format!("ptr {target}"))
     );
     assert!(!update[rhs..store].contains("load ptr, ptr "));

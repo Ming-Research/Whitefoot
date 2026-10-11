@@ -1040,9 +1040,14 @@ fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
                 .split_once(" = load ptr, ptr %wf.slot.")
                 .map(|(name, _)| name)
         });
-        parameters
-            .chain(spilled)
-            .any(|name| part.contains(&format!("load ptr, ptr {name}\n")))
+        parameters.chain(spilled).any(|name| {
+            let load = format!("load ptr, ptr {name}");
+            part.lines().any(|line| {
+                line.trim().split_once(" = ").is_some_and(|(_, instruction)| {
+                    instruction.split(", !tbaa !").next() == Some(load.as_str())
+                })
+            })
+        })
     })
 }
 
