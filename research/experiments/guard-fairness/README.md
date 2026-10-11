@@ -17,7 +17,11 @@ that scanned for each successor: its N = 50 tail passes, but runtime is
 1.61× baseline. The
 [results and attribution](../../investigations/guard-fairness/DESIGN.md#oldest-only-handoff-results)
 include the twin control and separate diagnostic counters.
-No ordered-queue measurement is claimed here.
+Run 38182569301 rejected the ordered-queue candidate despite meeting the
+comparison-count and sampled return-wait predictions; its N = 50 runtime
+remained 1.629/1.631 times baseline with valid twins. The
+[ordered-queue results](../../investigations/guard-fairness/DESIGN.md#ordered-queue-results)
+record both runs and the remaining diagnostic work.
 
 `build.sh` emits the unchanged probe's LLVM once with `WFC`, then uses
 `Makefile` and the maintained `compiler/runtime.mk` native source list to

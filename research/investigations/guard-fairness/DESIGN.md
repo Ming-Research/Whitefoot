@@ -901,3 +901,79 @@ The existing newcomer, age, cancellation and cross-unit selectors and all
 five deliberately broken variants remain wired. Native construction,
 intended mutant failures, race checking and performance are still awaiting
 CI; source inspection and fixture design are not executed evidence.
+
+### Ordered-queue results
+
+The owner supplied rounded results from two native 14900K runs of the
+registered protocol, both on revision
+`0a36bb15eee7ee26071d0a438db71015c3e69a1f`.
+[Run 38182220053](https://github.com/Ming-Research/Whitefoot/actions/runs/38182220053)
+reported N = 50 oldest/base and twin/base ratios of 1.832 and 1.089 in
+pass 1, and 1.691 and 1.045 in pass 2. Its reported verdict file says
+`inconclusive`: pass 1's twin/base ratio exceeds the registered upper
+control bound of 1.05. Its timing comparison is excluded from the verdict,
+rather than averaged with another run or retaining only its second order.
+[Run 38182569301](https://github.com/Ming-Research/Whitefoot/actions/runs/38182569301)
+supplies the decisive timing comparison below, with reported verdict file
+`reject`. These
+are owner-reported values; the raw artifacts are not locally available and
+have not been fetched or independently checked. Build, test, intended
+mutant-failure and ThreadSanitizer statuses were not supplied, so this
+section establishes no execution result for those checks.
+
+| Pass | N | Oldest/base runtime | Twin/base runtime | Oldest maximum wait (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 2 | 1.045 | 1.0015 | — |
+| 1 | 8 | 1.185 | 1.0049 | — |
+| 1 | 50 | 1.629 | 1.0065 | 1.307 |
+| 2 | 2 | 1.047 | 1.0012 | — |
+| 2 | 8 | 1.120 | 0.9883 | — |
+| 2 | 50 | 1.631 | 1.0067 | 1.300 |
+
+A dash means that value was not supplied. The twin ratios are listed in
+pass-major order: N = 2, 8, 50 for pass 1, then N = 2, 8, 50 for pass 2.
+All six controls lie within [0.95, 1.05]. The N = 50 maximum wait satisfies
+3.3 ms in both orders, and N = 2 satisfies the runtime criterion. The
+candidate remains **rejected**: runtime/base exceeds 1.10 at N = 8 and
+N = 50 in both orders. Neither the passing tail nor cheaper successor
+selection relaxes that acceptance rule.
+
+The supplied N = 50 diagnostic event totals, normalized per successful
+checkout, are:
+
+| Oldest-only event | Events per checkout |
+| --- | ---: |
+| Waiters notified | 48.61 |
+| Spurious retries | 47.61 |
+| Lock grabs on refused turns | 0.82 |
+| Batch notifications at or below T | 28.94 |
+| Initial age-qualified selections | 1.21 |
+| False-condition reservation passes | 18.46 |
+| Rescans | 0 |
+| Passing-search candidate links examined | 37.31 |
+
+Baseline notified 25.37 waiters per checkout, leaving 48.61 − 25.37 = 23.24
+extra notifications in oldest-only. Its sampled mean return-acquisition
+wait was 26.9 ns, versus baseline's 17.3 ns, with an oldest-only sampled
+maximum of 146 ns. Those latency summaries describe the sampled diagnostic
+acquisitions, not every return or the uninstrumented timing run.
+
+The reported passing count satisfies the registered bound:
+37.31 ≤ 4 × 18.46 + 4 = 77.84 links per checkout. The sampled mean also
+satisfies the 2.7 µs prediction: 26.9 ns is below 2,700 ns. Despite those
+improvements, both N = 50 runtime ratios, 1.629 and 1.631, remain in the
+registered [1.50, 1.70] refutation range with agreeing twins. This refutes
+the prediction that the old passing search was the main source of the
+approximately 1.6× runtime cost on this probe. The comparison does not
+support the intermediate 1.25 ratio, much less the 1.10 acceptance limit.
+
+The diagnostic counts still show substantial below-T batch notifications
+and false-condition passes. They identify remaining retry activity but
+cannot apportion elapsed time between those paths or explain each of the
+23.24 extra notifications. Registration and clock-repair comparisons are
+excluded from the passing-search counter, so the low passing count does
+not establish that all comparison cost disappeared. Without raw matched
+diagnostic and timing rows, instrumentation perturbation also remains
+unquantified here. The result supports cheaper passing and short sampled
+return waits while leaving the total runtime cost and the candidate's
+rejection intact.
