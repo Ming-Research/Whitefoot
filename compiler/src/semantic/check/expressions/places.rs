@@ -435,7 +435,16 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+        // [MSR-3] projects an entry former through the same typed suffix
+        // walk as a bare parameter. Its contract admission is checked by
+        // check_entry_formers; it introduces no executable place form.
+        let projected_entry = check_context.active_postcondition.is_some()
+            && self
+                .types
+                .declarations
+                .tree
+                .has_fixed(pbase, crate::FixedTerminal::Entry)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() && !projected_entry {
             return self
                 .types
                 .declarations
