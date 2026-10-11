@@ -794,3 +794,67 @@ preservation and DC4's validation evidence remain unverified. A subsequent local
 allocation repair uses `reserve_exact` in the shared merge so existing owning
 callers retain the former initial capacity request; its arithmetic and limits
 are unchanged. This repair was inspected by the implementing agent.
+
+## The many-arm join: implicit-bound evidence
+
+**Question and criterion, fixed before this round.** The arm series (one
+`set v = i` per arm, joined after the `match`) still grew about tenfold per
+doubling after the on-demand index ([14900K timing results](#14900k-timing-results)).
+The status board's acceptance, written on 2026-10-09 before this work: on the
+14900K, with the same base/twin/head comparison, each doubling of the series
+grows the check time by at most 2.5 times, every verdict is unchanged, and
+the eager-join differential holds.
+
+**Attribution by work counters.** `WHITEFOOT_CHECK_WORK` on a hosted
+ubuntu-24.04 runner (Whitefoot run 38138266398, compiler of main 4ad4f5786)
+shows one join per series input, with N inputs, N+2 union rows and every one
+of the (N+2)² evaluated pairs retained. Parent references equal N·(N+2)²
+(33,178,240 at 320 arms; 263,783,680 at 640) and the join's ledger interning
+is about three times that (789,297,920 at 640). Each arm's assignment creates
+a commit value known only in that arm, so almost every pair joins to the
+bound the two terms' types imply, yet received a proof with N parents. The
+stage-3 interpreter (`nat.wf`) differs: 1,441 small joins (at most 62 rows)
+and 292,117 join interns out of 4,164,570; its cost lies elsewhere.
+
+**Change.** A join stops scanning a pair once one contributing input reaches
+the exact implicit-only closed bound (the full implicit component closure)
+and records implicit evidence instead of a join node with every predecessor
+as a parent; stronger bounds keep their complete predecessor evidence
+(design/compiler/incremental-closure.md). Bounded relation delivery had
+skipped a candidate by inspecting its proof ancestry; ENT-5 selects delivered
+relations by derivability in the closed state and DIAG-2 lets a redundant
+delivery root be absent, so delivery now omits a substituted candidate
+exactly when the implicit closure derives it (design/compiler/checker-facts.md).
+A delivery root that was redundant can therefore disappear; no closed state
+or verdict changes.
+
+**Counters after the change** (Whitefoot run 38141481679, same inputs): at
+640 arms parent references 410,880 and join interns 2,460,798; at 320 arms
+103,040 and 615,998. Parent references now equal the evaluated pairs. For
+`nat.wf` parent references fall from 311,524 to 179,966 while join interns
+rise from 292,117 to 545,647 (implicit evidence nodes and derivability
+queries).
+
+**14900K timing** (Whitefoot run 38142600594, 2026-10-11; base = main
+4ad4f5786, twin = a byte copy of base, head = e517e7a47 carrying this change;
+six rotating rounds; `whitefootc --check`, one process at a time, no host
+setting changed; every binary exited 0 on every input):
+
+| Input (`--check`) | Base median (s) | Twin / base | Head median (s) | Head / base | Head range over 6 rounds (s) |
+|---|---:|---:|---:|---:|---|
+| Arm series, 160 arms | 0.261 | 1.015 | 0.036 | 0.138 | 0.034–0.042 |
+| Arm series, 320 arms | 1.800 | 1.000 | 0.081 | 0.045 | 0.078–0.085 |
+| Arm series, 640 arms | 17.392 | 1.000 | 0.253 | 0.015 | 0.249–0.267 |
+| Stage-3 interpreter, `nat.wf` | 3.827 | 0.993 | 3.835 | 1.002 | 3.818–3.872 |
+| Halo `pkg::vm` (Halo-wf 3ec418a72) | 2.657 | 1.006 | 2.599 | 0.978 | 2.559–2.620 |
+
+**Result against the criterion.** The cubic term is gone: 640 arms check in
+0.015 of the base time. The head grows 2.25 times from 160 to 320 arms and
+3.12 times from 320 to 640, so the 2.5-times criterion holds for the first
+doubling and fails for the second; what remains is enumerating the (N+2)²
+pairs. The interpreter is unchanged within the twin's spread, and Halo's
+check is 2.2% faster with all six head rounds below the base median. The
+timing covers these three inputs on one machine. Meeting the criterion at
+640 arms needs a join that enumerates only the pairs default values cannot
+reconstruct (correlated zero bounds and disequalities are its open
+obligations).
