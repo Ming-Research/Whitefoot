@@ -2616,7 +2616,7 @@ A runtime-produced `IoError` with a nonzero `code` carries the failed condition'
 |---|---|
 | `DeadlinePassed` or `Cancelled` | The fixed text in the table below |
 | A variant carrying `code` zero | The fixed text in the table below |
-| A variant carrying nonzero `code`, on POSIX | The host's `strerror_l` text for that code in a private immutable C locale, with no change to the process locale |
+| A variant carrying nonzero `code`, on POSIX | The host C library's message for that code in the C locale, the text `strerror_l` returns with a C locale object, with no change to the process locale |
 | A variant carrying nonzero `code`, on Windows | The system message returned by `FormatMessageW` with `FORMAT_MESSAGE_FROM_SYSTEM` and `FORMAT_MESSAGE_IGNORE_INSERTS`, language identifier `0x0409` (US English), converted to UTF-8 with all trailing CR and LF characters removed |
 
 The fixed texts are ASCII bytes, without the table's backticks:
