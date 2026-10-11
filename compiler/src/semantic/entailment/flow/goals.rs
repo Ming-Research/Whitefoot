@@ -101,17 +101,9 @@ impl Input<'_, '_> {
         // affine and cannot be a standalone goal datum.
         if self.is_copy(expression.ty())
             && let Some(path) = self.read_place_path(expression)
-            && let PlaceRoot::Binding(root) = path.root
+            && matches!(path.root, PlaceRoot::Binding(_))
         {
-            return Some(GoalExpression::Datum(GoalDatum::Place {
-                root,
-                projections: path
-                    .proof_steps()
-                    .map(|step| goal_projection_of_step(&step))
-                    .collect::<Option<Vec<_>>>()?,
-                ty: expression.ty(),
-                admission: GoalAdmission::default(),
-            }));
+            return self.goal_place_datum(&path, expression.ty());
         }
         let build_operation = |row, type_arguments, const_arguments, result, arguments: Vec<_>| {
             Some(GoalExpression::Operation {
@@ -568,7 +560,21 @@ impl Input<'_, '_> {
             .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
-            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
+            PlaceRoot::Binding(binding) => {
+                // Admission extends this endpoint's written spelling, not
+                // its resolved origin. Retain only its current range kind.
+                let admission = if self.place_is_range(place, ty) {
+                    GoalAdmission::plain_range(ty)
+                } else {
+                    GoalAdmission::default()
+                };
+                GoalExpression::Datum(GoalDatum::Place {
+                    root: binding,
+                    projections,
+                    ty,
+                    admission,
+                })
+            }
             PlaceRoot::Constant(id) => GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: self.context.constant_declaration(id)?,
                 projections,

@@ -242,6 +242,36 @@ impl Input<'_, '_> {
             .map(|endpoint| endpoint.ty)
     }
 
+    /// A resolved range root stores its element type, so retain its checked
+    /// reference kind while recovering the type below its complete path.
+    fn place_projection_endpoint(&self, place: &ResolvedPlace) -> Option<ProjectionEndpoint> {
+        let (ty, run) = match place.root {
+            PlaceRoot::Binding(binding) => {
+                let summary = self.summary(binding)?;
+                (summary.ty?, summary.range_reference)
+            }
+            PlaceRoot::Constant(constant) => (
+                self.context.constants.get(constant.0 as usize)?.ty,
+                false,
+            ),
+        };
+        self.projection_endpoint(
+            ProjectionEndpoint {
+                ty,
+                run,
+                indexed: false,
+                readonly: false,
+                represented: true,
+            },
+            &place.path,
+        )
+    }
+
+    pub(super) fn place_is_range(&self, place: &ResolvedPlace, ty: CheckedType) -> bool {
+        self.place_projection_endpoint(place)
+            .is_some_and(|endpoint| endpoint.ty == ty && endpoint.run)
+    }
+
     fn projection_endpoint(
         &self,
         mut endpoint: ProjectionEndpoint,
@@ -648,25 +678,7 @@ impl Reasoning<'_, '_, '_> {
         {
             let mut base = path.clone();
             base.path.pop();
-            let mut ty = match base.root {
-                PlaceRoot::Binding(binding) => self.input.summary(binding)?.ty?,
-                PlaceRoot::Constant(constant) => {
-                    self.input.context.constants.get(constant.0 as usize)?.ty
-                }
-            };
-            ty = self
-                .input
-                .projection_endpoint(
-                    ProjectionEndpoint {
-                        ty,
-                        run: false,
-                        indexed: false,
-                        readonly: false,
-                        represented: true,
-                    },
-                    &base.path,
-                )?
-                .ty;
+            let ty = self.input.place_projection_endpoint(&base)?.ty;
             return Some(self.place_measure_term(
                 measure,
                 base,
