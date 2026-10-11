@@ -56,8 +56,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one)\n",
-            "\n  mechanical_fix: declare the row as `reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(root.inner)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"enum Node {
   Empty();
@@ -65,7 +65,7 @@ fn main() -> status: std::process::ExitStatus pure {
   Branch(zero: Frozen<Node>, one: Frozen<Node>);
 }
 
-fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8> reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one) {
+fn map_lookup_at(root: &Frozen<Node>, key: u64, mask: u64) -> result: Option<u8> reads(root.inner) {
   match &root^.inner {
     Empty() => {
       return None<u8>();
@@ -160,8 +160,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one)\n",
-            "\n  mechanical_fix: declare the row as `reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(root.inner)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"enum Node {
   Empty();
@@ -169,7 +169,7 @@ fn main() -> status: std::process::ExitStatus pure {
   Branch(zero: Box<Node>, one: Box<Node>);
 }
 
-fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> reads(root.inner.Leaf.key), reads(root.inner.Leaf.byte), reads(root.inner.Branch.zero), reads(root.inner.Branch.one) {
+fn map_lookup_at(root: &Box<Node>, key: u64, mask: u64) -> result: Option<u8> reads(root.inner) {
   match &root^.inner {
     Empty() => {
       return None<u8>();
@@ -252,15 +252,15 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)\n",
-            "\n  mechanical_fix: declare the row as `reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)`, which covers every access the body makes and no other; also declare the row of `lookup_second` as `reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)`\n",
+            "\n  expected_row: reads(root.inner)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner)`, which covers every access the body makes and no other; also declare the row of `lookup_second` as `reads(root.inner)`\n",
         ],
         repaired: &[br#"enum Node {
   Leaf(byte: u8);
   Branch(next: Box<Node>);
 }
 
-fn lookup_first(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), reads(root.inner.Branch.next) {
+fn lookup_first(root: &Box<Node>) -> result: u8 reads(root.inner) {
   match &root^.inner {
     Leaf(byte: first_byte) => {
       return first_byte^;
@@ -271,7 +271,7 @@ fn lookup_first(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), rea
   }
 }
 
-fn lookup_second(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), reads(root.inner.Branch.next) {
+fn lookup_second(root: &Box<Node>) -> result: u8 reads(root.inner) {
   match &root^.inner {
     Leaf(byte: second_byte) => {
       return second_byte^;
@@ -332,15 +332,15 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)\n",
-            "\n  mechanical_fix: declare the row as `reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)`, which covers every access the body makes and no other; also declare the row of `lookup_second` as `reads(root.inner.Leaf.byte), reads(root.inner.Branch.next)`\n",
+            "\n  expected_row: reads(root.inner)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner)`, which covers every access the body makes and no other; also declare the row of `lookup_second` as `reads(root.inner)`\n",
         ],
         repaired: &[br#"enum Node {
   Leaf(byte: u8);
   Branch(next: Box<Node>);
 }
 
-fn lookup_first<T>(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), reads(root.inner.Branch.next) {
+fn lookup_first<T>(root: &Box<Node>) -> result: u8 reads(root.inner) {
   match &root^.inner {
     Leaf(byte: first_byte) => {
       return first_byte^;
@@ -351,7 +351,7 @@ fn lookup_first<T>(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), 
   }
 }
 
-fn lookup_second<U>(root: &Box<Node>) -> result: u8 reads(root.inner.Leaf.byte), reads(root.inner.Branch.next) {
+fn lookup_second<U>(root: &Box<Node>) -> result: u8 reads(root.inner) {
   match &root^.inner {
     Leaf(byte: second_byte) => {
       return second_byte^;
@@ -407,8 +407,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)\n",
-            "\n  mechanical_fix: declare the row as `reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)\n",
+            "\n  mechanical_fix: declare the row as `reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"struct Node {
   byte: u8;
@@ -416,7 +416,7 @@ fn main() -> status: std::process::ExitStatus pure {
   next: Option<Box<Node>>;
 }
 
-fn store(root: &Box<Node>, value: &u8) -> result: unit reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value) {
+fn store(root: &Box<Node>, value: &u8) -> result: unit reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value) {
   set root^.inner.byte = value^;
   match &root^.inner.next {
     Some(value: child) => {
@@ -473,15 +473,15 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(first.inner.Leaf.byte), reads(first.inner.Branch.next), reads(second.inner.Leaf.byte), reads(second.inner.Branch.next)\n",
-            "\n  mechanical_fix: declare the row as `reads(first.inner.Leaf.byte), reads(first.inner.Branch.next), reads(second.inner.Leaf.byte), reads(second.inner.Branch.next)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(first.inner), reads(second.inner)\n",
+            "\n  mechanical_fix: declare the row as `reads(first.inner), reads(second.inner)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"enum Node {
   Leaf(byte: u8);
   Branch(next: Box<Node>);
 }
 
-fn lookup(first: &Box<Node>, second: &Box<Node>) -> result: u8 reads(first.inner.Leaf.byte), reads(first.inner.Branch.next), reads(second.inner.Leaf.byte), reads(second.inner.Branch.next) {
+fn lookup(first: &Box<Node>, second: &Box<Node>) -> result: u8 reads(first.inner), reads(second.inner) {
   match &first^.inner {
     Leaf(byte: found) => {
       return found^;
@@ -616,7 +616,7 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("UTF-8 fixture")
         .replacen(
             "reads(root.inner.next), reads(value), writes(root.inner.byte)",
-            "reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)",
+            "reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)",
             1,
         );
     let refused = super::super::check(

@@ -970,8 +970,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 /// Recursive writes widen to the complete argument suffix in their category,
-/// subsume reads below it, retain sibling writes, and leave a different
-/// parameter's entry in EFF-1 written order.
+/// subsume reads below it, retain sibling writes and the dispatch read above
+/// them, and leave a different parameter's entry in EFF-1 written order.
 #[test]
 fn a_recursive_write_repair_is_canonical_and_carries_out_eff2() {
     let source = r#"enum Node {
@@ -998,9 +998,12 @@ fn main() -> status: std::process::ExitStatus pure {
     let (expected, missing, extra) = effect_mismatch(source);
     assert_eq!(
         expected,
-        "reads(value), writes(root.inner.Leaf.byte), writes(root.inner.Branch.next)"
+        "reads(root.inner), reads(value), writes(root.inner.Leaf.byte), writes(root.inner.Branch.next)"
     );
-    assert_eq!(missing, ["writes(root.inner.Branch.next)"]);
+    assert_eq!(
+        missing,
+        ["reads(root.inner)", "writes(root.inner.Branch.next)"]
+    );
     assert!(extra.is_empty(), "{extra:?}");
     let repaired = source.replacen("reads(value), writes(root.inner.Leaf.byte)", &expected, 1);
     assert_complete(repaired.as_bytes());
