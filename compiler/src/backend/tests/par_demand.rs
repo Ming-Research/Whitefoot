@@ -40,7 +40,17 @@ fn ablation(arm: crate::DemandAblation) -> OverlapLowering {
 #[test]
 fn default_demand_is_unchanged_after_each_ablation() {
     let before = emit_lowered(SMALL.as_bytes(), DEMAND);
-    for arm in [crate::DemandAblation::Order, crate::DemandAblation::Seed, crate::DemandAblation::Static] {
+    // Without a versionable region, the ablation changes no emitted code.
+    assert_eq!(
+        before,
+        emit_lowered(SMALL.as_bytes(), ablation(crate::DemandAblation::Unversioned))
+    );
+    for arm in [
+        crate::DemandAblation::Order,
+        crate::DemandAblation::Seed,
+        crate::DemandAblation::Static,
+        crate::DemandAblation::Unversioned,
+    ] {
         let _ = emit_lowered(SMALL.as_bytes(), ablation(arm));
         assert_eq!(before, emit_lowered(SMALL.as_bytes(), ablation(Default::default())));
     }
@@ -416,6 +426,23 @@ fn invariant_demand_region_selects_the_sequential_walker_once() {
                 assert!(!body.contains(forbidden), "{forbidden}: {body}");
             }
         }
+        let unversioned = emit_lowered(
+            source.as_bytes(),
+            ablation(crate::DemandAblation::Unversioned),
+        );
+        let walker = function_body(&unversioned, "@wf_walk");
+        assert!(!walker.contains("par.region"), "{walker}");
+        assert!(!walker.contains("@wf__par_seq_walk("), "{walker}");
+        assert!(walker.contains("@wf_paint("), "{walker}");
+        // The repeated ordinary paint call retains default extent pricing,
+        // the small/slice choice and request-driven slices.
+        let paint = function_body(&unversioned, "@wf_paint");
+        assert!(
+            paint.contains("par.small.") && paint.contains("par.slice."),
+            "{paint}"
+        );
+        assert!(paint.contains("udiv i64 149999, %"), "{paint}");
+        assert!(unversioned.contains(POLL), "{unversioned}");
         // Bounds and wrap guards remain source operations in the cheap version.
         assert!(sequential.contains("icmp ule i64"), "{sequential}");
         assert!(sequential.contains("add i64"), "{sequential}");

@@ -357,6 +357,9 @@ pub(super) fn plan(
     functions: &[IrFunction],
     ablation: DemandAblation,
 ) -> BTreeMap<String, Predicates> {
+    if ablation == DemandAblation::Unversioned {
+        return BTreeMap::new();
+    }
     let mut summaries = Summaries {
         functions,
         ablation,

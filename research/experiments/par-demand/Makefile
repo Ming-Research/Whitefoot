@@ -17,13 +17,15 @@ else ifeq ($(EXPERIMENT),3)
 ARMS := seq par demand twin order seed extent dedup
 else ifeq ($(EXPERIMENT),4)
 ARMS := seq par demand static twin
+else ifeq ($(EXPERIMENT),5c)
+ARMS := seq par demand unversioned twin
 else ifeq ($(EXPERIMENT),5a)
 # Same seq WF/oracle/runner/runtime objects; only linked placement changes.
 WORKLOADS := $(KERNELS)
 PADDING_SIZES := 64 4160 65664
 ARMS := seq par demand twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifneq ($(EXPERIMENT),1)
-$(error EXPERIMENT must be 1, 2, 3, 4 or 5a)
+$(error EXPERIMENT must be 1, 2, 3, 4, 5a or 5c)
 endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
@@ -39,6 +41,7 @@ native-demand := $(filter-out $(BUILD)/native/sched/core.o $(BUILD)/native/sched
 native-order := $(native-demand)
 native-extent := $(native-demand)
 native-static := $(native-demand)
+native-unversioned := $(native-demand)
 native-seed := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/seed-core.o
 native-dedup := $(filter-out $(BUILD)/demand-core.o,$(native-demand)) $(BUILD)/dedup-core.o
 $(BUILD)/seed-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
@@ -84,6 +87,7 @@ flags-seed := --par-demand --par-demand-ablation seed
 # requires the recorded revision, not a replay with this compiler.
 flags-extent := --par-demand
 flags-static := --par-demand --par-demand-ablation static
+flags-unversioned := --par-demand --par-demand-ablation unversioned
 # Static pattern rules let the maintained formal sources remain single-owned.
 define arm-rules
 $(addprefix $(BUILD)/$(1)/,$(addsuffix .ll,$(MICROS))): $(BUILD)/$(1)/%.ll: %.wf micro_host.ll $(WFC) Makefile
@@ -108,6 +112,8 @@ ifeq ($(EXPERIMENT),3)
 $(foreach arm,order seed extent,$(eval $(call arm-rules,$(arm))))
 else ifeq ($(EXPERIMENT),4)
 $(eval $(call arm-rules,static))
+else ifeq ($(EXPERIMENT),5c)
+$(eval $(call arm-rules,unversioned))
 endif
 $(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-dedup)
 	@mkdir -p $(@D)

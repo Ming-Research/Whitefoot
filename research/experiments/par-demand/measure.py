@@ -98,10 +98,49 @@ def performance_cores(root=Path("/sys/devices/system/cpu"),
                        performance_source=str(performance_file) if performance is not None else "all cores (P-core file absent)")
 
 
+E5C_PLACEMENT = {1: [2], 4: [2, 4, 6, 8], 8: [2, 4, 6, 8, 10, 12, 14, 1]}
+
+
+def e5c_placement(root=Path("/sys/devices/system/cpu"),
+                   performance_file=Path("/sys/devices/cpu_core/cpus"), available=None):
+    """Validate fixed logical IDs, without substituting CPUs on another host."""
+    _, topology = performance_cores(root, performance_file, available, minimum_cores=1)
+    performance = topology["performance_cpus"]
+    if performance is None:
+        raise ValueError("experiment 5c requires the P-core CPU mask")
+    siblings = {int(path.parent.parent.name[3:]): cpu_list(value)
+                for filename, value in topology["files"].items()
+                if (path := Path(filename)).name == "thread_siblings_list"}
+    selected = set(E5C_PLACEMENT[8])
+    if not selected <= set(performance) or not selected <= set(topology["available_cpus"]):
+        raise ValueError("experiment 5c fixed CPUs must all be allowed P-core CPUs")
+    online = topology["files"].get(str(root / "online"))
+    if online is None or not selected <= cpu_list(online):
+        raise ValueError("experiment 5c fixed CPUs must all be online")
+    if 0 not in siblings or 1 not in siblings or siblings[0] != siblings[1] or 0 not in siblings[1] or 1 not in siblings[0]:
+        raise ValueError("experiment 5c requires CPU 1 to be CPU 0's sibling")
+    physical = set()
+    for cpu in E5C_PLACEMENT[8]:
+        members = siblings.get(cpu, set())
+        if cpu not in members or any(siblings.get(member) != members for member in members):
+            raise ValueError(f"experiment 5c inconsistent sibling topology for CPU {cpu}")
+        core = tuple(sorted(members))
+        if core in physical:
+            raise ValueError("experiment 5c fixed CPUs must use distinct physical cores")
+        physical.add(core)
+        if cpu != 1 and cpu != min(members):
+            raise ValueError(f"experiment 5c CPU {cpu} must be its core's first sibling")
+    topology.update(placement_policy="fixed E5c P-core sets; never CPU 0",
+                    selected_siblings={str(cpu): sorted(siblings[cpu]) for cpu in E5C_PLACEMENT[8]},
+                    w8_shares_cpu0_physical_core=True,
+                    cpu0_siblings=sorted(siblings[0]))
+    return {width: list(cpus) for width, cpus in E5C_PLACEMENT.items()}, topology
+
+
 def demand_setting(experiment, arm):
     return "on" if (experiment == 2 and arm in ("demand", "idle1", "twin")
                     or experiment in (3, 4) and arm not in ("seq", "par")
-                    or experiment == "5a" and arm in ("demand", "twin")) else "off-never-request"
+                    or experiment in ("5a", "5c") and arm in ("demand", "unversioned", "twin")) else "off-never-request"
 
 
 def layout_identity(build, manifest):
@@ -140,13 +179,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--rounds", type=int)
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a"), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c"), default=1)
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    if args.experiment in (3, 4, "5a") and args.rounds is not None:
-        parser.error("experiments 3, 4 and 5a select their rounds from six sizing rounds; omit --rounds")
+    if args.experiment in (3, 4, "5a", "5c") and args.rounds is not None:
+        parser.error("experiments 3, 4, 5a and 5c select their rounds from six sizing rounds; omit --rounds")
     if args.instrumented and (args.experiment != 3 or args.sizing or args.verify_only):
         parser.error("--instrumented requires experiment 3 without sizing or verify-only")
     if args.rounds is None:
@@ -168,15 +207,21 @@ def main():
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
     topology = None
-    if args.experiment in (2, 3, 4, "5a") and not args.verify_only:
+    if args.experiment in (2, 3, 4, "5a", "5c") and not args.verify_only:
         if platform.system() != "Linux" or shutil.which("taskset") is None:
-            raise ValueError("experiments 2, 3, 4 and 5a require Linux topology and taskset pinning")
-        cores, topology = performance_cores(minimum_cores=1) if args.experiment == "5a" else performance_cores()
+            raise ValueError("experiments 2, 3, 4, 5a and 5c require Linux topology and taskset pinning")
+        if args.experiment == "5c":
+            # CPU 0 itself need not be in this service's allowed affinity.
+            pinned, topology = e5c_placement()
+            cores = []
+        else:
+            cores, topology = performance_cores(minimum_cores=1) if args.experiment == "5a" else performance_cores()
     else:
         # Verification has no timing verdict and may run on the hosted sizing
         # machine. Every experiment-2 timing batch, sizing included, is strict.
         cores = one_cpu_per_core()
-    pinned = {width: cores[:max(width, 1)] for width in widths_for_run} if len(cores) >= max(widths_for_run) else {}
+    if args.experiment != "5c" or args.verify_only:
+        pinned = {width: cores[:max(width, 1)] for width in widths_for_run} if len(cores) >= max(widths_for_run) else {}
     if args.experiment == "5a" and not args.verify_only:
         if 2 not in cores or topology["performance_cpus"] is None or 2 not in topology["performance_cpus"]:
             raise ValueError("experiment 5a requires CPU 2 to be an allowed first P-core sibling")
@@ -190,13 +235,13 @@ def main():
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
-                    setting="on" if args.experiment in (2, 3, 4, "5a") else "off-never-request", manifest=manifest,
+                    setting="on" if args.experiment in (2, 3, 4, "5a", "5c") else "off-never-request", manifest=manifest,
                     instrumented=args.instrumented, layout=layout)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in manifest:
             for arm in arms_for_run:
-                for width in widths_for_run if args.experiment in (2, 3, 4, "5a") else (1, 4):
+                for width in widths_for_run if args.experiment in (2, 3, 4, "5a", "5c") else (1, 4):
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
                             env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND=setting))
@@ -227,8 +272,8 @@ def main():
                     meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
-                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a") else meta["repetitions"])
-                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a") else meta["extent"])
+                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c") else meta["repetitions"])
+                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c") else meta["extent"])
                     widths = list(widths_for_run)
                     widths = widths[round_id % len(widths):] + widths[:round_id % len(widths)]
                     for width in widths:
@@ -246,7 +291,7 @@ def main():
                                          WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
     selected = {(name, width) for name in manifest for width in widths_for_run}
-    if args.experiment in (3, 4, "5a"):
+    if args.experiment in (3, 4, "5a", "5c"):
         args.rounds = 6
         batch(1, selected)
         sample = summarize(path, sizing=True, experiment=args.experiment)
@@ -274,9 +319,10 @@ def main():
     inspection_path = build / "inspection.json"
     inspection = json.loads(inspection_path.read_text()) if inspection_path.exists() else {}
     def exceeded(name, width, arms):
-        if args.experiment == 4:
+        if args.experiment in (4, "5c"):
             return attempt_result_e4(arms, width,
-                                     excluded=e2_excluded(name, inspection.get(name, {})))["status"] == "exceeds"
+                                     excluded=e2_excluded(name, inspection.get(name, {})),
+                                     experiment=args.experiment)["status"] == "exceeds"
         if args.experiment == 2:
             return attempt_result_e2(arms, width, decisions(name),
                                      excluded=e2_excluded(name, inspection.get(name, {})))["status"] == "exceeds"

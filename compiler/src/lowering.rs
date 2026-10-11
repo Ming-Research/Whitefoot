@@ -299,6 +299,8 @@ pub enum DemandAblation {
     Seed,
     /// Restore static slice pricing for the research comparison.
     Static,
+    /// Disable only function-body cheap-region versioning.
+    Unversioned,
 }
 
 /// Whether lowering actualizes ordinary permission-derived overlap.

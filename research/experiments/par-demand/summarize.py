@@ -5,7 +5,7 @@ Native tools have no equivalent paired-twin/re-run decision rule. All quantities
 here are ratios (seconds cancel). Each cell is judged by a bootstrap interval of
 the median paired round ratio (DESIGN.md, "The paired noise rule"), and a twin
 that disagrees with its byte-identical candidate voids the cell. CPU is
-reported in experiment 1 and judges H3 in experiments 2 and 4.
+reported in experiment 1 and judges H3 in experiments 2, 4 and 5c.
 """
 import argparse
 import csv
@@ -21,6 +21,7 @@ ARMS = ("seq", "demand", "par", "twin")
 E2_ARMS = ("seq", "par", "demand", "idle1", "twin")
 E3_ARMS = ("seq", "par", "demand", "twin", "order", "seed", "extent", "dedup")
 E4_ARMS = ("seq", "par", "demand", "static", "twin")
+E5C_ARMS = ("seq", "par", "demand", "unversioned", "twin")
 # Three nonzero shifts; ordinary seq is the zero-padding baseline.
 E5A_PADDING = {"seq-shift64": 64, "seq-shift4160": 4160, "seq-shift65664": 65664}
 E5A_ARMS = ("seq", "par", "demand", "twin", *E5A_PADDING)
@@ -32,13 +33,13 @@ FIELDS = ("workload", "arm", "width", "round", "attempt", "sample", "wall_ns", "
 
 
 def parse_experiment(value):
-    return "5a" if value == "5a" else int(value)
+    return value if value in ("5a", "5c") else int(value)
 
 
 def experiment_matrix(experiment):
     if experiment == "5a":
         return E5A_ARMS, (1,), E5A_MANIFEST
-    arms = E4_ARMS if experiment == 4 else E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
+    arms = E5C_ARMS if experiment == "5c" else E4_ARMS if experiment == 4 else E3_ARMS if experiment == 3 else E2_ARMS if experiment == 2 else ARMS
     return arms, E3_WIDTHS if experiment == 3 else WIDTHS, MANIFEST
 
 
@@ -63,13 +64,13 @@ def load(path, experiment=1, sample_index=1):
             if key in seen:
                 raise ValueError(f"duplicate measurement: {key}")
             seen.add(key)
-            if experiment in (2, 3, 4, "5a"):
-                cell = (name, width) if experiment in (4, "5a") else (name, width, attempt)
+            if experiment in (2, 3, 4, "5a", "5c"):
+                cell = (name, width) if experiment in (4, "5a", "5c") else (name, width, attempt)
                 if counts.setdefault(cell, count) != count:
                     raise ValueError(f"comparison extent changed: {cell}")
             if sample == sample_index:  # second call judges; first reports startup
                 groups.setdefault((name, width, attempt), {}).setdefault(arm, {})[round_id] = (wall, cpu)
-    if experiment in (2, 3, 4, "5a"):
+    if experiment in (2, 3, 4, "5a", "5c"):
         for key in seen:
             if key[:-1] + (1 - key[-1],) not in seen:
                 raise ValueError(f"missing first/second call: {key}")
@@ -133,8 +134,8 @@ def attempt_result(arms, width, decisions=0):
 def summarize(path, inspection=None, sizing=False, experiment=1):
     if experiment == "5a":
         return summarize_e5a(path, sizing)
-    if experiment == 4:
-        return summarize_e4(path, inspection, sizing)
+    if experiment in (4, "5c"):
+        return summarize_e4(path, inspection, sizing, experiment)
     if experiment == 3:
         return summarize_e3(path, sizing)
     if experiment == 2:
@@ -273,13 +274,18 @@ def summarize_rule_cells(path, inspection, sizing, experiment):
         excluded = e2_excluded(name, checked)
         inspected = (checked.get("hot_work_survives") is True and bool(checked.get("evidence"))
                      and bool(checked.get("check_compiles_to")))
+        if experiment == "5c":
+            # Inspection must cover every versioned sequential clone against
+            # the corresponding seq body, even when the diff is nonempty.
+            inspected = inspected and checked.get("all_versioned_clones_compared") is True and bool(
+                checked.get("normalized_disassembly_evidence"))
         for width in WIDTHS:
             cell = (name, width, 1)
             if cell not in groups:
                 raise ValueError(f"missing initial cell: {name}/{width}")
             repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if sizing else meta.get("repetitions", 0)
             decisions = meta.get("decisions_per_repetition", 0) * repetitions
-            evaluate = (lambda arms, first_calls: attempt_result_e4(arms, width, first_calls, excluded)) if experiment == 4 else (
+            evaluate = (lambda arms, first_calls: attempt_result_e4(arms, width, first_calls, excluded, experiment)) if experiment in (4, "5c") else (
                 lambda arms, first_calls: attempt_result_e2(arms, width, decisions, first_calls, excluded))
             initial = evaluate(groups[cell], startup[cell])
             result = dict(workload=name, width=width, attribution=meta["kind"], initial=initial)
@@ -292,9 +298,13 @@ def summarize_rule_cells(path, inspection, sizing, experiment):
                 if status == "exceeds":
                     status = "needs-rerun" if second is None else (
                         "fail" if result["rerun"]["rules"][key]["status"] == "exceeds" else "inconclusive")
+                elif second is not None and result["rerun"]["rules"][key]["status"] != status:
+                    # A cell rerun covers every rule, even when a different
+                    # rule triggered it. Disagreement cannot preserve a pass.
+                    status = "inconclusive"
                 if initial["status"] == "void" or result.get("rerun", {}).get("status") == "void":
                     status = "void"
-                elif experiment == 4 and sizing and status != "not-applicable":
+                elif experiment in (4, "5c") and sizing and status != "not-applicable":
                     status = "inconclusive"  # the sample selects n, never a verdict
                 elif status == "pass" and (not inspected or sizing):
                     status = "inconclusive"
@@ -302,7 +312,19 @@ def summarize_rule_cells(path, inspection, sizing, experiment):
             statuses = set(verdicts.values())
             result["verdicts"] = verdicts
             result["status"] = next((s for s in ("void", "fail", "needs-rerun", "inconclusive", "pass") if s in statuses), "not-applicable")
-            if excluded or (experiment == 2 and width == 1):
+            if experiment == "5c":
+                result["e5a_layout_spread"] = e5a_observed_spread(name)
+                if name == "small_split" and width in (4, 8):
+                    no_decision = (inspected and checked.get("walker_has_per_iteration_decision") is False
+                                   and bool(checked.get("normalized_disassembly_evidence")))
+                    # Apply E4's rerun discipline to a persistent loss. A
+                    # missing image inspection cannot falsify an attribution.
+                    result["decision_whole_cause"] = (
+                        "falsified" if not sizing and no_decision and verdicts["E4-seq"] == "fail"
+                        else "undecided")
+                if excluded:
+                    result["e4_control"] = "E4 rules decide nothing; E5c-keep still applies"
+            if (excluded and experiment != "5c") or (experiment == 2 and width == 1):
                 result["reason"] = "spine belongs to stage 4" if name == "spine" else (
                     "timed work optimized away" if excluded else "one-worker control; rules apply only at four and eight")
             elif not inspected or sizing:
@@ -311,53 +333,55 @@ def summarize_rule_cells(path, inspection, sizing, experiment):
     return results
 
 
-def attempt_result_e4(arms, width, startup=None, excluded=False):
-    if set(arms) != set(E4_ARMS):
-        raise ValueError("missing experiment-4 arm")
+def attempt_result_e4(arms, width, startup=None, excluded=False, experiment=4):
+    expected = E5C_ARMS if experiment == "5c" else E4_ARMS
+    reference_arm = "unversioned" if experiment == "5c" else "static"
+    if set(arms) != set(expected):
+        raise ValueError(f"missing experiment-{experiment} arm")
     rounds = set(arms["seq"])
     if not rounds or rounds != set(range(len(rounds))) or any(set(rows) != rounds for rows in arms.values()):
-        raise ValueError("unpaired or missing experiment-4 rounds")
+        raise ValueError(f"unpaired or missing experiment-{experiment} rounds")
     order = sorted(rounds)
-    walls = {arm: [arms[arm][r][0] for r in order] for arm in E4_ARMS}
-    cpus = {arm: [arms[arm][r][1] for r in order] for arm in E4_ARMS}
+    walls = {arm: [arms[arm][r][0] for r in order] for arm in expected}
+    cpus = {arm: [arms[arm][r][1] for r in order] for arm in expected}
     def ratios(source, numerator, denominator):
         return [a / b for a, b in zip(source[numerator], source[denominator])]
-    wall_ratios = {arm: quantity(ratios(walls, arm, "seq")) for arm in E4_ARMS}
+    wall_ratios = {arm: quantity(ratios(walls, arm, "seq")) for arm in expected}
     twin = quantity(ratios(walls, "twin", "demand"))
     margins = {arm: [(cpu - 1.1 * seq_cpu - 0.1 * max(0, seq_wall - wall) * width) / seq_cpu
                      for cpu, seq_cpu, seq_wall, wall in zip(cpus[arm], cpus["seq"], walls["seq"], walls[arm])]
-               for arm in ("par", "demand", "static")}
+               for arm in ("par", "demand", reference_arm)}
     rules = {"E4-seq": upper_bound(ratios(walls, "demand", "seq"), 1.00),
              "E4-H3": upper_bound(margins["demand"], 0)}
     comparisons = {}
-    for key, reference in (("E4-par", "par"), ("E4-gain", "static")):
+    for key, reference in (("E4-par", "par"), ("E5c-keep" if experiment == "5c" else "E4-gain", reference_arm)):
         values = ratios(walls, "demand", reference)
         comparisons[reference] = quantity(values)
         rules[key] = upper_bound(values, 1.05)
-        if wall_ratios[reference]["interval"][1] >= 1:
+        if key != "E5c-keep" and wall_ratios[reference]["interval"][1] >= 1:
             rules[key].update(status="not-applicable", reason=f"{reference}/seq interval is not wholly below 1")
     void = not twin["interval"][0] <= 1 <= twin["interval"][1]
-    for rule in rules.values():
+    for key, rule in rules.items():
         if void:
             rule["status"] = "void"
-        elif excluded:
+        elif excluded and key != "E5c-keep":
             rule.update(status="not-applicable", reason="reported control; decides nothing")
     statuses = {rule["status"] for rule in rules.values()}
-    status = ("void" if void else "not-applicable" if excluded else
+    status = ("void" if void else "not-applicable" if excluded and experiment != "5c" else
               "exceeds" if "exceeds" in statuses else "inconclusive" if "inconclusive" in statuses else "pass")
     result = dict(status=status, rules=rules, rounds=len(rounds), twin_wall_ratio=twin,
                   wall_ns={arm: quantity(values) for arm, values in walls.items()},
                   cpu_ns={arm: quantity(values) for arm, values in cpus.items()},
                   wall_over_seq=wall_ratios,
-                  cpu_over_seq={arm: quantity(ratios(cpus, arm, "seq")) for arm in E4_ARMS},
+                  cpu_over_seq={arm: quantity(ratios(cpus, arm, "seq")) for arm in expected},
                   wall_over_par={"demand": comparisons["par"]},
-                  wall_over_static={"demand": comparisons["static"]},
                   h3={arm: quantity(values) for arm, values in margins.items()})
+    result[f"wall_over_{reference_arm}"] = {"demand": comparisons[reference_arm]}
     if startup is not None:
-        if set(startup) != set(E4_ARMS) or any(set(rows) != rounds for rows in startup.values()):
+        if set(startup) != set(expected) or any(set(rows) != rounds for rows in startup.values()):
             raise ValueError("unpaired first calls")
         result["first_call_cpu_above_wall_ns"] = {
-            arm: quantity([startup[arm][r][1] - startup[arm][r][0] for r in order]) for arm in E4_ARMS}
+            arm: quantity([startup[arm][r][1] - startup[arm][r][0] for r in order]) for arm in expected}
     return result
 
 
@@ -372,25 +396,48 @@ def e4_round_count(cells):
                                                for width, target in quantities)), 30)
 
 
-def summarize_e4(path, inspection=None, sizing=False):
+def summarize_e4(path, inspection=None, sizing=False, experiment=4):
     # Freeze sizing using measurements and prospective controls only. Later
     # optimized-code inspection must not change the already selected count.
-    cells = summarize_rule_cells(path, None if sizing else inspection, sizing, experiment=4)
+    cells = summarize_rule_cells(path, None if sizing else inspection, sizing, experiment=experiment)
     if sizing:
         count = e4_round_count(cells)
     else:
-        sample_path = Path(path).parent / "sizing-e4" / "measurements.tsv"
+        sample_path = Path(path).parent / f"sizing-e{experiment}" / "measurements.tsv"
         if not sample_path.exists():
-            raise ValueError("missing experiment 4 six-round sizing evidence")
-        sample = summarize_e4(sample_path, sizing=True)
+            raise ValueError(f"missing experiment {experiment} six-round sizing evidence")
+        sample = summarize_e4(sample_path, sizing=True, experiment=experiment)
         count = sample["decisive_rounds"]
         if any(attempt["rounds"] != count for cell in cells
                for attempt in (cell["initial"], *([cell["rerun"]] if "rerun" in cell else []))):
             raise ValueError("decisive rounds differ from the count frozen by sizing")
-    result = dict(experiment=4, sizing=sizing, cells=cells, decisive_rounds=count)
+    result = dict(experiment=experiment, sizing=sizing, cells=cells, decisive_rounds=count)
     if not sizing:
         result["sizing_evidence"] = str(sample_path)
     return result
+
+
+# Rounded spreads transcribed from DESIGN.md, "Experiment 5a's results".
+# This run was globally inconclusive (records' twin voided its cell); these
+# controls cannot alter any literal E4-seq verdict or establish a micro floor.
+E5A_OBSERVED_SPREADS = {
+    "mandelbrot": (0.004611, 0.004012, 0.002904),
+    "records": (0.002021, 0.001588, 0.002010),
+    "fir": (0.000895, 0.001901, 0.000965),
+    "stencil": (0.001220, 0.001888, 0.001295),
+    "prefix": (0.004408, 0.005413, 0.005881),
+    "histogram": (0.006751, 0.003918, 0.002170),
+}
+
+
+def e5a_observed_spread(name):
+    spreads = E5A_OBSERVED_SPREADS.get(name)
+    return dict(source="research/investigations/par-demand/DESIGN.md#experiment-5as-results",
+                overall_reading="inconclusive", measured_width=1, measured_cpu=2,
+                workload_controls=dict(zip(E5A_PADDING, spreads)) if spreads is not None else None,
+                workload_cell="void" if name == "records" else "observations" if spreads else "not-measured",
+                panel_max_spread=max(max(values) for values in E5A_OBSERVED_SPREADS.values()),
+                interpretation="reported beside the literal E4-seq verdict; no threshold changed")
 
 
 def layout_floor(controls):
@@ -557,7 +604,7 @@ def main():
     parser.add_argument("measurements", type=Path)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--sizing", action="store_true")
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a"), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c"), default=1)
     args = parser.parse_args()
     inspection = json.loads(args.inspection.read_text()) if args.inspection and args.inspection.exists() else {}
     rows = summarize(args.measurements, inspection, args.sizing, args.experiment)

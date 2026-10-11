@@ -8,9 +8,9 @@ import measure
 import contextlib
 import io
 from pathlib import Path
-from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, E5A_ARMS, E5A_PADDING, E5A_MANIFEST, layout_floor, load, summarize,
+from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E5C_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, E5A_ARMS, E5A_PADDING, E5A_MANIFEST, layout_floor, load, summarize,
                        attempt_result_e2, attempt_result_e3, attempt_result_e4, cause_verdict, e3_round_count, e4_round_count)
-from measure import cpu_list, performance_cores, demand_setting
+from measure import cpu_list, performance_cores, demand_setting, e5c_placement, E5C_PLACEMENT
 
 class VerdictTests(unittest.TestCase):
     def setUp(self):
@@ -335,6 +335,9 @@ class Experiment3Tests(unittest.TestCase):
 
 
 class Experiment4Tests(unittest.TestCase):
+    experiment = 4
+    reference_arm = "static"
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -344,7 +347,7 @@ class Experiment4Tests(unittest.TestCase):
 
     def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
         baseline = {"seq": (1.0, 1.0), "par": (0.5, 1.0),
-                    "demand": (0.5, 1.0), "static": (0.5, 1.0), "twin": (0.5, 1.0)}
+                    "demand": (0.5, 1.0), self.reference_arm: (0.5, 1.0), "twin": (0.5, 1.0)}
         lines = []
         for name in MANIFEST:
             for width in WIDTHS:
@@ -360,7 +363,7 @@ class Experiment4Tests(unittest.TestCase):
                                 first_cpu = wall + 0.07 if sample == 0 else cpu
                                 lines.append(f"{name}\t{arm}\t{width}\t{r}\t{attempt}\t{sample}\t{int(wall * 1e9)}\t{int(first_cpu * 1e9)}\t1\n")
         self.path.write_text("".join(lines))
-        sample_dir = self.path.parent / "sizing-e4"
+        sample_dir = self.path.parent / f"sizing-e{self.experiment}"
         sample_dir.mkdir(exist_ok=True)
         # Saved sample always has exactly six rounds and no reruns. Constant
         # fixtures select n=6, independent of their passing/failing ratios.
@@ -368,7 +371,7 @@ class Experiment4Tests(unittest.TestCase):
         (sample_dir / "measurements.tsv").write_text("".join(sample_lines))
 
     def row(self, width=4, name="large_helper", inspection=None):
-        result = summarize(self.path, self.inspection if inspection is None else inspection, experiment=4)
+        result = summarize(self.path, self.inspection if inspection is None else inspection, experiment=self.experiment)
         return next(cell for cell in result["cells"] if cell["workload"] == name and cell["width"] == width)
 
     def test_seq_is_literal_with_no_allowance_and_one_rerun(self):
@@ -394,6 +397,14 @@ class Experiment4Tests(unittest.TestCase):
             self.assertEqual(self.row()["verdicts"]["E4-seq"], "pass")
             self.write({reference: (1, 1)}, attempts=(1, 2))
             self.assertEqual(self.row()["verdicts"][rule], "not-applicable")
+
+    def test_a_cell_rerun_cannot_preserve_another_rules_initial_pass(self):
+        self.write({"demand": (0.5, 1.4)}, attempts=(1, 2),
+                   rerun_changes={"demand": (0.6, 1)})
+        # H3 triggers the rerun; par/gain initially pass and then exceed.
+        self.assertEqual(self.row()["verdicts"]["E4-H3"], "inconclusive")
+        self.assertEqual(self.row()["verdicts"]["E4-par"], "inconclusive")
+        self.assertEqual(self.row()["verdicts"]["E4-gain"], "inconclusive")
 
     def test_h3_keeps_cpu_margin_width_and_only_saved_wall_credit(self):
         self.write({"demand": (0.5, 1.4)})
@@ -524,6 +535,172 @@ class Experiment4Tests(unittest.TestCase):
         self.assertEqual(next(cell for cell in cells if cell["workload"] == "small_split" and cell["width"] == 4)["status"], "fail")
         for extra in (("--rounds", "30"), ("--instrumented",)):
             with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "4", *extra]), \
+                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                measure.main()
+
+
+class Experiment5cTests(unittest.TestCase):
+    experiment = "5c"
+    reference_arm = "unversioned"
+    write = Experiment4Tests.write
+    row = Experiment4Tests.row
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "rows.tsv"
+        self.inspection = {name: dict(hot_work_survives=True, evidence="controlled E5c images",
+                                    check_compiles_to="entry selection; default slice admission",
+                                    all_versioned_clones_compared=True,
+                                    normalized_disassembly_evidence="clone-vs-seq.diff",
+                                    walker_has_per_iteration_decision=False) for name in MANIFEST}
+
+    def test_literal_e4_rules_and_keep_every_cell(self):
+        self.write()
+        self.assertEqual(set(self.row()["verdicts"]), {"E4-seq", "E4-par", "E4-H3", "E5c-keep"})
+        self.assertEqual(set(self.row()["verdicts"].values()), {"pass"})
+        self.assertEqual(set(self.row()["initial"]["h3"]), {"par", "demand", "unversioned"})
+        self.write({"par": (1, 1), "unversioned": (1, 1), "demand": (1, 1)})
+        for width in WIDTHS:
+            self.assertEqual(self.row(width)["verdicts"]["E4-seq"], "pass")
+            self.assertEqual(self.row(width)["verdicts"]["E4-par"], "not-applicable")
+            self.assertEqual(self.row(width)["verdicts"]["E5c-keep"], "pass")
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2))
+        for width in WIDTHS:
+            self.assertEqual(self.row(width)["verdicts"]["E4-seq"], "fail")
+        self.write({"demand": (0.525, 1)})
+        for name in MANIFEST:
+            for width in WIDTHS:
+                self.assertEqual(self.row(width, name)["verdicts"]["E5c-keep"], "pass")
+        self.write({"demand": (0.526, 1)}, attempts=(1, 2))
+        for name in MANIFEST:
+            self.assertEqual(self.row(name=name)["verdicts"]["E5c-keep"], "fail")
+        self.write({"unversioned": (2, 1), "demand": (2.2, 1)}, attempts=(1, 2))
+        self.assertEqual(self.row()["verdicts"]["E5c-keep"], "fail")  # no reference-gain condition
+        self.write({"demand": (0.5, 1.4)}, attempts=(1, 2))
+        self.assertEqual(self.row()["verdicts"]["E4-H3"], "fail")
+        self.assertAlmostEqual(self.row()["initial"]["h3"]["demand"]["median"], 0.1)
+        self.assertEqual(self.row(8)["verdicts"]["E4-H3"], "pass")
+
+    def test_twin_inspection_rerun_and_attribution(self):
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2))
+        self.assertEqual(self.row(4, "small_split")["decision_whole_cause"], "falsified")
+        self.inspection["small_split"]["walker_has_per_iteration_decision"] = True
+        self.assertEqual(self.row(4, "small_split")["decision_whole_cause"], "undecided")
+        self.inspection["small_split"]["walker_has_per_iteration_decision"] = False
+        self.write({"demand": (1.01, 1)})
+        self.assertEqual(self.row(4, "small_split")["decision_whole_cause"], "undecided")
+        self.assertEqual(self.row()["verdicts"]["E4-seq"], "needs-rerun")
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2), rerun_changes={"demand": (0.5, 1)})
+        self.assertEqual(self.row()["verdicts"]["E4-seq"], "inconclusive")
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2), rerun_changes={"twin": (0.6, 1)})
+        self.assertEqual(self.row(4, "small_split")["status"], "void")
+        self.assertEqual(self.row(4, "small_split")["decision_whole_cause"], "undecided")
+        self.write()
+        for field in ("hot_work_survives", "evidence", "check_compiles_to",
+                      "all_versioned_clones_compared", "normalized_disassembly_evidence"):
+            checked = dict(self.inspection["large_helper"])
+            del checked[field]
+            self.assertEqual(self.row(inspection={"large_helper": checked})["status"], "inconclusive")
+        for name in MANIFEST:
+            spread = self.row(1, name)["e5a_layout_spread"]
+            self.assertEqual(spread["overall_reading"], "inconclusive")
+            self.assertEqual(spread["panel_max_spread"], 0.006751)
+        self.assertIsNone(self.row(1, "small_split")["e5a_layout_spread"]["workload_controls"])
+        self.assertEqual(self.row(1, "records")["e5a_layout_spread"]["workload_cell"], "void")
+        self.assertEqual(self.row(1, "fir")["e5a_layout_spread"]["workload_controls"]["seq-shift4160"], 0.001901)
+
+    def test_keep_reconciles_a_rerun_triggered_by_a_different_rule(self):
+        self.write({"demand": (0.5, 1.4)}, attempts=(1, 2),
+                   rerun_changes={"demand": (0.6, 1)})
+        self.assertEqual(self.row()["initial"]["rules"]["E5c-keep"]["status"], "pass")
+        self.assertEqual(self.row()["rerun"]["rules"]["E5c-keep"]["status"], "exceeds")
+        self.assertEqual(self.row()["verdicts"]["E5c-keep"], "inconclusive")
+        self.assertEqual(self.row()["verdicts"]["E4-par"], "inconclusive")
+
+    def test_attribution_requires_the_full_image_inspection(self):
+        self.write({"demand": (1.01, 1)}, attempts=(1, 2))
+        for field in ("hot_work_survives", "evidence", "check_compiles_to",
+                      "all_versioned_clones_compared", "normalized_disassembly_evidence",
+                      "walker_has_per_iteration_decision"):
+            checked = dict(self.inspection["small_split"])
+            del checked[field]
+            self.assertEqual(self.row(4, "small_split", {"small_split": checked})["decision_whole_cause"], "undecided")
+
+    def test_missing_wrong_changed_and_sizing_evidence(self):
+        self.write()
+        original = self.path.read_text().splitlines(keepends=True)
+        for lines in (original[:-1], original + [original[0]],
+                      [line for line in original if "\tunversioned\t" not in line],
+                      [line for line in original if line.split("\t")[5] != "0"],
+                      [original[0].replace("\t1\t0\t1\t", "\t2\t0\t1\t")] + original[1:]):
+            self.path.write_text("".join(lines))
+            with self.assertRaises(ValueError): self.row()
+        self.write(attempts=(1, 2))
+        rows = [line.split("\t") for line in self.path.read_text().splitlines()]
+        for row in rows:
+            if row[4] == "2": row[-1] = "2"
+        self.path.write_text("".join("\t".join(row) + "\n" for row in rows))
+        with self.assertRaisesRegex(ValueError, "comparison extent changed"): self.row()
+        self.write()
+        sample = summarize(self.path, sizing=True, experiment="5c")
+        self.assertEqual(sample["decisive_rounds"], 6)
+        self.assertEqual({cell["status"] for cell in sample["cells"]}, {"inconclusive"})
+        keep = sample["cells"][0]["initial"]["rules"]["E5c-keep"]
+        keep.update(median=1.05, interval=[0.5, 1.5])
+        self.assertEqual(e4_round_count(sample["cells"]), 30)
+        keep.update(median=1.05, interval=[1.035, 1.065])
+        self.assertEqual(e4_round_count(sample["cells"]), 14)
+        self.write(rounds=7)
+        with self.assertRaisesRegex(ValueError, "frozen"): self.row()
+        self.write(rounds=5)
+        with self.assertRaisesRegex(ValueError, "six rounds"): self.row()
+        self.write(attempts=(1, 2))
+        with self.assertRaisesRegex(ValueError, "without reruns"):
+            summarize(self.path, sizing=True, experiment="5c")
+        self.write()
+        (self.path.parent / "sizing-e5c/measurements.tsv").unlink()
+        with self.assertRaisesRegex(ValueError, "sizing evidence"): self.row()
+
+    def test_driver_fixed_placement_unpooled_sizing_and_one_rerun(self):
+        build = self.path.parent
+        for arm in E5C_ARMS:
+            (build / arm).mkdir()
+            for name in MANIFEST:
+                (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        observed = []
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return type("Result", (), {"stdout": "fixture\n"})()
+            image, mode, arm, width, r, attempt = command[3:]
+            name = Path(image).name
+            self.assertEqual(command[:3], ["taskset", "-c", ",".join(map(str, E5C_PLACEMENT[int(width)]))])
+            self.assertEqual(mode, "measure")
+            self.assertEqual(kwargs["env"]["WF_PAR_DEMAND"], demand_setting("5c", arm))
+            if "repetitions" in MANIFEST[name]:
+                self.assertEqual(kwargs["env"]["WFD_REPETITIONS"], str(MANIFEST[name]["repetitions"]))
+            observed.append((name, arm, width, r, attempt))
+            wall = 110 if name == "small_split" and width == "4" and arm in ("demand", "twin") else 100
+            for sample in (0, 1):
+                kwargs["stdout"].write(f"{name}\t{arm}\t{width}\t{r}\t{attempt}\t{sample}\t{wall}\t100\t1\n")
+        with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "5c"]), \
+             patch.object(measure, "run", side_effect=fake_run), \
+             patch.object(measure.platform, "system", return_value="Linux"), \
+             patch.object(measure.shutil, "which", return_value="/usr/bin/taskset"), \
+             patch.object(measure, "e5c_placement", return_value=(E5C_PLACEMENT, {"w8_shares_cpu0_physical_core": True})), \
+             contextlib.redirect_stdout(io.StringIO()):
+            measure.main()
+        count = len(MANIFEST) * len(E5C_ARMS) * len(WIDTHS)
+        self.assertEqual(len(observed), count * 12 + len(E5C_ARMS) * 6)
+        self.assertEqual({(row[0], row[2]) for row in observed if row[-1] == "2"}, {("small_split", "4")})
+        identity = json.loads((build / "identity.json").read_text())
+        self.assertEqual(identity["pinned"], {str(w): cpus for w, cpus in E5C_PLACEMENT.items()})
+        self.assertTrue(identity["topology"]["w8_shares_cpu0_physical_core"])
+        self.assertEqual((identity["rounds"], identity["sizing_rounds"]), (6, 6))
+        self.assertEqual(len(load(build / "sizing-e5c/measurements.tsv", "5c")), len(MANIFEST) * len(WIDTHS))
+        self.assertEqual(len(load(build / "measurements.tsv", "5c")), len(MANIFEST) * len(WIDTHS) + 1)
+        for extra in (("--rounds", "30"), ("--instrumented",)):
+            with patch("sys.argv", ["measure.py", "--build", str(build), "--experiment", "5c", *extra]), \
                  contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 measure.main()
 
@@ -686,6 +863,63 @@ class PerformanceCoreTests(unittest.TestCase):
         self.assertEqual(identity["files"][str(performance)], "0-15\n")
         self.assertIn(str(root / "cpu0/topology/thread_siblings_list"), identity["files"])
         self.assertEqual(cpu_list("0-3,8,10-12"), {0, 1, 2, 3, 8, 10, 11, 12})
+
+    def test_e5c_fixed_p_cores_include_cpu_zero_sibling_but_not_cpu_zero(self):
+        root, performance = self.topology()
+        # E5c requires reciprocal sibling sources for its exact logical IDs.
+        for core in range(8):
+            path = root / f"cpu{core * 2 + 1}" / "topology"
+            path.mkdir(parents=True)
+            (path / "thread_siblings_list").write_text(f"{core * 2},{core * 2 + 1}\n")
+        (root / "online").write_text("0-19\n")
+        available = set(range(1, 20))  # CPU 0 itself need not be allowed.
+        pinned, identity = e5c_placement(root, performance, available)
+        self.assertEqual(pinned, E5C_PLACEMENT)
+        self.assertTrue(identity["w8_shares_cpu0_physical_core"])
+        self.assertEqual(identity["cpu0_siblings"], [0, 1])
+        self.assertNotIn(0, pinned[8])
+        with self.assertRaisesRegex(ValueError, "allowed P-core"):
+            e5c_placement(root, performance, available - {1})
+        (root / "online").write_text("0-13,15-19\n")
+        with self.assertRaisesRegex(ValueError, "online"):
+            e5c_placement(root, performance, available)
+        (root / "online").write_text("0-19\n")
+        (root / "cpu1/topology/thread_siblings_list").write_text("1\n")
+        with self.assertRaisesRegex(ValueError, "CPU 0's sibling"):
+            e5c_placement(root, performance, available)
+        (root / "cpu1/topology/thread_siblings_list").write_text("0-1\n")
+        performance.write_text("0-13\n")
+        with self.assertRaisesRegex(ValueError, "allowed P-core"):
+            e5c_placement(root, performance, available)
+        performance.unlink()
+        with self.assertRaisesRegex(ValueError, "P-core CPU mask"):
+            e5c_placement(root, performance, available)
+
+    def test_e5c_rejects_missing_nonreciprocal_shared_or_nonfirst_siblings(self):
+        for problem, expected in (("missing", "inconsistent sibling"),
+                                  ("nonreciprocal", "inconsistent sibling"),
+                                  ("shared", "distinct physical cores"),
+                                  ("nonfirst", "first sibling")):
+            with self.subTest(problem=problem):
+                root, performance = self.topology()
+                for core in range(8):
+                    path = root / f"cpu{core * 2 + 1}" / "topology"
+                    path.mkdir(parents=True)
+                    (path / "thread_siblings_list").write_text(f"{core * 2}-{core * 2 + 1}\n")
+                (root / "online").write_text("0-19\n")
+                def replace(cpu, members):
+                    (root / f"cpu{cpu}/topology/thread_siblings_list").write_text(members + "\n")
+                if problem == "missing":
+                    (root / "cpu4/topology/thread_siblings_list").unlink()
+                elif problem == "nonreciprocal":
+                    replace(5, "5")
+                elif problem == "shared":
+                    for cpu in (2, 3, 4, 5): replace(cpu, "2-5")
+                else:
+                    for cpu in (2, 5): replace(cpu, "2,5")
+                    for cpu in (3, 4): replace(cpu, "3,4")
+                with self.assertRaisesRegex(ValueError, expected):
+                    e5c_placement(root, performance, set(range(1, 20)))
 
     def test_fewer_than_eight_p_cores_or_restricted_affinity_is_refused(self):
         root, performance = self.topology(count=7)

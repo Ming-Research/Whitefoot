@@ -1513,7 +1513,8 @@ impl Options {
                         Some("order") => whitefoot::DemandAblation::Order,
                         Some("seed") => whitefoot::DemandAblation::Seed,
                         Some("static") => whitefoot::DemandAblation::Static,
-                        _ => return Err("--par-demand-ablation requires none, order, seed or static".to_owned()),
+                        Some("unversioned") => whitefoot::DemandAblation::Unversioned,
+                        _ => return Err("--par-demand-ablation requires none, order, seed, static or unversioned".to_owned()),
                     };
                     if demand_ablation.replace(arm).is_some() {
                         return Err("--par-demand-ablation may be written only once".to_owned());
@@ -2138,10 +2139,21 @@ mod tests {
         assert!(module.contains("udiv i64 149999, %"));
         let static_price = emit(parse(&["--par-demand", "--par-demand-ablation", "static", "value.wf"]).unwrap());
         assert!(!static_price.contains("udiv i64 149999,"));
-        for arm in ["none", "order", "seed", "static"] {
+        for arm in ["none", "order", "seed", "static", "unversioned"] {
             assert!(parse(&["--par-demand", "--par-demand-ablation", arm, "value.wf"]).is_ok());
             assert!(parse(&["--par", "--par-demand-ablation", arm, "value.wf"]).is_err());
         }
+        assert_eq!(
+            parse(&["--par-demand", "--par-demand-ablation", "unversioned", "value.wf"])
+                .unwrap()
+                .overlap(),
+            OverlapLowering::Demand {
+                ablation: whitefoot::DemandAblation::Unversioned,
+                budget: RecursionBudget::RuntimeDerived,
+                call_grain: CallGrain::WorkUnit,
+                sequential_refusal: false,
+            }
+        );
         assert!(parse(&["--par-demand", "--par-demand-ablation", "dedup", "value.wf"]).is_err());
         assert!(parse(&["--par-demand", "--par-demand-ablation", "extent", "value.wf"]).is_err());
         assert!(parse(&["--par-demand", "--par-demand-ablation"]).is_err());

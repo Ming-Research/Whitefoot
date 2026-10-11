@@ -75,10 +75,10 @@ Dispatch `.github/workflows/compute-bench.yml` with `experiment=par-demand`,
 `placement_runner=github` for sizing or `14900k` for the real panel, and
 `placement_rounds` for experiment 1 or 2's round count. Every dispatch first
 builds on a hosted runner, verifies results with requests on and off at the
-experiment's widths (1/4 for experiment 1, 1/4/8 for experiments 2/4, 4/8 for
+experiment's widths (1/4 for experiment 1, 1/4/8 for experiments 2/4/5c, 4/8 for
 experiment 3), and compares legacy emission. Experiments 1 and 2 also run one
 small hosted sizing round. The selected runner then uses those exact images;
-experiments 2, 3 and 4 require the 14900K for timing, while a hosted
+experiments 2, 3, 4, 5a and 5c require the 14900K for timing, while a hosted
 experiment-1 selection remains sizing-only. The native
 runner shares the formal performance instrument's prepare/call/check boundary:
 only the WF call is timed, with wall and process CPU clocks. Sample zero warms
@@ -106,7 +106,7 @@ Makefile compiles those `.wf` sources directly. Prefix and histogram reuse
 their formal performance APIs unchanged.
 
 Rounds rotate and reverse workload, width and build order. In experiments 1
-2 and 4, exceeded bounds get
+2, 4 and 5c, exceeded bounds get
 one extra interleaved batch at the same workload and width. No timing or source
 result is replaced on a rerun. The reducer reports wall/CPU medians, candidate
 ratio intervals and the initial/rerun verdicts. A failed rerun is `fail`; a first
@@ -232,7 +232,7 @@ interval's width by `sqrt(6/n)` and selects the first count whose projected
 width is at most 0.02 or its median's distance to the comparison point (1 for
 ratios, 0 for H3). The sample is never pooled with decisive observations.
 
-The compiler accepts `--par-demand-ablation none|order|seed|static` only with
+The compiler accepts `--par-demand-ablation none|order|seed|static|unversioned` only with
 `--par-demand`; omission is `none`. The current research switches are:
 
 - `order` publishes near and runs far, keeping the original seeds, bounds,
@@ -247,6 +247,8 @@ The compiler accepts `--par-demand-ablation none|order|seed|static` only with
   Omission (`none`), `order` and `seed` use the existing `split.work` estimate,
   clamped to one, with static pricing for unavailable estimates. The work
   estimator, order change and seed change themselves are unchanged.
+- `unversioned` disables only function-body cheap-region entry selection,
+  retaining default demand pricing, slices, call grain, budget and runtime.
 - `dedup` (`WF_PAR_DEMAND_DEDUP`) skips the counted request when the victim
   lane's `request_posted` flag is set; the posting thief sets it and the
   owner's publication clears it. The flag lives in the lane, which outlives
@@ -301,3 +303,75 @@ Sizing and a disagreeing twin cannot decide attribution. This reading leaves
 experiment 4's thresholds and verdicts intact. CI runs `build verify` and
 `measure` with `EXPERIMENT=5a`; `summarize` can reproduce the saved result with
 the same selection. Do not run these commands locally.
+
+
+## Experiment 5c: cheap-region versioning
+
+Select `experiment=par-demand`, `par_demand_experiment=5c`,
+`placement_runner=14900k`, with `placement_rounds` empty; leave the remaining
+compute-bench inputs at defaults. The [preregistration](../../investigations/par-demand/DESIGN.md#experiment-5c-cheap-region-versioning-fixed-before-it-measures)
+owns the question, predictions, falsifier and rules. The twelve E4 workloads
+run at widths 1, 4 and 8 with seq, par, default versioned demand, unversioned
+and a byte-identical demand twin. The unversioned arm compiles with
+`--par-demand --par-demand-ablation unversioned` and links the exact same
+demand scheduler objects. Only region versioning is disabled.
+
+The exact pin sets are W1 `{2}`, W4 `{2,4,6,8}`, W8
+`{2,4,6,8,10,12,14,1}`. The driver validates allowed/online P-core CPUs,
+distinct physical cores and reciprocal siblings before sizing; missing
+P-core evidence or a topology mismatch stops the run. CPU 0 is never selected;
+W8 uses CPU 1, which shares CPU 0's physical core. `identity.json` records
+these sets, topology source contents, selected sibling lists and the sharing.
+Hosted verification does not require this topology and produces no timing
+verdict.
+
+The 14900K job saves six full-work sizing rounds in `sizing-e5c/`, freezes
+6–30 decisive rounds by E4's rule over all four applicable rules, and takes
+a separate, unpooled decisive matrix. Every exceeding cell gets one rerun of
+that count. Medians use paired same-round ratios, 10,000 bootstrap draws,
+seed 20261010 and 95% intervals; a disagreeing twin voids its cell. E4-seq,
+E4-par and E4-H3 retain their exact thresholds and applicability. E5c-keep
+requires demand/unversioned wall's upper end ≤ 1.05 in every cell, including
+reported controls, without a reference-speedup condition. Each summary cell
+also carries `e5a_layout_spread`: the historical workload controls if measured,
+the panel maximum and the inconclusive/void limitations, beside its literal
+E4-seq verdict. The reducer selects no alternative never-slower reading.
+The shared E2/E4/5c reducer also corrects an existing rerun-reporting defect:
+when one rule triggers a cell rerun, disagreement in another rule now becomes
+inconclusive rather than retaining that rule's initial pass. Thresholds and
+reference-gain conditions are unchanged; this follows the registered
+"disagreement between attempts" rule.
+
+CI saves linked disassembly for seq, demand and unversioned along with LLVM,
+objects and ledgers in the results artifact. Image review must inventory
+versioned regions from demand's LLVM, compare normalized disassembly of every
+versioned sequential clone against the corresponding seq body, and retain
+all comparisons, including nonempty differences. For small_split, inspect the
+steady walker's versioned path for absence of per-iteration decisions and the
+unversioned path for the retained per-call choice. Keep source bounds/wrap
+guards separate from scheduling decisions in that inspection.
+
+After reviewing this run's images, put per-workload records in the artifact's
+`inspection.json`: the existing `hot_work_survives`, `evidence` and
+`check_compiles_to` fields, plus `all_versioned_clones_compared: true` and
+`normalized_disassembly_evidence` naming the saved inventory and comparisons.
+For a workload with no versioned clone, record that absence in the inventory.
+Small_split additionally records `walker_has_per_iteration_decision: false`
+only after inspecting the versioned sequential walker. Missing evidence leaves
+passes inconclusive. `decision_whole_cause` reports `falsified` for a persistent
+small_split W4/W8 E4-seq failure with that inspected absence, otherwise
+`undecided`; both attempt intervals remain visible.
+
+In CI, `build verify`, `measure` and `summarize` use `EXPERIMENT=5c`.
+To reduce saved evidence after image review, run the following in CI:
+
+```sh
+python3 research/experiments/par-demand/summarize.py <results>/measurements.tsv \
+  --experiment 5c --inspection <results>/inspection.json
+```
+
+No local build, test, harness execution or timing is authorized. The estimated
+14900K duration is about 44 minutes at E4's supplied 35-minute four-arm scale,
+scaled to five arms; frozen rounds and reruns may change it, and hosted
+construction/queue time is additional. These edits are unverified until CI
+and image review complete.

@@ -2189,3 +2189,120 @@ contain 1 in both runs. The tables give every comparison. The changed core
 and run prevent attributing these differences to removal of CPU 0 noise or
 to layout. The W=1 cause remains unresolved; the E4 failures retain their
 registered verdicts.
+
+
+## Experiment 5c: cheap-region versioning, fixed before it measures
+
+**Question.** Does selecting an invariant cheap region's sequential clone once
+at entry remove small_split's repeated decision cost, while preserving every
+protected workload's wall time? The attribution after experiment 4 identified
+an invariant extent decision inside its repeated walker, with a small path
+that already bypassed polling. Versioning is now implemented under default
+`--par-demand`; `--par-demand-ablation unversioned` disables only that
+function-body region selection. Pricing, slice drivers, call grain, recursion
+budget, publication order, request protocol and native runtime remain default
+demand behavior. This is a same-source ablation, not a language change.
+
+**Arms and workloads.** Use all twelve experiment-4 workloads at W=1, 4 and 8:
+small_constant, small_split, recursion, spine, hot_helper, large_helper,
+mandelbrot, records, fir, stencil, prefix and histogram. Arms are `seq` (no
+parallel flag), `par` (`--par`), `demand` (default versioned `--par-demand`),
+`unversioned` (`--par-demand --par-demand-ablation unversioned`), and `twin`
+(a byte copy of demand). Demand, unversioned and twin use requests on; seq
+and par use off-never-request. Hosted CI builds and verifies every arm at
+every width against the existing independent oracle, with requests both on
+and off. Every arm uses the same recorded full input, repetitions and extent;
+twin equality is required before measurement.
+
+**Placement.** Require the 14900K, with one logical CPU per P-core and no
+process pinned to CPU 0: W1 `{2}`, W4 `{2,4,6,8}`, W8
+`{2,4,6,8,10,12,14,1}`. CPU 1 is CPU 0's sibling: W8 shares CPU 0's physical
+core, so excluding logical CPU 0 does not isolate that physical core from its
+activity. Before sizing, validate the exact sets against the P-core mask,
+online CPUs, allowed affinity and reciprocal sibling topology; reject missing
+evidence, SMT duplication or a different topology rather than substitute a
+CPU. Record the source topology, selected sets and that W8 sharing in
+`identity.json`, in both sizing and decisive evidence.
+
+**Protocol and round count.** Use E4's protocol: rotate/reverse workload,
+width and arm order, retain both calls and judge the second call only, reporting
+first-call CPU above wall separately. In the same 14900K job, collect six
+full-work sizing rounds that judge nothing. Freeze `n` as the smallest count
+from 6 through 30 for which every applicable rule's projected interval width,
+scaled by `sqrt(6/n)`, is at most `max(0.02, |median-bound|)`; use 30 if none
+qualifies. Apply that rule to E4-seq, E4-par, E4-H3 and E5c-keep, including
+keep on reported controls. Save the sample under `sizing-e5c/` and collect
+`n` separate decisive rounds, never pooled with sizing. Every exceeding cell
+gets exactly one rerun of `n` rounds, with all five arms interleaved. Saved
+six-round measurements and the exact frozen count are required evidence.
+
+**Rules, per cell.** Keep E4's paired per-round ratios, their medians,
+10,000 bootstrap draws with seed `20261010`, and 95% intervals. A
+`twin / demand` interval excluding 1 voids the cell. Retain the following
+E4 rules exactly:
+
+- E4-seq, literal never-slower: `demand / seq` wall upper end at most 1.00
+  passes; lower end above 1.00 exceeds; otherwise inconclusive. There is
+  no decision-point allowance or two-sided one-worker band.
+- E4-par: where `par / seq` wall's interval lies wholly below 1,
+  `demand / par` wall upper end at most 1.05 passes.
+- E4-H3 keeps experiment 2's margin unchanged:
+  `m_r = (cpu_demand - 1.1 * cpu_seq - 0.1 * max(0, wall_seq - wall_demand) * W) / cpu_seq`;
+  the median margin's interval upper end at most 0 passes. Report the same
+  margin for par and unversioned for comparison.
+- E5c-keep: `demand / unversioned` wall upper end at most 1.05 in every cell
+  passes; versioning must not cost a protected workload. This rule has no
+  reference-speedup condition and includes small_constant and spine.
+- An interval's lower end above its bound exceeds. A second exceeding
+  interval after the one rerun fails; disagreement between attempts or an
+  interval straddling its bound stays inconclusive. Either attempt's
+  disagreeing twin voids the cell.
+- As in E4, small_constant, spine and cells whose timed work is optimized away
+  in both builds decide nothing for the E4 rules. E5c-keep still reports its
+  literal comparison on those cells. Sizing never supplies a passing verdict.
+- A pass requires this run's optimized-image inspection, identifying surviving
+  timed work and what the decision compiled to. Compare normalized disassembly
+  of **each versioned sequential clone against its corresponding seq body**,
+  retaining the comparison even when it is not identical. Inventory every
+  region in the demand LLVM image so a comparison cannot silently omit a
+  versioned clone. For small_split, inspect the walker for absence of any
+  per-iteration scheduling decision, and confirm that unversioned retains it.
+  Missing inspection never becomes a pass.
+
+**Attribution falsifier.** If small_split W4/W8 demand/seq remains above
+1.00 (lower end > 1.00), although image inspection shows its walker contains
+no per-iteration decision, the decision was not the whole cause. Use the
+one-rerun rule to report a persistent failing cell as falsifying that
+attribution; retain both attempts' intervals and the inspection, including
+an initial loss that the rerun does not confirm. A missing inspection or
+void twin leaves attribution undecided.
+
+**Predictions, fixed before measurement.** Small_split W4/W8 pass E4-seq
+or land within the layout spread 5a observed. That is a prediction beside
+the literal verdict, not an allowance: 5a measured kernels at W1 and did not
+measure a small_split layout control. Records and fir are unchanged by
+versioning in the protected sense: E5c-keep passes at every width.
+
+The owner's open card on how never-slower is stated and checked may change
+how E4-seq cells inside the layout floor are read. This experiment reports
+both the **literal verdict** and the **5a observed layout spread** beside
+each W1/E4-seq cell, without choosing between them or changing a threshold.
+Report the workload's three shifted-seq spreads where measured, and the
+panel's largest observed spread (0.006751); mark micros as unmeasured and
+records' 5a cell as void. The overall 5a reading remains inconclusive. These
+historical W1 controls establish neither a per-workload allowance for micros
+nor a W4/W8 layout floor.
+
+**Dispatch and pending evidence.** After the owner commits these edits on
+`claude/par-demand`, select `experiment=par-demand`,
+`par_demand_experiment=5c`, `placement_runner=14900k`, and empty
+`placement_rounds` in compute-bench; leave other inputs at defaults. The
+hosted job constructs/verifies and runs harness controls, then the 14900K
+job sizes and measures. Using the supplied approximately 35-minute E4 run
+at four-arm scale, five arms imply about **44 minutes** at equal round and
+rerun scale (`35 * 5 / 4`), excluding hosted construction and queue time.
+Sizing and the number of exceeding cells can change that estimate. No 5c
+build, test, harness execution or measurement has run locally; new compiler
+shape checks, construction, topology, image comparisons and results await CI
+and image review. Retain the harness while this attribution needs reproduction;
+retire it with the investigation when that question ends.
