@@ -12,6 +12,13 @@ Nodes: compiler/checker-facts, language/checks-and-proofs/automatic-facts, langu
 Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every added and changed decision and Rejected item verbatim.
 
 Summary: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements while capacity and invalidated-reference support die and the whole-cell row stays, because growth moves storage without changing those values; per-element equality postconditions, a capacity-only effect row and re-proving facts in a loop were rejected. The checker marks canonical growth calls' proof write events as relocations, keeping their full resolved write places, and one support classifier applies the mark to every fact component and range version. The range walk places growth by that classification next to `place_back` and `take_back`.
+## 2026-10-11 Freeing moved map tables once their statements end
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose A ("approve") on the card gran-reserve-reclaim-approval, which asked, written in Chinese, "approve Whitefoot#355's changes to the design tree design/compiler/waiting-contexts/concurrent-map.md?" (translated) and quoted the added publication-lifetime decision, the two added rejections and the replaced reserve-release decision verbatim at head 5a4a19657.
+
+Summary: An executor's map user kept its table publication after its statements ended and only a table switch reclaimed moved tables, so a moved table could stay pinned and firn's reserve release kept answering zero while over its memory limit. Users now keep their publication as an address token, and reclamation protects a retired table only while a matching entry-map user is active or the whole-map gate is closed, word maps keeping publication-only protection; a reserve release also detaches and frees the retired tables no statement uses. Releasing only the spare, which never advanced reclamation, and clearing the publication at every statement exit, which added two locked operations per x86-64 statement, were rejected; single-thread entry reads were unchanged within 0.1% on the 14900K ([measurement](../research/investigations/concurrent-map/DESIGN.md#freeing-moved-tables-once-their-statements-end)).
 ## 2026-10-11 Recursive effect-row repairs widen by argument suffixes
 
 Nodes: compiler/rejection-payloads
