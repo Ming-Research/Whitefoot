@@ -1256,9 +1256,6 @@ impl SeparationOracle for UnprovedSeparations {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BindingSummary {
     pub(crate) ty: Option<CheckedType>,
-    /// A range reference carries its element type in `ty`; its first index
-    /// selects that element rather than descending through the element type.
-    pub(crate) range_reference: bool,
     /// Every target established for this holder during the final structural
     /// walk. This function-wide inventory is not its target at a particular use.
     pub(crate) reference_paths: Vec<ResolvedPlace>,
@@ -1419,7 +1416,6 @@ impl PlaceMap {
         for parameter in &function.parameters {
             let summary = map.summary_mut(parameter.binding);
             summary.ty = Some(parameter.ty);
-            summary.range_reference = parameter.mode.is_range();
             if parameter.mode.is_reference() {
                 summary.reference = true;
                 summary.reference_paths = vec![ResolvedPlace::binding(parameter.binding)];
@@ -1524,21 +1520,14 @@ impl PlaceMap {
         for statement in statements {
             match statement {
                 CheckedStatement::Let { binding, value, .. } => {
-                    let (names_reference, range_reference) =
-                        match named_place(value).map(|named| named.form) {
-                            Some(NamingForm::Borrow) => (true, false),
-                            Some(NamingForm::Range) => (true, true),
-                            Some(NamingForm::Binding(named)) => (
-                                self.is_reference(named),
-                                self.summary(named)
-                                    .is_some_and(|summary| summary.range_reference),
-                            ),
-                            Some(NamingForm::Read) | None => (false, false),
-                        };
+                    let names_reference = match named_place(value).map(|named| named.form) {
+                        Some(NamingForm::Borrow | NamingForm::Range) => true,
+                        Some(NamingForm::Binding(named)) => self.is_reference(named),
+                        Some(NamingForm::Read) | None => false,
+                    };
                     let summary = self.summary_mut(*binding);
                     summary.ty = Some(value.ty());
                     summary.reference |= names_reference;
-                    summary.range_reference = range_reference;
                 }
                 CheckedStatement::DestructuringLet { bindings, .. } => {
                     for (binding, ty, _) in bindings {
@@ -1560,7 +1549,6 @@ impl PlaceMap {
                     let summary = self.summary_mut(*binding);
                     summary.ty = Some(*result_type);
                     summary.reference |= result_mode.is_reference();
-                    summary.range_reference = result_mode.is_range();
                     self.collect_arm_bindings(arms);
                 }
                 CheckedStatement::Match { arms, .. } => {
@@ -1598,7 +1586,6 @@ impl PlaceMap {
                 let summary = self.summary_mut(binder.binding);
                 summary.ty = Some(binder.ty);
                 summary.reference |= binder.mode.is_reference();
-                summary.range_reference = binder.mode.is_range();
             }
             self.collect_block_bindings(&arm.body);
         }

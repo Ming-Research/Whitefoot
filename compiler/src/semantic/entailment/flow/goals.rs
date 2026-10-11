@@ -103,7 +103,22 @@ impl Input<'_, '_> {
             && let Some(path) = self.read_place_path(expression)
             && matches!(path.root, PlaceRoot::Binding(_))
         {
-            return self.goal_place_datum(&path, expression.ty());
+            let mut goal = self.goal_place_datum(&path, expression.ty())?;
+            let written = match expression {
+                CheckedExpression::ReadStorage { root, .. } => {
+                    Some(CheckedSetTarget::Storage(root.clone()))
+                }
+                CheckedExpression::RangeIndex { place, .. } => {
+                    Some(CheckedSetTarget::RangeIndex(place.clone()))
+                }
+                _ => None,
+            };
+            if let Some(written) = written
+                && let GoalExpression::Datum(datum) = &mut goal
+            {
+                *datum.admission_mut()? = GoalAdmission::written(written);
+            }
+            return Some(goal);
         }
         let build_operation = |row, type_arguments, const_arguments, result, arguments: Vec<_>| {
             Some(GoalExpression::Operation {
@@ -560,21 +575,7 @@ impl Input<'_, '_> {
             .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
-            PlaceRoot::Binding(binding) => {
-                // Admission extends this endpoint's written spelling, not
-                // its resolved origin. Retain only its current range kind.
-                let admission = if self.place_is_range(place, ty) {
-                    GoalAdmission::plain_range(ty)
-                } else {
-                    GoalAdmission::default()
-                };
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: binding,
-                    projections,
-                    ty,
-                    admission,
-                })
-            }
+            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
             PlaceRoot::Constant(id) => GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: self.context.constant_declaration(id)?,
                 projections,
@@ -1500,7 +1501,8 @@ impl Reasoning<'_, '_, '_> {
                     return None;
                 }
                 let path = self.input.goal_place_path(datum)?;
-                self.place_operand(path, fragment)
+                let measure_base = self.input.goal_measure_base_type(datum);
+                self.place_operand(path, fragment, measure_base)
             }
             GoalExpression::Operation { row, arguments, .. }
                 if matches!(
