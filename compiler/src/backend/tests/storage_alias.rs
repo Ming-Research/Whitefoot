@@ -776,29 +776,77 @@ fn main() -> status: std::process::ExitStatus pure {
     let replace = emitted_function(&llvm, "replace_choice");
     let transfers: Vec<_> = replace
         .lines()
-        .filter(|line| line.contains("call void @llvm.memmove.p0.p0.i64("))
+        .enumerate()
+        .filter(|(_, line)| line.contains("call void @llvm.memmove.p0.p0.i64("))
         .collect();
-    assert_eq!(transfers.len(), 1, "one incoming whole-value copy: {replace}");
+    // WIN-3 releases the displaced affine owner. Preserve it before the
+    // replacement, then release that exact snapshot after the commit.
+    assert_eq!(
+        transfers.len(),
+        2,
+        "one displaced-owner capture and one incoming replacement: {replace}"
+    );
+    let (capture_index, capture) = transfers[0];
+    let (replacement_index, replacement) = transfers[1];
+    let old_snapshot = capture
+        .trim()
+        .strip_prefix("call void @llvm.memmove.p0.p0.i64(ptr ")
+        .and_then(|arguments| arguments.split_once(", ptr %v0,"))
+        .map(|(destination, _)| destination)
+        .expect("the first transfer captures the old target value");
     assert!(
-        transfers[0].contains("(ptr %v0, ptr %wf.arg.v1,"),
+        old_snapshot.starts_with("%wf.slot.")
+            && replace.lines().any(|line| {
+                line.trim().starts_with(&format!(
+                    "{old_snapshot} = alloca %wf.t.{choice}, align "
+                ))
+            }),
+        "the displaced Choice has private complete storage: {replace}"
+    );
+    assert!(
+        replacement.contains("(ptr %v0, ptr %wf.arg.v1,"),
         "copy the incoming value directly into the target: {replace}"
     );
+    for transfer in [capture, replacement] {
+        assert!(
+            transfer.contains(&format!(
+                "i64 ptrtoint (ptr getelementptr (%wf.t.{choice}, ptr null, i32 1) to i64), i1 false)"
+            )),
+            "both transfers copy the complete selected Choice representation: {replace}"
+        );
+        assert!(
+            !transfer.contains("!tbaa"),
+            "old-owner capture and whole-value replacement clobber all roles: {replace}"
+        );
+    }
     assert!(
-        transfers[0].contains(&format!(
-            "i64 ptrtoint (ptr getelementptr (%wf.t.{choice}, ptr null, i32 1) to i64), i1 false)"
-        )),
-        "the intrinsic copies the complete selected Choice representation: {replace}"
+        !replace.contains("; layout-bounded transfer ") && !replace.contains("@llvm.memcpy."),
+        "neither boundary transfer adds granules or another copy: {replace}"
+    );
+    let drops: Vec<_> = replace
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains("call void @wf.drop.t."))
+        .collect();
+    assert_eq!(drops.len(), 1, "release exactly the displaced owner: {replace}");
+    let (drop_index, drop) = drops[0];
+    assert_eq!(
+        drop.trim(),
+        format!("call void @wf.drop.t.{choice}(ptr {old_snapshot})"),
+        "release the captured old Choice, not the replacement: {replace}"
     );
     assert!(
-        !replace.contains("; layout-bounded transfer "),
-        "an incoming source retains its whole intrinsic: {replace}"
-    );
-    assert!(
-        !transfers[0].contains("!tbaa"),
-        "whole-value transition clobbers all roles: {replace}"
+        capture_index < replacement_index && replacement_index < drop_index,
+        "capture the old owner, commit its replacement, then release the old owner: {replace}"
     );
     let local = emitted_function(&llvm, "replace_local_number");
-    let (transfer, _, destination) = super::layout_transfers::transfer_region(local);
+    let target_marker = " to %v0\n";
+    let target_start = local
+        .find(target_marker)
+        .and_then(|end| local[..end].rfind("  ; layout-bounded transfer from "))
+        .unwrap_or_else(|| panic!("the local value reaches the target: {local}"));
+    let (transfer, _, destination) =
+        super::layout_transfers::transfer_region(&local[target_start..]);
     assert_eq!(destination, "%v0", "the local value reaches the target: {local}");
     assert!(
         transfer.contains("load i32") && transfer.contains("store i32")

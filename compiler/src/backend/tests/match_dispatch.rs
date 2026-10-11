@@ -1704,17 +1704,53 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     assert_handler_load(&module, "wf_run", 12, 4);
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
-    // External copies keep one intrinsic at either destination. The local
-    // constructor copy checks every typed interval and handler word.
+    // Public external copies retain one intrinsic; internal snapshot writes
+    // retain one intrinsic per required transfer. The local constructor copy
+    // checks every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
     assert_eq!(copied.matches("@llvm.memmove.").count(), 1, "{copied}");
     assert!(copied.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"), "{copied}");
     assert!(!copied.contains("; layout-bounded transfer "), "{copied}");
     let copied_into = emitted_body(&module, "copy_cell_into");
+    // Store is an ineligible read-through observation of this Load snapshot,
+    // so retain the complete private capture followed by its complete write.
+    let copies = copied_into
+        .lines()
+        .filter(|line| line.contains("call void @llvm.memmove."))
+        .collect::<Vec<_>>();
+    assert_eq!(copies.len(), 2, "{copied_into}");
+    let captured = copies[0]
+        .strip_prefix("  call void @llvm.memmove.p0.p0.i64(ptr ")
+        .and_then(|line| line.split_once(", ptr %v0, i64 "))
+        .map(|(destination, _)| destination)
+        .expect("capture the received Cell into private storage");
+    assert!(
+        captured.starts_with("%wf.slot.")
+            && copied_into.lines().any(|line| {
+                line.trim().starts_with(&format!(
+                    "{captured} = alloca %{ty}, align "
+                ))
+            }),
+        "the captured Cell has private complete storage: {copied_into}"
+    );
     assert_eq!(
-        copied_into.matches("@llvm.memmove.").count(),
-        1,
-        "{copied_into}"
+        copies,
+        [
+            format!(
+                "  call void @llvm.memmove.p0.p0.i64(ptr {captured}, ptr %v0, i64 ptrtoint (ptr getelementptr (%{ty}, ptr null, i32 1) to i64), i1 false)"
+            ),
+            format!(
+                "  call void @llvm.memmove.p0.p0.i64(ptr %v1, ptr {captured}, i64 ptrtoint (ptr getelementptr (%{ty}, ptr null, i32 1) to i64), i1 false)"
+            ),
+        ],
+        "capture the complete Cell before writing that same snapshot: {copied_into}"
+    );
+    assert!(!copied_into.contains("@llvm.memcpy."), "{copied_into}");
+    assert!(
+        !copied_into.lines().any(|line| {
+            line.contains(" = load ") || line.trim_start().starts_with("store ")
+        }),
+        "whole captures preserve the tag, payload and handler word: {copied_into}"
     );
     assert!(
         !copied_into.contains("; layout-bounded transfer "),

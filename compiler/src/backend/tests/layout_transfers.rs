@@ -505,7 +505,6 @@ fn nonproducer_transfers_keep_one_intrinsic_for_structs_unions_and_results() {
         "return_frame",
         "return_wrapped",
         "return_ten",
-        "copy_ten",
     ] {
         let body = emitted_function(&module, name);
         assert_eq!(body.matches("call void @llvm.memmove.").count(), 1, "{body}");
@@ -518,6 +517,38 @@ fn nonproducer_transfers_keep_one_intrinsic_for_structs_unions_and_results() {
             );
         }
     }
+    // The planner may reserve an unused entry slot for an incoming value;
+    // it must not turn that reservation into a redundant capture.
+    let incoming = emitted_function(&module, "copy_ten");
+    let ten_types = module
+        .lines()
+        .filter_map(|line| {
+            line.strip_suffix(
+                " = type { i32, i32, i32, i32, i32, i32, i32, i32, i32, i32 }",
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ten_types.len(), 1, "one complete ten-field type: {incoming}");
+    let ten_type = ten_types[0];
+    let copies = incoming
+        .lines()
+        .filter(|line| line.contains("call void @llvm.memmove."))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        copies,
+        [format!(
+            "  call void @llvm.memmove.p0.p0.i64(ptr %v0, ptr %wf.arg.v1, i64 ptrtoint (ptr getelementptr ({ten_type}, ptr null, i32 1) to i64), i1 false)"
+        )],
+        "one complete direct incoming copy without a capture: {incoming}"
+    );
+    assert!(!incoming.contains("@llvm.memcpy."), "{incoming}");
+    assert!(!incoming.contains("; layout-bounded transfer "), "{incoming}");
+    assert!(
+        !incoming.lines().any(|line| {
+            line.contains(" = load ") || line.trim_start().starts_with("store ")
+        }),
+        "no scalar replacement or extra memory accesses: {incoming}"
+    );
     // The same ten-leaf layout expands only beside its local field stores.
     // The external copy above used to emit twenty memory instructions.
     let expected: Vec<_> = (0..10).map(|leaf| (leaf * 4, "i32")).collect();
