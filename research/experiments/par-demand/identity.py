@@ -1254,7 +1254,8 @@ def direct_calls(instructions, selected=None, functions=None):
     return result
 
 
-def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions, seq_machine=None, seq_functions=None):
+def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions, seq_machine=None, seq_functions=None,
+                            seq_headers=None, demand_headers=None):
     """Attribute the known cold writer difference without declaring it equal.
 
     A name is only a candidate: the IR must have precisely the shared latch
@@ -1279,11 +1280,21 @@ def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions, seq_
             or common.get('abort') != ['call void @abort()', 'unreachable']
             or not any('@wf_resource_write(' in line for lines in common.values() for line in lines)):
         return None
+    # A private write helper may disappear entirely through inlining. Its exact
+    # source closure remains an obligation of the cold-boundary exception.
+    try:
+        original_helpers, original_headers = writer_helper_closure(seq_ir, seq_headers or {})
+        changed_helpers, changed_headers = writer_helper_closure(demand_ir, demand_headers or {})
+    except IdentityError:
+        return None
+    if original_helpers != changed_helpers or original_headers != changed_headers:
+        return None
     calls = transfer_inventory(demand, functions)
     original_calls = transfer_inventory(seq_machine, seq_functions) if seq_machine is not None else []
     atomics = [instruction.address for instruction in demand
                if instruction.mnemonic == 'lock' and instruction.operands.startswith('cmpxchg')]
-    if (not {'wf_resource_write', 'abort'} <= set(original_calls)
+    if ('abort' not in original_calls
+            or not writer_machine_frontier('wf_resource_write', original_helpers, set(original_calls))
             or Counter(calls) != Counter(original_calls) + Counter({'wf__floor_record_latch': 1})
             or sum(1 for instruction in demand if instruction.mnemonic in ('call', 'callq')
                    and target(instruction, functions)
@@ -1292,11 +1303,66 @@ def latched_writer_evidence(function, seq_ir, demand_ir, demand, functions, seq_
         return None
     return {'ir': 'identical write/abort CFG; only shared cmpxchg entry and volatile loser park added',
             'original_blocks': original, 'demand_blocks': changed,
+            'helpers': {'original_blocks': original_helpers, 'demand_blocks': changed_helpers,
+                        'original_headers': original_headers, 'demand_headers': changed_headers},
             'machine': {'latch_accessor': 'wf__floor_record_latch', 'atomic_acquisition_addresses': atomics,
                         'original_calls': sorted(original_calls), 'demand_calls': sorted(calls),
                         'original_instructions': instruction_snapshot(seq_machine, seq_functions),
                         'demand_instructions': instruction_snapshot(demand, functions)},
             'qualification': 'cold support exception: exact common IR and call inventory, not common writer machine-body identity'}
+
+
+def writer_helper_closure(ir, headers):
+    """Retain definitions and signatures of the common write-helper closure."""
+    if 'wf_resource_write' not in ir:
+        raise IdentityError('missing common write-helper IR definition')
+    pending, blocks, signatures = {'wf_resource_write'}, {}, {}
+    while pending:
+        function = pending.pop()
+        if function in signatures:
+            continue
+        header = headers.get(function)
+        if not isinstance(header, str) or not header:
+            raise IdentityError(f'missing common writer-helper signature: {function}')
+        signatures[function] = header
+        if function not in ir:
+            if not header.startswith('declare '):
+                raise IdentityError(f'missing common writer-helper definition: {function}')
+            continue
+        if not header.startswith('define '):
+            raise IdentityError(f'unsupported common writer-helper signature: {function}')
+        blocks[function] = ir[function]
+        for lines in ir[function].values():
+            for line in lines:
+                if re.search(r'\bcall\b', line):
+                    callee = re.search(r'\bcall\b.*?@([\w.$]+)\(', line)
+                    if not callee:
+                        raise IdentityError('unsupported indirect common writer-helper call')
+                    pending.add(callee[1])
+    return blocks, signatures
+
+
+def writer_machine_frontier(function, helpers, calls, visiting=None):
+    """Require every common helper leaf, or its surviving native ancestor.
+
+    Merely dropping a helper-name requirement would admit images where both
+    writers lost the write operation. An inlined helper must expose its actual
+    call leaves in the common native inventory instead.
+    """
+    if function in calls:
+        return True
+    visiting = set() if visiting is None else visiting
+    if function not in helpers or function in visiting:
+        return False
+    callees = {match[1] for lines in helpers[function].values() for line in lines
+               if (match := re.search(r'\bcall\b.*?@([\w.$]+)\(', line))}
+    return bool(callees) and all(writer_machine_frontier(callee, helpers, calls, visiting | {function})
+                                 for callee in callees)
+
+
+def ir_function_headers(text):
+    return {match[2]: match[1] for match in re.finditer(
+        r'^((?:define|declare)\b[^\n]*@([\w.$]+)\([^\n]*)$', text, re.M)}
 
 
 def transfer_inventory(instructions, functions=None):
@@ -1334,10 +1400,11 @@ def verified_writer_evidence(function, evidence):
     try:
         machine = evidence['machine']
         replay = latched_writer_evidence(function,
-            {'wf_resource_record_abort': evidence['original_blocks']},
-            {function: evidence['demand_blocks']},
+            {'wf_resource_record_abort': evidence['original_blocks'], **evidence['helpers']['original_blocks']},
+            {function: evidence['demand_blocks'], **evidence['helpers']['demand_blocks']},
             snapshot_instructions(machine['demand_instructions']), None,
-            snapshot_instructions(machine['original_instructions']))
+            snapshot_instructions(machine['original_instructions']), None,
+            evidence['helpers']['original_headers'], evidence['helpers']['demand_headers'])
         return replay is not None and replay == evidence
     except (KeyError, TypeError, ValueError):
         return False
@@ -1388,7 +1455,7 @@ def entry_adapter_evidence(seq_ir, demand_ir, wrapper, seq_header, demand_header
             'qualification': 'canonical source IR entrance provenance; selected computation may be inlined and its wrapper machine code still differs'}
 
 
-def verified_adapter_evidence(wrapper, evidence, compared):
+def verified_adapter_evidence(wrapper, evidence, compared, canonical_machine_closure=()):
     try:
         replay = entry_adapter_evidence({wrapper: evidence['original_blocks']},
             {wrapper: evidence['demand_blocks']}, wrapper,
@@ -1406,6 +1473,21 @@ def verified_adapter_evidence(wrapper, evidence, compared):
             memory = re.fullmatch(r'llvm\.(memcpy|memmove)\.p[0-9]+\.p[0-9]+\.i(?:32|64)|llvm\.(memset)\.p[0-9]+\.i(?:32|64)', declaration)
             if memory:
                 allowed.add(memory[1] or memory[2])
+        # LLVM also recognizes scalar fill/copy loops without an intrinsic in
+        # the raw IR. Admit that native transfer only when its exact canonical
+        # function is in this IR closure and both normalized machine bodies
+        # contain it identically. A label or another function's call proves
+        # nothing, and this never admits a parallel counterpart of a clone.
+        for row in canonical_machine_closure:
+            left, right = row.get('seq_instructions'), row.get('demand_instructions')
+            if (row.get('function') in closure and row.get('function') in compared
+                    and row.get('role') == 'reachable sequential body/helper'
+                    and row.get('seq_function') == canonical_symbol(row['function'])
+                    and isinstance(left, list) and left and isinstance(right, list) and right
+                    and all(isinstance(line, str) for line in left + right)
+                    and first_difference(left, right) is None):
+                allowed.update(match[1] for line in right
+                    if (match := re.fullmatch(r'(?:call|jmp) (memcpy|memmove|memset)', line)))
         actual_calls = direct_calls(instructions, selected - omitted)
         return (replay is not None and replay == {key: value for key, value in evidence.items()
                     if key not in ('optimized_pool_projection', 'canonical_ir_closure', 'canonical_ir_declarations')}
@@ -1484,7 +1566,7 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
                                 and any(failure['function'] == row['function'] and failure['category'] == 'latched-writer'
                                         for failure in record['failures']) for row in closure))
     adapter = record.get('entry_adapter_provenance', {})
-    proven_ir_entrance = verified_adapter_evidence(wrapper, adapter, compared)
+    proven_ir_entrance = verified_adapter_evidence(wrapper, adapter, compared, closure)
     for failure in record['failures']:
         observed_adapter_difference = any(row['function'] == wrapper
             and row['role'] == 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained'
@@ -1699,7 +1781,8 @@ def check_workload(name, build):
                 if diff:
                     failure(function, 'normalized sequential body differs', diff)
                     evidence = latched_writer_evidence(function, seq_ir, ir, demand[function], demand,
-                                                       seq[original], seq)
+                                                       seq[original], seq,
+                                                       ir_function_headers(seq_text), ir_function_headers(demand_text))
                     if evidence:
                         writer_evidence[function] = evidence
                 pending.update(direct_calls(demand[function], functions=demand))

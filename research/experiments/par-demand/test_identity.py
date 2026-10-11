@@ -187,6 +187,53 @@ define i64 @wf__par_seq_body(i64 %value) {
             self.assertEqual(wrong['failures'][0]['category'], 'ordinary')
             self.assertEqual(wrong['status'], 'fail')
 
+    def synthesized_fill(self):
+        # Raw scalar stores may become a native memset when LLVM inlines the
+        # canonical entrance; no memory intrinsic declaration is present.
+        record = self.record()
+        evidence = self.adapter_provenance()
+        evidence['canonical_ir_closure'] = parse_ir('''define i64 @wf__par_seq_body(i64 %value) {
+  %dst = inttoptr i64 %value to ptr
+  br label %fill
+fill:
+  %i = phi i64 [ 0, %entry ], [ %next, %fill ]
+  %p = getelementptr i8, ptr %dst, i64 %i
+  store i8 0, ptr %p
+  %next = add i64 %i, 1
+  %done = icmp eq i64 %next, 8
+  br i1 %done, label %exit, label %fill
+exit:
+  ret i64 %value
+}
+''')
+        evidence['optimized_pool_projection']['instructions'][3]['operands'] = '600 <memset>'
+        record['entry_adapter_provenance'] = evidence
+        record['comparisons'][0].update(seq_instructions=['call memset', 'ret'],
+                                         demand_instructions=['call memset', 'ret'])
+        return record
+
+    def test_synthesized_memory_call_requires_identical_exact_canonical_machine_closure(self):
+        record = self.synthesized_fill()
+        evidence = record['entry_adapter_provenance']
+        roots = {'wf__par_seq_body'}
+        row = record['comparisons'][0]
+        self.assertFalse(identity.verified_adapter_evidence('wf_bench_fixture', evidence, roots))
+        self.assertTrue(identity.verified_adapter_evidence('wf_bench_fixture', evidence, roots, [row]))
+        classify_construction(record, 'wf_bench_fixture', roots, {})
+        self.assertEqual(record['failures'][0]['category'], 'entry-adapter')
+        self.assertEqual(validate_admission(record)['category_counts']['entry-adapter'], 1)
+        for change in ('different', 'missing', 'unrelated', 'wrong_counterpart'):
+            changed = copy.deepcopy(row)
+            if change == 'different': changed['demand_instructions'] = ['call memcpy', 'ret']
+            if change == 'missing': changed.update(seq_instructions=['ret'], demand_instructions=['ret'])
+            if change == 'unrelated': changed.update(function='wf__par_seq_other', seq_function='wf_other')
+            if change == 'wrong_counterpart': changed['seq_function'] = 'wf_other'
+            with self.subTest(change=change):
+                self.assertFalse(identity.verified_adapter_evidence('wf_bench_fixture', evidence, roots | {'wf__par_seq_other'}, [changed]))
+        forged = copy.deepcopy(record)
+        forged['comparisons'][0].update(seq_instructions=['ret'], demand_instructions=['ret'])
+        with self.assertRaises(IdentityError): validate_admission(forged)
+
     def test_unchanged_computation_requires_concrete_dispatch_and_cheap_input_proof(self):
         record = self.record()
         record['failures'] = []
@@ -303,10 +350,64 @@ define i64 @wf__par_seq_body(i64 %value) {
         original_machine = insns([('call', '600 <wf_resource_write>'), ('call', '700 <abort@plt>'), ('ret', '')])
         return seq, demand, machine, original_machine
 
+    write_helper = '''declare i64 @write(i32, ptr, i64)
+declare ptr @__errno_location()
+define private i64 @wf_resource_write(ptr %bytes, i64 %length) #0 align 64 {
+entry:
+  br label %write
+write:
+  %written = call i64 @write(i32 2, ptr %bytes, i64 %length)
+  %failed = icmp slt i64 %written, 0
+  br i1 %failed, label %error, label %done
+error:
+  %errno = call ptr @__errno_location()
+  %code = load i32, ptr %errno, align 4
+  %interrupted = icmp eq i32 %code, 4
+  br i1 %interrupted, label %write, label %done
+done:
+  ret i64 %written
+}
+'''
+
+    def writer_evidence(self, seq, demand, machine, original_machine,
+                        helper=None, function='wf_resource_record_abort'):
+        changed_helper = self.write_helper if helper is None else helper
+        return latched_writer_evidence(function,
+            {'wf_resource_record_abort': seq, **parse_ir(self.write_helper)},
+            {function: demand, **parse_ir(changed_helper)}, machine, None, original_machine, None,
+            identity.ir_function_headers(self.write_helper), identity.ir_function_headers(changed_helper))
+
+    def test_inlined_writer_requires_unchanged_helper_closure_and_native_write_frontier(self):
+        seq, demand, _, _ = self.writer()
+        original_machine = insns([('call', '800 <__errno_location@plt>'),
+            ('call', '900 <write@plt>'), ('call', '700 <abort@plt>')])
+        machine = insns([('call', '500 <wf__floor_record_latch>'), ('lock', 'cmpxchg %edx,(%rax)'),
+            ('call', '800 <__errno_location@plt>'), ('call', '900 <write@plt>'), ('call', '700 <abort@plt>')])
+        evidence = self.writer_evidence(seq, demand, machine, original_machine)
+        self.assertIsNotNone(evidence)
+        self.assertTrue(identity.verified_writer_evidence('wf_resource_record_abort', evidence))
+        self.assertNotIn('wf_resource_write', evidence['machine']['original_calls'])
+        self.assertEqual(evidence['machine']['original_calls'], ['__errno_location', 'abort', 'write'])
+        for helper in [self.write_helper.replace('icmp eq i32 %code, 4', 'icmp eq i32 %code, 5'),
+                       self.write_helper.replace('i32 2, ptr %bytes', 'i32 1, ptr %bytes'),
+                       self.write_helper.replace('ptr %bytes, i64 %length) #0', 'ptr %bytes, i32 %length) #0'),
+                       self.write_helper.replace('declare ptr @__errno_location()', '')]:
+            self.assertIsNone(self.writer_evidence(seq, demand, machine, original_machine, helper))
+        forged = copy.deepcopy(evidence)
+        forged['helpers']['demand_blocks']['wf_resource_write']['error'][2] = '%interrupted = icmp eq i32 %code, 5'
+        self.assertFalse(identity.verified_writer_evidence('wf_resource_record_abort', forged))
+        for changed in [machine[:3] + machine[4:],
+                        machine + [Instruction(0x200, 'call', '900 <write@plt>')],
+                        machine[:3] + [Instruction(0x10c, 'call', 'a00 <wrong_write@plt>')] + machine[4:]]:
+            self.assertIsNone(self.writer_evidence(seq, demand, changed, original_machine))
+        # Matching inventories alone cannot excuse deleting the actual write
+        # from both images after the private helper was inlined.
+        self.assertIsNone(self.writer_evidence(seq, demand, machine[:3] + machine[4:],
+                                              original_machine[:1] + original_machine[2:]))
+
     def test_latched_writer_requires_both_exact_ir_delta_and_actual_atomic(self):
         seq, demand, machine, original_machine = self.writer()
-        evidence = latched_writer_evidence('wf_resource_record_abort',
-            {'wf_resource_record_abort': seq}, {'wf_resource_record_abort': demand}, machine, None, original_machine)
+        evidence = self.writer_evidence(seq, demand, machine, original_machine)
         self.assertIsNotNone(evidence)
         record = self.record()
         record['entry_adapter_provenance'] = self.adapter_provenance()
@@ -347,10 +448,8 @@ define i64 @wf__par_seq_body(i64 %value) {
                 validate_admission(wrong)
         changed = {**demand, 'write.loop': ['call void @different_write()', 'br label %abort']}
         for candidate, actual in [(changed, machine), (demand, machine[:1]), (demand, insns([('lock', 'cmpxchg %edx,(%rax)'), ('ret', '')]))]:
-            self.assertIsNone(latched_writer_evidence('wf_resource_record_abort',
-                {'wf_resource_record_abort': seq}, {'wf_resource_record_abort': candidate}, actual, None, original_machine))
-        self.assertIsNone(latched_writer_evidence('wf_unrelated_writer',
-            {'wf_resource_record_abort': seq}, {'wf_unrelated_writer': demand}, machine, None, original_machine))
+            self.assertIsNone(self.writer_evidence(seq, candidate, actual, original_machine))
+        self.assertIsNone(self.writer_evidence(seq, demand, machine, original_machine, function='wf_unrelated_writer'))
 
     def test_cli_retains_known_difference_first_instruction_and_nonzero_exit(self):
         def checked(name, _):
