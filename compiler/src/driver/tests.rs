@@ -958,7 +958,7 @@ fn a_proof_receipt_is_reused_exactly_while_its_analysis_inputs_are_unchanged() {
     );
 }
 
-/// [MOD-8, RANGE-2, ENT-3.S7] a receipt cannot replace the ordinary operand
+/// [MOD-8, RANGE-2, ENT-3.S7] a reused receipt retains the ordinary operand
 /// intervals a later range walk needs. Warm and fresh checks agree, including
 /// after a callee's range requirement becomes stronger than the caller's fact.
 #[test]
@@ -993,22 +993,49 @@ fn main() -> status: std::process::ExitStatus pure {
         let inputs = [SourceInput::new("range-operations.wf", source.as_bytes())];
         let fresh =
             super::check(&inputs, CompilerLimits::default()).map_err(|failure| failure.to_string());
+        let before = cache.receipt_counts();
         let cached = super::check_with_cache(&inputs, CompilerLimits::default(), &cache)
             .map_err(|failure| failure.to_string());
         assert_eq!(cached, fresh, "receipts change no range verdict");
-        cached
+        let after = cache.receipt_counts();
+        (cached, (after.0 - before.0, after.1 - before.1))
     };
     let original = source.replace("NEEDED", "8");
-    assert_eq!(analyzed(&original), Ok(()));
-    assert_eq!(analyzed(&original), Ok(()));
-    let changed = analyzed(&source.replace("NEEDED", "9"));
+    let (cold, (_, recorded)) = analyzed(&original);
+    assert_eq!(cold, Ok(()));
+    assert!(recorded >= 3, "the cold check records all three functions");
+    let (warm, (reused, recorded)) = analyzed(&original);
+    assert_eq!(warm, Ok(()));
+    assert!(reused >= 3, "the warm check reuses the range participants");
+    assert_eq!(recorded, 0, "the warm check analyzes nothing afresh");
+    let moved =
+        format!("fn unrelated() -> result: unit pure {{\n  return unit;\n}}\n\n{original}");
+    let (relocated, (reused, recorded)) = analyzed(&moved);
+    assert_eq!(relocated, Ok(()));
+    assert!(reused >= 3, "moving items preserves the original receipts");
+    assert_eq!(recorded, 1, "only the unrelated function is analyzed");
+    let edited = original.replace(
+        "let m = iand(x, 7_u64);",
+        "let mask = 7_u64;\n  let m = iand(x, mask);",
+    );
+    let (edited_verdict, (_, recorded)) = analyzed(&edited);
+    assert_eq!(edited_verdict, Ok(()));
+    assert_eq!(recorded, 1, "the edited range participant gets a receipt");
+    let (edited_warm, (reused, recorded)) = analyzed(&edited);
+    assert_eq!(edited_warm, Ok(()));
+    assert!(reused >= 3, "the edited range participant's receipt is reused");
+    assert_eq!(recorded, 0, "the edited warm check analyzes nothing afresh");
+    let (changed, _) = analyzed(&source.replace("NEEDED", "9"));
     assert!(
         changed
             .as_ref()
             .is_err_and(|failure| failure.contains("[RANGE-3]")),
         "{changed:?}"
     );
-    assert_eq!(analyzed(&original), Ok(()));
+    let (reverted, (reused, recorded)) = analyzed(&original);
+    assert_eq!(reverted, Ok(()));
+    assert!(reused >= 3, "reverting reuses the original receipts");
+    assert_eq!(recorded, 0, "reverting analyzes nothing afresh");
 }
 
 /// [MOD-9] an entry build is reused for an unchanged composition and
