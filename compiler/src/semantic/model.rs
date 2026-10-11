@@ -643,6 +643,26 @@ impl WindowShape {
 }
 
 impl CheckedType {
+    /// The checked element stored by an indexable shape [TYPE-9, SHARE-2].
+    /// Entries already stores its instantiated Option<V>, not V itself.
+    pub(crate) const fn storage_element(self) -> Option<CheckedElement> {
+        match self {
+            Self::Array { element, .. }
+            | Self::Buffer { element }
+            | Self::Window { element, .. }
+            | Self::Segments { element }
+            | Self::Entries { element } => Some(element),
+            Self::Unit
+            | Self::Bool
+            | Self::Integer(_)
+            | Self::Float(_)
+            | Self::Generic(_)
+            | Self::GenericInt(_)
+            | Self::GenericFloat(_)
+            | Self::Nominal(_)
+            | Self::KeySet => None,
+        }
+    }
     pub(crate) fn is_concrete(self, elements: &[CheckedType]) -> bool {
         match self {
             Self::Generic(_) | Self::GenericInt(_) | Self::GenericFloat(_) => false,

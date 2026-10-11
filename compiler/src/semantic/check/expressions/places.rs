@@ -955,15 +955,9 @@ impl<'unit> TypeContext<'unit> {
         if range {
             return Ok(ty);
         }
-        Ok(match ty {
-            Some(
-                CheckedType::Array { element, .. }
-                | CheckedType::Window { element, .. }
-                | CheckedType::Buffer { element }
-                | CheckedType::Segments { element },
-            ) => Some(self.element_type(element)?),
-            _ => None,
-        })
+        ty.map(|ty| self.container_element_type(ty))
+            .transpose()
+            .map(Option::flatten)
     }
     /// The selected type of a resolved target. A descendant summary keeps
     /// its referent type even though its containing anchor has another type.

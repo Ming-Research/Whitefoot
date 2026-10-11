@@ -55,6 +55,94 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+const SEGMENT_FIELD_READ: &str = r#"struct Item {
+  byte: u8;
+}
+
+fn read_byte(s: &Segments<Item>, segment: u64, offset: u64) -> result: u8 reads(s) {
+  if segment < s^.len {
+    if offset < s^[segment].len {
+      return s^[segment][offset].byte;
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+// Rendering the exhibited path must not reject a correctly covered row.
+#[test]
+fn an_accepted_segment_field_read_does_not_depend_on_row_rendering() {
+    assert_complete(SEGMENT_FIELD_READ.as_bytes());
+}
+
+#[test]
+fn a_segment_field_repair_names_the_field_after_both_indexes() {
+    let source = SEGMENT_FIELD_READ.replacen("reads(s)", "pure", 1);
+    let row = "reads(s[segment][offset].byte), reads(s[segment].len), reads(s.len)";
+    let (expected, missing, extra) = effect_mismatch(&source);
+    assert_eq!(expected, row);
+    assert_eq!(
+        missing,
+        [
+            "reads(s[segment][offset].byte)",
+            "reads(s[segment].len)",
+            "reads(s.len)"
+        ]
+    );
+    assert!(extra.is_empty(), "{extra:?}");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Eff2, |kind| {
+        matches!(kind, SemanticIssueKind::EffectMismatch { mechanical_fix, .. }
+            if mechanical_fix.as_deref() == Some("declare the row as `reads(s[segment][offset].byte), reads(s[segment].len), reads(s.len)`, which covers every access the body makes and no other"))
+    });
+    assert_complete(
+        source
+            .replacen("result: u8 pure", &format!("result: u8 {row}"), 1)
+            .as_bytes(),
+    );
+}
+
+const ENTRY_PAYLOAD_WRITE: &str = r#"fn replace_held(slots: &Entries<u8>, index: u64) -> result: unit writes(slots) {
+  if index < slots^.len {
+    match &slots^[index] {
+      Some(value: held) => {
+        set held^ = 1_u8;
+      }
+      None() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn an_accepted_entry_payload_write_does_not_depend_on_row_rendering() {
+    assert_complete(ENTRY_PAYLOAD_WRITE.as_bytes());
+}
+
+#[test]
+fn an_entry_payload_repair_names_the_variant_and_field_after_the_index() {
+    let source = ENTRY_PAYLOAD_WRITE.replacen("writes(slots)", "writes(slots[index])", 1);
+    let row = "reads(slots[index]), reads(slots.len), writes(slots[index].Some.value)";
+    let (expected, missing, extra) = effect_mismatch(&source);
+    assert_eq!(expected, row);
+    assert_eq!(missing, ["reads(slots.len)"]);
+    assert!(extra.is_empty(), "{extra:?}");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Eff2, |kind| {
+        matches!(kind, SemanticIssueKind::EffectMismatch { mechanical_fix, .. }
+            if mechanical_fix.as_deref() == Some("declare the row as `reads(slots[index]), reads(slots.len), writes(slots[index].Some.value)`, which covers every access the body makes and no other"))
+    });
+    assert_complete(source.replacen("writes(slots[index])", row, 1).as_bytes());
+}
+
 /// [WIN-3, OP-14] a linear window has no compiler-derived release at all,
 /// proved empty or not.
 ///

@@ -2070,10 +2070,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     },
                 );
             }
-            let row = self
+            // This optional diagnostic cache supplies KillingCall companions.
+            // Rendering cannot turn an accepted body into a compiler failure;
+            // EFF-2 mismatch reporting below renders its required payload strictly.
+            if let Ok(row) = self
                 .types
-                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
-            self.types.exhibited_rows.insert(signature.id, row);
+                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)
+            {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
         } else if let Some(source) = summary_source {
             // The renamed body writes what the canonical body writes: both
             // root their paths at the declaration's own parameters.
