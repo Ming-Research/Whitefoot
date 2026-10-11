@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Goal data admit integer terms by the place as written
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#358 (head 11fa213a5) adding this decision to the design tree node compiler/checker-facts?" (translated).
+
+Summary: The checker admitted writable fields below a subscript as ENT-2 terms when a constructor or call result was placed into indexed storage, accepting eight programs the specification rejects. Carried values are now published only when their target place as written is admissible, and a goal datum carries its written place as an admission annotation outside its typed identity: one canonical goal per identity keeps whole-goal truth, so a `+defined` guard or Boolean fact still crosses spellings, while integer projection and normalization belong to one admission view per spelling, so a numeric relation admitted through one spelling cannot reach an inadmissible one. Refusing the goal datum of an inadmissible indexed field was rejected because it removes the value identity that a guard on a writable indexed field and a readonly field reached by struct-equality projection need.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
