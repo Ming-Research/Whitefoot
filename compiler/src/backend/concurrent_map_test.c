@@ -1070,9 +1070,11 @@ static _Atomic int move_done;
 static void *move_now(void *arg) {
     (void)arg;
     wf_cmap_user *u = wf_cmap_user_at(move_map, 1);
+    enter_keyed(u);
     table *t = use_current(u);
     start_move(move_map, t);
     finish_move(move_map, t);
+    atomic_store_explicit(&u->active, 0, memory_order_release);
     atomic_store(&move_done, 1);
     return NULL;
 }
@@ -3688,10 +3690,153 @@ static void spares_match_the_current_size(void) {
     wf_cmap_destroy(map);
 }
 
-/* A clear under a whole hold empties the map at once, its own entries
- * included, keeps what the statement writes after it, and hands the old
- * entries to their release only once the hold is given up, leaking no
- * block. */
+/* Two persistent executor users, with no scheduling or later table access
+ * to advance reclamation: B's read ends on T, then A's whole statement
+ * inserts nine entries, whose release completes T -> U. The first reserve
+ * release must collect T itself (header and cells); further calls free
+ * nothing. With WF_CMAP_IGNORE_ACTIVITY, both users still pin T and the
+ * counted-byte assertion fails, reproducing the old repeated-zero result. */
+static void reserves_collect_retired(void) {
+    test_driver = 0;
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *a = wf_cmap_user_at(map, 0);
+    wf_cmap_user *b = wf_cmap_user_at(map, 1);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    wf_cmap_entry entry;
+    wf_cmap_read_entry(b, (const unsigned char *)"absent", 6, 0, &entry);
+    wf_cmap_unread_entry(b, &entry, 0);
+
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_take(a, &hold);
+    for (unsigned char key = 0; key < 9; key++)
+        *(uint64_t *)wf_cmap_held_entry(map, &key, 1, 1) = (uint64_t)key + 1;
+    wf_cmap_hold_release(&hold, VALUE_TAG);
+    if (atomic_load(&map->current) == old || atomic_load(&map->retired) != old || map->spare != NULL)
+        fail("whole statement did not leave its moved table retired", atomic_load(&map->current) == old,
+             atomic_load(&map->retired) == old);
+
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    atomic_store(&map->lock, 1);
+    uint64_t locked = wf_cmap_release_reserve(map);
+    if (locked != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("busy reserve release changed retired storage", locked, 0);
+    atomic_store(&map->lock, 0);
+    uint64_t released = 0;
+    for (unsigned attempt = 0; attempt < 3; attempt++) {
+        uint64_t freed = wf_cmap_release_reserve(map);
+        int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+        if (freed != (uint64_t)(before - after))
+            fail("retired reserve release disagrees with heap drop", freed, (uint64_t)(before - after));
+        released += freed;
+        before = after;
+        if (attempt != 0 && freed != 0)
+            fail("repeated retired reserve release freed more storage", freed, 0);
+    }
+    if (released != bytes)
+        fail("retired reserve release did not collect the exited users' table", released, bytes);
+    if (atomic_load(&map->retired) != NULL || map->spare != NULL || wf_cmap_count(map) != 9)
+        fail("retired reserve release retained storage or changed entries", wf_cmap_count(map), 9);
+    for (unsigned char key = 0; key < 9; key++) {
+        const uint64_t *slot = wf_cmap_read_entry(a, &key, 1, 0, &entry);
+        if (*slot != (uint64_t)key + 1)
+            fail("retired reserve release lost an entry", *slot, (uint64_t)key + 1);
+        wf_cmap_unread_entry(a, &entry, 0);
+    }
+    wf_cmap_destroy(map);
+}
+
+/* A release neither helps a move still under way nor reclaims a completed
+ * move while a read still publishes its old table. Once that read exits,
+ * the next release collects the table without another map operation. */
+static void reserves_keep_active_tables(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_entry entry;
+    wf_cmap_read_entry(u, (const unsigned char *)"missing", 7, 0, &entry);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    start_move(map, old);
+    table *next = atomic_load(&old->next);
+    if (next == NULL)
+        fail("active reserve test did not start a move", 0, 1);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->current) != old || atomic_load(&old->next) != next)
+        fail("reserve release helped an active move", freed, 0);
+    finish_move(map, old);
+    freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("reserve release collected an active reader's table", freed, 0);
+    wf_cmap_unread_entry(u, &entry, 0);
+    freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after its reader exited", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
+/* A whole hold protects all retired tables even without a matching user
+ * publication. Inject a second nonzero gate value as well: checking only
+ * gate == 1 would not implement the gate's closed/nonzero contract. */
+static void reserves_keep_whole_tables(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_hold(u);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    start_move(map, old);
+    finish_move(map, old);
+    if (atomic_load(&u->in) != 0 || atomic_load(&u->active) != 0)
+        fail("whole reserve test unexpectedly published a table or became active", atomic_load(&u->in),
+             atomic_load(&u->active));
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    for (int closed = 1; closed <= 2; closed++) {
+        atomic_store_explicit(&map->gate, closed, memory_order_seq_cst);
+        uint64_t freed = wf_cmap_release_reserve(map);
+        if (freed != 0 || atomic_load(&map->retired) != old ||
+            atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+            fail("reserve release collected behind a closed whole gate", freed, (uint64_t)closed);
+    }
+    wf_cmap_unhold(u);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after the whole gate opened", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
+/* Word-map users have no keyed activity mark: enter/leave, rather than
+ * statement completion, bounds the lifetime of their publication. */
+static void reserves_keep_word_tables(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *u = wf_cmap_enter(map);
+    uint64_t value;
+    wf_cmap_get(u, key_of(0), &value);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    if (atomic_load(&u->in) != (uintptr_t)old || atomic_load(&u->active) != 0)
+        fail("word reserve test lacks an inactive publication", atomic_load(&u->in) == (uintptr_t)old,
+             atomic_load(&u->active));
+    start_move(map, old);
+    finish_move(map, old);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("reserve release collected a word user's published table", freed, 0);
+    wf_cmap_leave(u);
+    freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after the word user left", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
 /* A map's reserve, the cells it keeps for the next move of their size, goes
  * on request: the release answers its bytes and changes no entry, a second
  * answers 0, one made while the map's own lock is held answers 0 and leaves
@@ -3710,14 +3855,19 @@ static void reserves_release_on_request(void) {
     if (map->spare == NULL)
         fail("a steady map never kept a reserve (keys inserted)", next, 0);
     uint64_t bytes = map->spare_capacity * sizeof(cell);
+    if (bytes < 2u * 1024u * 1024u) bytes = test_granted((size_t)bytes);
     atomic_store(&map->lock, 1);
     uint64_t locked = wf_cmap_release_reserve(map);
     if (locked != 0 || map->spare == NULL)
         fail("a release while the map's lock was held took the reserve (freed, kept)", locked, map->spare != NULL);
     atomic_store(&map->lock, 0);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
     uint64_t freed = wf_cmap_release_reserve(map);
     if (freed != bytes || map->spare != NULL)
         fail("a release did not free the reserve (freed, reserve bytes)", freed, bytes);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != (uint64_t)(before - after))
+        fail("spare release disagrees with heap drop", freed, (uint64_t)(before - after));
     uint64_t again = wf_cmap_release_reserve(map);
     if (again != 0)
         fail("a second release freed bytes (freed, expected)", again, 0);
@@ -3787,6 +3937,10 @@ static void reserves_release_beside_swaps(void) {
     }
 }
 
+/* A clear under a whole hold empties the map at once, its own entries
+ * included, keeps what the statement writes after it, and hands the old
+ * entries to their release only once the hold is given up, leaking no
+ * block. */
 static void maps_clear(void) {
     wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
@@ -4062,6 +4216,9 @@ static void heap_accounting(void) {
     if (atomic_load(&mapped_bytes_out) != before + 2 * mib + 32)
         fail("a pool node was also counted outside the pool", atomic_load(&mapped_bytes_out) - before, 2 * mib + 32);
 
+    /* These direct move steps form one entry statement: unlike word-map
+     * enter/leave users, an entry user's idle publication does not pin. */
+    enter_keyed(u);
     table *old = use_current(u);
     start_move_for(map, old, 65536);
     finish_move(map, old);
@@ -4081,6 +4238,7 @@ static void heap_accounting(void) {
         if (atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
             fail("replacing or reusing a spare miscounted its request", atomic_load(&mapped_bytes_out) - before, 8 * mib + 32);
     }
+    atomic_store_explicit(&u->active, 0, memory_order_release);
     int64_t live_blocks = atomic_load(&blocks_out);
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;) {
         if (slot == small && atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
@@ -4111,6 +4269,11 @@ int main(int argc, char **argv) {
      * than at the gate's limit. */
     alarm(120);
     set_patience(PATIENCE, PATIENCE);
+    if (argc == 2 && strcmp(argv[1], "reserve-retired") == 0) {
+        reserves_collect_retired();
+        puts("concurrent-map-test: retired reserve checks passed");
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
@@ -4188,6 +4351,10 @@ int main(int argc, char **argv) {
         concurrent(1);
         histories(20);
     }
+    reserves_keep_active_tables();
+    reserves_keep_whole_tables();
+    reserves_keep_word_tables();
+    reserves_collect_retired();
     reserves_release_on_request();
     reserves_release_beside_swaps();
     spares_match_the_current_size();

@@ -940,6 +940,7 @@ fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(),
             );
         }
     }
+    places::emit_measure_constants(output, program);
     for constant in program.constants() {
         output.text(format!("; const {}\n", constant.name()));
         let mut references = References::default();

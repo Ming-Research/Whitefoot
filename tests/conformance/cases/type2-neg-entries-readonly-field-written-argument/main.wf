@@ -1,0 +1,25 @@
+alias Packet = pkg::packets::Packet;
+
+fn overwrite_identity(number: &u64) -> result: unit writes(number) {
+  set number^ = 3_u64;
+  return unit;
+}
+
+fn update_packets(entries: &Entries<Packet>) -> result: unit writes(entries) {
+  for (index in 0_u64..entries^.len) {
+    let entry_ref = &entries^[index];
+    match entry_ref^ {
+      Some(value: packet) => {
+        let borrowed_packet = packet;
+        overwrite_identity(number: &borrowed_packet^.id);
+      }
+      None() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -444,11 +444,16 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
 	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
-concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
+concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v" selection; \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v"; \
 	done
+	@status=0; "$(COMPLETION_TMP)/concurrent-map-test-ignore-activity" reserve-retired \
+		> "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log" 2>&1 || status=$$?; \
+	cat "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"; \
+	test "$$status" -eq 1 && grep -q '^concurrent-map-test: retired reserve release did not collect the exited users' \
+		"$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
@@ -459,6 +464,11 @@ $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
 $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
+# The retired-table regression must reject ignoring statement activity.
+# Only its focused path runs: an unrelated failure is not a passing control.
+$(COMPLETION_TMP)/concurrent-map-test-ignore-activity: $(CONCURRENT_MAP_SOURCES) Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_IGNORE_ACTIVITY src/backend/concurrent_map_test.c -o "$@"
 
 # The same test built to check every read and write of memory, which is the
 # only witness of a read of a freed node: such a read's result is discarded,
@@ -591,6 +601,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
 	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
 	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
+	$(COMPLETION_TMP)/concurrent-map-test-ignore-activity \
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \

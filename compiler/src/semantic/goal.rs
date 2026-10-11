@@ -193,6 +193,8 @@ pub(crate) enum EvaluatedValueOccurrence {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum GoalProjection {
     Deref,
+    /// One declared readonly descriptor field [OP-15, MSR-2].
+    Measure(CheckedMeasure),
     Field(u32),
     /// One refined enum payload, preserving both the variant and field
     /// identity when a reference actual is substituted [REF-1, ENT-2].
@@ -245,6 +247,7 @@ impl GoalProjection {
         use super::places::{CapturedValue, PlaceStep};
         match self {
             Self::Deref => PlaceStep::Deref,
+            Self::Measure(measure) => PlaceStep::Measure(measure),
             Self::Field(field) => PlaceStep::Field(field),
             Self::Payload { variant, field } => PlaceStep::Payload { variant, field },
             Self::Subscript(offset) => PlaceStep::Index(offset),

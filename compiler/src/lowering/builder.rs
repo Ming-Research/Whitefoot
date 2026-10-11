@@ -682,19 +682,15 @@ fn lower_parameter_type(
 /// The representation a borrow-mode value carries.
 ///
 /// A borrow addresses the owner's storage, including a Box's pointer slot.
-/// Ordinary opaque values use the same address path. The buffer/view ABI
-/// retains its descriptor representation for every callable body [REF-1].
+/// Ordinary opaque values and runtime-capacity descriptor headers use the
+/// same address path. Range and Run references retain their dedicated
+/// nonowning descriptor representations [REF-1, REF-4, TYPE-9].
 fn lower_borrow_mode_type(
     mode: CheckedMode,
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own
-        || matches!(
-            ty,
-            IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
-        )
-    {
+    if mode == CheckedMode::Own || matches!(ty, IrType::Range { .. } | IrType::Run { .. }) {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {

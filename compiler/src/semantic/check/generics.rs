@@ -1128,6 +1128,11 @@ impl<'unit> Checker<'_, 'unit> {
         let mut declared_effects = self
             .types
             .parse_effects(check_context, effects, &parameters)?;
+        if let super::effect_repairs::RepairMode::Validate(rows) = &self.types.effect_repairs
+            && let Some(row) = rows.get(&template.declaration)
+        {
+            declared_effects = row.clone();
+        }
         // [EFF-3] the allocation fact of a boundary that takes from the heap
         // by definition: the boxed [OP-13] construction functions and
         // [OP-10]'s `grow`. It is not a row category [EFF-1, STOR-8], so it is

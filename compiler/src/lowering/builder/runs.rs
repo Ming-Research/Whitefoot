@@ -2,7 +2,7 @@
 //!
 //! A storage shape's value is its complete storage: a `Slots<T, n>` is the
 //! descriptor word `len` followed by `n` inline slots, and an `Array<T, n>`
-//! is `n` slots whose `len` and `cap` are both the type constant and are
+//! is `n` slots whose `len` is the type constant and is
 //! stored nowhere [TYPE-9, WIN-1, OP-9]. No slot carries a tag: the window
 //! is the complete typestate, so every measure here is one descriptor read
 //! or a compile-time constant and every subscript is one address
@@ -119,7 +119,7 @@ impl IrBuilder<'_> {
                 // Box-referent places are promoted by storage planning and
                 // lowered through their owner slot's address. Reaching this
                 // value-only path would take an address from a copied Box.
-                CheckedPlaceStep::BoxReferent(_) => {
+                CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Measure(_) => {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
                 CheckedPlaceStep::Subscript(subscript) => {

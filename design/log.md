@@ -5,6 +5,35 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Freeing moved map tables once their statements end
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose A ("approve") on the card gran-reserve-reclaim-approval, which asked, written in Chinese, "approve Whitefoot#355's changes to the design tree design/compiler/waiting-contexts/concurrent-map.md?" (translated) and quoted the added publication-lifetime decision, the two added rejections and the replaced reserve-release decision verbatim at head 5a4a19657.
+
+Summary: An executor's map user kept its table publication after its statements ended and only a table switch reclaimed moved tables, so a moved table could stay pinned and firn's reserve release kept answering zero while over its memory limit. Users now keep their publication as an address token, and reclamation protects a retired table only while a matching entry-map user is active or the whole-map gate is closed, word maps keeping publication-only protection; a reserve release also detaches and frees the retired tables no statement uses. Releasing only the spare, which never advanced reclamation, and clearing the publication at every statement exit, which added two locked operations per x86-64 statement, were rejected; single-thread entry reads were unchanged within 0.1% on the 14900K ([measurement](../research/investigations/concurrent-map/DESIGN.md#freeing-moved-tables-once-their-statements-end)).
+## 2026-10-11 Recursive effect-row repairs widen by argument suffixes
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it, and notify firn after the merge and release" (translated), on the card "approve Ming-Research/Whitefoot#346 (head 12f9482b5) changing the design tree node compiler/rejection-payloads?" (translated).
+
+Summary: For a function recursing along a Frozen or Box tree, EFF-2's suggested row grew by one level each round and never converged. Acyclic repairs keep their covered-entry removal and their separate uncovered entries, now stated as a decision of their own. For a recursive component identified by source declarations, a growing parameter-cycle edge adds the complete argument path it supplies, such as `writes(root.inner.next.Some.value)`, instead of merging growing paths at their longest common prefix, because the merged `writes(root.inner)` makes EFF-5 refuse a recursive call that passes a sibling path as a separate read. The proposed component rows are checked by the ordinary checker before any repair is printed, and a failed validation omits the repair as DIAG-1 permits; firn's recursive lookup compiles with the suggested `reads(root.inner)`. The rejected merge is now stated for acyclic entries.
+## 2026-10-11 References to compile-time measures point at shared constants
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#359 (head f03ba8de1) adding this decision to the design tree node compiler/storage-representation?" (translated).
+
+Summary: The specification admits a readonly reference to a prelude-declared measure such as `&source^.inner.len`, but a constant-capacity container keeps its compile-time measures out of memory, so the reference had no address. Such a reference now lowers to a private unnamed_addr read-only constant holding the u64 value, one per distinct value in each emitted module, because the measure never changes for the owner's lifetime and the language observes no reference address. Adding the word to every constant-capacity header was rejected because it enlarges every fixed container, which matters most on weak embedded targets, and refusing the borrow would narrow what the specification admits.
+## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
+
+Nodes: compiler/checker-facts, compiler/incremental-closure
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-c3-353-approve, which asked "approve Whitefoot #353 (head 640014c4c) and its three design decisions: the join shortcut, the conditions for sharing a proof, and delivery judging redundancy by derivability?" (translated) and quoted the three decisions verbatim.
+
+Summary: At a branch join the checker built, for every pair, a proof whose parents were all N predecessors, so doubling the arms multiplied checking time about tenfold. A join now first reuses a shared explicit proof every non-contradictory predecessor independently selects, and otherwise stops at the first contributing input that reaches the pair's implicit-only closed bound and records an implicit derivation, because every closed state already entails the implicit facts and their closure, so ENT-5's weakest common bound cannot exceed it. Bounded relation delivery judges a candidate redundant by exact derivability from implicit facts instead of by the ancestry of its chosen proofs. No program's verdict changes; on the 14900K the synthetic 640-arm sequence checks about 69 times faster, v2h is unchanged and Halo about 2% faster.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
