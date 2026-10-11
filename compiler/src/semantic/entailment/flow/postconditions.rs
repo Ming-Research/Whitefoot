@@ -1536,6 +1536,7 @@ impl Reasoning<'_, '_, '_> {
                 element,
                 source,
                 narrowed,
+                relocation,
             } => self.event_kills_term(
                 separations,
                 substitution.term,
@@ -1543,6 +1544,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    relocation: *relocation,
                     narrowed: narrowed.clone(),
                 },
             ),
@@ -1563,15 +1565,21 @@ impl Reasoning<'_, '_, '_> {
             KillEvent::Write {
                 place,
                 element: false,
+                relocation,
                 ..
             }
             | KillEvent::EntryImageHolderWrite {
                 place,
                 element: false,
+                relocation,
                 ..
-            } => live_holders
-                .iter()
-                .any(|holder| self.input.write_replaces_live_holder(*holder, place)),
+            } => live_holders.iter().any(|holder| {
+                if *relocation {
+                    self.input.relocation_kills_holder(separations, *holder, place)
+                } else {
+                    self.input.write_replaces_live_holder(*holder, place)
+                }
+            }),
             KillEvent::Write { element: true, .. }
             | KillEvent::EntryImageHolderWrite { element: true, .. } => false,
         };
@@ -1592,6 +1600,7 @@ impl Reasoning<'_, '_, '_> {
                 element,
                 source,
                 narrowed,
+                relocation,
             } => self.event_kills_term(
                 separations,
                 term,
@@ -1599,6 +1608,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    relocation: *relocation,
                     narrowed: narrowed.clone(),
                 },
             ),

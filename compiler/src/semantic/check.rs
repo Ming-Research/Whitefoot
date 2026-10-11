@@ -3118,14 +3118,17 @@ impl<'unit> TypeContext<'unit> {
             if signature.id.0 as usize != index {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            callees.push(EntailmentCallee::from_signature(
+            let mut callee = EntailmentCallee::from_signature(
                 signature
                     .parameters
                     .iter()
                     .map(|parameter| (parameter.declaration, parameter.mode, parameter.ty)),
                 &signature.declared_effects.writes,
                 self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
-            ));
+            );
+            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged")
+                && self.declarations.tree.is_prelude_node(signature.node)?;
+            callees.push(callee);
         }
         for (callee, checked) in callees.iter_mut().zip(functions) {
             callee.range_boundary = checked.function.range_facts.has_boundary();
