@@ -559,6 +559,16 @@ map's runtime or its test. Three runs on Whitefoot#311's branch (37918319834,
 
 Each budget is 1.25 times the slowest run, rounded up to 5 s.
 
+**`map-tsan` on ubuntu, raised to 45 s.** By 2026-10-11 the linux stage
+took 23 to 39 s across branches, and main's own source overran 35 s. Five
+interleaved dispatched rounds of main and Whitefoot#355's branch, on
+ubuntu-24.04 in the same hour (runs 38177118636 through 38178759524), took
+29.84, 34.75, 36.35, 35.36 and 29.75 s on main, two over budget, and 34.45,
+29.74, 35.56, 23.23 and 34.86 s on the branch, so the overruns were runner
+variance and not that change's cost. The owner approved a raise of 10 s, to
+45 s, on the status board (card gran-map-tsan-budget-raise, option A); macOS
+stays at 45 s.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
