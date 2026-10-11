@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Recursive effect-row repairs widen by argument suffixes
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it, and notify firn after the merge and release" (translated), on the card "approve Ming-Research/Whitefoot#346 (head 12f9482b5) changing the design tree node compiler/rejection-payloads?" (translated).
+
+Summary: For a function recursing along a Frozen or Box tree, EFF-2's suggested row grew by one level each round and never converged. Acyclic repairs keep their covered-entry removal and their separate uncovered entries, now stated as a decision of their own. For a recursive component identified by source declarations, a growing parameter-cycle edge adds the complete argument path it supplies, such as `writes(root.inner.next.Some.value)`, instead of merging growing paths at their longest common prefix, because the merged `writes(root.inner)` makes EFF-5 refuse a recursive call that passes a sibling path as a separate read. The proposed component rows are checked by the ordinary checker before any repair is printed, and a failed validation omits the repair as DIAG-1 permits; firn's recursive lookup compiles with the suggested `reads(root.inner)`. The rejected merge is now stated for acyclic entries.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
