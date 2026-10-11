@@ -3,7 +3,7 @@ use super::{
     ReservedNameClass,
 };
 
-pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 26] = [
+pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 31] = [
     prelude(
         BuiltinPreludeId::BOOL,
         "Bool",
@@ -90,6 +90,23 @@ pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 26] = [
         "NarrowError",
         Some(DeclarationClass::EnumVariant),
     ),
+    prelude(
+        BuiltinPreludeId::SCAN_STEP,
+        "ScanStep",
+        Some(DeclarationClass::NominalType),
+    ),
+    prelude(
+        BuiltinPreludeId::NEXT,
+        "Next",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(BuiltinPreludeId::NEXT_CURSOR, "next", None),
+    prelude(
+        BuiltinPreludeId::NEEDS,
+        "Needs",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(BuiltinPreludeId::NEEDS_BYTES, "bytes", None),
     prelude(
         BuiltinPreludeId::INT,
         "Int",
@@ -266,7 +283,7 @@ mod tests {
 
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
-        assert_eq!(PRELUDE_DECLARATIONS.len(), 26);
+        assert_eq!(PRELUDE_DECLARATIONS.len(), 31);
         assert_eq!(OPERATION_FAMILIES.len(), 88);
         assert_eq!(
             OPERATION_FAMILIES

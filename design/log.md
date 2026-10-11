@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 A scan bounded by the heap it may grow
+
+Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner approved the item request "approve #343: the three changes of the specification (SHARE-1 adds map_scan_within, PRE-1 adds ScanStep, one sentence of MSR-1) and the two design tree decisions; also raise io-hosts' linux-asan-ubsan budget from 10 s to 20 s" (translated) with "agreed" (translated), after choosing option A on the card "how can map_scan give a bound a caller can rely on before it allocates?" (translated) on 2026-10-10.
+
+Summary: A byte-bounded scan is a separate `map_scan_within` returning `Next` or `Needs`, with `map_scan` unchanged, because a caller budgeting heap needs whole-position progress and the exact budget of an indivisible first position before anything is copied, instead of turning the count hint into a bound or returning an unchanged cursor silently. The runtime preflights whole positions without allocating, simulates the key set's growth with fresh allocations and allocates its exact sort workspace only after admitting a prefix, because gathering or sorting an unaffordable position would itself exceed the bound and a thread-local spare could change the answer, instead of copying first and testing the final heap delta or discounting held spare storage; the repeated reads within a colliding home this costs are unmeasured. Two existing concurrent-map decisions now name `map_scan` as their subject, their content unchanged.
+
 ## 2026-10-10 Empty contiguous runtime windows share one header
 
 Nodes: compiler/storage-representation
