@@ -211,10 +211,33 @@ own investigation. Neither is implemented or silently used by this witness.
 
 ## Results and remaining evidence
 
-No observed overtaking counts are claimed yet. The owner will build and run
-the dispatch-only hosted workflow, then attach raw rows with the tested
-revision before this section records a verdict. Native compilation, Linux
-and macOS execution, counter sensitivity and compatibility with the other
-branch's reservations remain unverified. No specification rule or conformance
-verdict changed; no approval record is needed for a runtime mechanism because
-this phase proposes none for adoption.
+**First hosted run, 2026-10-11** (run 38154989622, revision `9e5e31f72`, the
+witness as committed in `2971c435e`; raw rows in the run's artifacts). Five
+trials per row, N competitors, cap = each competitor's statement count;
+"overtakes" = competitor completions on O between X's first failed probe
+and X's acquisition; "drained" = X acquired O only after every competitor
+had finished all its capped statements.
+
+| Host | Valid trials | Over B(N) = 64 x N | Drained |
+| --- | ---: | ---: | ---: |
+| ubuntu-24.04, x86-64, clang 18.1.3 | 47 | 1 | 0 |
+| macos-15, arm64, Apple clang 17.0.0 | 47 | 43 | 18 |
+
+| N, cap | Linux max overtakes | macOS min-max overtakes |
+| --- | ---: | ---: |
+| 1, 256 | 5 | 256-256 |
+| 1, 4096 | 5 | 92-4096 |
+| 1, 65536 | 5 | 27-65536 |
+| 2, 65536 | 1 | 1-131072 |
+| 8, 4096 | 2467 | 4096-32768 |
+| 8, 65536 | 3 | 708-266982 |
+
+The sampled bound is rejected on both hosts, so the static cycle in
+[the question](#question-and-semantic-witness) is observed, not only
+argued: on macOS X routinely waited until its competitors ran out of work,
+and its overtaking count grew with the cap, which is the shape unbounded
+overtaking predicts; on Linux it is rare but present. The uncontended
+control passed on both. Finite runs cannot show that the wait is
+infinite; they show that today's runtime gives X no bound related to N.
+Phase 2 needs one of the alternatives above; the guard reservation it must
+stay compatible with is on `claude/guard-fairness` and is not on this base.
