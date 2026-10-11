@@ -1,0 +1,27 @@
+fn read_word(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn array_length(array: &Array<u8>) -> result: u64 reads(array.len) {
+  return read_word(word: &array^.len);
+}
+
+fn slot_capacity(window: &Slots<u8>) -> result: u64 reads(window.cap) {
+  return read_word(word: &window^.cap);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let array = box_array_filled::<u8>(count: 4_u64, value: 0_u8);
+  let slots = box_slots_new::<u8>(capacity: 6_u64);
+  let length = array_length(array: &array.inner);
+  let capacity = slot_capacity(window: &slots.inner);
+  if length == 4_u64 {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if capacity == 6_u64 {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

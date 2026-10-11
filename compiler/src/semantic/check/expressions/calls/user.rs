@@ -474,10 +474,8 @@ impl<'unit> Checker<'_, 'unit> {
             .substitution
             .clone();
         for (key, argument) in actual_substitution.entries() {
-            if let (
-                GenericParameterKey::Source(parameter),
-                GenericArgument::Type(ty),
-            ) = (key, argument)
+            if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                (key, argument)
             {
                 self.check_type_parameter_placement(node, *parameter, *ty, &function.substitution)?;
             }
@@ -1385,6 +1383,7 @@ impl<'unit> TypeContext<'unit> {
                     projections.push(GoalProjection::Payload { variant, field });
                 }
                 PlaceStep::Deref => projections.push(GoalProjection::Deref),
+                PlaceStep::Measure(measure) => projections.push(GoalProjection::Measure(measure)),
                 PlaceStep::Index(index) => {
                     projections.push(GoalProjection::Subscript(index.goal_identity()));
                 }
@@ -1404,7 +1403,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
-                PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
+                PlaceStep::Part(_) | PlaceStep::Descendant(_) => {
                     return self.declarations.unsupported(
                         super::super::super::super::UnsupportedSemanticFeature::CompositeValues,
                         node,
@@ -1623,7 +1622,9 @@ impl<'unit> DeclarationInventory<'unit> {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
-            Checker::invalidate_window_references(bindings, &window);
+            let shifts_origin =
+                prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
+            Checker::invalidate_window_references(bindings, &window, shifts_origin);
         }
         Ok(())
     }

@@ -33,6 +33,8 @@ use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 /// observations before asking for a storage member.
 #[derive(Clone, Copy)]
 pub(in crate::semantic::check) enum PlaceMember {
+    /// A readonly field the prelude declares [TYPE-2, OP-15].
+    Measure(CheckedMeasure),
     Field {
         nominal: super::super::super::model::NominalId,
         index: u32,
@@ -48,12 +50,14 @@ impl PlaceMember {
     pub(in crate::semantic::check) fn ty(self) -> CheckedType {
         match self {
             Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
+            Self::Measure(_) => CheckedType::Integer(IntegerType::U64),
         }
     }
 
     pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
         match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
+            Self::Measure(measure) => CheckedPlaceStep::Measure(measure),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
         }
     }
@@ -670,6 +674,10 @@ impl<'unit> Checker<'_, 'unit> {
                 .types
                 .elaborate_place_member(check_context, suffix, place.ty)?;
             place.expression = match member {
+                PlaceMember::Measure(measure) => {
+                    place.measure = Some(measure);
+                    continue;
+                }
                 PlaceMember::BoxContent { nominal, ty } => {
                     place.resolved.append_step(PlaceStep::Deref);
                     CheckedExpression::BoxDeref {
@@ -771,6 +779,18 @@ impl<'unit> TypeContext<'unit> {
         ty: CheckedType,
         name: &str,
     ) -> Result<Option<PlaceMember>, CheckStop> {
+        // [PRE-1, TYPE-2, OP-15] measures on these value types are declared
+        // fields. Range and run-selection lengths carry no declaration and
+        // are handled only by the observation judgment [REF-4, MSR-1].
+        if let Some(measure) = super::super::types::measure_named(name)
+            && let Some(measured) = super::super::expressions::flat_storage::measured_kind_of(ty)
+            && !matches!(
+                measure.cell(measured),
+                super::super::super::model::MeasureCell::Absent
+            )
+        {
+            return Ok(Some(PlaceMember::Measure(measure)));
+        }
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
@@ -868,6 +888,7 @@ impl<'unit> TypeContext<'unit> {
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
         match member {
+            Some(PlaceMember::Measure(_)) => {}
             Some(PlaceMember::BoxContent { .. }) => {
                 if name != "inner" {
                     return self.declarations.issue_node(

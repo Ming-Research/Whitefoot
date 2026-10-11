@@ -1117,7 +1117,11 @@ fn range_references_cross_helpers_without_transferring_ownership() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 6);
     for exit in exits {
-        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
+        assert_eq!(
+            exit.matches("call void @wf__heap_give").count(),
+            2,
+            "{exit}"
+        );
     }
     assert_eq!(main.matches("call void @wf__heap_give").count(), 12);
     assert!(main.contains("call i8 @wf_fill"));
@@ -1289,7 +1293,11 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 5);
     for exit in exits {
-        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
+        assert_eq!(
+            exit.matches("call void @wf__heap_give").count(),
+            2,
+            "{exit}"
+        );
     }
     assert_eq!(main.matches("call void @wf__heap_give").count(), 10);
 }
@@ -1707,4 +1715,324 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+/// [REF-1, PRE-1, MSR-2] a measure borrow reaches its real descriptor word,
+/// including the distinct Ring-head and Entries-count positions. Derived
+/// observations never reach this projection. Type-constant fields use
+/// immutable target storage, checked separately below.
+#[test]
+fn measure_references_project_actual_descriptor_words() {
+    let cases = [
+        ("Box<Array<u8>>", "source^.inner", "len", 0),
+        ("Slots<u8, 4>", "source^", "len", 0),
+        ("Ring<u8, 4>", "source^", "len", 0),
+        ("Ring<u8, 4>", "source^", "head", 1),
+        ("Box<Slots<u8>>", "source^.inner", "len", 0),
+        ("Box<Slots<u8>>", "source^.inner", "cap", 1),
+        ("Box<Ring<u8>>", "source^.inner", "len", 0),
+        ("Box<Ring<u8>>", "source^.inner", "cap", 1),
+        ("Box<Ring<u8>>", "source^.inner", "head", 2),
+        ("Box<Segments<u8>>", "source^.inner", "len", 0),
+        ("Box<Paged<u8>>", "source^.inner", "len", 0),
+        ("Box<Paged<u8>>", "source^.inner", "cap", 1),
+        ("KeySet", "source^", "len", 0),
+        ("Entries<u8>", "source^", "len", 2),
+    ];
+    for (ty, place, measure, expected_field) in cases {
+        let source = format!(
+            "fn peek(n: &u64) -> result: u64 reads(n) {{\n  return n^;\n}}\n\nfn observe(source: &{ty}) -> result: u64 reads(source) {{\n  return peek(n: &{place}.{measure});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_ir(source.as_bytes(), |program| {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "observe")
+                .expect("observer");
+            let (result, address, projection) = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation:
+                            IrOperation::ProjectAddress {
+                                address,
+                                projection: crate::IrPlaceStep::Measure { measure },
+                            },
+                        ..
+                    } => Some((*result, *address, *measure)),
+                    _ => None,
+                })
+                .expect("actual descriptor projection");
+            let Some(IrType::Address(base)) = function.value_type(address) else {
+                panic!("descriptor owner address")
+            };
+            assert_eq!(
+                projection.descriptor_field(base.ty()),
+                Some(expected_field),
+                "{ty}.{measure}"
+            );
+            assert!(function.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+                matches!(instruction, IrInstruction::Define { operation: IrOperation::Call { arguments, .. }, .. } if arguments.contains(&result))
+            }), "callee receives the descriptor address");
+        });
+        let module = emit(source.as_bytes());
+        let body = emitted_function(&module, "observe");
+        assert!(
+            body.lines()
+                .any(|line| line.contains("getelementptr inbounds")
+                    && line.ends_with(&format!(", i32 0, i32 {expected_field}"))),
+            "{ty}.{measure}: {body}"
+        );
+    }
+}
+
+const TYPE_CONSTANT_REFERENCES: &[u8] =
+    br#"fn peek_constant(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn array_four(source: &Array<u8, 4>) -> result: u64 reads(source.len) {
+  return peek_constant(word: &source^.len);
+}
+
+fn slots_four(source: &Slots<u8, 4>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn ring_four(source: &Ring<u8, 4>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn array_zero(source: &Array<u8, 0>) -> result: u64 reads(source.len) {
+  return peek_constant(word: &source^.len);
+}
+
+fn slots_six(source: &Slots<u8, 6>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u8, 4>(value: 0_u8);
+  let s = slots_new::<u8, 4>();
+  let r = ring_new::<u8, 4>();
+  let first = array_four(source: &a);
+  let second = slots_four(source: &s);
+  let third = ring_four(source: &r);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// [REF-1, MSR-1, STOR-7] equal type-constant fields share readonly target
+/// storage even when their source owners and selected fields differ.
+#[test]
+fn type_constant_measure_references_share_readonly_globals() {
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        let module = crate::compile_for_emission(
+            &[crate::SourceInput::new(
+                "constant-measures.wf",
+                TYPE_CONSTANT_REFERENCES,
+            )],
+            crate::CompilerLimits::default(),
+            overlap,
+            None,
+            true,
+        )
+        .expect("type-constant references compile")
+        .0;
+        let text = module.as_str();
+        let globals = text
+            .lines()
+            .filter(|line| line.starts_with("@.wf_measure."))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            globals,
+            [
+                "@.wf_measure.0 = private unnamed_addr constant i64 0, align 8",
+                "@.wf_measure.4 = private unnamed_addr constant i64 4, align 8",
+                "@.wf_measure.6 = private unnamed_addr constant i64 6, align 8",
+            ]
+        );
+        for (name, value) in [
+            ("array_four", 4),
+            ("slots_four", 4),
+            ("ring_four", 4),
+            ("array_zero", 0),
+            ("slots_six", 6),
+        ] {
+            let body = emitted_function(text, name);
+            let suffix = format!(" = getelementptr i8, ptr @.wf_measure.{value}, i64 0");
+            let pointer = body
+                .lines()
+                .find_map(|line| line.trim().strip_suffix(&suffix))
+                .expect("constant backing address");
+            assert!(
+                body.lines()
+                    .any(|line| line.contains("call i64 @wf_peek_constant(")
+                        && line.contains(pointer)),
+                "callee must receive the constant pointer: {body}"
+            );
+            assert!(
+                !body.contains("!alias.scope") && !body.contains("!noalias"),
+                "constant storage has no owner allocation scope: {body}"
+            );
+        }
+        // Cache decoding must preserve private replication, not just the
+        // printed header: both models must split to identical private globals.
+        let decoded =
+            crate::LlvmModule::decode(&module.encode()).expect("emission model roundtrip");
+        for granularity in [
+            crate::FragmentGranularity::Function,
+            crate::FragmentGranularity::Module,
+        ] {
+            let fragments = crate::split_module(&module, granularity).expect("constant fragments");
+            assert_eq!(
+                crate::split_module(&decoded, granularity).expect("decoded constant fragments"),
+                fragments
+            );
+            for fragment in &fragments {
+                for value in [0, 4, 6] {
+                    let symbol = format!("@.wf_measure.{value}");
+                    if fragment.contains(&symbol) {
+                        let definition = format!(
+                            "{symbol} = private unnamed_addr constant i64 {value}, align 8"
+                        );
+                        assert_eq!(
+                            fragment.lines().filter(|line| *line == definition).count(),
+                            1,
+                            "each using module owns one readonly copy: {fragment}"
+                        );
+                    }
+                }
+                assert!(
+                    !fragment
+                        .lines()
+                        .any(|line| line.starts_with("@.wf_measure.")
+                            && !line.contains(" = private unnamed_addr constant ")),
+                    "no external or hidden constant backing: {fragment}"
+                );
+            }
+        }
+    }
+}
+
+const CAPTURED_CONSTANT_MEASURE: &[u8] =
+    br#"fn peek_captured(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn copy_count(source: &Array<u8, 4>, out: &[u64]) -> result: unit reads(source.len), writes(out) {
+  let word = &source^.len;
+  for (index in 0_u64..out^.len) {
+    set out^[index] = peek_captured(word: word);
+  }
+  return unit;
+}
+
+fn wait_read(word: &u64) -> result: u64 reads(word) waits {
+  return word^;
+}
+
+fn waiting_count(source: Array<u8, 4>) -> result: u64 pure waits {
+  let word = &source.len;
+  let seen = wait_read(word: word);
+  return seen;
+}
+
+fn shared_count(source: Shared<Array<u8, 4>>) -> result: u64 pure waits {
+  let seen = 0_u64;
+  atomic state = &source {
+    let word = &state^.len;
+    set seen = peek_captured(word: word);
+  }
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let source = array_filled::<u8, 4>(value: 0_u8);
+  let out = array_filled::<u64, 8>(value: 0_u64);
+  copy_count(source: &source, out: &out[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// [PAR-2, WAIT-1, SHARE-2] task captures, waiting calls and atomic reads
+/// transport the constant pointer as an ordinary reference argument.
+#[test]
+fn constant_measure_pointers_survive_parallel_and_waiting_consumers() {
+    super::system::with_parallel_ir(CAPTURED_CONSTANT_MEASURE, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "copy_count")
+            .expect("count copier");
+        let measure_pointer = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation:
+                        IrOperation::ProjectAddress {
+                            projection:
+                                crate::IrPlaceStep::Measure {
+                                    measure: crate::IrMeasure::Length,
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(*result),
+                _ => None,
+            })
+            .expect("formed constant reference");
+        let captures = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::LoopSplit { captures, .. },
+                    ..
+                } => Some(captures),
+                _ => None,
+            })
+            .expect("counted loop must actualize a split");
+        assert!(
+            captures.contains(&measure_pointer),
+            "the split must capture the formed readonly pointer"
+        );
+    });
+    let module = super::emit_with_overlap(CAPTURED_CONSTANT_MEASURE);
+    for name in ["waiting_count", "shared_count", "copy_count"] {
+        let body = emitted_function(&module, name);
+        let suffix = " = getelementptr i8, ptr @.wf_measure.4, i64 0";
+        let pointer = body
+            .lines()
+            .find_map(|line| line.trim().strip_suffix(suffix))
+            .expect("constant pointer in every consumer");
+        if name == "shared_count" {
+            assert!(
+                body.lines()
+                    .any(|line| line.contains("call i64 @wf_peek_captured(")
+                        && line.contains(pointer)),
+                "the atomic call must receive the constant pointer: {body}"
+            );
+        } else {
+            let callee = if name == "waiting_count" {
+                "call ptr @wf_wait_read("
+            } else {
+                "@wf__par_split_"
+            };
+            assert!(
+                body.lines().any(|line| line.contains("call ")
+                    && line.contains(callee)
+                    && line.contains(&format!("ptr {pointer}"))),
+                "the waiting callee or loop splitter must receive the constant pointer: {body}"
+            );
+        }
+        assert!(!body.contains("!alias.scope") && !body.contains("!noalias"));
+    }
 }
