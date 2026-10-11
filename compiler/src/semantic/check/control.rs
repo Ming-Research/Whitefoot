@@ -763,7 +763,7 @@ impl<'unit> TypeContext<'unit> {
     /// The compiler-derived releases one edge leaving a scope carries
     /// [STOR-3, LIV-1], and the [PROV-6] refusal of a value that is linear in
     /// this scope and has no derived release to carry it there.
-    fn live_affine_drops(
+    pub(super) fn live_affine_drops(
         &self,
         check_context: &CheckContext<'_>,
         bindings: &HashMap<DeclarationId, LocalBinding>,

@@ -1,0 +1,22 @@
+nocopy struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn make() -> result: Pair pure {
+  return Pair(left: 1_u64, right: 2_u64);
+}
+
+fn update(pair: &Pair) -> result: unit writes(pair) contract {
+  requires pair^.left == pair^.right;
+  ensures pair^.left == pair^.right;
+} {
+  set pair^ = make();
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pair = Pair(left: 0_u64, right: 0_u64);
+  let done = update(pair: &pair);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -13,7 +13,10 @@ fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
 }
 
 #[test]
-fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
+fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
+    // PRE-1: release returns a nonempty boxed window and its boxed element,
+    // an empty window (whose header STOR-1 does not count), and a struct
+    // owning two cells to the baseline.
     // STOR-1: status 15 catches counted empty headers, zero growth or
     // wrong growth extents (48 bytes for u64, 16 for zero-byte elements);
     // status 16 catches release imbalance after those owners leave scope.
@@ -78,7 +81,11 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
     let program = build_program(&compile_program("memory_contexts.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
     }
 }
 

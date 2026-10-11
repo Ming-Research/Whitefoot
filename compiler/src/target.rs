@@ -474,9 +474,7 @@ pub(super) fn paged_geometry(
     let ceiling = crate::lowering::layout_ceiling(program.nominals(), program.elements(), element)
         .map(|ceiling| ceiling.stride);
     let limit = match ceiling {
-        Some(crate::IrLayoutMagnitude::Finite(ceiling)) if ceiling <= 4096 => {
-            4096 / ceiling.max(1)
-        }
+        Some(crate::IrLayoutMagnitude::Finite(ceiling)) if ceiling <= 4096 => 4096 / ceiling.max(1),
         _ => 1,
     };
     Ok((1_u64 << (63 - limit.leading_zeros()), stride))
@@ -561,6 +559,43 @@ pub(crate) fn union_enum_layout(
     })
 }
 
+/// Experimental expansion limits: cover Halo's 80-byte Frame (11 leaves)
+/// without scalarizing long records or collection storage.
+pub(crate) const TRANSFER_MAX_BYTES: u64 = 128;
+const TRANSFER_MAX_GRANULES: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TransferAccess {
+    Scalar(IrType),
+    Pointer,
+    Integer(u16),
+    /// Representation bytes which cannot safely travel through an integer
+    /// (a split/overlaid pointer, non-byte-sized leaf or nested byte interval).
+    Bytes,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TransferGranule {
+    pub(crate) offset: u64,
+    pub(crate) size: u64,
+    pub(crate) access: TransferAccess,
+}
+
+/// Selected-layout copy leaves. None retains the whole-value memory intrinsic;
+/// arrays/windows (including nested ones) never expose unoccupied slots as
+/// initialized scalar values. This changes emission, not layout or admission.
+pub(crate) fn bounded_transfer(
+    target: TargetLayout,
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<Option<Vec<TransferGranule>>, TargetLayoutFailure> {
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    if layouts.layout(ty)?.size > TRANSFER_MAX_BYTES {
+        return Ok(None);
+    }
+    layouts.transfer_leaves(ty)
+}
+
 /// All family words must fit OP-9's retained language ceiling. A product of
 /// selected child layouts is not that ceiling: nested unions may already be
 /// smaller, and their unused allowance is available to the containing enum.
@@ -630,7 +665,8 @@ pub(crate) fn is_union_enum(
 /// Whether a value of `ty` holds a union-laid-out enum inline: the enum
 /// itself, or a struct, enum payload, inline array or inline window that
 /// contains one. Such a value is memory-only in the backend
-/// (compiler/payload-enum-layout): it lives in storage, moves by memmove, and
+/// (compiler/payload-enum-layout): it lives in storage, moves through bounded
+/// transfers or memmove, and
 /// is never loaded, stored or passed as one LLVM first-class value, because
 /// LLVM has no union type to carry it. A `Box` and a runtime-capacity block
 /// hold their content behind a pointer, and a zero-length array or
@@ -1677,8 +1713,7 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            self.union_layout(variants, nominal.handler_words)?
-                .value
+            self.union_layout(variants, nominal.handler_words)?.value
         } else {
             let mut fields = Vec::new();
             match nominal.kind() {
@@ -1762,6 +1797,175 @@ impl<'types> LayoutComputer<'types> {
         })
     }
 
+    fn transfer_leaves(
+        &mut self,
+        ty: IrType,
+    ) -> Result<Option<Vec<TransferGranule>>, TargetLayoutFailure> {
+        let layout = self.layout(ty)?;
+        if layout.size > TRANSFER_MAX_BYTES {
+            return Ok(None);
+        }
+        let access = match ty {
+            IrType::Unit | IrType::Bool | IrType::Integer { .. } | IrType::Float { .. } => {
+                Some(TransferAccess::Scalar(ty))
+            }
+            IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Some(TransferAccess::Pointer),
+            IrType::Nominal(id) => {
+                let nominal = self
+                    .nominals
+                    .get(id.index())
+                    .ok_or(TargetLayoutFailure::InvalidIr)?;
+                match nominal.kind() {
+                    IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
+                        Some(TransferAccess::Pointer)
+                    }
+                    _ if nominal.is_tag_only_enum() => Some(TransferAccess::Scalar(ty)),
+                    IrNominalKind::Struct { fields } => {
+                        return self
+                            .transfer_fields(fields.iter().map(|field| field.ty()).collect());
+                    }
+                    IrNominalKind::Enum { variants } => {
+                        if is_union_enum(self.nominals, self.elements, id)? {
+                            return self.union_transfer(variants, nominal.handler_words);
+                        }
+                        let mut fields = vec![IrType::Integer {
+                            width: 32,
+                            signed: false,
+                        }];
+                        fields.extend(
+                            variants
+                                .iter()
+                                .flat_map(|variant| variant.fields())
+                                .map(|field| field.ty()),
+                        );
+                        return self.transfer_fields(fields);
+                    }
+                    IrNominalKind::Opaque => None,
+                }
+            }
+            // Collections and reference descriptors retain their existing copy.
+            _ => None,
+        };
+        Ok(access.map(|access| {
+            vec![TransferGranule {
+                offset: 0,
+                size: layout.size,
+                access,
+            }]
+        }))
+    }
+
+    fn transfer_fields(
+        &mut self,
+        fields: Vec<IrType>,
+    ) -> Result<Option<Vec<TransferGranule>>, TargetLayoutFailure> {
+        let mut result = Vec::new();
+        for (ty, offset) in self.field_offsets(&fields)? {
+            let Some(leaves) = self.transfer_leaves(ty)? else {
+                return Ok(None);
+            };
+            for mut leaf in leaves {
+                leaf.offset += offset;
+                result.push(leaf);
+                if result.len() > TRANSFER_MAX_GRANULES {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(result))
+    }
+
+    fn union_transfer(
+        &mut self,
+        variants: &[crate::IrVariant],
+        words: u32,
+    ) -> Result<Option<Vec<TransferGranule>>, TargetLayoutFailure> {
+        let layout = self.union_layout(variants, words)?;
+        let mut views = Vec::new();
+        let mut boundaries = std::collections::BTreeSet::from([0, layout.value.size]);
+        for variant in variants {
+            let mut fields = vec![IrType::Integer {
+                width: 32,
+                signed: false,
+            }];
+            fields.extend(variant.fields().iter().map(|field| field.ty()));
+            let Some(mut leaves) = self.transfer_fields(fields)? else {
+                return Ok(None);
+            };
+            if let Some(offset) = layout.handler_offset {
+                for word in 0..words {
+                    leaves.push(TransferGranule {
+                        offset: offset + u64::from(word) * POINTER_LAYOUT.size,
+                        size: POINTER_LAYOUT.size,
+                        access: TransferAccess::Pointer,
+                    });
+                }
+            }
+            for leaf in &leaves {
+                boundaries.insert(leaf.offset);
+                boundaries.insert(leaf.offset + leaf.size);
+            }
+            if boundaries.len() > TRANSFER_MAX_GRANULES + 1 {
+                return Ok(None);
+            }
+            views.push(leaves);
+        }
+        let boundaries: Vec<_> = boundaries.into_iter().collect();
+        let mut result = Vec::new();
+        for interval in boundaries.windows(2) {
+            let offset = interval[0];
+            let end = interval[1];
+            // A pointer load is used only when every view has exactly that
+            // pointer word here. Any overlaid/split word uses byte memmove.
+            let pointer = views.iter().all(|leaves| {
+                leaves.iter().any(|leaf| {
+                    leaf.offset == offset
+                        && leaf.offset + leaf.size == end
+                        && leaf.access == TransferAccess::Pointer
+                })
+            });
+            let plain = views
+                .iter()
+                .flatten()
+                .filter(|leaf| leaf.offset < end && offset < leaf.offset + leaf.size)
+                .all(|leaf| match leaf.access {
+                    TransferAccess::Integer(_) => true,
+                    TransferAccess::Scalar(
+                        IrType::Unit | IrType::Integer { .. } | IrType::Float { .. },
+                    ) => true,
+                    TransferAccess::Scalar(IrType::Nominal(id)) => {
+                        self.nominals[id.index()].is_tag_only_enum() && leaf.size == 4
+                    }
+                    _ => false,
+                });
+            result.push(TransferGranule {
+                offset,
+                size: end - offset,
+                access: if pointer {
+                    TransferAccess::Pointer
+                } else if plain {
+                    TransferAccess::Integer(((end - offset) * 8) as u16)
+                } else {
+                    TransferAccess::Bytes
+                },
+            });
+        }
+        Ok(Some(result))
+    }
+
+    /// Field offsets and aggregate size use the same target alignment walk.
+    fn field_offsets(
+        &mut self,
+        fields: &[IrType],
+    ) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+        let layouts = fields
+            .iter()
+            .map(|&ty| self.layout(ty))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (_, offsets) = self.aggregate_offsets(layouts, TargetObject::Representation)?;
+        Ok(fields.iter().copied().zip(offsets).collect())
+    }
+
     fn struct_layout(&mut self, fields: Vec<IrType>) -> Result<Layout, TargetLayoutFailure> {
         let mut layouts = Vec::with_capacity(fields.len());
         for field in fields {
@@ -1775,18 +1979,32 @@ impl<'types> LayoutComputer<'types> {
         fields: impl IntoIterator<Item = Layout>,
         object: TargetObject,
     ) -> Result<Layout, TargetLayoutFailure> {
+        self.aggregate_offsets(fields, object)
+            .map(|(layout, _)| layout)
+    }
+
+    fn aggregate_offsets(
+        &self,
+        fields: impl IntoIterator<Item = Layout>,
+        object: TargetObject,
+    ) -> Result<(Layout, Vec<u64>), TargetLayoutFailure> {
         let mut size = 0_u64;
         let mut alignment = 1_u64;
+        let mut offsets = Vec::new();
         for field in fields {
             size = align_up(self.target, size, field.align, object)?;
+            offsets.push(size);
             size = checked_add(size, field.size, self.target, object)?;
             alignment = alignment.max(field.align);
         }
         size = align_up(self.target, size, alignment, object)?;
-        Ok(Layout {
-            size,
-            align: alignment,
-        })
+        Ok((
+            Layout {
+                size,
+                align: alignment,
+            },
+            offsets,
+        ))
     }
 }
 
