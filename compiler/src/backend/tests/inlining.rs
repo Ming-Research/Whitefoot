@@ -157,7 +157,12 @@ fn bounded_inline_attributes_survive_serialization_and_fragments() {
                 .filter(|line| line.starts_with("define ") && line.contains(&marker))
                 .collect::<Vec<_>>();
             assert_eq!(headers.len(), 1, "{name}: {headers:?}");
-            assert_eq!(headers[0].contains(" alwaysinline "), expected, "{}", headers[0]);
+            assert_eq!(
+                headers[0].contains(" alwaysinline "),
+                expected,
+                "{}",
+                headers[0]
+            );
         }
     }
 }

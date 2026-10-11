@@ -142,7 +142,8 @@ pub(super) struct OwnerAliases {
 }
 
 fn readonly_formals(function: &IrFunction) -> Vec<usize> {
-    if function.waits() || !function.overlaps().is_empty() || aliasing_admitted_row(function.name()) {
+    if function.waits() || !function.overlaps().is_empty() || aliasing_admitted_row(function.name())
+    {
         return Vec::new();
     }
     let Some(signature) = function.source_signature() else {
@@ -265,7 +266,9 @@ impl OwnerAliases {
         const UNKNOWN: usize = usize::MAX;
         for (index, (value, ty)) in function.parameters().iter().enumerate() {
             let root = if matches!(ty, IrType::Address(_))
-                && function.source_signature().and_then(|s| s.parameters().get(index))
+                && function
+                    .source_signature()
+                    .and_then(|s| s.parameters().get(index))
                     == Some(&crate::IrSourceMode::Reference)
             {
                 index

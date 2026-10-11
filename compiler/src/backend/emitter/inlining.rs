@@ -37,7 +37,9 @@ impl InlinePlan {
     /// A clone erases overlap scheduling. Plan every callee in that same
     /// world, so selected expansion costs and loop summaries match ordinary
     /// sequential lowering rather than inheriting the overlapped plan.
-    pub(in crate::backend) fn build_sequential(program: &IrProgram) -> Result<Self, BackendFailure> {
+    pub(in crate::backend) fn build_sequential(
+        program: &IrProgram,
+    ) -> Result<Self, BackendFailure> {
         Self::build_in_world(program, true)
     }
 
