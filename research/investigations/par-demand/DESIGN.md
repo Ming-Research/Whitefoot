@@ -2827,3 +2827,155 @@ whole-change reviewer could not start because the agent tool reached its
 thread limit and the separate CLI review failed initialization with
 `Operation not permitted`; these scoped reviews do not replace that missing
 fresh review. No approval or measured success is claimed.
+
+### Hosted construction attribution at 968ed23c8
+
+Run 38142512574 reached comparison for every workload and stopped before
+timing. The saved `.ll.raw` is compiler output before LLVM optimization;
+the saved `.ll` also contains the timed host adapter. The paired `.o.s`
+and final disassembly distinguish private labels from real instruction
+differences. This is construction evidence, not a performance result.
+
+In the table, **a** means a checker gap, **b** means different machine code
+for the same pre-optimization sequential computation, and **c** means
+different pre-optimization IR. An entry adapter needs an explicit
+qualification: its literal IR differs because it contains the pool query;
+its inactive computation can nevertheless match after selecting the
+inactive edge and collapsing the join phi. Calling that projection equal
+does not prove that the query preserves entry state or costs nothing.
+
+| Workload / reported function | Reported first difference | Attribution |
+|---|---|---|
+| small_constant / wf__heap_change | address-valued RIP reference | a: bounded readonly string address was unsupported |
+| small_split / wf_bench_micro | call frame_dummy+0xa0 / +0xe0 | a: private abort callee lost its symbol; root IR matches, but helper closure is c |
+| small_split / wf__heap_change | address-valued RIP reference | a |
+| small_split / wf__par_seq_workload | call frame_dummy+0xa0 / +0xe0 | a: misleading nearest symbol; root IR matches, helper closure is c |
+| recursion / wf_bench_micro | push rax / saved2 | c for literal dispatcher IR; inactive projected computation IR and fib closure match, so the remaining projected entry machine difference is b |
+| spine / wf_bench_micro | mov rdx,rax / push saved0 | c for literal dispatcher IR; inactive projected computation IR and spine closure match, so the remaining projected entry machine difference is b |
+| large_helper / wf_bench_micro | mov rdx,rax / push saved0 | c for literal adapter; inactive projected adapter matches, but helper closure is c |
+| mandelbrot / wf_bench_mandelbrot | stack allocation 0x18 / 0x28 | c for literal adapter and computation closure |
+| mandelbrot / wf__heap_change | address-valued RIP reference | a |
+| mandelbrot / wf__par_seq_render_points | call frame_dummy+0xa0 / +0xe0 | a for call naming; computation IR is independently c |
+| records / wf_bench_records | push saved0 / rbp | a for register naming; remaining adapter saves are real c |
+| records / wf__par_seq_summarize_records | call frame_dummy+0xa0 / +0xe0 | a for call naming; computation IR is independently c |
+| records / wf__heap_change | address-valued RIP reference | a |
+| fir / wf_bench_fir | sub 0x18,rsp / push rax | c for literal adapter and computation closure |
+| fir / wf__heap_change | address-valued RIP reference | a |
+| fir / wf__par_seq_filter | sub 0x18,rsp / push rax | c: outlined sequential chunk already differs in IR |
+| stencil / wf_bench_stencil | push saved0 / rbp | a for register naming; remaining adapter saves are real c |
+| stencil / wf__par_seq_stencil | mov rsi,saved4 / rbp | c: not a consistent whole-function register permutation; IR also differs |
+| stencil / wf__heap_change | address-valued RIP reference | a |
+| prefix / wf_bench_prefix | push saved0 / rbp | a for register naming; remaining adapter saves are real c |
+| prefix / wf__par_seq_prefix | stack allocation 0x28 / 0x38 | c: outlined sequential chunks already differ in IR |
+| prefix / wf__heap_change | address-valued RIP reference | a |
+| histogram / wf_bench_histogram | push saved0 / rbp | a for register naming; remaining adapter saves are real c |
+| histogram / wf__par_seq_histogram | stack offset 0x10 / 0x18 | c: outlined sequential chunks already differ in IR |
+| histogram / wf__heap_change | address-valued RIP reference | a |
+
+The private call is LLVM's `.Lwf_resource_abort`, visible in `.o.s` but
+absent from the original final ELF symbol table. `frame_dummy+offset` is
+objdump's nearest-symbol description, not the callee's identity. The
+checker now requires exact retained ELF function bounds and resolves the
+destination address first; it does not erase arbitrary call offsets.
+Experiment 6 retains assembler temporaries and linker locals in every arm.
+Function reconstruction uses symbol types and exact ranges, including
+repeated basic-block labels from different objects; reachable support
+includes private targets of conditional transfers as well as calls.
+The readonly address is the bridge's allocation-thread-inventory error
+string. Its normalization retains translation-unit-qualified object names,
+complete bytes, size, interior offset and overlapping object identities;
+equal bytes alone do not establish pointer identity. RBP can be an ordinary
+nonvolatile temporary. It is normalized consistently with the other saved
+registers unless explicit stack/frame instructions give it a frame role.
+Push order, save count, stack offsets and frame allocation remain evidence.
+Synthetic controls require relocated identical private callees and readonly
+addresses to match, and mutated bodies, changed pointer alias relationships
+and inconsistent register permutations to differ. The hosted native control
+requires retained symbols to leave executable section bytes unchanged and
+to expose a deliberately changed private callee. These new controls await CI;
+only Python syntax compilation and patch whitespace checks ran locally.
+
+Correct callee naming reveals another genuine difference: demand's
+`wf_resource_record_abort` acquires a private latch with `cmpxchg` and parks
+losing writers, whereas seq starts the write loop immediately. The abort
+thunk itself has matching IR; its reachable support does not. This is not
+repaired by renaming its call.
+
+The clone IR differences arise before Clang. [Loop synthesis](../../../compiler/src/lowering/builder/loops.rs)
+replaces original loops with chunk functions before the [backend emits
+sequential clones](../../../compiler/src/backend/emitter.rs); its
+[sequential split emitter](../../../compiler/src/backend/emitter/parallel.rs)
+calls the chunk. In the saved paired raw IR, small_split's `workload` bodies match,
+but seq's `mark` contains its loop and demand's sequential `mark` calls a
+chunk. The same distinction applies to large_helper's `helper`. The roots
+`render_points`, `summarize_records`, `filter`, `stencil`, `prefix` and
+`histogram` themselves contain new sequential chunk calls. Their signatures,
+alignment, target settings and function attributes match; their CFGs and
+function boundaries do not. Recursion's `workload`/`fib` and spine's
+`workload`/`spine`/`sharedleaf` closures match before optimization.
+The [timed adapters](../../../tests/programs/compute/host-adapter.awk)
+still preserve inputs across a new pool call, and Clang can
+inline the inactive computation in the mixed module. That explains real
+entry save differences without attributing them to a changed clone IR.
+For stencil, identical six-register push order fixes the normalization
+mapping; changing a later use from RBX to RBP cannot be absorbed by a
+consistent permutation.
+
+### What would establish machine identity
+
+These are alternatives for the owner, not an implemented compiler change
+or a relaxation of E6-identity. The current failures remain construction
+failures after the checker repairs.
+
+First, the compiler would need a canonical sequential lowering made before
+parallel loop synthesis, covering the entire reachable computation and its
+support, attributes and globals. Cloning the already transformed graph
+cannot meet the promised byte-identical lowering. The resource-record
+writer's differing concurrency policy also needs an explicit boundary:
+sharing that support unchanged may conflict with parallel error handling;
+excluding it from identity would change the check's scope.
+
+Emitting matching original IR and putting an identical `noinline` boundary
+in both images would prevent the timed adapter from absorbing the
+computation. It costs a call or tail transfer and the optimizer's freedom
+across that boundary. It does not by itself prevent inlining or other
+interprocedural decisions *inside* the computation from depending on the
+rest of each module. Separate LLVM modules optimized independently have no
+general contract guaranteeing identical machine code from equal function
+text; matching attributes and disabling selected passes reduces variation
+without proving the owner's machine-code criterion.
+
+A stronger option is to compile the canonical sequential closure **once**
+to an object and link that exact object into both images, keeping demand's
+dispatcher and parallel bodies in separate objects and disabling LTO across
+the boundary. Both W1 dispatch and the cheap-region edge call or tail-jump
+to that same computation. This preserves internal sequential optimization
+and fixes register allocation and frame layout by construction. Relocations,
+linker relaxation and bindings still need the final disassembly check.
+Its costs are the outer call or tail-transfer boundary, input preservation
+across the once-per-entry decision, and compiler/linker management of a closed
+common computation and its support. If the boundary separates the existing
+seq adapter from its computation, it removes their current inlining
+opportunity, and that cost must be measured against the existing seq image.
+Alternatively the shared object can include the original sequential adapter
+and preserve that inlining, placing demand's dispatcher outside it. The
+candidate still pays the additional entry save/restore and transfer, which
+remain timed and require the entry-state proof. Separate modules can meet the criterion
+with a reused common object; independently regenerated code is not that
+guarantee.
+
+Comparing canonical sequential IR instead would mechanically establish
+equal input to LLVM for the full closure, under LLVM's correctness contract.
+It would permit different spills, frames and instruction counts and hence
+would not prove equal machine cost. This requires the owner to change the
+disassembly rule, and still requires correcting today's outlined clone IR.
+
+The remaining question is where identity starts: the computation behind
+an explicit entry boundary, with the one allowed entry decision and its
+save/restore cost measured separately, or the entire timed entry. A timed
+entry with a new pool call cannot literally equal an entry with no call.
+Making both baselines pay the same dispatcher would conceal its cost
+relative to the existing seq baseline. The common-object option can satisfy
+normalized disassembly identity for the computation; it cannot make that
+extra entry work disappear. Preserve the present failing criterion until
+the owner chooses that boundary and the acceptable dispatch cost.

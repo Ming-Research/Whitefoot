@@ -33,7 +33,209 @@ def image_fixture():
     return bytes(data)
 
 
+def readonly_local_fixture():
+    """Equal local spellings from different STT_FILE translation units."""
+    data = bytearray(0x600)
+    ident = b'\x7fELF\x02\x01\x01' + bytes(9)
+    struct.pack_into('<16sHHIQQQIHHHHHH', data, 0,
+                     ident, 2, 62, 1, 0, 0, 0x400, 0, 64, 0, 0, 64, 4, 0)
+    strings, offsets = b'\0', {}
+    for spelling in ('first.c', 'second.c', '.L.str'):
+        offsets[spelling] = len(strings)
+        strings += spelling.encode() + b'\0'
+    data[0x80:0x8a] = b'same\0same\0'
+    data[0x200:0x200 + len(strings)] = strings
+    symbols = [(0, 0, 0, 0, 0, 0),
+               (offsets['first.c'], 4, 0, 0xfff1, 0, 0),
+               (offsets['.L.str'], 1, 0, 1, 0x300, 5),
+               (offsets['second.c'], 4, 0, 0xfff1, 0, 0),
+               (offsets['.L.str'], 1, 0, 1, 0x305, 5)]
+    for index, symbol in enumerate(symbols):
+        struct.pack_into('<IBBHQQ', data, 0x100 + index * 24, *symbol)
+    sections = [(0,) * 10,
+                (0, 1, 2, 0x300, 0x80, 10, 0, 0, 1, 0),
+                (0, 2, 0, 0, 0x100, len(symbols) * 24, 3, 5, 8, 24),
+                (0, 3, 0, 0, 0x200, len(strings), 0, 0, 1, 0)]
+    for index, section in enumerate(sections):
+        struct.pack_into('<IIQQQQIIQQ', data, 0x400 + index * 64, *section)
+    return bytes(data)
+
+
 class ImageIdentityTests(unittest.TestCase):
+    def test_nearest_label_call_resolves_exact_private_function_and_checks_body(self):
+        def image_at(address, value):
+            image = ElfImage.__new__(ElfImage)
+            image.symbols = {'frame_dummy': (0x100, 4, 2),
+                             '.Lwf_resource_abort': (address, 5, 2)}
+            text = f'''100 <frame_dummy>:
+ 100: ret
+{address:x} <.LBB0_0>:
+ {address:x}: mov ${value},%eax
+ {address + 4:x}: ret
+'''
+            table = image.bound(parse_disassembly(text))
+            caller = [Instruction(0x80, 'call', f'{address:x} <frame_dummy+0x{address - 0x100:x}>')]
+            return image, table, caller
+        seq_image, seq, seq_caller = image_at(0x140, 7)
+        moved_image, moved, moved_caller = image_at(0x180, 7)
+        self.assertEqual(direct_calls(seq_caller, functions=seq), {'wf_resource_abort'})
+        self.assertIsNone(first_difference(normalized(seq_caller, image=seq_image),
+                                          normalized(moved_caller, image=moved_image)))
+        self.assertIsNone(first_difference(normalized(seq['wf_resource_abort']),
+                                          normalized(moved['wf_resource_abort'])))
+        _, changed, _ = image_at(0x180, 9)
+        self.assertIsNotNone(first_difference(normalized(seq['wf_resource_abort']),
+                                             normalized(changed['wf_resource_abort'])))
+
+    def test_retained_basic_block_headers_do_not_truncate_elf_bodies(self):
+        image = ElfImage.__new__(ElfImage)
+        image.symbols = {'.Lwf_resource_record_abort': (0x100, 8, 2),
+                         '.Lwf_resource_abort': (0x110, 6, 2)}
+        functions = image.bound(parse_disassembly('''100 <.Lwf_resource_record_abort>:
+ 100: mov $7,%eax
+104 <.LBB0_1>:
+ 104: ret
+ 108: nop
+110 <.Lwf_resource_abort>:
+ 110: call 100 <.Lwf_resource_record_abort>
+115 <.LBB1_1>:
+ 115: ret
+'''))
+        self.assertEqual([row.address for row in functions['wf_resource_record_abort']], [0x100, 0x104])
+        self.assertEqual([row.address for row in functions['wf_resource_abort']], [0x110, 0x115])
+        self.assertEqual(direct_calls(functions['wf_resource_abort'], functions=functions),
+                         {'wf_resource_record_abort'})
+
+    def test_duplicate_retained_notype_fragments_reconstruct_enclosing_functions(self):
+        for spelling in ('.LBB0_1', 'arbitrary_fragment'):
+            with self.subTest(spelling=spelling):
+                image = ElfImage.__new__(ElfImage)
+                image.symbols = {'wf_first': (0x100, 8, 2), 'wf_second': (0x200, 8, 2),
+                                 'fragment#0': (0x104, 0, 0), 'fragment#1': (0x204, 0, 0)}
+                image.symbol_names = {'wf_first': 'wf_first', 'wf_second': 'wf_second',
+                                      'fragment#0': spelling, 'fragment#1': spelling}
+                disassembly = parse_disassembly(f'''100 <wf_first>:
+ 100: mov $7,%eax
+104 <{spelling}>:
+ 104: ret
+200 <wf_second>:
+ 200: mov $9,%eax
+204 <{spelling}>:
+ 204: ret
+''')
+                functions = image.bound(disassembly)
+                self.assertEqual(set(functions), {'wf_first', 'wf_second'})
+                self.assertEqual([row.address for row in functions['wf_first']], [0x100, 0x104])
+                self.assertEqual([row.address for row in functions['wf_second']], [0x200, 0x204])
+                del image.symbols['fragment#1']
+                with self.assertRaisesRegex(IdentityError, 'lacks exact ELF bounds'):
+                    image.bound(disassembly)
+
+    def test_duplicate_retained_end_labels_do_not_include_alignment_padding(self):
+        image = ElfImage.__new__(ElfImage)
+        image.symbols = {'wf_first': (0x100, 5, 2), 'wf_second': (0x200, 5, 2),
+                         'end#0': (0x105, 0, 0), 'end#1': (0x205, 0, 0)}
+        image.symbol_names = {'wf_first': 'wf_first', 'wf_second': 'wf_second',
+                              'end#0': '.Lfunc_end0', 'end#1': '.Lfunc_end0'}
+        functions = image.bound(parse_disassembly('''100 <wf_first>:
+ 100: mov $7,%eax
+ 104: ret
+105 <.Lfunc_end0>:
+ 105: nop
+200 <wf_second>:
+ 200: mov $9,%eax
+ 204: ret
+205 <.Lfunc_end0>:
+ 205: nop
+'''))
+        self.assertEqual(set(functions), {'wf_first', 'wf_second'})
+        self.assertEqual([row.address for row in functions['wf_first']], [0x100, 0x104])
+        self.assertEqual([row.address for row in functions['wf_second']], [0x200, 0x204])
+
+    def test_interfunction_conditional_branch_checks_relocated_private_body(self):
+        def image_at(address, constant):
+            image = ElfImage.__new__(ElfImage)
+            image.symbols = {'wf_caller': (0x80, 8, 2),
+                             '.Lwf_private_cold': (address, 5, 2)}
+            functions = image.bound(parse_disassembly(f'''80 <wf_caller>:
+ 80: jne {address:x} <.Lwf_private_cold>
+ 86: ret
+{address:x} <.Lwf_private_cold>:
+ {address:x}: mov ${constant},%eax
+ {address + 4:x}: ret
+'''))
+            return image, functions
+        seq_image, seq = image_at(0x100, 7)
+        moved_image, moved = image_at(0x200, 7)
+        _, changed = image_at(0x200, 9)
+        self.assertIsNone(first_difference(normalized(seq['wf_caller'], image=seq_image),
+                                          normalized(moved['wf_caller'], image=moved_image)))
+        targets = direct_calls(seq['wf_caller'], functions=seq)
+        self.assertEqual(targets, {'wf_private_cold'})
+        for helper in targets:
+            self.assertIsNone(first_difference(normalized(seq[helper]), normalized(moved[helper])))
+            self.assertIsNotNone(first_difference(normalized(seq[helper]), normalized(changed[helper])))
+
+    def test_unresolved_displaced_private_target_requires_retained_symbols(self):
+        functions = FunctionTable([('wf_public', 0x100, [Instruction(0x100, 'ret', '')])])
+        with self.assertRaisesRegex(IdentityError, 'symbol-retaining image required'):
+            target(Instruction(0x80, 'call', '140 <frame_dummy+0x40>'), functions)
+
+    def test_named_readonly_address_identity_survives_layout_but_not_alias_changes(self):
+        def image_at(address, content=b'same\0same\0'):
+            image = ElfImage.__new__(ElfImage)
+            image.data = content
+            image.sections = [(0, 1, 2, address, 0, len(content), 0, 0, 1, 0)]
+            image.symbols = {'A': (address, 5, 1), 'B': (address + 5, 5, 1)}
+            return image
+        instruction = Instruction(0x100, 'lea', '(%rip),%rax')
+        seq, moved = image_at(0x300), image_at(0x500)
+        self.assertEqual(seq.reference_identity(0x300, instruction, 'A'),
+                         moved.reference_identity(0x500, instruction, 'A'))
+        seq_body = [Instruction(0x100, 'lea', '0x1f9(%rip),%rax # 300 <A>')]
+        moved_body = [Instruction(0x200, 'lea', '0x2f9(%rip),%rax # 500 <A>')]
+        self.assertIsNone(first_difference(normalized(seq_body, image=seq),
+                                          normalized(moved_body, image=moved)))
+        self.assertNotEqual(seq.reference_identity(0x300, instruction, 'A'),
+                            seq.reference_identity(0x305, instruction, 'B'))
+        moved.symbols['B'] = (0x500, 5, 1)
+        self.assertNotEqual(seq.reference_identity(0x300, instruction, 'A'),
+                            moved.reference_identity(0x500, instruction, 'A'))
+        changed = image_at(0x500, b'diff\0same\0')
+        self.assertNotEqual(seq.reference_identity(0x300, instruction, 'A'),
+                            changed.reference_identity(0x500, instruction, 'A'))
+
+    def test_readonly_suffix_alias_offsets_and_translation_units_are_preserved(self):
+        image = ElfImage.__new__(ElfImage)
+        image.data = b'longsame\0same\0'
+        image.sections = [(0, 1, 2, 0x300, 0, len(image.data), 0, 0, 1, 0)]
+        image.symbols = {'.L.str#0': (0x300, 9, 1), '.L.str#1': (0x304, 5, 1),
+                         '.L.str#2': (0x309, 5, 1)}
+        image.symbol_names = {key: '.L.str' for key in image.symbols}
+        image.symbol_bindings = {key: 0 for key in image.symbols}
+        image.symbol_sources = {'.L.str#0': ('first.c', 0), '.L.str#1': ('second.c', 0),
+                               '.L.str#2': ('third.c', 0)}
+        instruction = Instruction(0x100, 'lea', '(%rip),%rax')
+        suffix = image.reference_identity(0x304, instruction, 'nearest')
+        separate = image.reference_identity(0x309, instruction, 'nearest')
+        self.assertNotEqual(suffix, separate)
+        self.assertIn('first.c#0::.L.str', suffix)
+        self.assertIn('second.c#0::.L.str', suffix)
+        self.assertIn(',4,9,', suffix)
+        self.assertIn('third.c#0::.L.str', separate)
+
+    def test_elf_stt_file_provenance_keeps_equal_local_readonly_names_distinct(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'fixture'
+            path.write_bytes(readonly_local_fixture())
+            image = ElfImage(path)
+            self.assertEqual(image.symbol_sources['.L.str#0'], ('first.c', 0))
+            self.assertEqual(image.symbol_sources['.L.str#1'], ('second.c', 0))
+            self.assertEqual(image.local_object_key('.L.str#0'), 'first.c#0::.L.str')
+            self.assertEqual(image.local_object_key('.L.str#1'), 'second.c#0::.L.str')
+            self.assertNotEqual(image.readonly_address_identity(0x300),
+                                image.readonly_address_identity(0x305))
+
     def test_duplicate_local_functions_are_retained_and_resolved_by_address(self):
         functions = parse_disassembly('''100 <wf_local>:
  100: ret

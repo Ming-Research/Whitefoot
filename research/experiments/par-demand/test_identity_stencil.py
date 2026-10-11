@@ -82,6 +82,30 @@ class StencilProjectionTests(unittest.TestCase):
 
 
 class StencilRegisterTests(unittest.TestCase):
+    def test_rbp_as_saved_temporary_can_be_renamed_consistently(self):
+        seq = instructions([('push', '%rbx'), ('mov', '%rdi,%rbx'),
+                            ('add', '$7,%ebx'), ('mov', '%rbx,%rax'),
+                            ('pop', '%rbx'), ('ret', '')])
+        demand = instructions([('push', '%rbp'), ('mov', '%rdi,%rbp'),
+                               ('add', '$7,%ebp'), ('mov', '%rbp,%rax'),
+                               ('pop', '%rbp'), ('ret', '')])
+        self.assertIsNone(first_difference(normalized(seq), normalized(demand)))
+
+    def test_frame_role_is_pinned_even_when_setup_is_outside_projection(self):
+        seq = instructions([('push', '%rbp'), ('mov', '%rsp,%rbp'),
+                            ('mov', '8(%rbp),%rax'), ('leave', ''), ('ret', '')])
+        changed = instructions([('push', '%rbx'), ('mov', '%rsp,%rbx'),
+                                ('mov', '8(%rbx),%rax'), ('leave', ''), ('ret', '')])
+        self.assertIsNotNone(first_difference(normalized(seq, {2}), normalized(changed, {2})))
+
+    def test_implicit_bp_frame_operand_stays_pinned_with_width_and_prefix(self):
+        for opcode, operands in [('leavew', ''), ('data16', 'leave'),
+                                 ('enterw', '$0,$0'), ('data16', 'enter $0,$0')]:
+            with self.subTest(opcode=opcode, operands=operands):
+                seq = instructions([('mov', '%di,%bp'), (opcode, operands)])
+                changed = instructions([('mov', '%di,%bx'), (opcode, operands)])
+                self.assertIsNotNone(first_difference(normalized(seq), normalized(changed)))
+
     def test_identical_save_order_precludes_later_rbx_rbp_permutation(self):
         # Hosted bodies have the same six saves, then choose rbx versus rbp
         # for the product. Even permitting rbp renaming could not make a

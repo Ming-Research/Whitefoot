@@ -23,8 +23,15 @@ class IdentityError(ValueError):
 
 
 def canonical_symbol(name):
+    name = retained_function_name(name)
     name = name.removesuffix('@plt')
     return 'wf_' + name[len('wf__par_seq_'):] if name.startswith('wf__par_seq_') else name
+
+
+def retained_function_name(name):
+    # LLVM's private machine functions use temporary assembler labels. E6
+    # retains them as evidence; their language-level names remain unchanged.
+    return name[2:] if name.startswith('.Lwf_') else name
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,24 @@ class FunctionTable(dict):
 
     def resolve(self, address, spelling):
         base, separator, offset = spelling.partition('+')
+        base = retained_function_name(base)
+        # objdump may print a preceding function or basic-block label rather
+        # than the actual callee. The machine address chooses the function.
+        exact = [key for key, start in self.starts.items() if start == address]
+        if len(exact) == 1:
+            return exact[0]
+        if exact:
+            aliases = [key for key in exact if self.names[key] == base]
+            if len(aliases) == 1:
+                return aliases[0]
+            raise IdentityError(f'ambiguous function aliases at target address {address:x}')
+        owners = [key for key, instructions in self.items()
+                  if any(instruction.address == address for instruction in instructions)]
+        if len(owners) == 1:
+            key = owners[0]
+            return f'{key}+0x{address - self.starts[key]:x}'
+        if owners:
+            raise IdentityError(f'ambiguous function owners at target address {address:x}')
         candidates = self.by_name.get(base, [])
         if separator:
             if not re.fullmatch(r'0x[0-9a-fA-F]+', offset):
@@ -88,11 +113,8 @@ class FunctionTable(dict):
             return matches[0] + (f'+{offset}' if separator else '')
         if candidates:
             raise IdentityError(f'target {spelling} at {address:x} has no matching function identity')
-        at_address = [key for key, start in self.starts.items() if start == begin]
-        if len(at_address) == 1:
-            return at_address[0] + (f'+{offset}' if separator else '')
-        if at_address:
-            raise IdentityError(f'ambiguous function aliases at target address {address:x}')
+        if separator:
+            raise IdentityError(f'unresolved displaced machine target {spelling} at {address:x}; symbol-retaining image required')
         # PLT and other external entries need not have a bounded ELF function.
         return spelling
 
@@ -130,53 +152,125 @@ class ElfImage:
         fields = struct.unpack_from('<16sHHIQQQIHHHHHH', self.data)
         offset, stride, count = fields[6], fields[11], fields[12]
         self.sections = [struct.unpack_from('<IIQQQQIIQQ', self.data, offset + index * stride) for index in range(count)]
+        section_names = self.sections[fields[13]]
+        names = self.data[section_names[4]:section_names[4] + section_names[5]]
+        self.named_sections = {names[section[0]:].split(b'\0', 1)[0].decode(): section for section in self.sections}
         self.symbols = {}
         self.symbol_names = {}
         self.symbol_bindings = {}
+        self.symbol_sources = {}
         records = {}
         for section in self.sections:
             if section[1] != 2:  # SHT_SYMTAB, not the incomplete dynamic table
                 continue
             strings = self.sections[section[6]]
             table = self.data[strings[4]:strings[4] + strings[5]]
+            file_name, file_ordinal, file_counts = '<unknown>', 0, {}
             for at in range(section[4], section[4] + section[5], section[9]):
                 name, info, _, _, address, size = struct.unpack_from('<IBBHQQ', self.data, at)
                 spelling = table[name:].split(b'\0', 1)[0].decode()
+                if info & 15 == 4:  # STT_FILE identifies a local symbol's unit.
+                    file_name = spelling
+                    file_ordinal = file_counts.get(spelling, 0)
+                    file_counts[spelling] = file_ordinal + 1
+                    continue
                 if spelling and address:
-                    record = (address, size, info & 15, info >> 4)
+                    record = (address, size, info & 15, info >> 4, file_name, file_ordinal)
                     # Multiple symbol tables or aliases can repeat the exact
                     # record, but distinct addresses must all survive.
                     if record not in records.setdefault(spelling, []):
                         records[spelling].append(record)
         for spelling, values in records.items():
             values.sort()
-            for ordinal, (address, size, kind, binding) in enumerate(values):
+            for ordinal, (address, size, kind, binding, file_name, file_ordinal) in enumerate(values):
                 key = spelling if len(values) == 1 else f'{spelling}#{ordinal}'
                 if key in self.symbols:
                     raise IdentityError(f'ELF symbol identity key collision: {key}')
                 self.symbols[key] = (address, size, kind)
                 self.symbol_names[key] = spelling
                 self.symbol_bindings[key] = binding
+                self.symbol_sources[key] = (file_name, file_ordinal)
         if not self.symbols:
             raise IdentityError('ELF symbol table absent; cannot bound functions')
 
     def bound(self, functions):
+        # Retaining temporary labels makes objdump split a function at .LBB
+        # headers. Rebuild each complete body from its exact ELF range.
+        flat = {}
+        for instructions in functions.values():
+            for instruction in instructions:
+                if instruction.address in flat and flat[instruction.address] != instruction:
+                    raise IdentityError(f'conflicting disassembly at {instruction.address:x}')
+                flat[instruction.address] = instruction
+        symbols = [(retained_function_name(getattr(self, 'symbol_names', {}).get(key, key)), address, size)
+                   for key, (address, size, kind) in self.symbols.items() if kind == 2 and size]
+        if isinstance(functions, FunctionTable):
+            for name, keys in functions.by_name.items():
+                if len(keys) > 1:
+                    for key in keys:
+                        start = functions.starts[key]
+                        bounded_function = any(candidate == retained_function_name(name) and address == start
+                                               for candidate, address, _ in symbols)
+                        # The same temporary-label spelling can occur in
+                        # several translation units. Admit a fragment only
+                        # with an exact STT_NOTYPE record; spelling alone
+                        # never supplies bounds. End labels can precede
+                        # padding outside a function's exclusive ELF end.
+                        retained_fragment = any(kind == 0 and address == start
+                                                and getattr(self, 'symbol_names', {}).get(symbol_key, symbol_key) == name
+                                                for symbol_key, (address, _, kind) in self.symbols.items())
+                        if not bounded_function and not retained_fragment:
+                            raise IdentityError(f'duplicate local function {name} at {functions.starts[key]:x} lacks exact ELF bounds')
         entries = []
-        for key, instructions in functions.items():
-            name = functions.names[key] if isinstance(functions, FunctionTable) else key
-            begin = functions.starts[key] if isinstance(functions, FunctionTable) else (instructions[0].address if instructions else None)
-            matches = [(address, size) for symbol_key, (address, size, kind) in self.symbols.items()
-                       if kind == 2 and size and address == begin
-                       and getattr(self, 'symbol_names', {}).get(symbol_key, symbol_key) == name]
-            if len(set(matches)) > 1:
-                raise IdentityError(f'conflicting ELF function bounds for {name} at {begin:x}')
-            if matches:
-                address, size = matches[0]
-                entries.append((name, address, [instruction for instruction in instructions if address <= instruction.address < address + size]))
-            elif isinstance(functions, FunctionTable) and len(functions.by_name[name]) > 1:
-                raise IdentityError(f'duplicate local function {name} at {begin:x} lacks exact ELF bounds')
+        ranges = {}
+        for name, address, size in symbols:
+            identity = name, address
+            if identity in ranges:
+                if ranges[identity] != size:
+                    raise IdentityError(f'conflicting ELF function bounds for {name} at {address:x}')
+                continue
+            ranges[identity] = size
+            instructions = [instruction for at, instruction in sorted(flat.items()) if address <= at < address + size]
+            if not instructions or instructions[0].address != address:
+                raise IdentityError(f'ELF function {name} at {address:x} lacks entry disassembly')
+            entries.append((name, address, instructions))
         self.functions = FunctionTable(entries)
         return self.functions
+
+    def local_object_key(self, key):
+        binding = getattr(self, 'symbol_bindings', {}).get(key, 1)
+        if binding != 0:
+            return canonical_symbol(key)
+        source = getattr(self, 'symbol_sources', {}).get(key)
+        if source is None or source[0] in ('', '<unknown>'):
+            raise IdentityError('local readonly object lacks translation-unit provenance')
+        spelling = self.symbol_names[key]
+        peers = sorted((start, symbol_key) for symbol_key, (start, _, kind) in self.symbols.items()
+                       if kind == 1 and self.symbol_names[symbol_key] == spelling
+                       and self.symbol_sources[symbol_key] == source)
+        ordinal = next(index for index, (_, symbol_key) in enumerate(peers) if symbol_key == key)
+        suffix = f'#{ordinal}' if len(peers) > 1 else ''
+        return f'{source[0]}#{source[1]}::{spelling}{suffix}'
+
+    def readonly_address_identity(self, address):
+        objects = [(key, start, length) for key, (start, length, kind) in self.symbols.items()
+                   if kind == 1 and length and start <= address < start + length]
+        if not objects:
+            raise IdentityError('readonly address lacks exact retained object bounds; symbol-retaining image required')
+        identities = []
+        for key, start, length in objects:
+            section = next((section for section in self.sections if section[3] <= start and start + length <= section[3] + section[5]), None)
+            if section is None or section[2] & 1 or section[1] == 8:
+                raise IdentityError('readonly object bounds are not wholly immutable file data')
+            offset = section[4] + start - section[3]
+            content = self.data[offset:offset + length]
+            if len(content) != length:
+                raise IdentityError('readonly object data incomplete')
+            identities.append((self.local_object_key(key), address - start, length, content.hex()))
+        # Include all overlapping names, rather than collapsing equal strings.
+        # True aliases share this set; distinct equal objects have different
+        # names, and suffix aliases retain their offset within the larger one.
+        return 'readonly-address:' + json.dumps(sorted(identities), separators=(',', ':'))
 
     def code_identity(self, address, spelling):
         if hasattr(self, 'functions'):
@@ -204,7 +298,9 @@ class ElfImage:
         if section is None:
             raise IdentityError(f'RIP address {address:x} is outside ELF data sections')
         if not section[2] & 1:  # immutable constants use bytes, not anonymous pool placement
-            if instruction.mnemonic.startswith(('lea', 'call', 'jmp')):
+            if instruction.mnemonic in ('lea', 'leal', 'leaq'):
+                return self.readonly_address_identity(address)
+            if instruction.mnemonic.startswith(('call', 'jmp')):
                 raise IdentityError('unsupported address-valued RIP reference')
             content = self.reference_bytes(address, instruction).hex()
             return 'readonly:' + content
@@ -367,11 +463,13 @@ def on_cycle(edges, node):
     return any(node in reachable(edges, successor) for successor in edges.get(node, ()))
 
 
-# SysV arguments/return registers, stack/frame, flags and all vector registers
-# stay pinned. Nonvolatile integer register permutations preserve call effects;
+# SysV arguments/return registers, stack, flags and all vector registers stay
+# pinned. RBP stays pinned when it has a frame role. Nonvolatile permutations
+# otherwise preserve call effects;
 # scratch r10/r11 may permute only within their caller-clobbered class.
 REGISTERS = {
     'rbx': ('saved', ('rbx', 'ebx', 'bx', 'bl')),
+    'rbp': ('saved', ('rbp', 'ebp', 'bp', 'bpl')),
     **{f'r{n}': ('saved', (f'r{n}', f'r{n}d', f'r{n}w', f'r{n}b')) for n in range(12, 16)},
     **{f'r{n}': ('scratch', (f'r{n}', f'r{n}d', f'r{n}w', f'r{n}b')) for n in (10, 11)},
 }
@@ -386,12 +484,24 @@ def normalized(instructions, selected=None, omitted=(), image=None):
     labels = {instructions[at].address: f'I{index}' for index, at in enumerate(live)}
     renaming = {}
     counts = {'saved': 0, 'scratch': 0}
+    # A backend can allocate RBP as an ordinary nonvolatile temporary. It is
+    # not interchangeable with saved registers when frame instructions give
+    # it an implicit role or when it transports the stack pointer. Inspect
+    # the whole function, even when normalizing a projected subset.
+    frame_pointer = any(
+        re.search(r'(?:^|\s)(?:enter|leave)[wlq]?(?:\s|$)',
+                  insn.mnemonic + ' ' + insn.operands.split('#', 1)[0])
+        or (re.search(r'%(?:rbp|ebp|bp|bpl)\b', insn.operands)
+            and re.search(r'%(?:rsp|esp|sp|spl)\b', insn.operands))
+        for insn in instructions)
 
     def register(match):
         name = match[1]
         if name not in ALIASES:
             return '%' + name
         base, group, size = ALIASES[name]
+        if base == 'rbp' and frame_pointer:
+            return '%' + name
         if base not in renaming:
             renaming[base] = f'{group}{counts[group]}'
             counts[group] += 1
@@ -819,15 +929,16 @@ def dispatch_proof(ir, wrapper):
 
 
 def direct_calls(instructions, selected=None, functions=None):
+    """Discover reachable helper transfers, including interfunction branches."""
     selected = range(len(instructions)) if selected is None else sorted(selected)
     result = set()
     addresses = {instruction.address for instruction in instructions}
     for at in selected:
         insn = instructions[at]
-        if insn.mnemonic.startswith('call') or insn.mnemonic == 'jmp':
+        if insn.mnemonic.startswith(('call', 'j', 'loop')):
             destination = target(insn, functions)
             if not destination:
-                raise IdentityError(f'indirect call at {insn.address:x}')
+                raise IdentityError(f'unresolved helper transfer at {insn.address:x}')
             if destination[0] not in addresses:
                 result.add(destination[1].removesuffix('@plt'))
     return result
@@ -971,7 +1082,7 @@ def check_workload(name, build):
 
 
 def self_test(clang='clang', objdump='objdump'):
-    """CI-only negative: actually compile a body differing by one constant."""
+    """CI-only compiled mutation and retained private-symbol controls."""
     with tempfile.TemporaryDirectory(prefix='wf-e6-identity-') as directory:
         directory = Path(directory)
         bodies = []
@@ -986,6 +1097,87 @@ def self_test(clang='clang', objdump='objdump'):
         if not difference:
             raise IdentityError('negative construction self-test accepted mutated sequential body')
         print(json.dumps({'negative_self_test': 'pass', 'function': 'wf_witness', 'detected': difference}))
+        images, functions = {}, {}
+        for arm, constant, retain in [('discarded', 7, False), ('retained', 7, True), ('changed', 9, True)]:
+            source, executable = directory / f'{arm}.ll', directory / arm
+            c_source, c_object = directory / f'{arm}_strings.c', directory / f'{arm}_strings.o'
+            c_source.write_text('const char *wf_identity_c_string(void) { return "identity retained local string"; }\n')
+            # These address-significant objects must remain distinct despite
+            # equal bytes. Private functions use the same naming/bounds path
+            # as the allocator failure helpers that motivated this control.
+            source.write_text(f'''source_filename = "identity_private_fixture.ll"
+@wf_identity_readonly_a = private constant [5 x i8] c"same\\00"
+@wf_identity_readonly_b = private constant [5 x i8] c"same\\00"
+define private i64 @wf_identity_private(i64 %x) noinline {{
+entry:
+  %result = add i64 %x, {constant}
+  ret i64 %result
+}}
+define i64 @wf_identity_use(i64 %x) {{
+entry:
+  %result = call i64 @wf_identity_private(i64 %x)
+  ret i64 %result
+}}
+define ptr @wf_identity_address_a() {{
+entry:
+  ret ptr @wf_identity_readonly_a
+}}
+define ptr @wf_identity_address_b() {{
+entry:
+  ret ptr @wf_identity_readonly_b
+}}
+define i32 @main() {{
+entry:
+  ret i32 0
+}}
+''')
+            flags = ['-Wa,-L', '-Wl,--discard-none'] if retain else []
+            subprocess.run([clang, '-O2', *(['-Wa,-L'] if retain else []), '-c', str(c_source), '-o', str(c_object)], check=True)
+            subprocess.run([clang, '-O2', '-Wno-override-module', *flags, str(source), str(c_object), '-o', str(executable)], check=True)
+            images[arm] = ElfImage(executable)
+            disassembly = subprocess.check_output([objdump, '-d', '--no-show-raw-insn', str(executable)], text=True)
+            functions[arm] = images[arm].bound(parse_disassembly(disassembly))
+        if 'wf_identity_private' not in functions['retained'] or 'wf_identity_private' in functions['discarded']:
+            raise IdentityError('native retention self-test did not retain the private function exclusively in the retained image')
+        def executable_sections(image):
+            return {name: image.data[section[4]:section[4] + section[5]]
+                    for name, section in image.named_sections.items() if section[1] == 1 and section[2] & 4}
+        if executable_sections(images['discarded']) != executable_sections(images['retained']):
+            raise IdentityError('native symbol-retention flags changed executable section bytes')
+        private_difference = first_difference(normalized(functions['retained']['wf_identity_private']),
+                                              normalized(functions['changed']['wf_identity_private']))
+        if private_difference is None:
+            raise IdentityError('native retention self-test accepted a changed private callee body')
+        actual_calls = direct_calls(functions['retained']['wf_identity_use'], functions=functions['retained'])
+        if actual_calls != {'wf_identity_private'}:
+            raise IdentityError('native retention self-test failed to resolve the actual private callee')
+        image = images['retained']
+        local_strings = [key for key, (_, _, kind) in image.symbols.items()
+                         if kind == 1 and image.symbol_names[key] == '.L.str'
+                         and image.symbol_bindings[key] == 0
+                         and image.symbol_sources[key] == ('retained_strings.c', 0)]
+        if len(local_strings) != 1:
+            raise IdentityError('native retention self-test lacks final-ELF local .L.str STT_FILE provenance')
+        string_key = local_strings[0]
+        string_address, string_size, _ = image.symbols[string_key]
+        if string_size != len(b'identity retained local string\0') or 'retained_strings.c#0::.L.str' not in image.readonly_address_identity(string_address):
+            raise IdentityError('native retention self-test has incorrect bounded C string identity')
+        normalized(functions['retained']['wf_identity_c_string'], image=image)
+        addresses = []
+        for suffix in ('a', 'b'):
+            candidates = [address for key, (address, size, kind) in image.symbols.items()
+                          if kind == 1 and size == 5 and retained_function_name(image.symbol_names[key]) == f'wf_identity_readonly_{suffix}']
+            if len(candidates) != 1:
+                raise IdentityError('native retention self-test lacks exact private readonly object bounds')
+            addresses.append(candidates[0])
+        if addresses[0] == addresses[1] or image.readonly_address_identity(addresses[0]) == image.readonly_address_identity(addresses[1]):
+            raise IdentityError('native retention self-test erased distinct equal-content readonly address identities')
+        address_difference = first_difference(normalized(functions['retained']['wf_identity_address_a'], image=image),
+                                              normalized(functions['retained']['wf_identity_address_b'], image=image))
+        if address_difference is None:
+            raise IdentityError('native retention self-test accepted a changed readonly address target')
+        print(json.dumps({'native_retention_self_test': 'pass', 'executable_bytes_identical': True,
+                          'private_callee_mutation': private_difference, 'readonly_address_mutation': address_difference}))
 
 
 def main():

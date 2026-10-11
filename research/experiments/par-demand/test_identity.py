@@ -44,9 +44,8 @@ class NormalizationTests(unittest.TestCase):
         image.symbols = {'A': (0x200, 4, 1), 'B': (0x204, 4, 1)}
         first = insns([('lea', '0x100(%rip),%rax # 200 <A>')])
         second = insns([('lea', '0x104(%rip),%rax # 204 <B>')])
-        for instructions in (first, second):
-            with self.assertRaisesRegex(IdentityError, 'address-valued'):
-                normalized(instructions, image=image)
+        self.assertIsNotNone(first_difference(normalized(first, image=image),
+                                             normalized(second, image=image)))
 
     def test_function_sizes_exclude_interfunction_padding(self):
         image = ElfImage.__new__(ElfImage)

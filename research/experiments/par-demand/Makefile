@@ -36,6 +36,12 @@ DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORA
 .DEFAULT_GOAL := build
 .DELETE_ON_ERROR:
 include $(ROOT)/compiler/runtime.mk
+ifeq ($(EXPERIMENT),6)
+# Identity needs private function and data-object names in the final ELF.
+# Keep assembler temporaries and linker locals; do not change optimization.
+NATIVE_OPTIMIZATION_FLAGS += -Wa,-L
+NATIVE_LINK_FLAGS += -Wl,--discard-none
+endif
 build: $(IMAGES)
 # Ordinary arms preprocess out demand fields and instructions. Only candidate
 # and its copied twin link the demand units; idle1 adds the idle-policy guard.
