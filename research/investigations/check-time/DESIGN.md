@@ -808,8 +808,9 @@ the eager-join differential holds.
 **Attribution by work counters.** `WHITEFOOT_CHECK_WORK` on a hosted
 ubuntu-24.04 runner (Whitefoot run 38138266398, compiler of main 4ad4f5786)
 shows one join per series input, with N inputs, N+2 union rows and every one
-of the (N+2)² evaluated pairs retained. Parent references equal N·(N+2)²
-(33,178,240 at 320 arms; 263,783,680 at 640) and the join's ledger interning
+of the (N+2)² evaluated pairs retained. Parent references equal
+N·((N+2)²−2), N parents on all but two pairs (33,178,240 at 320 arms;
+263,783,680 at 640), and the join's ledger interning
 is about three times that (789,297,920 at 640). Each arm's assignment creates
 a commit value known only in that arm, so almost every pair joins to the
 bound the two terms' types imply, yet received a proof with N parents. The
@@ -830,7 +831,8 @@ or verdict changes.
 
 **Counters after the change** (Whitefoot run 38141481679, same inputs): at
 640 arms parent references 410,880 and join interns 2,460,798; at 320 arms
-103,040 and 615,998. Parent references now equal the evaluated pairs. For
+103,040 and 615,998. Parent references now equal N·(N+2), quadratic in N,
+while the (N+2)² evaluated pairs remain. For
 `nat.wf` parent references fall from 311,524 to 179,966 while join interns
 rise from 292,117 to 545,647 (implicit evidence nodes and derivability
 queries).
