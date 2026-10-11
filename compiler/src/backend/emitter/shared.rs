@@ -167,19 +167,21 @@ impl FunctionEmitter<'_, '_> {
         let IrRecordKind::AtomicGroup { count } = record.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
-        if let Some(nominal) = nominal {
-            self.checked_entry(nominal)?;
-        }
+        let mut arguments = format!("ptr {}, i64 {count}", record_name(record));
         let name = if take {
             "wf__atomic_group_take"
         } else {
+            let tag_bytes = if let Some(nominal) = nominal {
+                self.entry_tag_width(nominal)?.div_ceil(8)
+            } else {
+                // An object-only group has no table entry tag to inspect.
+                0
+            };
+            write!(arguments, ", i64 0, i32 {tag_bytes}, i64 0")
+                .map_err(|_| BackendFailure::TextEmission)?;
             "wf__atomic_group_release"
         };
-        self.emit_unit_call(
-            result,
-            name,
-            &format!("ptr {}, i64 {count}", record_name(record)),
-        )
+        self.emit_unit_call(result, name, &arguments)
     }
     /// The state type of a shared-object nominal.
     fn shared_state(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
@@ -397,7 +399,7 @@ impl FunctionEmitter<'_, '_> {
         let Some(IrType::Nominal(map_nominal)) = self.value_type(table) else {
             return Err(BackendFailure::InvalidIr);
         };
-        self.checked_entry(map_nominal)?;
+        let tag_bytes = self.entry_tag_width(map_nominal)?.div_ceil(8);
         let Some(IrType::Nominal(nominal)) = self.value_type(result) else {
             return Err(BackendFailure::InvalidIr);
         };
@@ -420,7 +422,7 @@ impl FunctionEmitter<'_, '_> {
         self.names(&["wf__keyed_table_scan_within"]);
         writeln!(
             self.output,
-            "  %{payload} = call i64 @wf__keyed_table_scan_within(ptr {}, i64 {}, i64 {}, i64 {}, ptr {}, ptr %scan.needs.{}, i64 0, i32 4, i64 0)\n  %{tag} = load i32, ptr %scan.needs.{}\n  %{is_next} = icmp eq i32 %{tag}, 0",
+            "  %{payload} = call i64 @wf__keyed_table_scan_within(ptr {}, i64 {}, i64 {}, i64 {}, ptr {}, ptr %scan.needs.{}, i64 0, i32 {tag_bytes}, i64 0)\n  %{tag} = load i32, ptr %scan.needs.{}\n  %{is_next} = icmp eq i32 %{tag}, 0",
             self.value_name(table),
             self.value_name(cursor),
             self.value_name(count),

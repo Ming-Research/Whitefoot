@@ -124,18 +124,53 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let value = NeighborBytes(first: 129_u8, second: 193_u8, third: 251_u8);
   let initial = 0_u64;
   let remaining = 0_u64;
+  let bounded_keys = key_set_new(capacity: 0_u64);
+  let bounded_count = 0_u64;
+  let bounded_failed = False();
   atomic t = &store {
     set t^[first] = Some<NeighborBytes>(value: value);
     set t^[second] = Some<NeighborBytes>(value: value);
     set initial = map_count::<NeighborBytes>(map: t);
     set t^[first] = None<NeighborBytes>();
     set remaining = map_count::<NeighborBytes>(map: t);
+    let bounded = map_scan_within::<NeighborBytes>(map: t, cursor: 0_u64, count: 2_u64, limit: 0_u64, keys: &bounded_keys);
+    let required = 0_u64;
+    match bounded {
+      Next(next: end) => {
+        set bounded_failed = True();
+      }
+      Needs(bytes: wanted) => {
+        set required = wanted;
+      }
+    }
+    if required > 0_u64 {
+      let admitted = map_scan_within::<NeighborBytes>(map: t, cursor: 0_u64, count: 2_u64, limit: required, keys: &bounded_keys);
+      match admitted {
+        Next(next: end) => {
+          if end != 0_u64 {
+            set bounded_failed = True();
+          }
+        }
+        Needs(bytes: wanted) => {
+          set bounded_failed = True();
+        }
+      }
+    } else {
+      set bounded_failed = True();
+    }
+    set bounded_count = bounded_keys.len;
   }
   if initial != 2_u64 {
     return std::process::exit_status(code: 1_u8);
   }
   if remaining != 1_u64 {
     return std::process::exit_status(code: 2_u8);
+  }
+  if bounded_failed {
+    return std::process::exit_status(code: 6_u8);
+  }
+  if bounded_count != 1_u64 {
+    return std::process::exit_status(code: 7_u8);
   }
   atomic slot = &store[second] {
     set slot^ = Some<NeighborBytes>(value: value);
@@ -169,9 +204,11 @@ fn main() -> status: std::process::ExitStatus pure waits {
     for (symbol, opcode) in [
         ("wf__keyed_table_count", "call i64"),
         ("wf__keyed_table_scan", "call i64"),
+        ("wf__keyed_table_scan_within", "call i64"),
         ("wf__keyed_table_clear", "call void"),
         ("wf__keyed_table_swap", "call void"),
         ("wf__table_hold_release", "call void"),
+        ("wf__atomic_group_release", "call void"),
     ] {
         let calls: Vec<_> = llvm.lines().filter(|line| {
             line.contains(&format!("{opcode} @{symbol}("))
@@ -190,6 +227,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
         && llvm.lines().any(|line| line.contains("call void @wf__table_unlock_entry(ptr ")
             && line.contains(", i32 ")),
         "the runtime receives its unchanged i32 presence argument: {llvm}");
+    let needs_tags = llvm.lines().filter_map(|line| {
+        line.trim().split_once(" = load i32, ptr %scan.needs.").map(|(value, _)| value)
+    }).collect::<Vec<_>>();
+    assert_eq!(needs_tags.len(), 2,
+        "both bounded scans read the runtime's separate i32 needs result: {llvm}");
+    assert!(needs_tags.iter().all(|value| llvm.contains(&format!(" = icmp eq i32 {value}, 0"))),
+        "both bounded scans compare their separate i32 needs result: {llvm}");
     // All four bytes belong to the slot. Dirtying the inactive payload of
     // None is semantically unobservable, but a stale four-byte tag reader
     // mistakes those nonzero neighbors for a present entry.
@@ -227,5 +271,23 @@ uint64_t wf_test_narrow_count(void *map, uint64_t offset, uint32_t width, uint64
     assert_ne!(damaged, observed);
     let output = compile_link_and_run(&damaged, Some(observer), &[]);
     assert_eq!(output.status.code(), Some(2), "the widened read sees inactive payload bytes: {output:?}");
+    assert_eq!(output.stdout, b"D;", "{output:?}");
+    // Isolate the bounded scan's entry-width argument. Its runtime reads the
+    // same dirty None before this hold is released; count stays correct.
+    let mut scans = 0;
+    let damaged = observed.lines().map(|line| {
+        if line.contains("call i64 @wf__keyed_table_scan_within(") {
+            scans += 1;
+            let replacement = line.replace(", i64 0, i32 1, i64 0)", ", i64 0, i32 4, i64 0)");
+            assert_ne!(replacement, line, "the bounded scan's byte width was damaged");
+            replacement
+        } else {
+            line.to_owned()
+        }
+    }).collect::<Vec<_>>().join("\n");
+    assert_eq!(scans, 2, "only the two bounded scans have their entry width damaged");
+    let output = compile_link_and_run(&damaged, Some(observer), &[]);
+    assert_eq!(output.status.code(), Some(7),
+        "the widened bounded scan includes the inactive None as a second key: {output:?}");
     assert_eq!(output.stdout, b"D;", "{output:?}");
 }

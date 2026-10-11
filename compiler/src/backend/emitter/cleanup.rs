@@ -264,7 +264,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_release", "void", &["ptr", "i64"]),
+        (
+            "wf__atomic_group_release",
+            "void",
+            &["ptr", "i64", "i64", "i32", "i64"],
+        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (

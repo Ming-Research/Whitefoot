@@ -3206,9 +3206,28 @@ static void shared_map_groups(void) {
             fail("an absent read group did not stabilize shared None", a != map->none, map->whole_hold == NULL);
         if (present && atomic_load(&map->gate) != 0)
             fail("a present read group took an exclusive whole hold", atomic_load(&map->gate), 0);
-        wf__atomic_group_release(group, 2);
-        if (wf_cmap_count_held(map, 0, 4, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
-            fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, 4, 0), present);
+        wf__atomic_group_release(group, 2, 0, sizeof *a, 0);
+        if (wf_cmap_count_held(map, 0, sizeof *a, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
+            fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, sizeof *a, 0), present);
+    }
+    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
+
+    /* Only the first byte is the tag; dirty following bytes must not turn
+     * None into Some. A fixed four-byte release read fails the first round. */
+    object = wf__shared_map_new(4, 1, 2);
+    map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
+    group[0].object = object; group[1].object = object;
+    for (unsigned present = 0; present < 2; ++present) {
+        wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
+        wf__table_hold_key(&first, (const unsigned char *)"k", 1);
+        wf__table_hold_key(&second, (const unsigned char *)"k", 1);
+        wf__atomic_group_take(group, 2);
+        unsigned char *slot = wf__table_hold_slot(&first, 0);
+        memset(slot, 0xa5, 4);
+        slot[0] = (unsigned char)present;
+        wf__atomic_group_release(group, 2, 0, sizeof slot[0], 0);
+        if (wf_cmap_count(map) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
+            fail("a byte-tag group read padding or retained its hold", wf_cmap_count(map), present);
     }
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 }
