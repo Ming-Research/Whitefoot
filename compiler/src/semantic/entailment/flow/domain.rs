@@ -98,13 +98,14 @@ impl Input<'_, '_> {
         }
     }
 
-    /// A result's integer data must be terms at the written set destination
-    /// [CALL-4, ENT-2]. Resolving a reference alias to indexed storage does
-    /// not add a subscript to its written spelling.
-    pub(super) fn set_result_integer_admitted(
+    /// Integer data must be terms at the written set destination followed by
+    /// its owned projections [CALL-4, MSR-3, ENT-2]. Resolving a reference
+    /// alias to indexed storage does not add a subscript to its written
+    /// spelling.
+    pub(super) fn set_integer_place_admitted(
         &self,
         target: &CheckedSetTarget,
-        projections: &[GoalProjection],
+        projections: &[PlaceStep],
     ) -> bool {
         let offsets = match target {
             CheckedSetTarget::Place(_) => return true,
@@ -122,7 +123,7 @@ impl Input<'_, '_> {
         if offsets != Some(SubscriptedTerm::Represented) {
             return false;
         }
-        let Some((GoalProjection::Field(last), prefix)) = projections.split_last() else {
+        let Some((PlaceStep::Field(last), prefix)) = projections.split_last() else {
             if !projections.is_empty() {
                 return false;
             }
@@ -137,11 +138,7 @@ impl Input<'_, '_> {
             };
             return term == Some(SubscriptedTerm::Represented);
         };
-        let path = prefix
-            .iter()
-            .map(|projection| projection.place_step())
-            .collect::<Vec<_>>();
-        let Some(CheckedType::Nominal(nominal)) = self.owned_path_type(target.ty(), &path) else {
+        let Some(CheckedType::Nominal(nominal)) = self.owned_path_type(target.ty(), prefix) else {
             return false;
         };
         let Some(CheckedNominalKind::Struct { fields }) = self

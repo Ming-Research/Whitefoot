@@ -363,6 +363,47 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn a_constructed_field_carry_judges_its_complete_written_destination() {
+    let source = |placement: &str| {
+        format!(
+            "struct Cell {{
+  value: u8;
+}}
+
+struct Envelope {{
+  cell: Cell;
+}}
+
+fn probe(cells: &Array<Envelope, 1>) -> result: unit writes(cells) {{
+  let cell = Cell(value: 1_u8);
+  {placement}
+  let value = ref^.cell.value + 254_u8;
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    // [ENT-2, MSR-3] the constructor's `.cell` step precedes the carried
+    // `.value` suffix. Only the unsubscripted written destination admits it,
+    // even though both reference reads resolve to the same indexed storage.
+    let indexed = source(
+        "set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];",
+    );
+    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
+        )
+    });
+    let reference = source("let ref = &cells^[0_u64];\n  set ref^ = Envelope(cell: cell);");
+    assert_complete(reference.as_bytes());
+}
+
+#[test]
 fn a_field_that_is_no_term_carries_only_its_type_bounds() {
     let source = br#"struct Header {
   width: u32;

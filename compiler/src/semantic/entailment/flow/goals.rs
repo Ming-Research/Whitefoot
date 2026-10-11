@@ -367,6 +367,16 @@ impl Input<'_, '_> {
                     {
                         return None;
                     }
+                    // [ENT-2] a field datum owes admission at its written
+                    // place before proof-path resolution. Selected index
+                    // rows below retain their non-L0 value identity.
+                    if !self.set_integer_place_admitted(
+                        &CheckedSetTarget::Storage(root.clone()),
+                        &[],
+                    )
+                    {
+                        return None;
+                    }
                     return self.goal_container_place(root);
                 };
                 let base = CheckedContainerRoot {

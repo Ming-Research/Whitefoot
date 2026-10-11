@@ -2074,9 +2074,14 @@ impl Reasoning<'_, '_, '_> {
                 self.projected_destination_term(place, projections, measure, ty)
             }
             ResultDestination::SetTarget { target, place } => {
-                if measure.is_none() && !self.input.set_result_integer_admitted(target, projections)
-                {
-                    return None;
+                if measure.is_none() {
+                    let path = projections
+                        .iter()
+                        .map(|projection| projection.place_step())
+                        .collect::<Vec<_>>();
+                    if !self.input.set_integer_place_admitted(target, &path) {
+                        return None;
+                    }
                 }
                 self.projected_destination_term(place.clone(), projections, measure, ty)
             }

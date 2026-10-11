@@ -345,6 +345,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_measure_datums(
                 node_path,
                 destination,
+                Some((target, &[])),
                 carry,
                 &mut state.facts,
             );
@@ -372,6 +373,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_construct_placements(
                 node_path,
                 &base,
+                Some(target),
                 &constructed,
                 &mut state.facts,
             );
@@ -612,6 +614,7 @@ impl Analyzer<'_, '_> {
                     self.reasoning().establish_construct_placements(
                         node_path,
                         &base,
+                        None,
                         &constructed,
                         &mut state.facts,
                     );
@@ -735,6 +738,7 @@ impl Analyzer<'_, '_> {
                         self.reasoning().establish_measure_datums(
                             node_path,
                             destination,
+                            None,
                             carry,
                             &mut state.facts,
                         );
@@ -1943,6 +1947,7 @@ impl Analyzer<'_, '_> {
                 self.reasoning().establish_measure_datums(
                     &binder.node_path,
                     destination,
+                    None,
                     carry,
                     &mut state.facts,
                 );
