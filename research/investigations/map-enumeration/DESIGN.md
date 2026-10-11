@@ -246,7 +246,8 @@ so a prior observation survives a scan while a subsequent observation reads
 the new state. An intervening KeySet write kills the scan's exit-byte fact.
 Conformance cases require both reservation subtractions to be admitted and
 reject a missing entry observation, an unrelated reservation value and a
-post-scan write. Their verdicts remain unverified until CI runs them.
+post-scan write. These conformance cases ran and passed on `e5f3ac05d`
+in the corpus jobs on Linux and macOS.
 
 Option B, the runtime keeping the reservation account, was rejected because
 it only solves this one interface and reverses the shape just chosen. Option C,
@@ -265,8 +266,8 @@ wrapper's declared boundary alone. It must lose the current-state relation
 after a write to the set while preserving the saved entry observation.
 Reject a route that needs a runtime inequality check, changes `ScanStep`,
 publishes a fact only for the prelude's symbol, or admits a stale observation
-after a write. No experiment or proof-checking run has been performed for
-this proposal.
+after a write. The conformance proof-checking runs on `e5f3ac05d` passed
+in the corpus jobs on Linux and macOS.
 
 The runtime byte query sums the host-granted item/index store and byte arena
 capacities; live key lengths alone omit unused capacity. Public KeySet
@@ -275,7 +276,7 @@ thread-local spare path kept those allocations in the metered heap after
 release, so it could not meet the selected meaning. No production caller
 would populate that cache once public release bypassed it, so the cache is
 removed and every KeySet release returns its storage. The performance effect
-of losing this reuse is unmeasured.
+of removing the spare cache is unmeasured.
 
 ## The runtime step under a whole hold
 

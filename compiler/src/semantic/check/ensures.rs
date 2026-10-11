@@ -888,13 +888,37 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     Some((left_datum, left_value.checked_sub(right_value)?))
                 }
-                // A multiplication of two constants is one constant; any
-                // other coefficient leaves the fragment.
+                // Fold two constants, or preserve a coefficient-one side
+                // when the other operand is a direct literal one. A folded
+                // composite constant is not INV-1's direct literal factor.
                 _ => {
-                    if !left_datum.is_empty() || !right_datum.is_empty() {
-                        return None;
+                    if left_datum.is_empty() && right_datum.is_empty() {
+                        Some((Vec::new(), left_value.checked_mul(right_value)?))
+                    } else if left_datum.is_empty()
+                        && left_value == 1
+                        && matches!(
+                            left,
+                            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                                origin: PostconditionConstantOrigin::Literal,
+                                ..
+                            })
+                        )
+                    {
+                        Some((right_datum, right_value))
+                    } else if right_datum.is_empty()
+                        && right_value == 1
+                        && matches!(
+                            right,
+                            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
+                                origin: PostconditionConstantOrigin::Literal,
+                                ..
+                            })
+                        )
+                    {
+                        Some((left_datum, left_value))
+                    } else {
+                        None
                     }
-                    Some((Vec::new(), left_value.checked_mul(right_value)?))
                 }
             };
         }
