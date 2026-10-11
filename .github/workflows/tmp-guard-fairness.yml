@@ -145,8 +145,6 @@ jobs:
       - name: Unpack compiler and record toolchain
         run: |
           tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/wfc.tar.gz"
-          rustc --version
-          cargo --version
           /usr/bin/clang --version
           ld.lld --version
       - name: Build counter arms separately
