@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-11, written in Chinese, th
 
 Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
 
+## 2026-10-11 Freeing moved map tables once their statements end
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose A ("approve") on the card gran-reserve-reclaim-approval, which asked, written in Chinese, "approve Whitefoot#355's changes to the design tree design/compiler/waiting-contexts/concurrent-map.md?" (translated) and quoted the added publication-lifetime decision, the two added rejections and the replaced reserve-release decision verbatim at head 5a4a19657.
+
+Summary: An executor's map user kept its table publication after its statements ended and only a table switch reclaimed moved tables, so a moved table could stay pinned and firn's reserve release kept answering zero while over its memory limit. Users now keep their publication as an address token, and reclamation protects a retired table only while a matching entry-map user is active or the whole-map gate is closed, word maps keeping publication-only protection; a reserve release also detaches and frees the retired tables no statement uses. Releasing only the spare, which never advanced reclamation, and clearing the publication at every statement exit, which added two locked operations per x86-64 statement, were rejected; single-thread entry reads were unchanged within 0.1% on the 14900K ([measurement](../research/investigations/concurrent-map/DESIGN.md#freeing-moved-tables-once-their-statements-end)).
 ## 2026-10-11 Recursive effect-row repairs widen by argument suffixes
 
 Nodes: compiler/rejection-payloads
