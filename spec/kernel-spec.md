@@ -1,4 +1,4 @@
-# Kernel Specification v0.125
+# Kernel Specification v0.126
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1717,7 +1717,7 @@ A `std` prefix in a standard library record, a `module_row` or `entry_decl` path
 The standard library's graph binds no package [MOD-11].
 A module program selects the standard library modules its packages' rows list, and a source bundle those its records name by a `std` path; each selected module selects its dependencies in the standard library's graph. The bound unit orders the program's modules first [MOD-2], then its bound packages' modules [MOD-11], then the selected standard library modules in the standard library's row order, so a program record's ordinal never depends on which packages or standard library modules it selects.
 A standard library module's verdict depends only on the standard library's records and graph and the prelude [MOD-8], never on the program that selects it, and a check or composition reads a standard library module's records only when it selects that module.
-The host modules are the standard library modules PRE-2 fixes; every other standard library module is written in Whitefoot and checked as every module is.
+The host modules are the standard library modules PRE-2 fixes, including the snapshot module whose capture boundary is [SNAP-1]; every other standard library module is written in Whitefoot and checked as every module is.
 
 [MOD-11] A `package_decl` binds its IDENT, in its graph's package alone, to one package.
 Its STRING's value is a relative location: one or more components separated by exactly one `/`, each `..` or a logical path component [PROG-2]. The bound package's root is the directory the host reaches from the binding graph's package root by following those components in order, a symbolic link on the way being followed as the host follows it, and its graph record is the `modules.wfg` in that directory. A STRING whose value is not a relative location is a hard error citing MOD-11 at the `package_decl`.
@@ -2251,6 +2251,7 @@ Each context executes its own constructs one at a time, in the order they define
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
 Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order in which atomic statements and cancellation-state updates of different contexts take effect [SHARE-3], the positions of byte sequences, the extents of map scans and the bytes a release of a map's reserve reports [SHARE-1] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+The snapshot creation result, child termination, collection outcomes and unconstrained traversal orders of [SNAP-2, SNAP-3] are also inputs of the execution. A snapshot child executes one supplied encoder under [SNAP-3] and creates no Whitefoot context or source continuation.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect. The waiting cancellation-state update [PRE-2] has the same progress guarantee as an unguarded atomic statement; a firing that makes a guard persistently true is covered by this guarantee for guarded statements.
 An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
@@ -2311,7 +2312,7 @@ The statement reads its handle places and index atoms when it begins. Each objec
 The bindings are in scope in the guard and the block, and their roots leave scope when the block ends by any edge [REF-2]. A binding `es` whose atom is a key set `ks` establishes `es^.len == ks.len` at the block's entry, as a guard's comparison is established there [ENT-3.S1], and a write to `ks` while `es` is valid invalidates `es` [REF-2].
 Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
-The guard and the block together name every binding.
+The guard and the block together name every binding. A snapshot capture in the block has the additional call admission and whole-state observation of [SNAP-1].
 A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1].
 The statement's footprint is its handle places and index atoms, read, together with the footprint of its guard and block from which every path that starts at a target's state is removed.
 
@@ -2320,6 +2321,7 @@ Its guard and block execute with exclusive access to the states its targets name
 The atomic statements and the cancellation-state updates of [PRE-2] take effect in one order [WAIT-2], and those of one context take effect in its source order.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 A statement that has begun and has not taken effect waits for its guard while its guard is false in its targets' states, and [WAIT-2] states when it takes effect.
+A successful snapshot capture observes its map and cut at this same point under [SNAP-1]; its child image retains that observation under [SNAP-3].
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 An implementation may hold less than a statement's states, or hold them together with other statements, wherever the program's outcomes are those it has when every statement's block executes with exclusive access to its states.
 
@@ -2551,7 +2553,7 @@ Each record is an ordinary callable boundary usable by a direct call or a functi
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
 The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
-[PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
+[PRE-2] The host modules are the seven standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`, `std::process` and `std::snapshot`, registered by these rows of the standard library's graph:
 
 ```
 pkg::time: [];
@@ -2560,13 +2562,14 @@ pkg::text: [];
 pkg::fs: [pkg::io, pkg::text];
 pkg::net: [pkg::io, pkg::time];
 pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
+pkg::snapshot: [pkg::time];
 ```
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host function may declare type parameters under [FN-2]; all its instantiations use the one callable boundary whose definition the build supplies.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
 An opaque struct a host module declares with fields, `Instant`, `CancelState`, `CancelSource` or `CancelWatch`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
-A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
+A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for an outstanding host outcome. The nonwaiting `capture_export` performs the one synchronous creation attempt of [SNAP-3], returning its immediate outcome while the atomic statement holds its states; it neither suspends its context nor waits for child output or termination.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
 `CancelSource` and `CancelWatch` are opaque structs whose private fields hold, respectively, a `Shared<CancelState>` and a `SharedRead<CancelState>` of one shared cancellation state. Their capabilities and field-wise release follow [PROV-6]. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Dropping a source or watch releases only its shared handle and neither fires nor clears the state; the explicit `close_cancel_source` and `close_cancel_watch` consume and drop their argument; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch retaining a private shared state for which no source is made available, so its state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
@@ -3001,6 +3004,148 @@ public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter
 
 public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
 ```
+
+`std::snapshot`, the record `snapshot/module.wfm`:
+
+```
+alias Instant = pkg::time::Instant;
+alias CancelWatch = pkg::time::CancelWatch;
+
+public opaque nodrop struct Reserve {
+}
+
+public opaque nodrop struct Job {
+}
+
+public enum PrepareError {
+  SnapshotReserveUnavailable();
+  SnapshotPrepareRefused();
+}
+
+public enum CreateError {
+  SnapshotCreateRefused();
+}
+
+public enum ReadError {
+  SnapshotReadFailed();
+  DeadlinePassed();
+  Cancelled();
+}
+
+public enum ExportError {
+  SnapshotScratchExhausted();
+  SnapshotOutputExhausted();
+  SnapshotLengthOverflow();
+  SnapshotPipeFailed();
+  SnapshotChildSetupFailed();
+}
+
+public enum ProtocolError {
+  SnapshotStatusMissing();
+  SnapshotStatusMalformed();
+  SnapshotStreamTruncated();
+  SnapshotStreamMalformed();
+}
+
+public enum ChildOutcome {
+  SnapshotExportComplete(public bytes: u64, public records: u64);
+  SnapshotExportFailed(public error: ExportError);
+  SnapshotChildExited(public code: u8);
+  SnapshotChildSignalled(public signal: u32);
+  SnapshotProtocolFailed(public error: ProtocolError);
+}
+
+public enum CollectionOutcome {
+  SnapshotCollected(public bytes: u64);
+  SnapshotDiscarded(public delivered: u64, public discarded: u64);
+  SnapshotCollectionFailed(public error: ReadError, public delivered: u64);
+}
+
+public struct Outcome {
+  public child: ChildOutcome;
+  public collection: CollectionOutcome;
+  public abort_requested: Bool;
+}
+
+public fn prepare(scratch_bytes: u64, output_bytes: u64) -> result: Result<Reserve, PrepareError> pure waits doc "Prepares one capture's workspace and dedicated pipes under SNAP-3.";
+
+public fn discard(reserve: Reserve) -> result: unit pure waits doc "Consumes an unused reserve and releases its prepared resources under SNAP-3.";
+
+public fn capture_export<V: drop>(reserve: Reserve, map: &ConcurrentHashMap<V>, cut: u64) -> result: Result<Job, CreateError> reads(map) doc "Attempts the held typed export admitted by SNAP-1, with bytes specified by SNAP-2 and lifetime and outcomes by SNAP-3.";
+
+public fn read(job: &Job, out: &[u8], deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadError> reads(cancel), writes(job), writes(out) waits contract {
+  requires 0 < out^.len;
+  ensures when Ok(value: count): count <= out^.len;
+} doc "Collects the next stream bytes under SNAP-3; zero reports EOF and establishes no export success.";
+
+public fn finish(job: Job) -> result: Outcome pure waits doc "Drains remaining output and consumes and reaps the job exactly once under SNAP-3.";
+
+public fn abort(job: Job) -> result: Outcome pure waits doc "Requests child termination and consumes and reaps the job exactly once under SNAP-3.";
+```
+
+[SNAP-1] A typed snapshot capture is a call resolving to the `std::snapshot::capture_export` declaration of [PRE-2], including through an alias [MOD-4]. A function-kind argument selecting this declaration is a hard error citing SNAP-1 at the complete `targ`, with a repair: its capture-site conditions require the direct call described below, and the ordinary function-formal contract cannot express them. Its type argument obeys the ordinary `drop` bound and the following snapshot-resource-free judgment. This judgment is an additional admission condition on this declaration, not a new written bound or function kind.
+
+A concrete type is snapshot-resource-free exactly when every vertex of its finite owned-type graph belongs to these permitted shapes: a primitive [TYPE-1]; an enum, with edges to every declared variant-payload type in declaration order; a struct declared in a module or source bundle, nonopaque or having at least one declared field, with edges to its declared fields in order; one of the five storage shapes [TYPE-9], with an edge to its element type; or `Box<T>`, with an edge to T. The storage shapes and `Box` use their content edge rather than their representation fields. The prelude `Shared`, `SharedRead`, `Frozen`, `ConcurrentHashMap`, `Entries` and `KeySet` have no permitted shape in this judgment. An opaque struct with no fields has no permitted shape, so fieldless resource handles are refused independently of their module of origin. All payload types participate, including those of inactive variants. Capability modifiers remain governed by [OWN-1]; resource freedom neither grants `copy` nor changes ordinary release.
+
+The graph uses concrete nominal instances and primitive types as vertices and is visited depth first, each vertex once, in declared field and payload order. Finite cycles through `Box` or storage are admitted when each visited vertex has a permitted shape; ordinary finite-layout and instantiation rules still apply [STOR-6, FN-6]. A generic body retains this obligation and each concrete instance discharges it under [FN-2]. Complete declarations, including private owned fields, supply the graph at composition; this grants no source field-selection visibility [MOD-5]. Failure is a hard error citing SNAP-1 at the complete capture `call`, naming the first forbidden vertex and the owned path that first reaches it, with a repair [DIAG-1].
+
+The call is admitted in the lexical block of one `atomic_stmt` under these conditions: its map argument resolves, through ordinary reference aliases [REF-1], to the complete state of a whole-map target of that statement; its cut argument is a `u64` place whose resolved path starts at another target's state; and the footprint of the statement's complete block contains only reads of every held state. Writes to local storage remain ordinary writes. Each possible referent of an alias must meet its condition. A copied local cut, a literal cut, and a function parameter without that held origin have no such path. The call is not in the guard, and a call in a helper's body has the helper's own lexical atomic statement as its admission site. Failure of any condition is a hard error citing SNAP-1 at the complete capture `call`, naming the failed condition with a repair [DIAG-1]. A statement may contain several admitted captures; each makes its own creation attempt and all successful images observe that statement's one point [SHARE-3].
+
+The capture reads every present map entry, its key bytes and the complete owned value closure; no absent key is a record. Its map footprint holds the whole map and its cut observation holds the cut's target in the same atomic statement [SHARE-2]. The snapshot's cut is precisely the value read from that place at the statement's point; the language gives a `u64` no application-specific log or sequence meaning. The read-only-block condition makes the entire captured owned closure and cut equal at that point regardless of the call's position within the block.
+
+A composition containing a capture requires Linux x86-64 LP64 with glibc and the execution conditions of [SNAP-3]. A different selected target is an explicit unsupported-target diagnostic after source checking under [DIAG-1], naming the required platform; it is neither source rejection nor a substitute capture algorithm.
+
+[SNAP-2] A successful export has the following byte format, version 1. Octets below are hexadecimal, juxtaposition concatenates, `U32(n)` and `U64(n)` encode an unsigned integer in respectively four and eight little-endian octets, and `raw(n)` is exactly n arbitrary octets. Counts describe logical contents, never capacities, allocator padding, addresses or unused storage. The consumer's schema is the exact concrete V and its declaration graph, including nominal field order and enum variant order; the stream carries no declaration names or schema migration promise.
+
+```
+stream       = 57 46 53 4e 41 50 30 31 U64(cut) record* ff U64(record_count)
+record       = 01 U64(key_length) U64(cut) chunk+ 03
+chunk        = 02 U32(n) raw(n)                 (1 <= n <= 4096)
+record_body  = raw(key_length) E(V)
+```
+
+Concatenating one record's chunk payloads yields exactly its record_body. Every record repeats the header's cut. A record's key is its exact binary map key, including zero octets. Every present entry appears once. Top-level record order is an input of the execution [WAIT-2]. Chunk boundaries may divide any encoded field or scalar; the encoder fills each chunk to 4096 octets while at least that many body octets remain and emits the final shorter chunk when needed. This needs no whole-record length prepass or second dataset copy. `record_count` equals the number of completed records. An empty map emits the header and terminal with zero records.
+
+The recursive encoding E has the following disjoint one-octet tags. An integer's following octets have its declared width, little endian; signed integers use two's complement. An enum variant ordinal is zero based in declaration order. Each component encoding includes its own tag.
+
+| Type or shape | E encoding |
+|---|---|
+| `unit` | `00` |
+| `i8`, `i16`, `i32`, `i64` | respectively `01`, `02`, `03`, `04`, followed by the integer's 1, 2, 4 or 8 octets |
+| `u8`, `u16`, `u32`, `u64` | respectively `05`, `06`, `07`, `08`, followed by the integer's 1, 2, 4 or 8 octets |
+| `f32`, `f64` | respectively `09`, `0a`, followed by the exact IEEE 754 binary32 or binary64 representation in 4 or 8 little-endian octets |
+| A struct using its declared fields | `10 U64(field_count)` followed by each field's E in declaration order |
+| An enum, including `Bool` | `11 U64(variant_ordinal) U64(payload_count)` followed by the active variant's payload fields' E in declaration order |
+| `Array`, `Slots`, `Ring`, `Segments`, `Paged` | respectively `20`, `21`, `22`, `23`, `24`, then `U64(length)` and each initialized logical element's E in index order |
+| `Box<T>` | `25` followed by E of its content |
+| `std::collections::hash_map::HashMap<K, W, ceiling>` | `30 U64(pair_count)` followed by E(key), E(value) for each present pair |
+| `std::collections::ordered_map::OrderedMap<K, W, ceiling>` | `31 U64(pair_count)` followed by E(key), E(value) for each present pair in stored structural in-order |
+
+The two named standard-library collection rows select their exact nominal declarations before the general struct row; aliases name the same declaration [MOD-4], and other structs use their declared fields even if their representation resembles a collection. The hash map row walks filled buckets, omitting vacant and deleted buckets; its pair order is an input of the execution [WAIT-2]. The ordered map row recursively visits a node's leading child, then each entry's pair followed by that entry's child, in the initialized entry order. It invokes no comparator and makes no additional claim that an inconsistent user comparison protocol sorted those pairs. These rows expose logical entries rather than hash buckets, capacity, tree nodes or balancing shape. General struct encoding includes private fields and recursively owned contents; privacy restricts source selection, not these exported contents. A ring's logical index zero is its front, so wrapping changes no encoding order. `Segments` and `Paged` emit logical indices across their physical segments or pages. Floating encodings preserve signed zero, infinities and every NaN sign and payload bit: the encoder performs no floating operation or NaN normalization.
+
+All lengths, ordinals, counts and total output accounting are mathematical nonnegative integers representable by their stated fields. An encoder unable to represent one terminates with `SnapshotLengthOverflow`; no field wraps. Framing and terminal bytes count toward the output reserve [SNAP-3]. A prefix lacking the final terminal is incomplete even when its last record is complete. A complete terminal by itself is not success: final success requires the matching child status and termination under [SNAP-3]. An explicit export failure is carried by the independent bounded status channel, so exhausting the output quota never needs an unbudgeted error record on the data stream.
+
+[SNAP-3] A `Reserve` owns the preparation of exactly one attempted export. `prepare` creates all descriptors, a fresh dedicated output pipe, a private bounded status pipe, and the scratch arena before returning `Ok`; allocation refusal produces `SnapshotReserveUnavailable`, and another host refusal produces `SnapshotPrepareRefused`, with no resource retained by the failed call. `discard` consumes an unused reserve and releases those resources. These operations wait and therefore occur outside a held atomic block [SHARE-2]. The dedicated pipes consume resources of the reserve, not credits from a `HandleFactory`.
+
+The requested `scratch_bytes` bounds the prepared arena's requested size. All data-dependent encoder workspace, including traversal frames for recursive values, buffering and pending lengths, comes from that arena; exhaustion produces `SnapshotScratchExhausted`. The same prepared image supplies the child's private arena. Fixed runtime-owned per-reserve/job control storage, including the child encoder's private bounded stack, totals at most 65536 requested bytes, in addition to that arena. Recursive traversal uses arena frames, not unbounded native recursion. The output pipe's payload capacity is at most 65536 bytes and the status pipe's at most 4096 bytes. `output_bytes` bounds the cumulative number of bytes written to the output pipe, including the [SNAP-2] header, every frame and terminal; before any write would exceed it, the encoder stops with `SnapshotOutputExhausted`, and no byte beyond that bound is written. Zero reserves are admitted and may produce these exhaustion outcomes. Partial writes count only transferred bytes. The reserve holds no buffer proportional to the dataset or to one record's total size; collection writes directly into the caller's supplied window and charges its bounded parsing state to the prepared workspace. Parent parsing-workspace exhaustion is a collection failure reported as `SnapshotReadFailed`, with no overrun or fallback allocation.
+
+These quantities bound requested workspace, control storage, pipe payload capacity and total output, not total process memory. Allocator rounding, kernel descriptor and pipe metadata, ordinary runtime stacks, page tables and copy-on-write growth are outside them. The fork image may retain the entire original process image and arbitrarily many parent writes may create private pages. This version promises abort on encoder-workspace or output exhaustion and explicit caller abort; it promises no worst-case aggregate physical-memory reserve, automatic COW-budget abort, capture-pause bound or wall-clock cleanup bound. Observed RSS, COW growth, pause and cleanup time are measurements of particular executions, not stronger guarantees. Host resource exhaustion retains [SCOPE-3]'s external conditions.
+
+`capture_export` consumes the reserve and makes exactly one synchronous child-creation attempt while the map and cut are held. Inside the hold its parent-side work performs no allocation, descriptor operation, suspension or waiting for the child; preparation and any signal masking precede acquisition of the hold, and parent activation and descriptor cleanup follow release of that hold on every leaving edge. These phases preserve the ordinary source order and outcomes; a failed creation returns `Err(SnapshotCreateRefused())`, retains no child or live job, and releases the consumed reserve outside the hold. A successful creation returns `Ok` owning one linear `Job` regardless of subsequent child failure. A successful image is retained until that child terminates; it remains independent of parent mutation, release or replacement of the source map, its values and the cut's source. No parent reference is retained beyond the call [REF-3], and the child runs neither source code nor source-level release on that image.
+
+The child first performs qualified capsule setup using raw host operations to isolate signals, arrange termination when its parent dies, close inherited descriptors outside the two designated pipes, and establish its private stack/workspace; setup may inspect its parent identity and the host's descriptor inventory and writes only that child's descriptor table, signal state and prepared workspace. It then executes exactly one runtime-supplied encoder for the complete admitted type closure. The encoder reads only its private captured image and immutable encoder descriptions, writes only its private stack/workspace and the two designated pipes, and invokes only the qualified raw host operations for output, status and exit. Both setup and encoding call no user function, hash callback or comparison callback; acquire no inherited lock; use no inherited allocator, TLS, runtime queue or cleanup; create no further child; and never return into the parent's continuation. Snapshot data goes through the one dedicated output pipe alone; the status pipe carries only the fixed terminal control record below. Neither pipe is a preexisting file, socket or source handle. Preparation failure, export failure and abort perform no modification or publication of an application file or log.
+
+The supported execution leaves the child waitable for its one runtime owner, permits no competing reaper, registers no `pthread_atfork` handler, and preserves the native capsule's calling-thread lifetime through child termination. The runtime supplies these conditions for a composed Whitefoot program; linked native components must preserve them under [SCOPE-3]. Signal masking and worker placement are implementation obligations, never a source calling-thread requirement or an additional source function kind.
+
+The child attempts one 32-byte status record: ASCII octets `WFSSTAT1`, one status octet, seven zero octets, `U64(bytes_written)` and `U64(records_completed)`. Status zero reports completed export; statuses 1 through 5 respectively report `SnapshotScratchExhausted`, `SnapshotOutputExhausted`, `SnapshotLengthOverflow`, `SnapshotPipeFailed` and `SnapshotChildSetupFailed`. This control record has fixed space reserved by preparation and does not consume the output quota. A failure to deliver it can leave status absent or incomplete. A valid record is exactly 32 bytes with that magic, zero reserved octets and a defined status. The counts equal actual transferred output bytes and completed record frames. The child exits with code zero after reporting either complete export or an explicit export failure; an unsuccessful status transfer may instead produce missing status or abnormal termination.
+
+`read` returns `Ok(count)` after copying that many next stream bytes to `out^[0..count]`, leaves the rest of the window unchanged, and returns a positive count whenever it has delivered bytes. At permanent data-pipe EOF it returns `Ok(0)`; subsequent reads also return zero. This says nothing about child success. Its deadline and cancellation follow [PRE-2], producing the ReadError variants `DeadlinePassed` and `Cancelled`; these outcomes transfer no byte, retain the usable job, and record no collection failure. A parent collection failure returns `Err(SnapshotReadFailed())`, transfers no byte for that call, records the failure in the job and ends further successful collection; subsequent reads return the same error. An export failure can follow earlier successful reads, which remain only a prefix. Read chunks need not coincide with the encoder's frames.
+
+`finish` and `abort` consume the job. `finish` drains and discards unread output while awaiting termination, so an unread full pipe cannot make it wait for a child that is waiting for pipe capacity; `abort` records an abort request and requests termination if the child is still alive, drains or closes its collection endpoint as needed, then awaits termination. Both reap their child exactly once, release their descriptors and prepared memory, and return only after that cleanup; finite data and descriptor work is bounded by the reserves, while waiting for host termination/reaping is governed by [WAIT-2] and has no elapsed-time bound. The child may already have completed when abort is requested. `abort_requested` is `True` exactly for the consuming abort operation; the child's actual termination is reported independently.
+
+`Outcome.child` selects as follows, in order: death by signal gives `SnapshotChildSignalled` with its positive signal number; normal exit with nonzero code gives `SnapshotChildExited`; zero exit with no status bytes gives `SnapshotProtocolFailed(SnapshotStatusMissing())`; zero exit with an incomplete, invalid or extra status record gives `SnapshotProtocolFailed(SnapshotStatusMalformed())`; zero exit with valid nonzero status gives `SnapshotExportFailed` with that status's error. Zero exit with success status and an output prefix ending before its required terminal gives `SnapshotProtocolFailed(SnapshotStreamTruncated())`; a complete stream violating [SNAP-2]'s byte grammar, schema tags, field lengths, repeated cut or terminal count, or disagreeing with the success status's byte or record counts, gives `SnapshotProtocolFailed(SnapshotStreamMalformed())`; a complete matching stream gives `SnapshotExportComplete` with those counts. This protocol validation retains only bounded parsing state; the encoder's obligation to emit exactly the captured map's keys and values is its supplied-definition obligation under [SCOPE-3], not a second map comparison by the collector. After a zero exit and valid success status, a collection failure that prevents deciding the stream yields `SnapshotProtocolFailed(SnapshotStreamTruncated())` alongside the collection failure, never `SnapshotExportComplete`.
+
+`Outcome.collection` independently gives `SnapshotCollectionFailed` and the bytes previously delivered when a parent read or drain failed; otherwise it gives `SnapshotDiscarded` with delivered and discarded byte counts when any bytes were drained or discarded by the consuming operation, and `SnapshotCollected` with delivered bytes when none were discarded. A successful child does not establish that the caller received every byte: only `SnapshotExportComplete` together with `SnapshotCollected` and `abort_requested` equal to `False` establishes the complete collected export. Keeping or publishing a durable base and its log suffix remains the application's separate operation.
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
 

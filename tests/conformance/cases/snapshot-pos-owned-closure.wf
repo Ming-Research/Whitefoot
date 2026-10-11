@@ -1,0 +1,37 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+alias HashMap = std::collections::hash_map::HashMap;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+
+struct Rank {
+  score: f64;
+  member: Box<Slots<u8>>;
+}
+
+struct Sorted {
+  order: OrderedMap<Rank, unit, 4294967296_u64>;
+  scores: HashMap<Box<Slots<u8>>, f64, 4294967296_u64>;
+}
+
+enum Value {
+  Text(bytes: Box<Slots<u8>>);
+  Items(items: Box<Ring<Box<Slots<u8>>>>);
+  Members(members: HashMap<Box<Slots<u8>>, unit, 4294967296_u64>);
+  Fields(fields: HashMap<Box<Slots<u8>>, Box<Slots<u8>>, 4294967296_u64>);
+  Ranked(ranked: Sorted);
+}
+
+struct Entry {
+  value: Value;
+  expires: u64;
+  access: u32;
+  last_write: u64;
+}
+
+fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<Entry>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
+  atomic held_map = &table^, held_cut = &sequence^ {
+    return std::snapshot::capture_export::<Entry>(reserve: move reserve, map: held_map, cut: held_cut^);
+  }
+}

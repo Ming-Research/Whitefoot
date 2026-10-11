@@ -1,0 +1,13 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+fn capture<V: drop>(reserve: Reserve, table: &Shared<ConcurrentHashMap<V>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
+  atomic held_map = &table^, held_cut = &sequence^ {
+    return std::snapshot::capture_export::<V>(reserve: move reserve, map: held_map, cut: held_cut^);
+  }
+}
+
+fn instantiate(reserve: Reserve, table: &Shared<ConcurrentHashMap<Box<Slots<u8>>>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
+  return capture::<Box<Slots<u8>>>(reserve: move reserve, table: table, sequence: sequence);
+}

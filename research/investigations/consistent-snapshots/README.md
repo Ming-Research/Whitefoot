@@ -32,6 +32,14 @@ memory under arbitrary mutation. Small embedded systems remain a design constrai
 a claim that the current compiler already targets them
 (`docs/constitution.md:16`, `:28`, `:48`, `:56`).
 
+The [typed capture-export draft](capture-export.md) records the proposed
+source interface, remaining contract gaps and phase-2 implementation plan.
+The survey's runtime observations are historical: the merged
+[`fork_capsule`](../../../compiler/src/backend/completion/fork_capsule.h)
+now supplies the restricted native witness surface, superseding observations
+that no native fork integration exists. The source-callable export amendment
+is still a specification draft; its compiler and runtime path is unimplemented.
+
 ## Need, evidence and a limit no mechanism removes
 
 A successful capture selects one point **t** between request and capture
