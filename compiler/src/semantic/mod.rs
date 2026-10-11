@@ -1384,19 +1384,19 @@ pub enum SemanticIssueKind {
     },
     /// The written effect row differs from syntactically exhibited effects.
     EffectMismatch {
-        /// The exhibited row without the entries another of its entries
-        /// covers, in EFF-1 canonical spelling: EFF-2 admits it for the body,
-        /// EFF-1 admits it as written, and every entry is an exhibited path.
-        expected_row: String,
+        /// A validated EFF-1/EFF-2 row repair, absent when recursive closure
+        /// or the substituted component's call checks refuse the candidate.
+        expected_row: Option<String>,
         /// The row the declaration writes, in the same spelling.
         found_row: String,
-        /// The entries of `expected_row` that cover an exhibited access the
-        /// declaration does not cover.
+        /// Canonical entries covering exhibited accesses the declaration
+        /// does not cover, retained even when no repair row is validated.
         missing: Vec<String>,
         /// Declared categories and paths the body does not exhibit.
         extra: Vec<String>,
-        /// The repair [DIAG-1]: declare `expected_row`.
-        mechanical_fix: String,
+        /// The repair [DIAG-1]: declare the validated component rows.
+        /// EFF-2 does not require a repair when no row-only edit is validated.
+        mechanical_fix: Option<String>,
     },
     /// A generic type parameter named a source contract as its bound.
     SourceContractGenericBound,
