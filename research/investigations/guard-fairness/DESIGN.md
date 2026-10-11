@@ -659,3 +659,137 @@ two-object atomic-loop witness alongside the mixed map/object contention
 witness, with no guards required. Both findings are deferred for a separate
 progress design and CI witnesses; this results change implements no fix
 and changes no specification rule.
+
+## Step D: remaining-path attribution, registered before measurement
+
+The owner selected a diagnostic comparison before choosing another fairness
+mechanism. The question is whether the remaining oldest-only cost is
+associated mainly with below-threshold broadcasts, searches while passing
+a reservation, or false-condition reservation passes. This is an attribution
+run of the existing implementation, not a new candidate or a relaxation of
+the oldest-only rejection above. No step D result is claimed here.
+
+### Observations and construction
+
+Keep `probe.wf`, the three runtime modes, all uninstrumented build flags,
+the timing arm order, K = 1,000, N = 2, 8, 50 and both reversed orders
+unchanged. Baseline's twin remains a byte-identical copy. On the native
+i9-14900K run two drivers pinned to CPUs 2 and 4. Dispatch input
+`path_diagnostics` defaults to false. When enabled it additionally builds
+counter-on baseline, age and oldest executables and interleaves their runs
+with the uninstrumented arms. Diagnostic rows remain in their own CSV and
+are never supplied to the timing judge. Retain small pilots and raw records.
+Allow about three minutes for the 14900K job, excluding the hosted compiler
+build, queueing and tool installation; this is a scheduling estimate, not a
+new timing observation.
+
+Under `WF_GUARD_COUNTERS` retain the existing four totals and additionally
+record these paths. Event counts are normalized by completed guarded
+checkouts, which are the successful takes of the logical pool resource;
+the return statement's physical acquisition is not another denominator.
+Counts include generic startup/teardown, just as the earlier counters did.
+
+- Below-T batch wakes: notifications issued by the ordinary-object
+  broadcast path after a valid oldest age at most T was observed. Count
+  notifications, not writes; a batch with M watchers contributes M. Report
+  grant-bypass and invalid-clock/age fallback batches separately so they
+  cannot masquerade as below-T broadcasts. Baseline and age have their own
+  broadcast behavior and do not establish a mode-2 threshold classification.
+- First by-age selections: initial age-qualified sweep selections. These
+  count starts, not the watches subsequently visited by the same notification.
+  A multi-object watcher already reserved elsewhere can receive this
+  notification without installing a new reservation here. False handoff
+  and rescan are different stages; a rescan can initiate another by-age
+  selection.
+- False-condition passes: a reserved retry that registers a false guard
+  transfers its reservation to another watcher. Successful read-only
+  release is not a false condition. Failed retries that finish a sweep
+  without a recipient are not passes.
+- Rescans: deferred notifications actually revisited after a sweep,
+  distinguished from repeatedly setting its pending bit. A rescan is not
+  necessarily a broadcast: it can begin another aged selection.
+- Pass-search comparisons: watched links examined by oldest selection
+  while advancing an existing reservation, including links excluded by
+  cutoff/cursor and unsuccessful searches. Initial oldest selection is
+  excluded. Count links examined rather than individual Boolean/identity
+  tests, making the unit independent of short-circuit evaluation.
+
+The diagnostic-only return observer uses a generic runtime entry marking
+the next ordinary acquisition. A research LLVM observer transform marks the
+first real return acquisition after `hold_work`, once before its retry loop;
+it rejects missing or ambiguous sites. It preserves the original emitted
+LLVM separately and never changes the counter-off timing IR. The runtime
+does not inspect `out`, function identity or this probe's state.
+
+Sample the first and every 64th marked acquisition in each context. At
+entry to the real `wf__shared_acquire`, take a monotonic timestamp; preserve
+it through spin, fairness yield, parking and retries; take the end timestamp
+after acquisition succeeds. This interval measures acquisition-call wall
+time, including suspension and scheduling, not just mutex wait or CPU work.
+It excludes the work preceding that call and the return block itself.
+Report marked acquisitions, successful samples, total sampled ns, maximum
+sampled ns and clock failures. Report sampled mean as total/sample count;
+do not divide sampled ns by all successful checkouts or treat the sample
+maximum as the maximum of all return waits. Return sampling clock reads
+are separate from the existing fairness-clock counter. Sampling can alias
+the workload's periodic behavior and adds observer cost; its findings are
+diagnostic, not uninstrumented latency bounds.
+
+### Reading fixed before the run
+
+At N = 50, compare the below-T, initial-selection and false-pass counts and
+normalize search work both by successful checkout and by actual
+false-condition pass. For this single-object probe those three counts
+describe different notification stages, alongside the separately recorded
+grant/clock fallbacks; rescan executions and search work overlap them.
+They are not a complete partition of arbitrary multi-object guard
+notifications or successful read-only forwarding. Check the
+N = 2 and 8 rows for the proposed scaling. A larger count denotes event
+frequency, not a fraction of elapsed time; no collection of these counters
+can apportion overlapping scheduler and synchronization cost.
+
+- If below-T batch notifications are the largest measured notification
+  category, the next comparison is option B: one-at-a-time notification
+  in every regime, with false-condition forwarding retained for progress.
+  This pattern refutes the claim that aged sweeps account for most wakes.
+  Strict turns' prior engine losses remain an objection to test, not a
+  numerical prediction for that new variant.
+- If pass-search links per pass grow with N and links per checkout grow
+  approximately as N squared, while below-T batches are not the principal
+  source of notifications, investigate fixing the lookup representation
+  before changing notification semantics. High search work supports the
+  quadratic-work hypothesis; it does not alone establish that searches
+  dominate runtime. A counter-off paired version with cheaper selection
+  is the eventual cost falsifier.
+- If false-condition passes are the largest notification category, with
+  approximately N passes per checkout, investigate option C: condition
+  eligibility sufficient to avoid scheduling false retries. This remains
+  relevant even if lookup work is also large; reducing lookup cost alone
+  leaves those resumes. Field dependencies alone cannot distinguish this
+  probe's `out = 1` and `out = 0` writes. Large sampled return waits support
+  the proposed enabling-writer delay; small samples weaken that explanation
+  but cannot exclude unsampled tails.
+
+These patterns may overlap. If both false passes and quadratic searches
+are prominent, a lookup-only comparison isolates the smaller representation
+change first; it does not establish that condition filtering is unnecessary.
+If no pattern separates, or fallback/rescan work dominates, bring that
+observation back before selecting a mechanism. Diagnostics themselves have
+no fairness or cost acceptance verdict. Every later candidate must still
+pass the uninstrumented N = 50 maximum of 3.3 ms, runtime/base at most
+1.10 at every N in both orders, and twin/base in [0.95, 1.05] in every
+cell before asking firn for an engine comparison.
+
+### Existing main divergence
+
+This comparison keeps the branch's original base `fe5589ec5f45`. Inspection
+of the cached `origin/main` at `89ddad8866e24aacadfb42217a594ad58996cff7`
+finds substantial driver-service changes since that base. A read-only
+three-way merge of the committed branch head and that cached main reports
+two conflicts in `bridge.c`: main arms a context wake gate before shared
+parking, whereas this branch adds an exemption argument to that parking
+call; main also replaces the inline driver resume loop with
+`wf_context_run`. A future integration must reconcile wake publication
+with reservations and sample-field ownership. No merge, rebase or fetch
+was performed; this comparison cannot establish applicability to any
+newer remote main.

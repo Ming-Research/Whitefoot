@@ -532,6 +532,16 @@ void wf__watch_seen(unsigned moment);
 #ifndef WF_GUARD_COUNTERS
 #define WF_GUARD_COUNTERS 0
 #endif
+#if WF_GUARD_COUNTERS
+/* Diagnostic callers mark once before the retry label of their next ordinary
+ * wf__shared_acquire. Marks 1,65,... per context sample real monotonic elapsed
+ * time from first acquire entry through successful acquisition, including
+ * spins, parks, resumption and cooperative passes. Never marks shared_take
+ * or native cancellation acquisition; a pending mark cannot be marked again.
+ * The caller supplies the meaning (the guard probe marks return statements);
+ * the runtime does not inspect the object or the source program. */
+void wf__guard_measure_next_acquire(void);
+#endif
 /* The per-watch READY observer is native-test-only, including builds without
  * LTO. Production and diagnostic counter builds add no test-observer call. */
 #ifndef WF_GUARD_TEST_HOOKS

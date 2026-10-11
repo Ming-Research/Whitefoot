@@ -4,6 +4,11 @@
 name: tmp-guard-fairness
 on:
   workflow_dispatch:
+    inputs:
+      path_diagnostics:
+        description: Interleave separate path counters and sampled return waits with timing
+        type: boolean
+        default: false
   push:
     branches: [claude/guard-fairness]
     paths: [.github/workflows/tmp-guard-fairness.yml]
@@ -24,6 +29,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
           make -C compiler build
           python3 research/experiments/guard-fairness/summarize.py self-test
+          python3 research/experiments/guard-fairness/tag-acquire.py self-test
           mkdir -p "$RUNNER_TEMP/wfc"
           cp compiler/target/gate/whitefootc "$RUNNER_TEMP/wfc/"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/wfc.tar.gz" wfc
@@ -148,16 +154,12 @@ jobs:
           /usr/bin/clang --version
           ld.lld --version
       - name: Build counter arms separately
+        if: inputs.path_diagnostics
         env:
           WFC: ${{ runner.temp }}/wfc/whitefootc
           OUT: ${{ runner.temp }}/gf-counters
           COUNTERS: 1
         run: sh research/experiments/guard-fairness/build.sh > "$OUT-build.txt"
-      - name: Counter attribution, diagnostic only
-        env:
-          OUT: ${{ runner.temp }}/gf-counters
-          DIAGNOSTIC: 1
-        run: sh research/experiments/guard-fairness/run.sh > "$OUT-run.txt"
       - name: Build uninstrumented comparison arms
         env:
           WFC: ${{ runner.temp }}/wfc/whitefootc
@@ -167,11 +169,15 @@ jobs:
       - name: Reversed interleaved orders and baseline twin
         env:
           OUT: ${{ runner.temp }}/gf-timing
+          DIAGNOSTIC_OUT: ${{ runner.temp }}/gf-counters
+          PATH_DIAGNOSTICS: ${{ inputs.path_diagnostics && '1' || '0' }}
         run: sh research/experiments/guard-fairness/run.sh > "$OUT-run.txt"
       - name: Show paired decision and diagnostics
         run: |
           cat "$RUNNER_TEMP/gf-timing/verdict.txt"
-          cat "$RUNNER_TEMP/gf-counters/counters.csv"
+          if [ -f "$RUNNER_TEMP/gf-counters/counters.csv" ]; then
+            cat "$RUNNER_TEMP/gf-counters/counters.csv"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -181,6 +187,7 @@ jobs:
             ${{ runner.temp }}/gf-*/*.csv
             ${{ runner.temp }}/gf-*/verdict.txt
             ${{ runner.temp }}/gf-*/probe.ll
+            ${{ runner.temp }}/gf-*/probe-diagnostic.ll
             ${{ runner.temp }}/gf-*/*.stdout
             ${{ runner.temp }}/gf-*-build.txt
             ${{ runner.temp }}/gf-*-run.txt

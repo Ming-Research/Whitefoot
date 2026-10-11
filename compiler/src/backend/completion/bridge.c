@@ -1347,6 +1347,14 @@ struct wf_context {
     unsigned guard_has_object;
     /* Owned by the running context, consumed by its next actual park. */
     unsigned guard_false_retry;
+    /* Diagnostic mark/sample state is owned only by the running context.
+     * Publishing that context through the existing run-queue lock carries
+     * these fields across suspension and driver migration; no writer of an
+     * object or watch reads them. State 1 is unsampled, 2 awaits first entry,
+     * and 3 retains the sampled start through every acquisition retry. */
+    unsigned guard_acquire_mark;
+    unsigned guard_acquire_phase;
+    uint64_t guard_acquire_started;
 #endif
     /* First false-guard registration of the current statement, retained
      * across retries, and zero before it waits or after it completes.
@@ -2541,42 +2549,117 @@ static void wf_context_finish(wf_context *context) {
 }
 
 #if WF_GUARD_COUNTERS
-/* Instrumented builds only. Each thread owns one cache-line-sized slot;
- * registration uses one relaxed RMW, then counter increments need no shared
- * RMW. Atomic relaxed slots also permit diagnostic calls from native test
- * threads without a reporting data race. The final report follows driver
- * termination, so the program's driver counts are final. Counts include
- * generic runtime work, not a special probe path. */
+enum { WF_GUARD_COUNT_WOKEN, WF_GUARD_COUNT_SPURIOUS,
+       WF_GUARD_COUNT_REFUSED, WF_GUARD_COUNT_CLOCK,
+       WF_GUARD_COUNT_BATCH_YOUNG, WF_GUARD_COUNT_AGE_SELECTION,
+       WF_GUARD_COUNT_FALSE_HANDOFF, WF_GUARD_COUNT_RESCAN,
+       WF_GUARD_COUNT_PASS_LINK, WF_GUARD_COUNT_BATCH_GRANTED,
+       WF_GUARD_COUNT_BATCH_CLOCK,
+       WF_GUARD_COUNT_RETURN_MARKED, WF_GUARD_COUNT_RETURN_SAMPLES,
+       WF_GUARD_COUNT_RETURN_NS, WF_GUARD_COUNT_RETURN_MAX,
+       WF_GUARD_COUNT_RETURN_CLOCK_FAILURE, WF_GUARD_COUNT_VALUES };
+/* Instrumented builds only. Each thread owns a cache-line-aligned slot;
+ * registration uses one relaxed RMW, then increments and local maxima need
+ * no shared RMW. Atomic relaxed slots permit diagnostic observations without
+ * a data race; the final report follows driver termination. Contexts can
+ * migrate, so a completed sample contributes to its finishing thread's slot,
+ * while its start timestamp travels with the context. Counters are modulo
+ * 2^64, like the existing totals; no counter affects runtime admission. */
 typedef struct {
-    _Alignas(64) _Atomic uint64_t value[4];
+    _Alignas(64) _Atomic uint64_t value[WF_GUARD_COUNT_VALUES];
 } wf_guard_counter_slot;
 static wf_guard_counter_slot wf_guard_counters[WF_HEAP_COUNTERS];
 static _Atomic unsigned wf_guard_counter_count;
 static _Thread_local wf_guard_counter_slot *wf_guard_counter_self;
-enum { WF_GUARD_COUNT_WOKEN, WF_GUARD_COUNT_SPURIOUS,
-       WF_GUARD_COUNT_REFUSED, WF_GUARD_COUNT_CLOCK };
-static void wf_guard_count(unsigned which) {
+static _Atomic uint64_t *wf_guard_counter_value(unsigned which) {
     if (wf_guard_counter_self == NULL) {
         unsigned slot = atomic_fetch_add_explicit(
             &wf_guard_counter_count, 1u, memory_order_relaxed);
         if (slot >= WF_HEAP_COUNTERS) wf_bridge_fail("too many guard counter threads");
         wf_guard_counter_self = &wf_guard_counters[slot];
     }
-    _Atomic uint64_t *value = &wf_guard_counter_self->value[which];
-    atomic_store_explicit(value, atomic_load_explicit(value, memory_order_relaxed) + 1u,
+    return &wf_guard_counter_self->value[which];
+}
+static void wf_guard_add(unsigned which, uint64_t amount) {
+    _Atomic uint64_t *value = wf_guard_counter_value(which);
+    atomic_store_explicit(value, atomic_load_explicit(value, memory_order_relaxed) + amount,
                           memory_order_relaxed);
 }
-static void wf_guard_report(void) {
-    uint64_t totals[4] = {0u};
-    for (unsigned slot = 0; slot < WF_HEAP_COUNTERS; ++slot)
-        for (unsigned field = 0; field < 4; ++field)
-            totals[field] += atomic_load_explicit(
-                &wf_guard_counters[slot].value[field], memory_order_relaxed);
-    fprintf(stderr, "guard_counters,%llu,%llu,%llu,%llu\n",
-            (unsigned long long)totals[0], (unsigned long long)totals[1],
-            (unsigned long long)totals[2], (unsigned long long)totals[3]);
+static void wf_guard_max(unsigned which, uint64_t sample) {
+    _Atomic uint64_t *value = wf_guard_counter_value(which);
+    if (sample > atomic_load_explicit(value, memory_order_relaxed))
+        atomic_store_explicit(value, sample, memory_order_relaxed);
 }
-#define WF_GUARD_COUNT(which) wf_guard_count(which)
+#define WF_GUARD_COUNT(which) wf_guard_add(which, 1u)
+
+/* Mark a caller-chosen ordinary acquire, never inspect the state it protects.
+ * The diagnostic caller marks once before its retry label. Marks 1, 65, ...
+ * in each context are sampled; every mark is counted to check placement. */
+void wf__guard_measure_next_acquire(void) {
+    wf_context *self = wf_context_current;
+    if (self == NULL || self->guard_acquire_mark != 0u)
+        wf_bridge_fail("an acquisition diagnostic was marked outside a context or twice");
+    self->guard_acquire_mark = self->guard_acquire_phase == 0u ? 2u : 1u;
+    self->guard_acquire_phase = (self->guard_acquire_phase + 1u) & 63u;
+    WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_MARKED);
+}
+static void wf_guard_acquire_begin(wf_context *self) {
+    if (self != NULL && self->guard_acquire_mark == 2u) {
+        self->guard_acquire_started = wf_file_monotonic_ns();
+        self->guard_acquire_mark = 3u;
+    }
+}
+static void wf_guard_acquire_end(wf_context *self) {
+    if (self->guard_acquire_mark == 3u) {
+        /* These two diagnostic clock reads are intentionally separate from
+         * the fairness-policy clock counter. Zero/backward samples are
+         * reported as failures and excluded from the sample sum and maximum. */
+        uint64_t ended = wf_file_monotonic_ns();
+        uint64_t started = self->guard_acquire_started;
+        if (started != 0u && ended >= started) {
+            uint64_t elapsed = ended - started;
+            WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_SAMPLES);
+            wf_guard_add(WF_GUARD_COUNT_RETURN_NS, elapsed);
+            wf_guard_max(WF_GUARD_COUNT_RETURN_MAX, elapsed);
+        } else {
+            WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_CLOCK_FAILURE);
+        }
+    }
+    self->guard_acquire_mark = 0u;
+}
+static void wf_guard_report(void) {
+    uint64_t totals[WF_GUARD_COUNT_VALUES] = {0u};
+    for (unsigned slot = 0; slot < WF_HEAP_COUNTERS; ++slot) {
+        for (unsigned field = 0; field < WF_GUARD_COUNT_VALUES; ++field) {
+            uint64_t value = atomic_load_explicit(
+                &wf_guard_counters[slot].value[field], memory_order_relaxed);
+            if (field == WF_GUARD_COUNT_RETURN_MAX) {
+                if (value > totals[field]) totals[field] = value;
+            } else {
+                totals[field] += value;
+            }
+        }
+    }
+    fprintf(stderr, "guard_counters,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_WOKEN],
+            (unsigned long long)totals[WF_GUARD_COUNT_SPURIOUS],
+            (unsigned long long)totals[WF_GUARD_COUNT_REFUSED],
+            (unsigned long long)totals[WF_GUARD_COUNT_CLOCK]);
+    fprintf(stderr, "guard_events,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_YOUNG],
+            (unsigned long long)totals[WF_GUARD_COUNT_AGE_SELECTION],
+            (unsigned long long)totals[WF_GUARD_COUNT_FALSE_HANDOFF],
+            (unsigned long long)totals[WF_GUARD_COUNT_RESCAN],
+            (unsigned long long)totals[WF_GUARD_COUNT_PASS_LINK],
+            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_GRANTED],
+            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_CLOCK]);
+    fprintf(stderr, "guard_return_wait,%llu,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_MARKED],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_SAMPLES],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_NS],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_MAX],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_CLOCK_FAILURE]);
+}
 #else
 #define WF_GUARD_COUNT(which) ((void)0)
 #endif
@@ -2792,13 +2875,25 @@ static int wf_guard_before(const wf_context *left, const wf_context *right) {
 }
 static wf_watch *wf_guard_oldest(wf_watch_link *head, const wf_context *after, uint64_t cutoff) {
     wf_watch *oldest = NULL;
+#if WF_GUARD_COUNTERS
+    uint64_t examined = 0u;
+#endif
     for (wf_watch_link *link = head; link != NULL; link = link->next) {
+#if WF_GUARD_COUNTERS
+        examined += 1u;
+#endif
         wf_context *context = link->watch->context;
         if (context->guard_started > cutoff) continue;
         if (after != NULL && !wf_guard_before(after, context)) continue;
         if (oldest == NULL || wf_guard_before(context, oldest->context))
             oldest = link->watch;
     }
+#if WF_GUARD_COUNTERS
+    /* Count cursor scans, including rejected links and an exhausted search;
+     * update the thread slot once per call, outside the scan's inner loop.
+     * Initial oldest selection (after == NULL) is excluded. */
+    if (after != NULL) wf_guard_add(WF_GUARD_COUNT_PASS_LINK, examined);
+#endif
     return oldest;
 }
 static wf_context *wf_guard_reserve_locked(wf_shared *shared, wf_watch *watch,
@@ -2835,6 +2930,9 @@ static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **d
                                         wf_shared *turn) {
     wf_context *ready = NULL;
 #if WF_GUARD_MODE == 2
+#if WF_GUARD_COUNTERS
+    unsigned batch_counter = WF_GUARD_COUNT_BATCH_GRANTED;
+#endif
     if (turn != NULL && turn->reservation != NULL) {
         wf_context *owner = turn->reservation;
         /* Untried younger watches will observe this write in their existing
@@ -2855,8 +2953,16 @@ static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **d
         wf_watch *oldest = wf_guard_oldest(*head, NULL, UINT64_MAX);
         uint64_t now = wf_guard_now();
         uint64_t started = oldest->context->guard_started;
-        if (started != 0u && now >= started && now - started > WF_GUARD_TURN_AGE_NS)
+        if (started != 0u && now >= started && now - started > WF_GUARD_TURN_AGE_NS) {
+            /* Initial age-qualified selection, including a sweep that first
+             * joins an existing reservation from another watched object. */
+            WF_GUARD_COUNT(WF_GUARD_COUNT_AGE_SELECTION);
             return wf_guard_reserve_locked(turn, oldest, 0u, now, dead);
+        }
+#if WF_GUARD_COUNTERS
+        batch_counter = started != 0u && now != 0u && now >= started
+            ? WF_GUARD_COUNT_BATCH_YOUNG : WF_GUARD_COUNT_BATCH_CLOCK;
+#endif
     }
 #elif WF_GUARD_MODE == 1
     uint64_t now = turn != NULL && *head != NULL ? wf_guard_now() : 0u;
@@ -2865,6 +2971,12 @@ static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **d
 #endif
     while (*head != NULL) {
         wf_watch *watch = (*head)->watch;
+#if WF_GUARD_MODE == 2 && WF_GUARD_COUNTERS
+        /* Notifications, not batch invocations. Granted-hold bypass and
+         * missing/backward-clock fallback are disjoint from valid age <= T.
+         * Table-list broadcasts (turn == NULL) are not object fallbacks. */
+        if (turn != NULL) WF_GUARD_COUNT(batch_counter);
+#endif
 #if WF_GUARD_MODE == 1
         uint64_t started = watch->context->guard_started;
         if (turn != NULL && started != 0u && now >= started
@@ -3303,7 +3415,15 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
 }
 
 int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+#if WF_GUARD_COUNTERS
+    wf_context *self = wf_context_current;
+    wf_guard_acquire_begin(self);
+    int parked = wf_shared_acquire_as(object, write, frame, 0);
+    if (!parked) wf_guard_acquire_end(self);
+    return parked;
+#else
     return wf_shared_acquire_as(object, write, frame, 0);
+#endif
 }
 
 /* Whether a statement that cannot park may borrow the hold an unlock handed
@@ -3397,7 +3517,15 @@ static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
     wf_watch *next = wf_guard_oldest(shared->watching, self, self->guard_cutoff);
     if (next != NULL) {
         *ready = wf_guard_reserve_locked(shared, next, rescan, self->guard_cutoff, dead);
-        if (shared->reservation != NULL) rescan = 0u;
+        if (shared->reservation != NULL) {
+#if WF_GUARD_COUNTERS
+            /* Only an installed next owner after an actual false guard is
+             * a false handoff. Read-only success and notifications joining
+             * another object's existing reservation are not handoffs here. */
+            if (wf_watch_quiet()) WF_GUARD_COUNT(WF_GUARD_COUNT_FALSE_HANDOFF);
+#endif
+            rescan = 0u;
+        }
     }
     wf_spin_unlock(&wf_watch_lock);
     return rescan;
@@ -3427,6 +3555,11 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write,
     wf_context *written = wrote ? wf_shared_written_locked(shared, dead) : NULL;
     if (rescan) {
         wf_spin_lock(&wf_watch_lock);
+#if WF_GUARD_COUNTERS
+        /* An executed deferred notification pass with work still registered,
+         * not each writer's request or each re-evaluation of the flag. */
+        if (shared->watching != NULL) WF_GUARD_COUNT(WF_GUARD_COUNT_RESCAN);
+#endif
         written = wf_watch_wake_locked(&shared->watching, dead, shared);
         wf_spin_unlock(&wf_watch_lock);
     }
@@ -3465,6 +3598,11 @@ static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write,
     wf_context *written = write != 0u ? wf_shared_written_locked(shared, dead) : NULL;
     if (rescan) {
         wf_spin_lock(&wf_watch_lock);
+#if WF_GUARD_COUNTERS
+        /* An executed deferred notification pass with work still registered,
+         * not each writer's request or each re-evaluation of the flag. */
+        if (shared->watching != NULL) WF_GUARD_COUNT(WF_GUARD_COUNT_RESCAN);
+#endif
         written = wf_watch_wake_locked(&shared->watching, dead, shared);
         wf_spin_unlock(&wf_watch_lock);
     }
