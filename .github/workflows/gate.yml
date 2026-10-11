@@ -33,8 +33,11 @@ permissions:
 
 # A ready event and a push to the same branch share one group, so the later
 # run, which covers both platforms whenever the pull request is ready, wins.
+# If a push run asks GitHub before the ready state is visible, it runs Linux
+# only and Gate on both platforms is absent for that head: the merge check
+# refuses it and a manual run qualifies it.
 concurrency:
-  group: gate-${{ github.head_ref || github.ref_name }}
+  group: gate-${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -73,9 +76,12 @@ jobs:
             push)
               if [ "$GITHUB_REF" = refs/heads/main ]; then
                 both=true reason='push to main'
+              elif [ "${GITHUB_REF#refs/heads/}" = "$GITHUB_REF" ]; then
+                both=false reason="push to $GITHUB_REF, which is not a branch"
               else
-                ready=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-                  --jq '[.[] | select(.draft == false) | .number] | join(" ")')
+                pulls=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
+                  --jq '.[] | select(.draft == false) | .number')
+                ready=$(echo $pulls)
                 if [ -n "$ready" ]; then
                   both=true reason="push to ready pull request $ready"
                 else
@@ -299,17 +305,27 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
         run: |
-          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest&per_page=100" \
-            --jq '.check_runs[] | "\(.name)\t\(.conclusion)"' > "$RUNNER_TEMP/checks.tsv"
+          set -euo pipefail
+          groups=$(jq -er '.[]' <<< "$GATE_GROUPS")
+          test -n "$groups"
+          # Only jobs of this workflow's runs for the revision count; a job
+          # re-run in a later attempt or run supersedes the earlier one.
+          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq '.workflow_runs[].id')
+          : > "$RUNNER_TEMP/jobs.tsv"
+          for run in $runs; do
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.completed_at != null) | [.completed_at, .name, .conclusion] | @tsv' >> "$RUNNER_TEMP/jobs.tsv"
+          done
           missing=0
-          for group in $(echo "$GATE_GROUPS" | jq -r '.[]'); do
+          for group in $groups; do
             for os in ubuntu-24.04 macos-15; do
               name="$group ($os)"
-              conclusion=$(awk -F '\t' -v name="$name" '$1 == name { print $2 }' "$RUNNER_TEMP/checks.tsv" | head -n 1)
+              conclusion=$(sort -r "$RUNNER_TEMP/jobs.tsv" | awk -F '\t' -v name="$name" '$2 == name { print $3; exit }')
               if [ "$conclusion" = success ]; then
                 echo "ok      $name"
               else
-                echo "MISSING $name: ${conclusion:-no check run}"
+                echo "MISSING $name: ${conclusion:-no gate job}"
                 missing=1
               fi
             done

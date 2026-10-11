@@ -573,11 +573,13 @@ stays at 45 s.
 
 Every successful `gate.yml` run created between 2026-10-11 12:04Z and
 22:53Z, 58 runs of 4 groups on each platform, read from the Actions API
-(each job's `created_at`, `started_at` and `completed_at`):
+(each job's `created_at`, `started_at` and `completed_at`). Twelve Linux
+and nine macOS jobs, re-run attempts, report a start before their creation;
+those waits count as zero:
 
 | Platform | Jobs | Job run, median / max (min) | Slowest job's wait per run, median / mean / max (min) |
 | --- | ---: | --- | --- |
-| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 0.0 / 12.0 |
+| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 1.8 / 12.0 |
 | macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
 
 A run's wall from its first job's creation to its last job's completion had
