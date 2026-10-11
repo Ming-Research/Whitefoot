@@ -12,6 +12,13 @@ Nodes: compiler/checker-facts, language/checks-and-proofs/automatic-facts, langu
 Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every added and changed decision and Rejected item verbatim.
 
 Summary: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements while capacity and invalidated-reference support die and the whole-cell row stays, because growth moves storage without changing those values; per-element equality postconditions, a capacity-only effect row and re-proving facts in a loop were rejected. The checker marks canonical growth calls' proof write events as relocations, keeping their full resolved write places, and one support classifier applies the mark to every fact component and range version. The range walk places growth by that classification next to `place_back` and `take_back`.
+## 2026-10-11 References to compile-time measures point at shared constants
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#359 (head f03ba8de1) adding this decision to the design tree node compiler/storage-representation?" (translated).
+
+Summary: The specification admits a readonly reference to a prelude-declared measure such as `&source^.inner.len`, but a constant-capacity container keeps its compile-time measures out of memory, so the reference had no address. Such a reference now lowers to a private unnamed_addr read-only constant holding the u64 value, one per distinct value in each emitted module, because the measure never changes for the owner's lifetime and the language observes no reference address. Adding the word to every constant-capacity header was rejected because it enlarges every fixed container, which matters most on weak embedded targets, and refusing the borrow would narrow what the specification admits.
 ## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
 
 Nodes: compiler/checker-facts, compiler/incremental-closure

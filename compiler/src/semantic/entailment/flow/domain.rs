@@ -467,17 +467,46 @@ impl Reasoning<'_, '_, '_> {
         }
         let fragment = fragment_type(expression.ty())?;
         let path = self.input.read_place_path(expression)?;
-        let kind = match path.path.as_slice() {
-            projections
-                if projections
-                    .iter()
-                    .all(|projection| matches!(projection, PlaceStep::Field(_))) =>
-            {
-                TermKind::Place(path, fragment)
+        self.place_operand(path, fragment)
+    }
+
+    /// [ENT-2, MSR-2] scalar places formed by reads and instantiated
+    /// contracts use one term and the same descriptor standing bounds.
+    pub(super) fn place_operand(
+        &mut self,
+        path: ResolvedPlace,
+        fragment: IntegerType,
+    ) -> Option<TermId> {
+        // [ENT-2, MSR-2] an exact scalar reference to a descriptor field
+        // retains that field's standing bounds as well as its term identity.
+        if fragment == IntegerType::U64
+            && let Some(PlaceStep::Measure(measure)) = path.path.last().copied()
+        {
+            let mut base = path.clone();
+            base.path.pop();
+            let mut ty = match base.root {
+                PlaceRoot::Binding(binding) => self.input.summary(binding)?.ty?,
+                PlaceRoot::Constant(constant) => {
+                    self.input.context.constants.get(constant.0 as usize)?.ty
+                }
+            };
+            for step in &base.path {
+                ty = self
+                    .input
+                    .goal_projection_type(ty, goal_projection_of_step(step)?)?;
             }
-            _ => TermKind::Place(path, fragment),
-        };
-        Some(self.vocabulary.terms.intern(kind))
+            return Some(self.place_measure_term(
+                measure,
+                base,
+                measured_kind(ty)?,
+                type_constant(ty),
+            ));
+        }
+        Some(
+            self.vocabulary
+                .terms
+                .intern(TermKind::Place(path, fragment)),
+        )
     }
 
     /// Files one [REF-4] formation's endpoint images under its start capture,
