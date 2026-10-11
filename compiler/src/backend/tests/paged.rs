@@ -5,10 +5,21 @@ use super::*;
 const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   let p = box_paged_new::<u64>(capacity: 1_u64);
   place_back(window: &p.inner, value: 73_u64);
+  grow_paged(cell: &p, capacity: 2_u64);
+  place_back(window: &p.inner, value: 1_u64);
+  grow_paged(cell: &p, capacity: 3_u64);
+  place_back(window: &p.inner, value: 2_u64);
+  grow_paged(cell: &p, capacity: 4_u64);
   grow_paged(cell: &p, capacity: 513_u64);
+  for (
+    i in 3_u64..512_u64,
+    invariant length: p.inner.len == i
+  ) {
+    place_back(window: &p.inner, value: i);
+  }
   grow_paged(cell: &p, capacity: 1025_u64);
   for (
-    i in 1_u64..1025_u64,
+    i in 512_u64..1025_u64,
     invariant length: p.inner.len == i
   ) {
     place_back(window: &p.inner, value: i);
@@ -34,16 +45,16 @@ const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
 "#;
 
 /// Allocation identities and release order are observed independently of the
-/// cell implementation. U64's 512-element pages require 17 page owners
-/// for capacity 8193; cells reserve 1, 2, 4 and 32 directory words after a
-/// 24-byte header. Growth copies only the 1, 2 and 3 initialized pointers.
+/// cell implementation. Page zero grows through 1, 2, 4 and 512 slots,
+/// copying only its 1, 2 and 3 filled elements. Later growth copies only
+/// directory pointers and leaves all 17 final page owners in place.
 #[test]
-fn paged_growth_preserves_page_owners_and_releases_every_allocation() {
+fn paged_growth_moves_only_small_page_zero_and_releases_every_allocation() {
     let llvm = compile(GROWTH);
     let growth = emitted_prelude_row(&llvm, "grow_paged");
     assert_eq!(
         growth.matches("call void @llvm.memmove").count(),
-        1,
+        2,
         "{growth}"
     );
     assert!(growth.contains(".copied = mul nuw i64"), "{growth}");
@@ -62,39 +73,43 @@ fn paged_growth_preserves_page_owners_and_releases_every_allocation() {
 #include <stdio.h>
 #include <string.h>
 extern int wf_fixture_main(int, char **);
-static void *owners[21];
+static void *owners[24];
 static size_t allocations, releases, copies;
 static void require(int ok) { if (!ok) { fputs("paged allocation mismatch\n", stderr); exit(99); } }
 void *wf_paged_allocate(uint64_t bytes) {
-  static const uint64_t first[] = {32, 4096, 40, 4096, 56, 4096, 280};
-  require(allocations < 21);
-  require(bytes == (allocations < 7 ? first[allocations] : 4096));
+  static const uint64_t first[] = {32, 8, 16, 32, 40, 4096, 4096, 56, 4096, 280};
+  require(allocations < 24);
+  require(bytes == (allocations < 10 ? first[allocations] : 4096));
   void *p = malloc((size_t)bytes); require(p != NULL);
   memset(p, 0xa5, (size_t)bytes);
   owners[allocations++] = p;
   return p;
 }
+
 void wf_paged_move(void *destination, const void *source, uint64_t bytes, _Bool is_volatile) {
-  static const size_t old[] = {0, 2, 4}, fresh[] = {2, 4, 6};
-  require(copies < 3 && allocations == fresh[copies] + 1 && !is_volatile);
-  require(destination == (char *)owners[fresh[copies]] + 24);
-  require(source == (char *)owners[old[copies]] + 24);
-  require(bytes == 8 * (copies + 1));
+  static const size_t old[] = {1, 2, 0, 3, 4, 7}, fresh[] = {2, 3, 4, 5, 7, 9};
+  static const size_t offsets[] = {0, 0, 24, 0, 24, 24};
+  static const uint64_t counts[] = {8, 16, 8, 24, 16, 24};
+  require(copies < 6 && allocations == fresh[copies] + 1 && !is_volatile);
+  size_t offset = offsets[copies];
+  require(destination == (char *)owners[fresh[copies]] + offset);
+  require(source == (char *)owners[old[copies]] + offset);
+  require(bytes == counts[copies]);
   ++copies;
   memmove(destination, source, (size_t)bytes);
 }
 void wf_paged_release(void *p, uint64_t bytes) {
-  static const size_t order[] = {0, 2, 4, 1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 6};
-  require(releases < 21 && p == owners[order[releases]]);
-  static const uint64_t first[] = {32, 4096, 40, 4096, 56, 4096, 280};
+  static const size_t order[] = {1, 2, 0, 3, 4, 7, 5, 6, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 9};
+  require(releases < 24 && p == owners[order[releases]]);
+  static const uint64_t first[] = {32, 8, 16, 32, 40, 4096, 4096, 56, 4096, 280};
   size_t owner = order[releases];
-  require(bytes == (owner < 7 ? first[owner] : 4096));
+  require(bytes == (owner < 10 ? first[owner] : 4096));
   ++releases;
   /* Quarantine allocations so reuse cannot conceal an identity change. */
 }
 int main(int argc, char **argv) {
   int result = wf_fixture_main(argc, argv);
-  require(result == 0 && allocations == 21 && releases == 21 && copies == 3);
+  require(result == 0 && allocations == 24 && releases == 24 && copies == 6);
   for (size_t i = 0; i < allocations; ++i) free(owners[i]);
   return 0;
 }
@@ -102,6 +117,74 @@ int main(int argc, char **argv) {
     let output = compile_link_and_run(&observed, Some(host), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
+fn paged_empty_owners_and_zero_growth_never_allocate_or_release_the_shared_header() {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+  let first = box_paged_new::<u64>(capacity: 0_u64);
+  let second = box_paged_new::<Box<u64>>(capacity: 0_u64);
+  grow_paged(cell: &first, capacity: 0_u64);
+  grow_paged(cell: &second, capacity: 0_u64);
+  if first.inner.cap != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second.inner.len != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let observed = compile(source)
+        .replace("@wf__heap_take(", "@wf_paged_unexpected_allocate(")
+        .replace("@wf__heap_give(", "@wf_paged_unexpected_release(");
+    let host = r#"#include <stdint.h>
+#include <stdlib.h>
+extern const unsigned char wf__empty_window[64];
+void *wf_paged_unexpected_allocate(uint64_t bytes) { (void)bytes; exit(98); }
+void wf_paged_unexpected_release(void *p, uint64_t bytes) {
+  (void)bytes;
+  if (p != (const void *)&wf__empty_window) exit(99);
+}
+"#;
+    let output = compile_link_and_run(&observed, Some(host), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+/// Whitefoot#352 supplies the missing general relocation classification.
+/// Keep this acceptance/runtime witness explicit until that change lands;
+/// then move its normative fact-preservation coverage into conformance.
+#[test]
+#[ignore = "depends on Whitefoot#352: grow_paged relocation preserves filled-element range facts"]
+fn paged_page_zero_move_preserves_filled_element_range_fact() {
+    let source = br#"fn filled(values: &Paged<u64>) -> result: unit pure contract {
+  requires forall held(k in 0_u64..values^.len): values^[k] == 73_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  for (
+    k in 0_u64..1_u64,
+    invariant length: p.inner.len == k,
+    invariant forall prefix(j in 0_u64..k): p.inner[j] == 73_u64
+  ) {
+    place_back(window: &p.inner, value: 73_u64);
+  }
+  filled(values: &p.inner);
+  grow_paged(cell: &p, capacity: 2_u64);
+  filled(values: &p.inner);
+  if p.inner[0_u64] != 73_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let output = compile_and_run(&llvm);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
 const RUNS: &[u8] = br#"fn fill(part: &Run<u64>) -> result: unit writes(part) {
@@ -228,6 +311,21 @@ fn paged_page_geometry_covers_zero_stride_and_elements_larger_than_a_page() {
   if p.inner.pages.len != 1_u64 {
     return std::process::exit_status(code: 6_u8);
   }
+  let large_owner = box_paged_new::<Array<u8, 4097>>(capacity: 1_u64);
+  let first = array_filled::<u8, 4097>(value: 7_u8);
+  place_back(window: &large_owner.inner, value: first);
+  grow_paged(cell: &large_owner, capacity: 2_u64);
+  let second = array_filled::<u8, 4097>(value: 9_u8);
+  place_back(window: &large_owner.inner, value: second);
+  if large_owner.inner.pages.len != 2_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if large_owner.inner[0_u64][4096_u64] != 7_u8 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  if large_owner.inner[1_u64][0_u64] != 9_u8 {
+    return std::process::exit_status(code: 9_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -315,9 +413,14 @@ fn paged_page_and_cell_size_failures_precede_their_allocator() {
     // The page limit, directory doubling limit, and the exact 24 + 8*2
     // cell boundary, both at construction and at replacement. Zero-stride
     // pages isolate the cell limit from the ordinary 4096-byte page limit.
+    // Capacity one now fits its small page, while 257 rounds to a full
+    // page and fails before its allocator under the 2048-byte limit.
     let cases: &[LimitCase] = &[
-        (2048, "u64", None, 0, true, b"A1;F1;"),
-        (2048, "u64", None, 1, false, b"A1;"),
+        (2048, "u64", None, 0, true, b""),
+        (2048, "u64", None, 1, true, b"A1;A2;F2;F1;"),
+        (2048, "u64", None, 256, true, b"A1;A2;F2;F1;"),
+        (2048, "u64", None, 257, false, b"A1;"),
+        (2048, "u64", Some(1), 257, false, b"A1;A2;"),
         (2048, "u64", None, u64::MAX, false, b""),
         (40, "Array<u8, 0>", None, 4097, true, b"A1;A2;A3;F2;F3;F1;"),
         (39, "Array<u8, 0>", None, 4097, false, b""),

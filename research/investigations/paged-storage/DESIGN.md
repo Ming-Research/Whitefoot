@@ -2,9 +2,10 @@
 
 Status: direction selected by the owner on 2026-10-06 (Q122: build the
 built-in `Paged<T>` with Snowghost's requirements R1 to R6 in one change);
-implementation in progress on this branch. The design-tree and
-specification changes await the owner's approval. The criterion below was
-written before any measurement.
+the built-in form is implemented. The owner selected ruling B on card
+`paged-small-owners` on 2026-10-11; the small-owner amendment below is the
+current implementation direction. The original C1 to C3 criterion below
+was written before its measurements.
 
 ## Question
 
@@ -22,8 +23,8 @@ two kinds of indexed storage, and neither fits:
   helpers cost 29.7% of html5 full-layout samples on the i9-14900K before
   Snowghost split its nodes into separately paged field groups.
 
-What storage gives stable element addresses, O(1) indexing, and the same
-proof model as `Slots` (exact places, index separation, `apart`
+What storage gives stable element addresses after bounded initial growth,
+O(1) indexing, and the same proof model as `Slots` (exact places, index separation, `apart`
 certificates, parallel permission), without returned references?
 
 ## How the question was reached
@@ -67,9 +68,12 @@ Stated by Snowghost-wf after the owner reviewed its mock API:
 - **R2** One-level index semantics: `p^[i]`, `p^[i].f` and `p^.len` are
   ordinary sequence places; RANGE, `apart`, PAR-2 and REF-4 treat them
   exactly as `Slots` elements; page arithmetic exists only in lowering.
-- **R3** Growth never moves an element; only directory words move. REF-2 is
-  unchanged: growth still invalidates references. No compaction, no middle
-  insertion; deletion, tombstones and generations stay library code.
+- **R3** Under the owner's 2026-10-11 small-owner ruling, growth may move
+  only page 0 before its allocated length reaches B, copying at most B - 1
+  initialized elements in total across its replacements. Full-sized pages
+  retain every element address. REF-2 is unchanged: growth still invalidates
+  references. No compaction, no middle insertion; deletion, tombstones and
+  generations stay library code.
 - **R4** `&p^[a..b]` has its own range kind, which may cross pages and is
   not a `&[T]`.
 - **R5** A bridge to contiguity: a page count, and page k as an ordinary
@@ -77,8 +81,9 @@ Stated by Snowghost-wf after the owner reviewed its mock API:
 - **R6** The page size is fixed per element type at compile time and is a
   power of two.
 
-R7 (adopting a private `Paged`'s pages into a retained one, for splices) and
-a smaller first page for tiny owners are recorded under "Not in this change".
+R7 (adopting a private `Paged`'s pages into a retained one, for splices)
+remains under "Not in this change"; any future adoption admits only full
+pages. The smaller first page is selected below.
 
 ### Evidence from Snowghost's probes
 
@@ -103,7 +108,7 @@ released compiler `wf-f949e676acfa`:
 ### Language surface
 
 `Paged<T>` is a fifth storage shape, a window in the sense of [WIN-1] whose
-slots are stored in fixed-size pages:
+slots use uniform logical page coordinates with the backing lengths below:
 
 ```whitefoot
 opaque nocopy struct Paged<T> {
@@ -119,11 +124,12 @@ opaque nocopy struct Paged<T> {
 - **Growth.** `grow_paged<T>(cell: &Box<Paged<T>>, capacity: u64)` with the
   row `writes(cell)` and the contract of `grow`: `capacity >= cap` before,
   `cap == capacity` and `len` unchanged after. It allocates pages and may
-  reallocate the cell that holds the directory; no element moves (R3). The
-  row writes the whole cell, so growth invalidates every reference into the
-  storage and kills its facts exactly as `grow` does for `Slots`; it also overlaps every element
-  access. Lowering additionally cuts an overlap group before forming a
-  Paged address through the owner or directory, because reference formation
+  reallocate the cell that holds the directory, and may replace the small
+  first page under R3. The row writes the whole cell, so growth invalidates
+  every reference into the storage and overlaps every element access. Fact
+  preservation across relocation is the separate Whitefoot PR #352 dependency
+  described below; the base specification still kills overlapping facts.
+  Lowering additionally cuts an overlap group before forming a Paged address through the owner or directory, because reference formation
   itself has no source content read under [PAR-1].
 - **Window operations.** `place_back` and `take_back` admit `Paged<T>` as
   their window argument with their existing records, rows and contracts
@@ -171,21 +177,29 @@ opaque nocopy struct Paged<T> {
 
 ### Lowering
 
-- A `Box<Paged<T>>` owner is one pointer to one header-first allocation:
+- A capacity-0 `Box<Paged<T>>` owner points at the shared immutable empty
+  header and allocates nothing. A positive-capacity owner is one pointer to
+  one header-first allocation:
   `{ len: i64, cap: i64, dircap: i64, pages: [dircap x ptr] }`. The directory
   starts at `cell + 24`; it has no separate pointer or allocation.
 - B is the largest power of two with `B * stride_ceiling(T) <= 4096`, and
   at least 1, using [OP-9]'s language stride ceiling so that B, which a
   program can observe, is the same on every target (owner ruling Q135);
   the actual stride, at or below the ceiling, addresses the elements.
-  Pages hold `B` elements each. Construction doubles `dircap` from one until
-  it covers `ceil(cap / B)`, then allocates the cell and those pages.
-- `grow_paged` retains the cell while its directory has room. When it needs
-  more entries, it doubles `dircap` until it fits, allocates a new cell,
+  Page 0 is allocated for the least power of two covering positive capacity,
+  capped at B; later pages hold B elements each. Positive construction doubles
+  `dircap` from one until it covers `ceil(cap / B)`, then allocates the cell
+  and those pages.
+- Positive `grow_paged` from the shared header allocates its first cell and
+  pages. Growth retains an allocated cell while its directory has room. When
+  it needs more entries, it doubles `dircap` until it fits, allocates a new cell,
   copies the header and existing page pointers only, frees the old cell and
   stores the replacement through its `&Box<Paged<T>>` parameter. It then
-  allocates the missing pages and records the exact requested capacity.
-  `place_back` and `take_back` never reallocate the cell.
+  replaces page 0 when the needed power-of-two length exceeds its old length
+  below B, copying only initialized elements, and allocates the missing full
+  pages. It records the exact requested capacity. Once page 0 reaches B, every
+  existing page is retained. `place_back` and `take_back` never reallocate the
+  cell or a page.
 - An element address loads the page pointer at `cell + 24 + 8 * (i >> s)`,
   then adds `(i & (B - 1)) * stride`: one dependent load from the cell,
   matching the hand-written header-first page table.
@@ -203,12 +217,14 @@ opaque nocopy struct Paged<T> {
   callee that ignores it must enter while the cell still exists for its
   ordinary reference attributes. This covers later growth inside a wrapper
   and a refused hand-out executed at the join.
-- Release drops the initialized elements in index order and frees each page;
-  the Box then frees the cell, which includes the directory. The cell size
+- Release drops the initialized elements in index order and frees each page
+  at its actual allocated extent, deriving page 0's length from capacity;
+  the Box then frees the cell, which includes the directory. Release of the
+  shared header frees nothing. The cell size
   `24 + 8 * dircap` and each page size use checked arithmetic against the
   target allocation maximum [STOR-6]; exhaustion is a resource failure
-  [STOR-8]. A zero-capacity cell still reserves one directory entry, while a
-  zero-stride page uses one allocation byte and zero element displacement.
+  [STOR-8]. A positive-capacity zero-stride page uses one allocation byte and
+  zero element displacement.
 
 ## Boundary choices for specification and lowering
 
@@ -235,7 +251,7 @@ OP-9's table independently of the actual representation, so a zero actual
 stride needs no special case: its addresses keep zero displacement whatever B
 is, and a stride ceiling of one, as for `u8` or `unit`, gives B = 4096. A
 stride ceiling above 4096 gives B = 1. Directory growth starts at one entry and
-doubles when full; a zero-capacity owner needs no element page. These choices
+doubles when full; a zero-capacity owner needs no allocation. These choices
 preserve logical indices, element counts and the general resource-failure
 rules independently of target padding.
 
@@ -248,12 +264,13 @@ entry.
 
 ## Not in this change
 
-Each is recorded in `docs/todo.md` with its reopening condition:
+These capabilities are outside the selected small-owner amendment:
 
-- **R7 page adoption** for splices (Snowghost's P9).
-- **A smaller first page** for owners that hold a few elements.
-- **References that survive growth.** Elements do not move, but growth
-  rewrites the directory, so a refinement needs an effect part that every
+- **R7 page adoption** for splices (Snowghost's P9). Any future operation
+  adopts only pages containing B initialized elements, whose backing therefore
+  holds B elements; page 0 is filled to B before adoption.
+- **References that survive growth.** Growth can move the small first page
+  and rewrites the directory, so a refinement needs an effect part that every
   address formation reads (as Astra's round-four proposal sketched).
 - **Facts relating a slot to its page**, so a page step can be separated
   from element subscripts outside it.
@@ -261,6 +278,64 @@ Each is recorded in `docs/todo.md` with its reopening condition:
   and **reading an unwritten scalar inside a certified loop**: separate gaps
   Snowghost's probes found.
 - **FN-6 closed-term cycles**, which nested visitors need.
+
+## Small owners: shared empty header and a growing first page
+
+**Question.** Can per-owner Paged storage avoid empty-header allocations and
+full first pages while retaining uniform page addressing and bounded growth
+copying? The owner selected option B on card `paged-small-owners` on
+2026-10-11. The prior R3 prohibition on moving any element is replaced by
+bounded relocation of page 0; stable slot identity and the existing REF-2
+invalidation remain.
+
+**Measured motivation.** Snowghost reported one ecma262 page with 34,302
+blocks and 10,217 contexts, each owning two initially empty Paged instances:
+89,038 extra header allocations and 100,466 extra full pages under the
+4096-byte page budget. Its layout-node stride ceiling is 528 bytes, so B = 4.
+The page budget does not imply that each actual page occupies 4096 bytes:
+its allocation is B times the selected target stride. Reported peak memory
+rose from 860 MB to 903 MB and full layout was 3.3% slower. These are
+Snowghost's observations, supplied with the ruling; Whitefoot has not
+remeasured them. The source is Snowghost-wf branch
+[`research/m2-paged-mechanism`, `MECHANISM.md`](https://github.com/Ming-Research/Snowghost-wf/blob/research/m2-paged-mechanism/research/investigations/m2-paged/MECHANISM.md).
+
+**Mechanism.** Capacity 0 points at the shared immutable empty header and
+allocates nothing; first positive growth allocates. At positive capacity
+below B, page 0 reserves the least power of two covering that capacity.
+Growth beyond its allocated length replaces it and copies its initialized
+elements, until its allocated length reaches B. The increasing lengths are
+powers of two, so the sum of possible copied elements is at most
+`1 + 2 + ... + B/2 = B - 1`; B = 1 needs no page replacement. Subsequent
+growth appends full pages and may replace the directory cell, retaining
+every existing element address. Logical capacity remains the requested
+count, page 0 starts at logical index 0, and addressing remains page
+`i >> s`, slot `i & (B - 1)`, with no additional per-index test. Release
+skips the shared header and frees a small page 0 at its actual size.
+Snowghost confirms that it keeps neither a page reference nor an element
+address across growth; its block identity is a slot number.
+
+**Fact-preservation dependency.** Whitefoot [PR #352, growth retains
+unchanged facts](https://github.com/Ming-Research/Whitefoot/pull/352), on
+`claude/grow-keeps-facts`, is approved but not in this amendment's base.
+Its ENT-5 relocation classification is by the canonical `grow_paged`
+operation and preserves support in the unchanged length and filled element
+storage, including owned descendants, while reference validity still
+follows REF-2. A page-0 replacement changes storage addresses without
+changing those values, so the same classification applies after #352 lands;
+no separate element-equality premise is needed. OP-10 identifies the move
+as a relocation and leaves fact survival to ENT-5. The dependent range-fact
+witness must be enabled and pass after #352 is integrated; this amendment
+does not import that branch's broad proof-system changes or claim that its
+base preserves those facts.
+
+**Remaining comparison and veto.** Snowghost must retest
+[Snowghost-wf PR #61, the Paged mechanism](https://github.com/Ming-Research/Snowghost-wf/pull/61)
+on hosted timing `m2-paged-time`, comparing the same full-layout workload
+with its prior storage mechanism and the revised Paged mechanism under the
+same conditions. The small-owner proposal is vetoed when full layout is
+more than 3% slower. The prior 3.3% loss does not establish the revised
+mechanism's result; allocation savings, peak memory and full-layout timing
+remain to measure.
 
 ## Alternatives rejected
 
@@ -346,8 +421,9 @@ comparable with the i9-14900K's. Snowghost repeats the run on the
 i9-14900K with performance counters and page-fault counts. A like-for-like
 port with one `Paged` per existing store stays 1 to 9 percent slower with
 the header-first cell; that its 82,907 per-owner stores with full first
-pages cause this is a hypothesis for the smaller-first-page item in
-`docs/todo.md`, which the page-fault counts can reject.
+pages cause this was a hypothesis for the
+[small-owner investigation](#small-owners-shared-empty-header-and-a-growing-first-page),
+which the page-fault counts can reject.
 
 ### C3 on the i9-14900K: both lowerings fail
 

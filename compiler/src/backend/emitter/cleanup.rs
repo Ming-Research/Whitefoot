@@ -1241,6 +1241,17 @@ fn emit_paged_drop_helper(
         output.push_str("  br label %pages.start\n");
     }
     output.open_block("pages.start".to_owned());
+    let first_extent = super::paged::first_page_extent(&mut output, "%cap", b, "first")?;
+    let first_bytes = if stride == 0 {
+        "1".to_owned()
+    } else {
+        writeln!(
+            output,
+            "  %first.bytes = mul nuw i64 {first_extent}, {stride}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        "%first.bytes".to_owned()
+    };
     writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("pages".to_owned());
     output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
@@ -1250,7 +1261,7 @@ fn emit_paged_drop_helper(
         .ok_or(BackendFailure::InvalidIr)?
         .max(1);
     output.symbol("wf__heap_give");
-    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @wf__heap_give(ptr %allocation, i64 {page_bytes})\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %is.first = icmp eq i64 %p, 0\n  %page.bytes = select i1 %is.first, i64 {first_bytes}, i64 {page_bytes}\n  call void @wf__heap_give(ptr %allocation, i64 %page.bytes)\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();
