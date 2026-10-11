@@ -793,3 +793,111 @@ call; main also replaces the inline driver resume loop with
 with reservations and sample-field ownership. No merge, rebase or fetch
 was performed; this comparison cannot establish applicability to any
 newer remote main.
+
+## Ordered wait queue: prediction registered before implementation
+
+The owner reports path-attribution run 38178470077 on revision
+`52d22226d2c769d2aedad5475464e21c799ef554`, native i9-14900K: at N = 50,
+oldest/base runtime was 1.608/1.665 and twin/base 0.998/0.967, retaining
+the rejection. Per checkout, oldest counted approximately 48.4 notifications
+(baseline 24.9), 20.6 below-T batch notifications, 26.3 false-condition
+passes, zero rescans and 1,289 passing-search link examinations. Sampled
+mean return acquisition time was approximately 5.4 µs, against baseline
+21 ns, with a sampled maximum of 19 µs. At N = 8, below-T batches
+dominated at 6.42 notifications per checkout while passes and passing
+searches were near zero. These are the owner's supplied results; their raw
+artifact has not been downloaded or independently checked in this checkout.
+
+The owner selected removal of the quadratic passing search before changing
+notification semantics. Keep mode 2's age/identity order, 1 ms threshold,
+oldest-only reservation, age-preserving false retry, finite cutoff, below-T
+batch notifications, cross-unit notification and progress exemptions.
+Maintain an ordered wait queue under the existing locks and select the
+next eligible watcher directly. Baseline and age runtime arms are unchanged.
+Ordered registration may still require comparisons; moving the old entire
+passing scan to every false re-registration would not support the intended
+cost attribution and must be disclosed if it occurs.
+
+**Registered prediction.** At N = 50, passing-search link examinations per
+successful checkout will be at most four times the number of false-condition
+reservation passes plus four, replacing approximately 1,289 examinations
+per checkout. The sampled mean return-acquisition wait will be at most
+2.7 µs (half the reported 5.4 µs) in the diagnostic run. With agreeing
+twins, an uninstrumented oldest/base runtime ratio at most 1.25 in both
+N = 50 orders will support search as a main contributor by substantially
+closing the gap toward 1.10. Ratios from 1.50 through 1.70 in both orders,
+despite meeting the comparison-count prediction, will refute search as the
+main source of the approximately 1.6× cost. Other outcomes are mixed or
+inconclusive for that attribution. A failing cost verdict stays a rejection:
+acceptance still requires N = 50 maximum wait at most 3.3 ms, runtime/base
+at most 1.10 at every N in both orders, and twin/base in [0.95, 1.05] in
+every cell. Diagnostic timing and the prediction's intermediate 1.25 ratio
+cannot establish acceptance.
+
+Run the same K = 1,000, N = 2, 8, 50 protocol on two drivers pinned to
+CPUs 2 and 4 of the native 14900K, with unchanged interleaved timing arms
+and their reversed second order. Enable the existing `path_diagnostics`
+input so separate counter builds and the sampled return observer run in
+the same dispatch. Keep the baseline twin and all five deliberately broken
+variants' intended failures, and require clean TSan. No ordered-queue
+measurement is claimed here. The branch stays on its existing base without
+merging main.
+
+### Ordered-queue implementation and verification scope
+
+Only mode 2 sorts ordinary-object watch links by the existing
+`(guard_started, integer context identity)` key. A reservation leaves an
+uncounted link owned by its context at the selected position. The shared
+watch lock protects the order, back links and anchor, while reservation
+installation and retirement also hold the reserved object's lock. The
+anchor stores its context directly: retaining a pointer to a detached watch
+would race with the selected context reinitializing that watch outside the
+watch lock. The private link union preserves its size; neither the public
+watch-frame ABI nor the fixed shared-object header grows. No new lock is
+introduced.
+
+A reserved false retry inserts its real link immediately after its anchor.
+Passing starts there, skips that one same-key retry if present, and selects
+the next eligible link or stops at the cutoff. Notification detaches every
+real link of a watcher, including links on other units; the existing back
+pointers automatically update an anchor whose successor was removed. An
+already-reserved cross-unit notification keeps its original anchor and
+uses the selected link's successor only during the same locked operation.
+Successful release removes the anchor before age reset or context exit.
+The cancellation alternative succeeds and retires through that same path;
+a host timeout still does not asynchronously abandon an atomic guard.
+
+Direct successor selection and same-object reserved false re-registration
+are constant-time in the number of waiters. Finding the selected watch's
+link still costs its number of watched units, as does unlinking those units.
+New or unreserved registrations search for their ordered insertion point,
+including retries from below-T batches; those can still incur linear work
+per registration. The passing-search counter retains its meaning and counts
+real successor candidates, including self/cutoff rejection, not anchors,
+initial selection, insertion or repair comparisons. Thus a low passing
+count alone cannot establish that total watch-lock work is now linear.
+
+The original missing-clock policy can change an age from zero to a valid
+sample while earlier links are still registered on other units. Mode 2
+then moves those prior inline and chunk links forward under the watch lock,
+restoring their new key order without changing the clock-recovery rule.
+This rare repair also visits table links and can change their broadcast
+order while preserving the notification set; tables otherwise retain
+prepend registration and broadcast behavior. The repair is not performed
+on every false retry. Baseline and age retain their original registration,
+selection and removal paths.
+
+The existing native `handoff` case now uses four distinct-age watchers to
+exercise interior successors and repeated age-preserving false insertions.
+The private `cancel-test` ordered fixture supplies an independent equal-age
+identity oracle, removes a successor through another unit, tests the cutoff
+and checks final anchors, back links and counts. Its clock-recovery fixture
+registers five objects plus a table (including overflow watch chunks),
+arranges a zero age, then registers a sixth object through the production
+path; prior links must move behind the older valid ages without changing
+counts. Both fixtures run in the ordinary cancellation test, and the
+temporary workflow runs their isolated selector natively and under TSan.
+The existing newcomer, age, cancellation and cross-unit selectors and all
+five deliberately broken variants remain wired. Native construction,
+intended mutant failures, race checking and performance are still awaiting
+CI; source inspection and fixture design are not executed evidence.

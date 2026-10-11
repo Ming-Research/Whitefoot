@@ -36,11 +36,13 @@
  *
  * Finally, on the same driver, R writes an object watched by an aged W and
  * asks for it again before yielding: it must park until W's next acquisition,
- * even though W's guard is still false. Repeat with two watchers and with
+ * even though W's guard is still false. Repeat with several watchers and with
  * R first taking an exempt statement holding another object or table entry.
  * The final nonexempt acquire detects leaked hold counts as well as missing
- * reservations. With two watchers, only the oldest wakes initially, and
- * its false retry passes the reservation to the next oldest before R runs.
+ * reservations. Only the oldest wakes initially; with four watchers, each
+ * false retry must pass through the next oldest, including interior queue
+ * positions, before R runs. Re-registering an older false retry must not
+ * select it again in the same sweep or hide the younger successors.
  * Cancellation is a guard alternative: firing the watched cancellation
  * state after selection makes the reserved retry complete, freeing the
  * object for another statement and for the reserved context's exit.
@@ -580,8 +582,10 @@ static void turn_w_step(test_frame *f) {
     struct wf_table_entry *entry = (struct wf_table_entry *)g->entry;
     uint32_t present = 0;
     if (f->statements == 0 && !f->begun) {
-        /* Registration order gives distinct original ages. The watch list
-         * inserts at its head, so selecting that head fails oldest-first. */
+        /* Registration order gives distinct original ages, independently
+         * of context allocation addresses. A head-inserting list without
+         * ordered selection fails oldest-first; an ordered queue with a
+         * stale successor after false re-registration fails on later passes. */
         f->begun = (int)++turn_registered;
         atomic_store(&guard_now, (uint64_t)f->begun);
     }
@@ -641,7 +645,7 @@ static void turn_r_step(test_frame *f) {
             fail("W had not parked before R ran (parks, watchers)", turn_parks, turn_waiters);
         if (wf__shared_acquire(turn_object, 1, f))
             return;
-        atomic_store(&guard_now, TURN_AGE_NS + 3u);
+        atomic_store(&guard_now, TURN_AGE_NS + turn_waiters + 1u);
         *state_of(turn_object) = 1;
         uint64_t before = atomic_load(&watch_ready);
         wf__shared_unlock(turn_object, 1);
@@ -695,7 +699,7 @@ static void turn_r_step(test_frame *f) {
 
 static void turn_phase_begin(test_frame *root) {
     atomic_store(&guard_now, 1u);
-    turn_waiters = turn_case == TURN_PLAIN ? 1 : 2;
+    turn_waiters = turn_case == TURN_PLAIN ? 1 : (turn_case == TURN_OBJECT ? 4 : 2);
     turn_parks = turn_attempts = turn_finished = turn_r_parked = turn_exempt = turn_registered = 0;
     turn_object = wf__shared_new(sizeof(uint64_t));
     turn_other = wf__shared_new(sizeof(uint64_t));

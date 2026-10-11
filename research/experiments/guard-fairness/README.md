@@ -8,17 +8,22 @@ hold it for 4,096 dependent mixing steps, and release it; it prints the
 exact p50, p99 and longest acquisition delay over all N × K acquisitions,
 the mean hold and the run time.
 
-The current protocol is the oldest-only handoff experiment registered in
-[the investigation](../../investigations/guard-fairness/DESIGN.md#step-b-oldest-only-handoff-registered-before-measurement).
-Run 38140292139 on revision `ba0e7c5e7` rejected this candidate under that
-rule: its N = 50 tail passes, but runtime is 1.61× baseline. The
+The current comparison tests an ordered wait queue for oldest-only handoff,
+with its cost-attribution prediction registered in
+[the investigation](../../investigations/guard-fairness/DESIGN.md#ordered-wait-queue-prediction-registered-before-implementation).
+The original acceptance criteria and timing protocol still apply. Run
+38140292139 on revision `ba0e7c5e7` rejected the earlier implementation
+that scanned for each successor: its N = 50 tail passes, but runtime is
+1.61× baseline. The
 [results and attribution](../../investigations/guard-fairness/DESIGN.md#oldest-only-handoff-results)
 include the twin control and separate diagnostic counters.
+No ordered-queue measurement is claimed here.
 
 `build.sh` emits the unchanged probe's LLVM once with `WFC`, then uses
 `Makefile` and the maintained `compiler/runtime.mk` native source list to
 build three runtime arms from this checkout: `WF_GUARD_MODE=0` baseline,
-`=1` rejected age-bounded turns, and `=2` oldest-only handoff. Every arm uses
+`=1` rejected age-bounded turns, and `=2` oldest-only handoff with an ordered
+wait queue. Every arm uses
 the same emitted LLVM, C11, `-O2 -falign-functions=64`, full LTO and LLD,
 with the ordinary runtime's POSIX thread and link flags. These are the
 optimization settings of the previous driver's `--full-lto` build, applied
@@ -72,7 +77,12 @@ reservation, notifications bypassing handoff because an ordinary hold has
 already been granted, and notifications falling back to a batch because
 the age clock is missing or backward. The three batch counters count
 notifications rather than batches. Link visits include unsuccessful scans
-and cross-object continuation; initial oldest searches are excluded. Age
+and cross-object continuation; initial oldest searches, position anchors
+and registration comparisons are excluded. The ordered queue retains an
+anchor for the reserved waiter's position, so its false re-registration
+inserts directly after that anchor. New waits and unreserved retries still
+search for their insertion position; passing-link counts therefore do not
+measure every comparison needed to maintain the queue. Age
 selections can occur during a rescan, so those columns are not disjoint.
 These path totals are zero in the baseline and age reference. Raw totals
 and all event counts divided by successful checkout count are preserved.
@@ -119,6 +129,9 @@ production builds retain neither its call nor counter bookkeeping.
 All builds and runs use CI. The temporary workflow stores raw stdout/stderr,
 combined CSV, original and diagnostic LLVM, construction metadata and the paired verdict in
 the `guard-fairness-evidence` artifact. It is removed before branch readiness.
+Its hosted checks retain all five intended negative-control failures and
+run both the expanded handoff case and the private ordered-queue fixture
+under normal compilation and ThreadSanitizer.
 
 ```sh
 gh workflow run tmp-guard-fairness.yml --repo Ming-Research/Whitefoot --ref claude/guard-fairness -f path_diagnostics=true

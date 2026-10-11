@@ -55,6 +55,10 @@ jobs:
           for selection in handoff newcomer age cancel cross-unit; do
             SHARED_OBJECT_TEST_CASE="$selection" "$RUNNER_TEMP/guard-control-candidate/shared-object-test"
           done
+          scratch="$RUNNER_TEMP/guard-control-candidate"
+          make -C compiler "$scratch/cancel-test" COMPLETION_TMP="$scratch" \
+            COMPLETION_BASE_CFLAGS="$flags -DWF_GUARD_MODE=2"
+          CANCEL_TEST_CASE=ordered "$scratch/cancel-test"
           for variant in baseline age threshold-zero; do
             case "$variant" in
               baseline) selection=newcomer; expected='R overtook a woken guard' ;;
@@ -131,11 +135,12 @@ jobs:
       - name: Guard handoff ThreadSanitizer checks
         run: |
           scratch="$RUNNER_TEMP/guard-control-tsan"
-          make -C compiler "$scratch/shared-object-test" COMPLETION_TMP="$scratch" CC=/usr/bin/clang \
+          make -C compiler "$scratch/shared-object-test" "$scratch/cancel-test" COMPLETION_TMP="$scratch" CC=/usr/bin/clang \
             COMPLETION_BASE_CFLAGS='-std=c11 -O1 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_MODE=2 -DWF_GUARD_COUNTERS=1 -DWF_GUARD_TEST_HOOKS=1 -fsanitize=thread -fno-omit-frame-pointer'
           for selection in handoff newcomer age cancel cross-unit; do
             TSAN_OPTIONS=halt_on_error=1 SHARED_OBJECT_TEST_CASE="$selection" "$scratch/shared-object-test"
           done
+          TSAN_OPTIONS=halt_on_error=1 CANCEL_TEST_CASE=ordered "$scratch/cancel-test"
   run:
     # The 14900K is shared: time only when dispatched in its queue.
     if: github.event_name == 'workflow_dispatch'
