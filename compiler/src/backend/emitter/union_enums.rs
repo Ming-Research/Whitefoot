@@ -2,10 +2,11 @@
 //!
 //! An enum with at least two payload-carrying variants whose product
 //! representation would not return in registers is laid out as a union of
-//! per-variant views: variant `k` is `%wf.t.<link>.v<k> = type { i32,
-//! <fields of k> }`, and the value is `%wf.t.<link> = type { i32, [S - 4 x
-//! i8], [0 x %wf.t.<link>.v<m>] }`, where `S` is the size target layout
-//! computes and `v<m>` a view of the value's alignment. The zero-length array
+//! per-variant views: variant `k` is `%wf.t.<link>.v<k> = type { iN,
+//! <fields of k> }`, and the value is `%wf.t.<link> = type { iN, [S - N/8 x
+//! i8], [0 x %wf.t.<link>.v<m>] }`, where `N` is the selected tag width,
+//! `S` is the size target layout computes and `v<m>` a view of the value's
+//! alignment. The zero-length array
 //! at offset `S` gives the value that alignment without adding a byte, and
 //! the tag stays field 0, where the product layout has it too.
 //!
@@ -52,12 +53,14 @@ pub(super) fn emit_union_declarations(
     };
     let layout = crate::target::union_enum_layout(target, program, nominal.id())
         .map_err(BackendFailure::TargetLayout)?;
+    let tag_ty = enum_tag_type(nominal)?;
+    let tag_bytes = u64::from(enum_tag_width(nominal)?.div_ceil(8));
     for variant in variants
         .iter()
         .filter(|variant| !variant.fields().is_empty())
     {
         let mut references = References::default();
-        let mut body = String::from("{ i32");
+        let mut body = format!("{{ {tag_ty}");
         for field in variant.fields() {
             body.push_str(", ");
             body.push_str(&llvm_type_with_references(
@@ -72,7 +75,7 @@ pub(super) fn emit_union_declarations(
     let payload = layout
         .handler_offset()
         .unwrap_or(layout.size())
-        .checked_sub(4)
+        .checked_sub(tag_bytes)
         .ok_or(BackendFailure::InvalidIr)?;
     let aligning = view_name(nominal, layout.aligning_variant());
     let body = if let Some(offset) = layout.handler_offset() {
@@ -83,9 +86,9 @@ pub(super) fn emit_union_declarations(
             .size()
             .checked_sub(offset + bytes)
             .ok_or(BackendFailure::InvalidIr)?;
-        format!("{{ i32, [{payload} x i8], [{bytes} x i8], [{tail} x i8], [0 x %{aligning}] }}")
+        format!("{{ {tag_ty}, [{payload} x i8], [{bytes} x i8], [{tail} x i8], [0 x %{aligning}] }}")
     } else {
-        format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}")
+        format!("{{ {tag_ty}, [{payload} x i8], [0 x %{aligning}] }}")
     };
     let mut references = References::default();
     references.types.insert(aligning);

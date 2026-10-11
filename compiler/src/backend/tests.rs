@@ -1000,7 +1000,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let llvm = emit(source);
     assert!(llvm.contains("switch i1"));
-    assert!(llvm.contains("switch i32"));
+    assert!(llvm.contains("switch i8"));
     // compiler/payload-enum-layout: `Payload`'s product, the tag and four
     // payload leaves, does not return in registers, so it is a union of
     // variant views; `Compact`'s tag and two leaves do, so it keeps the
@@ -1009,13 +1009,13 @@ fn main() -> status: std::process::ExitStatus pure {
     let compact = nominal_type("Compact");
     assert!(
         llvm.lines().any(|line| {
-            line.starts_with(&format!("{payload} = type {{ i32, ["))
+            line.starts_with(&format!("{payload} = type {{ i8, ["))
                 && line.contains(" x i8], [0 x ")
         }),
         "{llvm}"
     );
     assert!(
-        llvm.contains(&format!("{compact} = type {{ i32, i32, i64 }}")),
+        llvm.contains(&format!("{compact} = type {{ i8, i32, i64 }}")),
         "{llvm}"
     );
     // The address one `getelementptr inbounds` into `ty` at `field` defines.
@@ -1028,7 +1028,7 @@ fn main() -> status: std::process::ExitStatus pure {
         })
     };
     // Every constructor initializes the complete result, then stores its
-    // `i32` tag at field 0 and each selected payload field with its own type.
+    // `i8` tag at field 0 and each selected payload field with its own type.
     let initialized = |body: &str, ty: &str, tag: u32, fields: &[(String, &str)]| {
         assert!(
             body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
@@ -1039,7 +1039,7 @@ fn main() -> status: std::process::ExitStatus pure {
         let tag_address = field_address(body, ty, 0).expect("the tag has a destination at field 0");
         assert!(
             body.lines()
-                .any(|line| line.trim() == format!("store i32 {tag}, ptr {tag_address}")),
+                .any(|line| line.trim() == format!("store i8 {tag}, ptr {tag_address}")),
             "the tag is initialized with its width: {body}"
         );
         for (address, field_type) in fields {

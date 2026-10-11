@@ -1125,22 +1125,23 @@ fn emit_enum_cleanup_body(
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
     let ty = IrType::Nominal(nominal);
+    let tag_ty = super::enum_tag_type(program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?)?;
     {
         output.open_block("entry".to_string());
         // The tag is at offset 0 in every enum layout.
         if by_address {
-            writeln!(output, "  %tag = load i32, ptr %value")
+            writeln!(output, "  %tag = load {tag_ty}, ptr %value")
         } else {
             writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
         }
         .map_err(|_| BackendFailure::TextEmission)?;
     };
-    writeln!(output, "  switch i32 %tag, label %invalid [")
+    writeln!(output, "  switch {tag_ty} %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
     for variant in variants {
         writeln!(
             output,
-            "    i32 {}, label %variant.{}",
+            "    {tag_ty} {}, label %variant.{}",
             variant.tag(),
             variant.tag()
         )

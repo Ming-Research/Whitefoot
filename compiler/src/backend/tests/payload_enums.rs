@@ -86,6 +86,44 @@ struct SlabHandle {
   generation: u64;
 }
 
+enum HaloCell {
+  HaloA(first: u8, second: u8, third: u8, word: u32);
+  HaloB(first: u8, second: u8, third: u8, word: u32);
+}
+
+fn halo_word(cell: &HaloCell) -> result: u32 reads(cell) {
+  match cell^ {
+    HaloA(first: a, second: b, third: c, word: w) => {
+      if a^ != 129_u8 {
+        return 0_u32;
+      }
+      if b^ != 193_u8 {
+        return 0_u32;
+      }
+      if c^ != 251_u8 {
+        return 0_u32;
+      }
+      return w^;
+    }
+    HaloB(first: a, second: b, third: c, word: w) => {
+      if a^ != 131_u8 {
+        return 0_u32;
+      }
+      if b^ != 197_u8 {
+        return 0_u32;
+      }
+      if c^ != 253_u8 {
+        return 0_u32;
+      }
+      return w^;
+    }
+  }
+}
+
+fn halo_cell() -> result: HaloCell pure {
+  return HaloCell::HaloA(first: 129_u8, second: 193_u8, third: 251_u8, word: 305419896_u32);
+}
+
 fn component(code: u32) -> result: Component pure {
   return Component::Delim(code_point: code);
 }
@@ -118,6 +156,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let third = written(value: 3_u64);
   let fourth = small(value: 4_u64);
   let fifth = pair(value: 5_u64);
+  let first_cell = halo_cell();
+  let cells = array_filled::<HaloCell, 2>(value: first_cell);
+  let second_cell = HaloCell::HaloB(first: 131_u8, second: 197_u8, third: 253_u8, word: 2271560481_u32);
+  set cells[1_u64] = second_cell;
+  let first_word = halo_word(cell: &cells[0_u64]);
+  let second_word = halo_word(cell: &cells[1_u64]);
+  if first_word != 305419896_u32 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_word != 2271560481_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -144,18 +194,29 @@ fn sequence(fields: impl IntoIterator<Item = (u64, u64)>) -> (u64, u64) {
     (size.next_multiple_of(align), align)
 }
 
-const TAG: (u64, u64) = (4, 4);
+// Independent of target::enum_tag_width: these are the approved count
+// boundaries, not values obtained from the layout implementation under test.
+fn payload_tag(variants: usize) -> (u64, u64) {
+    let bytes = match variants {
+        0..=256 => 1,
+        257..=65536 => 2,
+        _ => 4,
+    };
+    (bytes, bytes)
+}
 
 /// Every enum with a payload in `program`: its link name, its selected
 /// layout, its product layout (the tag followed by every variant's fields,
 /// with nested enums in their own selected layouts), and each payload
 /// variant's view (the tag followed by that variant's fields).
 struct EnumLayout {
+    name: String,
     link: String,
     union: bool,
     selected: (u64, u64),
     product: (u64, u64),
     views: Vec<(u32, (u64, u64))>,
+    tag_bytes: u64,
 }
 
 fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
@@ -168,8 +229,9 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
             continue;
         }
         let field = |ty: IrType| selected(program, ty);
+        let tag = payload_tag(variants.len());
         let product = sequence(
-            std::iter::once(TAG).chain(
+            std::iter::once(tag).chain(
                 variants
                     .iter()
                     .flat_map(|variant| variant.fields())
@@ -181,19 +243,21 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
             .filter(|variant| !variant.fields().is_empty())
             .map(|variant| {
                 let view = sequence(
-                    std::iter::once(TAG)
+                    std::iter::once(tag)
                         .chain(variant.fields().iter().map(|declared| field(declared.ty()))),
                 );
                 (variant.tag(), view)
             })
             .collect();
         layouts.push(EnumLayout {
+            name: nominal.name().to_owned(),
             link: nominal.link_name().to_owned(),
             union: is_union_enum(program.nominals(), program.elements(), nominal.id())
                 .expect("eligibility"),
             selected: selected(program, IrType::Nominal(nominal.id())),
             product,
             views,
+            tag_bytes: tag.0,
         });
     }
     layouts
@@ -252,6 +316,7 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
         // Register-returned products keep their layout.
         assert_eq!(result_layout(program, "small"), ((16, 8), false));
         assert_eq!(result_layout(program, "pair"), ((24, 8), false));
+        assert_eq!(result_layout(program, "halo_cell"), ((8, 4), true));
         let written = program
             .functions()
             .iter()
@@ -281,7 +346,7 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
                 let expected = (
                     size.expect("payload view")
                         .next_multiple_of(layout.selected.1),
-                    align.expect("payload view").max(4),
+                    align.expect("payload view").max(layout.tag_bytes),
                 );
                 assert_eq!(layout.selected, expected, "{}", layout.link);
             } else {
@@ -312,20 +377,50 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
         if layout.union {
             assert_eq!(
                 declaration.split(", ").nth(1),
-                Some(format!("[{} x i8]", layout.selected.0 - 4).as_str()),
+                Some(format!("[{} x i8]", layout.selected.0 - layout.tag_bytes).as_str()),
                 "{declaration}"
             );
         } else {
             assert!(!declaration.contains(" x i8], [0 x "), "{declaration}");
         }
     }
-    assert_llvm_layouts(&llvm, probes);
+    let halo = layouts.iter().find(|layout| layout.name == "HaloCell")
+        .expect("the two-variant Halo-shaped union is emitted");
+    for variant in 0..2 {
+        assert!(llvm.contains(&format!(
+            "%wf.t.{}.v{variant} = type {{ i8, i8, i8, i8, i32 }}", halo.link
+        )), "{llvm}");
+    }
+    let mut offsets = Vec::new();
+    for variant in 0..2 {
+        for (field, expected) in [0, 1, 2, 3, 4].into_iter().enumerate() {
+            offsets.push((format!(
+                "i64 ptrtoint (ptr getelementptr (%wf.t.{}.v{variant}, ptr null, i32 0, i32 {field}) to i64)",
+                halo.link
+            ), expected));
+        }
+    }
+    offsets.push((format!(
+        "i64 ptrtoint (ptr getelementptr ([2 x %wf.t.{}], ptr null, i32 0, i32 1) to i64)",
+        halo.link
+    ), 8));
+    assert_llvm_layouts_and_offsets(&llvm, probes, offsets);
 }
 
 /// Run the program and observe LLVM DataLayout's size and alignment constants
 /// in the same executable. Shared with handler-word layout coverage.
 pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64)>) {
-    let entries: Vec<_> = probes
+    assert_llvm_layouts_and_offsets(llvm, probes, Vec::new());
+}
+
+/// Observe field offsets and array strides in the existing layout executable,
+/// so a consistent wrong representation still fails the independent constants.
+pub(super) fn assert_llvm_layouts_and_offsets(
+    llvm: &str,
+    probes: BTreeMap<String, (u64, u64)>,
+    offsets: Vec<(String, u64)>,
+) {
+    let mut entries: Vec<_> = probes
         .keys()
         .flat_map(|name| {
             [
@@ -336,6 +431,7 @@ pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64
             ]
         })
         .collect();
+    entries.extend(offsets.iter().map(|(expression, _)| expression.clone()));
     let module = format!(
         "{llvm}\n@wf_test_layouts = constant [{} x i64] [{}]\n",
         entries.len(),
@@ -361,10 +457,11 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         .lines()
         .map(|line| line.parse().expect("one decimal per line"))
         .collect();
-    let expected: Vec<u64> = probes
+    let mut expected: Vec<u64> = probes
         .values()
         .flat_map(|(size, align)| [*size, *align])
         .collect();
+    expected.extend(offsets.iter().map(|(_, expected)| *expected));
     assert!(
         output.status.code() == Some(0) && measured == expected,
         "program result and LLVM layouts: {output:?}; measured {measured:?}, expected {expected:?}; types {:?}",

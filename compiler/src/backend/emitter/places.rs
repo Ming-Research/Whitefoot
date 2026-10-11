@@ -416,7 +416,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrNominalKind::Enum { variants } => {
                 fields.push((
                     IrType::Integer {
-                        width: 32,
+                        width: enum_tag_width(self.nominal(nominal)?)?,
                         signed: false,
                     },
                     false,
@@ -518,8 +518,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let destination = self.value_place(result)?;
         self.initialize_construction(ty, &destination, tag)?;
         if let Some(tag) = tag {
+            let IrType::Nominal(nominal) = ty else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let tag_ty = enum_tag_type(self.nominal(nominal)?)?;
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
-            writeln!(self.output, "  store i32 {tag}, ptr {address}")
+            writeln!(self.output, "  store {tag_ty} {tag}, ptr {address}")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(destination)

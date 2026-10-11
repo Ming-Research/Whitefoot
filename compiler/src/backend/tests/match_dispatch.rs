@@ -658,11 +658,7 @@ fn known_steps_leave_the_cursor_s_run_in_the_enclosing_function() {
     );
 }
 
-#[test]
-fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
-    // A tag-only enum of two variants has a one-bit tag, which must index
-    // the table as 0 or 1, never as -1. Ten alternating steps add 25.
-    let source = r#"alias ExitStatus = std::process::ExitStatus;
+const PARITY_TABLE: &str = r#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 enum Parity {
@@ -704,16 +700,58 @@ fn run(steps: u64, first: Parity) -> r: u64 pure {
   }
 }
 
+fn same_parity(left: Parity, right: Parity) -> result: Bool pure {
+  return left == right;
+}
+
+fn different_parity(left: Parity, right: Parity) -> result: Bool pure {
+  return left != right;
+}
+
+fn parity_kind(value: &Parity) -> result: u8 reads(value) {
+  match value^ {
+    Even() => {
+      return 0_u8;
+    }
+    Odd() => {
+      return 1_u8;
+    }
+  }
+}
+
 fn main() -> status: ExitStatus pure {
   let first = Parity::Even();
-  let r = run(steps: 10_u64, first: first);
+  let high = Parity::Odd();
+  let held = array_filled::<Parity, 2>(value: first);
+  set held[1_u64] = high;
+  let kind = parity_kind(value: &held[1_u64]);
+  if kind != 1_u8 {
+    return exit_status(code: 2_u8);
+  }
+  let equal = same_parity(left: held[1_u64], right: high);
+  let unequal = different_parity(left: held[0_u64], right: high);
+  if equal {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  if unequal {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  let r = run(steps: 10_u64, first: high);
   if r == 25_u64 {
     return exit_status(code: 0_u8);
   }
   return exit_status(code: 1_u8);
 }
 "#;
-    let module = emit(source.as_bytes());
+
+#[test]
+fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
+    // A tag-only enum of two variants has a one-bit tag, which must index
+    // the table as 0 or 1, never as -1. Ten alternating steps add 25.
+
+    let module = emit(PARITY_TABLE.as_bytes());
     assert_split(&module, "wf_run", 2);
     let dispatch = definition(&module, "wf_run.dispatch");
     assert!(
@@ -722,6 +760,90 @@ fn main() -> status: ExitStatus pure {
     );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+/// Expand the checked two-state fixture in IR, keeping dense declarations and
+/// exhaustive matches. All added variants share Even's existing block, so
+/// dispatch still has two arms rather than thousands of copies of one arm.
+/// This isolates representation from the cost of parsing/checking a large enum.
+fn high_tag_program(high: u32) -> crate::IrProgram {
+    super::system::with_ir(PARITY_TABLE.as_bytes(), |original| {
+        let mut program = original.clone();
+        let id = program.nominals.iter().find(|n| n.name() == "Parity").unwrap().id();
+        let nominal = &mut program.nominals[id.index()];
+        nominal.kind = crate::IrNominalKind::Enum {
+            variants: (0..=high).map(|tag| crate::IrVariant {
+                tag,
+                fields: Vec::new(),
+            }).collect(),
+        };
+        // OP-9 remains four bytes for every tag-only enum with >2 variants.
+        program.nominal_ceilings[id.index()] = crate::IrLayoutCeiling {
+            size: crate::IrLayoutMagnitude::Finite(4),
+            align: 4,
+            stride: crate::IrLayoutMagnitude::Finite(4),
+        };
+        for function in &mut program.functions {
+            for block in &mut function.blocks {
+                for instruction in &mut block.instructions {
+                    if let crate::IrInstruction::Define {
+                        operation: crate::IrOperation::ConstructEnum { nominal, variant, .. },
+                        ..
+                    } = instruction
+                    {
+                        if *nominal == id {
+                            *variant = if *variant == 0 { high - 1 } else { high };
+                        }
+                    }
+                }
+                if let crate::IrTerminator::Match {
+                    enum_type: crate::IrEnumType::Nominal(matched), targets, ..
+                } = &mut block.terminator
+                {
+                    if *matched == id {
+                        assert_eq!(targets.len(), 2, "the source has two exhaustive arms");
+                        let even = targets.iter().find(|t| t.tag == 0).unwrap().block;
+                        let odd = targets.iter().find(|t| t.tag == 1).unwrap().block;
+                        *targets = (0..=high).map(|tag| crate::IrMatchTarget {
+                            tag,
+                            block: if tag == high { odd } else { even },
+                        }).collect();
+                    }
+                }
+            }
+        }
+        program
+    })
+}
+
+#[test]
+fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
+    for (high, width) in [(128, 8), (32768, 16)] {
+        let program = high_tag_program(high);
+        let module = crate::emit_llvm(&program).expect("dense high-tag enums emit").into_string();
+        assert_split(&module, "wf_run", 2);
+        let dispatch = definition(&module, "wf_run.dispatch");
+        assert!(dispatch.contains(&format!("zext i{width} ")), "{dispatch}");
+        assert!(!dispatch.contains(&format!("sext i{width} ")), "{dispatch}");
+        let main = emitted_body(&module, "main");
+        assert!(main.contains(&format!("or i{width} 0, {high}")), "{main}");
+        assert!(main.contains(&format!("store i{width} ")), "{main}");
+        let kind = emitted_body(&module, "parity_kind");
+        assert!(kind.contains(&format!("load i{width},")), "{kind}");
+        assert!(kind.contains(&format!("switch i{width} ")), "{kind}");
+        assert!(kind.contains(&format!("i{width} {high}, label")), "{kind}");
+        for (name, predicate) in [("same_parity", "eq"), ("different_parity", "ne")] {
+            let body = emitted_body(&module, name);
+            assert!(body.contains(&format!("icmp {predicate} i{width} ")), "{body}");
+        }
+        // Only the 129-variant module is sent to clang. The 32769-variant
+        // module has emission assertions, avoiding a large native build while
+        // detecting truncation and signed table indexing at the i16 boundary.
+        if high == 128 {
+            let output = compile_and_run(&module);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+        }
+    }
 }
 
 /// A two-arm loop over thirty `u64` values. With `changing`, every arm adds
@@ -1473,16 +1595,16 @@ fn continue_edges_to_a_header_match_split_into_handlers() {
     }
 }
 
-/// A 12-byte union inside a 28-byte product ceiling: one word makes 20,
-/// two words make 28, three cannot fit. Tags deliberately differ from arm
+/// An 8-byte union inside an unchanged 28-byte product ceiling: one word
+/// makes 16, two words make 24, three cannot fit. Tags deliberately differ from arm
 /// order. Copying Add, then replacing that copy with Sub must compute 18.
 const HANDLER_CELLS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 enum Cell {
-  Halt(value: u32, extra: u8);
-  Add(value: u32, extra: u8);
-  Sub(value: u32, extra: u8);
+  Halt(first: u8, second: u8, extra: u8, value: u32);
+  Add(first: u8, second: u8, extra: u8, value: u32);
+  Sub(first: u8, second: u8, extra: u8, value: u32);
 }
 
 fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
@@ -1495,7 +1617,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
     invariant bound: pc < n
   ) {
     match code^.inner[pc] {
-      Add(value: v, extra: e) => {
+      Add(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         set acc = acc +wrap amount;
@@ -1506,7 +1628,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         }
         return 0_u32;
       }
-      Sub(value: v, extra: e) => {
+      Sub(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         set acc = acc -wrap amount;
@@ -1517,7 +1639,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         }
         return 0_u32;
       }
-      Halt(value: v, extra: e) => {
+      Halt(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         return acc +wrap amount;
@@ -1527,7 +1649,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
 }
 
 fn make_add() -> result: Cell pure {
-  return Cell::Add(value: 7_u32, extra: 2_u8);
+  return Cell::Add(first: 131_u8, second: 197_u8, extra: 2_u8, value: 7_u32);
 }
 
 fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
@@ -1536,13 +1658,13 @@ fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
 
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
-    Add(value: v, extra: e) => {
+    Add(extra: e, value: v, ..) => {
       return 1_u32;
     }
-    Sub(value: v, extra: e) => {
+    Sub(extra: e, value: v, ..) => {
       return 2_u32;
     }
-    Halt(value: v, extra: e) => {
+    Halt(extra: e, value: v, ..) => {
       return 3_u32;
     }
   }
@@ -1561,10 +1683,10 @@ fn main() -> status: ExitStatus pure {
   let copied = copy_cell(cell: &first);
   push(code: &code, cell: copied);
   push(code: &code, cell: first);
-  let third = Cell::Halt(value: 10_u32, extra: 3_u8);
+  let third = Cell::Halt(first: 131_u8, second: 197_u8, extra: 3_u8, value: 10_u32);
   push(code: &code, cell: third);
   if code.inner.len == 3_u64 {
-    let replacement = Cell::Sub(value: 3_u32, extra: 1_u8);
+    let replacement = Cell::Sub(first: 131_u8, second: 197_u8, extra: 1_u8, value: 3_u32);
     set code.inner[1_u64] = replacement;
     let kind = tag(cell: &code.inner[1_u64]);
     let result = run(code: &code);
@@ -1594,7 +1716,9 @@ fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
     assert!(dispatch.lines().next().unwrap().contains(&format!("ptr {place}")), "{dispatch}");
     assert!(dispatch.lines().any(|line| line.contains("musttail call ")
         && line.contains(&format!(" {handler}("))), "{dispatch}");
-    assert!(!dispatch.contains("load i32"), "{dispatch}");
+    for width in [1, 8, 16, 32] {
+        assert!(!dispatch.contains(&format!("load i{width},")), "{dispatch}");
+    }
     assert!(!dispatch.contains("x ptr]"), "{dispatch}");
     assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
     assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
@@ -1610,11 +1734,26 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         let cell = selected.nominals().iter().find(|n| n.name() == "Cell").unwrap();
         let layout = crate::target::union_enum_layout(target, selected, cell.id()).unwrap();
         assert_eq!((layout.size(), layout.handler_offset(), layout.handler_alignment()),
-            (20, Some(12), Some(4)));
+            (16, Some(8), Some(4)));
+        // The same shape with exactly two payload variants has OP-9 ceiling
+        // 20 rather than 28, and still admits one word in a 16-byte value.
+        // This is a layout-only nominal probe; no altered function is emitted.
+        let mut halo_two = selected.clone();
+        if let crate::IrNominalKind::Enum { variants } = &mut halo_two.nominals[cell.id().index()].kind {
+            variants.truncate(2);
+        }
+        halo_two.nominal_ceilings[cell.id().index()] = crate::IrLayoutCeiling {
+            size: crate::IrLayoutMagnitude::Finite(20), align: 4,
+            stride: crate::IrLayoutMagnitude::Finite(20),
+        };
+        let two = crate::target::union_enum_layout(target, &halo_two, cell.id()).unwrap();
+        assert_eq!((two.size(), two.handler_offset(), two.handler_alignment()),
+            (16, Some(8), Some(4)));
+        assert!(crate::target::threaded_enum_fits(target, &halo_two, cell.id()).unwrap());
         (format!("wf.t.{}", cell.link_name()), super::payload_enums::enum_layout_probes(selected))
     });
     let module = emit(HANDLER_CELLS);
-    assert_handler_load(&module, "wf_run", 12, 4);
+    assert_handler_load(&module, "wf_run", 8, 4);
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
     let copied = emitted_body(&module, "copy_cell");
@@ -1623,16 +1762,16 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     let main = emitted_body(&module, "main");
     assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
     let tag = emitted_body(&module, "tag");
-    assert!(tag.contains("load i32") && tag.contains("switch i32"), "{tag}");
+    assert!(tag.contains("load i8") && tag.contains("switch i8"), "{tag}");
     assert!(!tag.contains("load ptr"), "an ordinary match reads only the tag: {tag}");
     assert!(module.contains(&format!(
-        "%{ty} = type {{ i32, [8 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
+        "%{ty} = type {{ i8, [7 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
     )), "{module}");
     // Fixed layout constants plus LLVM DataLayout and the program's result
     // distinguish a coherent wrong layout from the approved representation.
-    probes.insert(ty.clone(), (20, 4));
+    probes.insert(ty.clone(), (16, 4));
     for tag in 0..3 {
-        probes.insert(format!("{ty}.v{tag}"), (12, 4));
+        probes.insert(format!("{ty}.v{tag}"), (8, 4));
     }
     super::payload_enums::assert_llvm_layouts(&module, probes);
 }
@@ -1649,10 +1788,10 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         two.functions.push(other.clone());
         let prepared = crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
         let layout = crate::target::union_enum_layout(target, &prepared.program, cell).unwrap();
-        assert_eq!((layout.size(), layout.handler_offset()), (28, Some(12)));
+        assert_eq!((layout.size(), layout.handler_offset()), (24, Some(8)));
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
-        assert_handler_load(&module, "wf_run", 12, 4);
-        assert_handler_load(&module, "wf_other_run", 20, 4);
+        assert_handler_load(&module, "wf_run", 8, 4);
+        assert_handler_load(&module, "wf_other_run", 16, 4);
         let made = emitted_body(&module, "make_add");
         assert!(made.contains("store ptr @wf_run.arm.0,")
             && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");

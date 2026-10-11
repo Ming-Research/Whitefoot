@@ -348,8 +348,8 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
     }
 }
 
-/// One IR-only compilation covers recursive layout selection and the
-/// unchanged inactive-payload and ordinary-Array initialization boundaries.
+/// One compilation covers recursive layout selection and initialization
+/// boundaries; its native run checks the shifted byte/window sentinels.
 #[test]
 fn aggregate_construction_omits_only_copied_window_fields() {
     let source = br#"struct Holder {
@@ -381,6 +381,24 @@ enum Choice {
 struct Plain {
   values: Array<u64, 2>;
   marker: u64;
+}
+
+struct BytePrefix {
+  first: u8;
+  second: u8;
+  third: u8;
+  fourth: u8;
+  fifth: u8;
+}
+
+enum ByteChoice {
+  ByteActive(prefix: BytePrefix, value: Slots<u8, 4>, suffix: u8);
+  ByteOther(bytes: Array<u8, 32>);
+}
+
+fn byte_choice(value: Slots<u8, 4>) -> result: ByteChoice pure {
+  let prefix = BytePrefix(first: 129_u8, second: 193_u8, third: 251_u8, fourth: 131_u8, fifth: 197_u8);
+  return ByteChoice::ByteActive(prefix: prefix, value: move value, suffix: 253_u8);
 }
 
 fn holder() -> result: Holder pure {
@@ -420,7 +438,45 @@ fn plain() -> result: Plain pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
+  let bytes = slots_new::<u8, 4>();
+  place_back(window: &bytes, value: 171_u8);
+  place_back(window: &bytes, value: 173_u8);
+  let packed = byte_choice(value: move bytes);
+  match move packed {
+    ByteActive(prefix: p, value: v, suffix: s) => {
+      if p.first != 129_u8 {
+        return std::process::exit_status(code: 1_u8);
+      }
+      if p.second != 193_u8 {
+        return std::process::exit_status(code: 2_u8);
+      }
+      if p.third != 251_u8 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      if p.fourth != 131_u8 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if p.fifth != 197_u8 {
+        return std::process::exit_status(code: 5_u8);
+      }
+      if s != 253_u8 {
+        return std::process::exit_status(code: 6_u8);
+      }
+      if v.len == 2_u64 {
+        if v[0_u64] != 171_u8 {
+          return std::process::exit_status(code: 7_u8);
+        }
+        if v[1_u64] != 173_u8 {
+          return std::process::exit_status(code: 8_u8);
+        }
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 9_u8);
+    }
+    ByteOther(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+  }
 }
 "#;
     let module = compile(source);
@@ -441,7 +497,21 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     assert_eq!(zero_stores("outer"), ["store i64 zeroinitializer"]);
     assert_eq!(zero_stores("many"), ["store i64 zeroinitializer"]);
-    assert_eq!(zero_stores("product"), ["store i32 zeroinitializer"]);
+    assert_eq!(zero_stores("product"), ["store i8 zeroinitializer"]);
+    // A byte tag and five prefix bytes put the copied window at [8, 24).
+    // A stale synthetic u32 tag instead puts it at [16, 32), so these
+    // intervals discriminate the initializer's layout from target emission.
+    assert_eq!(
+        zero_stores("byte_choice"),
+        ["store [8 x i8] zeroinitializer", "store [16 x i8] zeroinitializer"]
+    );
+    let byte_choice = emitted_body(&module, "byte_choice");
+    for offset in [0, 24] {
+        assert!(byte_choice.lines().any(|line| {
+            line.contains("getelementptr inbounds i8, ptr %wf.result")
+                && line.ends_with(&format!(", i64 {offset}"))
+        }), "{byte_choice}");
+    }
     // The union is 520 bytes (tag, padding, 64 u64s). Its active window
     // occupies [16, 280): retain both the prefix and all inactive suffix.
     assert_eq!(
@@ -466,6 +536,8 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(stores.len(), 1, "{name}: {stores:?}");
         assert!(stores[0].starts_with("store %wf.t."), "{name}: {stores:?}");
     }
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
 /// A take changes the descriptor even when no element bytes exist. Ring's

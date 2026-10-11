@@ -389,6 +389,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         inserts: Vec<(usize, Option<IrValueId>)>,
     ) -> Result<(), BackendFailure> {
         let aggregate_ty = self.output.type_name(self.program, ty)?;
+        let IrType::Nominal(nominal) = ty else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let tag_ty = enum_tag_type(self.nominal(nominal)?)?;
         let mut base = "zeroinitializer".to_owned();
         let total = inserts.len();
         for (ordinal, (index, value)) in inserts.into_iter().enumerate() {
@@ -417,7 +421,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 None => {
                     writeln!(
                         self.output,
-                        "  {output} = insertvalue {aggregate_ty} {base}, i32 {tag}, {index}"
+                        "  {output} = insertvalue {aggregate_ty} {base}, {tag_ty} {tag}, {index}"
                     )
                     .map_err(|_| BackendFailure::TextEmission)?;
                 }

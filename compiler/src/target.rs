@@ -37,6 +37,22 @@ pub(crate) enum TargetLayoutFailure {
     Unrepresentable(TargetObject),
 }
 
+/// Physical discriminant width for dense semantic tags `0..variant_count`.
+/// Payload tags use whole bytes; equivalent two-state scalar enums keep i1.
+/// Counts above the semantic u32 tag domain cannot describe valid enum IR.
+pub(crate) fn enum_tag_width(
+    variant_count: u64,
+    tag_only: bool,
+) -> Result<u8, TargetLayoutFailure> {
+    match variant_count {
+        0..=2 if tag_only => Ok(1),
+        0..=256 => Ok(8),
+        257..=65536 => Ok(16),
+        65537..=4294967296 => Ok(32),
+        _ => Err(TargetLayoutFailure::InvalidIr),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TargetLayout {
     triple: &'static str,
@@ -484,7 +500,7 @@ pub(super) fn paged_geometry(
 
 /// The selected-target layout of one union-laid-out enum
 /// (compiler/payload-enum-layout): the value's size and alignment, and each
-/// variant's view, the `i32` tag followed by that variant's fields.
+/// variant's view, the count-sized tag followed by that variant's fields.
 struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
@@ -840,7 +856,7 @@ impl<'types> ReturnLeaves<'types> {
                     }
                     // `{ i128, i128 }`: each `i128` takes two words.
                     IrNominalKind::Opaque => self.integer(copies, 4),
-                    // `i1` or `i32`.
+                    // A count-sized scalar tag occupies one register.
                     IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => {
                         self.integer(copies, 1);
                     }
@@ -869,7 +885,7 @@ impl<'types> ReturnLeaves<'types> {
         Ok(())
     }
 
-    /// The `i32` tag, then every variant's fields in order.
+    /// The count-sized tag, then every variant's fields in order.
     fn product_enum(
         &mut self,
         variants: &[crate::IrVariant],
@@ -1668,10 +1684,14 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            if variants.len() <= 2 {
-                Layout { size: 1, align: 1 }
-            } else {
-                Layout { size: 4, align: 4 }
+            let width = enum_tag_width(
+                u64::try_from(variants.len()).map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                true,
+            )?;
+            let bytes = u64::from(width.div_ceil(8));
+            Layout {
+                size: bytes,
+                align: bytes,
             }
         } else if is_union_enum(self.nominals, self.elements, id)? {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
@@ -1687,7 +1707,11 @@ impl<'types> LayoutComputer<'types> {
                 } => fields.extend(declarations.iter().map(|field| field.ty())),
                 IrNominalKind::Enum { variants } => {
                     fields.push(IrType::Integer {
-                        width: 32,
+                        width: enum_tag_width(
+                            u64::try_from(variants.len())
+                                .map_err(|_| TargetLayoutFailure::InvalidIr)?,
+                            false,
+                        )?,
                         signed: false,
                     });
                     fields.extend(
@@ -1714,20 +1738,24 @@ impl<'types> LayoutComputer<'types> {
     }
 
     /// compiler/payload-enum-layout: every variant on its own as the
-    /// sequence of the `i32` tag and its fields, the value sized and aligned
-    /// for the largest and most aligned of them. A fieldless variant's view
+    /// sequence of the count-sized tag and its fields, the value sized and
+    /// aligned for the largest and most aligned of them. A fieldless variant's view
     /// is the tag alone. A nested enum field takes its own selected layout.
     fn union_layout(
         &mut self,
         variants: &[crate::IrVariant],
         words: u32,
     ) -> Result<UnionLayout, TargetLayoutFailure> {
+        let tag_width = enum_tag_width(
+            u64::try_from(variants.len()).map_err(|_| TargetLayoutFailure::InvalidIr)?,
+            false,
+        )?;
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
         let mut align = 1_u64;
         for variant in variants {
             let mut fields = vec![IrType::Integer {
-                width: 32,
+                width: tag_width,
                 signed: false,
             }];
             fields.extend(variant.fields().iter().map(|field| field.ty()));
@@ -1843,5 +1871,48 @@ fn as_object(failure: TargetLayoutFailure, object: TargetObject) -> TargetLayout
     match failure {
         TargetLayoutFailure::Unrepresentable(_) => TargetLayoutFailure::Unrepresentable(object),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod enum_tag_tests {
+    use super::{TargetLayoutFailure, enum_tag_width};
+
+    #[test]
+    fn tag_width_covers_every_dense_tag_without_widening_early() {
+        let cases = [
+            (0, 8, 1),
+            (1, 8, 1),
+            (2, 8, 1),
+            (3, 8, 8),
+            (255, 8, 8),
+            (256, 8, 8),
+            (257, 16, 16),
+            (65535, 16, 16),
+            (65536, 16, 16),
+            (65537, 32, 32),
+            (4294967295, 32, 32),
+            (4294967296, 32, 32),
+        ];
+        for (count, payload, scalar) in cases {
+            assert_eq!(
+                enum_tag_width(count, false),
+                Ok(payload),
+                "payload count {count}"
+            );
+            assert_eq!(
+                enum_tag_width(count, true),
+                Ok(scalar),
+                "scalar count {count}"
+            );
+        }
+        for count in [4294967297, u64::MAX] {
+            for tag_only in [false, true] {
+                assert_eq!(
+                    enum_tag_width(count, tag_only),
+                    Err(TargetLayoutFailure::InvalidIr)
+                );
+            }
+        }
     }
 }
