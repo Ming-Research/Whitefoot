@@ -587,9 +587,13 @@ driver-count-test: $(COMPLETION_TMP)/driver-count-test
 		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
 			echo "driver count io_uring: unavailable on this host (not native evidence)"; \
 		else exit $$status; fi
+	@# Install capture redirections inside the exec'd child: the recipe shell's
+	@# signal annotation belongs in the CI log, outside byte-exact runtime stderr.
 	@$(NO_CORE_DUMPS) for mode in wake-refused ring-refused callback-refused; do \
-		status=0; $(NATIVE_REQUIREMENT) "$(COMPLETION_TMP)/driver-count-test" "$$mode" \
-			> "$(COMPLETION_TMP)/driver-count.out" 2> "$(COMPLETION_TMP)/driver-count.err" || status=$$?; \
+		echo "driver-count-test: $$mode"; \
+		status=0; $(NATIVE_REQUIREMENT) sh -c 'exec "$$1" "$$2" > "$$3" 2> "$$4"' \
+			driver-count-refusal "$(COMPLETION_TMP)/driver-count-test" "$$mode" \
+			"$(COMPLETION_TMP)/driver-count.out" "$(COMPLETION_TMP)/driver-count.err" || status=$$?; \
 		if [ $$status -eq 77 ] && [ "$(REQUIRE_NATIVE)" != 1 ] && [ "$${WF_REQUIRE_LINUX_IO_URING:-0}" != 1 ]; then \
 			cat "$(COMPLETION_TMP)/driver-count.err"; \
 		else \
