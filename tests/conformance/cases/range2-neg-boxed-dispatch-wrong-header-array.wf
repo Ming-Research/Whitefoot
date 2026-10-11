@@ -1,0 +1,22 @@
+fn dispatch(targets: &Box<Array<u64>>, code: &Box<Array<u8>>) -> result: u8 reads(targets), reads(code) contract {
+  requires 0_u64 < targets^.inner.len;
+  requires 0_u64 < code^.inner.len;
+  requires forall ok(j in 0_u64..targets^.inner.len): targets^.inner[j] < code^.inner.len;
+} {
+  let pc = 0_u64;
+  loop (
+    invariant inside: pc < code^.inner.len
+  ) {
+    let t = targets^.inner[pc];
+    let op = code^.inner[t];
+    if op == 0_u8 {
+      return op;
+    }
+    set pc = t;
+    continue;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
