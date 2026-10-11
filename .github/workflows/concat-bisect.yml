@@ -62,40 +62,28 @@ jobs:
           fetch-depth: 0
           submodules: true
           path: sg
-      - name: Build layout_oracle before and after #345 and compare out-of-line calls
+      - name: Snowghost IR and inlining remarks before and after #345
         working-directory: sg
         run: |
           set -euo pipefail
-          git log --oneline -1
           make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-4753d28fb4ae; do
-            # Releases from #348 on need the upgrade branch's one added read effect (Snowghost-wf#64).
-            if [ "$release" = wf-exp-4753d28fb4ae ]; then git checkout -q 15e8d4a7a2a0c9bf94ab01d7cefd8159ebd9b579 -- renderer; fi
+          OPT=$(command -v opt-22 || ls /usr/lib/llvm-22/bin/opt)
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
             echo "release = $release" > whitefoot.pin
             make -s compiler
             if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
             wfc=$(realpath build/whitefoot/$release/whitefootc)
-            (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o "$out/layout-$release")
-            (cd renderer && "$wfc" --graph modules.wfg --entry style_oracle -o "$out/style-$release")
-            for b in layout style; do
-              ls -la "$out/$b-$release"; nm "$out/$b-$release" | wc -l
-              { objdump -d --no-show-raw-insn "$out/$b-$release" | grep -oE 'call +[0-9a-f]+ <[^>+]*' || true; } \
-                | sed -E 's/call +[0-9a-f]+ <//' | sort | uniq -c | sort -k2 > "$out/calls-$b-$release.txt"
-              wc -l < "$out/calls-$b-$release.txt"
-              { nm --size-sort -S "$out/$b-$release" | grep wf_package || true; } > "$out/sizes-$b-$release.txt"
+            (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle --emit-llvm -o "$out/layout-$release.ll")
+            "$OPT" -passes='default<O2>' -pass-remarks-missed=inline -pass-remarks=inline "$out/layout-$release.ll" -o /dev/null 2> "$out/remarks-$release.txt" || echo "opt failed"
+            for f in next_glyphs set_links set_glyph_class add_scalar_piece set_glyph copy_point; do
+              echo "== $release $f"
+              grep -E "'[a-z_.]*\.$f' " "$out/remarks-$release.txt" | sed -E "s/.*' (not inlined|inlined) into '([^']*)'.*(cost=[0-9]+, threshold=[0-9]+|always inline|never inline|noinline)?.*/\1 \2 \3/" | sort | uniq -c | sort -rn | head -6
+              awk "/^define .*\\.$f\\(/,/^}/" "$out/layout-$release.ll" > "$out/ir-$f-$release.ll"
+              wc -l < "$out/ir-$f-$release.ll"
             done
           done
           git checkout -- whitefoot.pin
-          for b in layout style; do
-            echo "== $b: out-of-line calls before #345 / after #345 / Whitefoot#357 head, for callees that changed"
-            join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-$b-wf-9497f0a54fec.txt" "$out/calls-$b-wf-exp-b8cf83108946.txt" > "$out/j1-$b.txt"
-            join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1-$b.txt" "$out/calls-$b-wf-exp-4753d28fb4ae.txt" \
-              | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | sort -k7 | head -60
-            echo "== $b: callees whose out-of-line call count changed (before -> after)"
-            join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-$b-wf-9497f0a54fec.txt" "$out/calls-$b-wf-exp-b8cf83108946.txt" \
-              | awk '$2 != $3 {d=$3-$2; print (d<0?-d:d), $2, "->", $3, $1}' | sort -rn | head -40
-          done
       - uses: actions/upload-artifact@v4
         with:
           name: sg-bisect
