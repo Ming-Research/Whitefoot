@@ -251,7 +251,7 @@ impl Descriptors<'_> {
                     IrType::Window {
                         shape: kind,
                         capacity: cap,
-                        element,
+                        ..
                     } => {
                         shape = match kind {
                             IrWindowShape::Slots => 4,
@@ -273,7 +273,7 @@ impl Descriptors<'_> {
                         if kind == IrWindowShape::Paged {
                             data = crate::target::PAGED_HEADER_BYTES;
                             page =
-                                crate::target::paged_geometry(self.target, self.program, element)
+                                crate::target::paged_geometry(self.target, self.program, child)
                                     .map_err(BackendFailure::TargetLayout)?
                                     .0;
                         }

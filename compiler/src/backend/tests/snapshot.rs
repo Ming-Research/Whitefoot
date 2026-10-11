@@ -66,6 +66,7 @@ struct Values {
   dynamic_ring: Box<Ring<u32>>;
   segments: Box<Segments<u64>>;
   pages: Box<Paged<u8>>;
+  wide_pages: Box<Paged<u64>>;
   hash: std::collections::hash_map::HashMap<u32, u64, 99>;
   ordered: std::collections::ordered_map::OrderedMap<u32, u64, 99>;
   tree: Slots<Box<Node>, 1>;
@@ -108,6 +109,14 @@ fn aggregate(reserve: std::snapshot::Reserve, map: &ConcurrentHashMap<Values>, c
             !llvm.contains("declare void @wf_std.snapshot.capture_export"),
             "every instance has its supplied definition"
         );
+        let pages = llvm.lines()
+            .filter(|line| line.contains("{ i64 7, i64 36,"))
+            .collect::<Vec<_>>();
+        assert_eq!(pages.len(), 2);
+        for elements_per_page in [4096, 512] {
+            assert!(pages.iter().any(|line| line.contains(&format!("i64 {elements_per_page} }}"))),
+                "page geometry must use the u8/u64 payload stride ceiling");
+        }
         // Fields are offset/type pairs and all traversal code is in the
         // supplied native runtime; no emitted encoder can call source code.
         assert!(!llvm.contains("define void @wf.snapshot."));

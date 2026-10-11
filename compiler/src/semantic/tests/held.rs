@@ -3,6 +3,11 @@ use crate::{SemanticOutcome, SemanticRule};
 use super::{assert_accepts, assert_rule_kind, with_semantics};
 
 #[test]
+fn a_program_capture_export_item_has_no_snapshot_type_graph_constraint() {
+    assert_accepts(b"fn capture_export<T: drop>(value: T) -> result: T pure {\n  return move value;\n}\n\nfn ordinary(value: Shared<u64>) -> result: Shared<u64> pure {\n  return capture_export::<Shared<u64>>(value: move value);\n}\n");
+}
+
+#[test]
 fn forwarded_observations_retain_symbolic_and_concrete_origins() {
     let source = b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n\nfn forward(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return observe(value: value);\n}\n\nfn sample(state: &Shared<u64>) -> result: u64 reads(state) waits {\n  atomic current = &state^ {\n    return forward(value: current);\n  }\n}\n";
     with_semantics(source, |outcome| {

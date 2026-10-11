@@ -58,10 +58,19 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn is_snapshot_export(&self, declaration: DeclarationId) -> Result<bool, CheckStop> {
-        let Some((package, path)) = self.types.declarations.declaration_home(declaration) else { return Ok(false); };
-        Ok(*package == crate::PackageKey::Standard
-            && matches!(path.as_slice(), [single] if single == "snapshot")
-            && self.types.declarations.declaration_spelling(declaration)? == "capture_export")
+        // SNAP-1 qualifies the resolved PRE-2 item, never a caller's spelling
+        // or an enclosing item's name. MOD-4 aliases retain this same key.
+        let record = self.types.declarations.resolved.declaration(declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(matches!(record.key(), crate::DeclarationKey::Item(crate::ItemKey::Declared {
+            home: crate::ItemHome::Module {
+                package: crate::PackageKey::Standard,
+                path,
+                record: crate::SourceRole::Interface,
+            },
+            role: crate::DeclarationRole::Function,
+            spelling,
+        }) if path.len() == 1 && path[0] == "snapshot" && spelling == "capture_export"))
     }
 
     fn snapshot_graph(&self, node: NodeId, ty: CheckedType, path: String, seen: &mut HashSet<CheckedType>) -> Result<(), CheckStop> {
