@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
+
+Nodes: compiler/checker-facts, compiler/incremental-closure
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-c3-353-approve, which asked "approve Whitefoot #353 (head 640014c4c) and its three design decisions: the join shortcut, the conditions for sharing a proof, and delivery judging redundancy by derivability?" (translated) and quoted the three decisions verbatim.
+
+Summary: At a branch join the checker built, for every pair, a proof whose parents were all N predecessors, so doubling the arms multiplied checking time about tenfold. A join now first reuses a shared explicit proof every non-contradictory predecessor independently selects, and otherwise stops at the first contributing input that reaches the pair's implicit-only closed bound and records an implicit derivation, because every closed state already entails the implicit facts and their closure, so ENT-5's weakest common bound cannot exceed it. Bounded relation delivery judges a candidate redundant by exact derivability from implicit facts instead of by the ancestry of its chosen proofs. No program's verdict changes; on the 14900K the synthetic 640-arm sequence checks about 69 times faster, v2h is unchanged and Halo about 2% faster.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
