@@ -407,8 +407,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)\n",
-            "\n  mechanical_fix: declare the row as `reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)\n",
+            "\n  mechanical_fix: declare the row as `reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)`, which covers every access the body makes and no other\n",
         ],
         repaired: &[br#"struct Node {
   byte: u8;
@@ -416,7 +416,7 @@ fn main() -> status: std::process::ExitStatus pure {
   next: Option<Box<Node>>;
 }
 
-fn store(root: &Box<Node>, value: &u8) -> result: unit reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value) {
+fn store(root: &Box<Node>, value: &u8) -> result: unit reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value) {
   set root^.inner.byte = value^;
   match &root^.inner.next {
     Some(value: child) => {
@@ -616,7 +616,7 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("UTF-8 fixture")
         .replacen(
             "reads(root.inner.next), reads(value), writes(root.inner.byte)",
-            "reads(root.inner.next), reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)",
+            "reads(value), writes(root.inner.byte), writes(root.inner.next.Some.value)",
             1,
         );
     let refused = super::super::check(
