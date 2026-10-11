@@ -394,7 +394,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let address = self.value_name(buffer);
         let index = self.value_name(offset);
         let element_pointer = self.buffer_element_pointer(block, &address, &index)?;
-        self.load_place_result(result, ty, &element_pointer)
+        self.load_place_result(result, ty, &element_pointer, None)
     }
 
     /// Emits the proof-preserving wide probe: how many upcoming byte-walk

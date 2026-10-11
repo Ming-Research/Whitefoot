@@ -30,6 +30,7 @@ mod segments;
 mod shared;
 mod slice;
 mod storage_alias;
+mod transfers;
 mod union_enums;
 mod value_equality;
 
@@ -66,6 +67,7 @@ use parallel::{
     parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
     sequential_clone_symbol,
 };
+use transfers::{LocalTransferSources, TransferSource};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendFailure {
@@ -1607,6 +1609,7 @@ struct FunctionEmitter<'program, 'state> {
     /// pointer returned to an operation emitter.
     frame: FunctionFramePlan,
     storage: FunctionStoragePlan,
+    transfer_sources: LocalTransferSources,
     result_slot: Option<usize>,
     /// Slots of by-value parameters read in place through the pointer the
     /// caller passed, with no entry copy (compiler/storage-placement).
@@ -1768,6 +1771,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             entry_prelude: String::new(),
             frame,
             storage,
+            transfer_sources: LocalTransferSources::default(),
             result_slot,
             incoming_places: HashMap::new(),
             incoming_snapshots: IncomingSnapshots::default(),
@@ -2082,6 +2086,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        self.transfer_sources = LocalTransferSources::build(self.function, &self.incoming);
         if !declaration && !waiting && self.dispatch.is_none() {
             self.owner_alias =
                 storage_alias::OwnerAliases::build(self.owner_scopes, self.function, &self.incoming);

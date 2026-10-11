@@ -51,7 +51,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let empty = ByteOwner(bytes: move empty_bytes);
   let empty_destination = box_slots_new::<u8>(capacity: 0_u64);
   copy_owners(source: &empty, destination: &empty_destination);
-  if read_empty_owners(first: &empty.bytes, second: &empty_destination) != 0_u64 {
+  let empty_length = read_empty_owners(first: &empty.bytes, second: &empty_destination);
+  if empty_length != 0_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   return std::process::exit_status(code: 0_u8);
@@ -169,25 +170,29 @@ fn main() -> status: std::process::ExitStatus pure {
     i in 0_u64..16_u64,
     invariant length: window.inner.len == 1_u64
   ) {
-    let observed = observe_and_append(source: &window, target: &window);
-    if observed != i {
-      return std::process::exit_status(code: 1_u8);
-    }
-    if window.inner.head != i {
-      return std::process::exit_status(code: 2_u8);
-    }
-    if window.inner.len != 2_u64 {
-      return std::process::exit_status(code: 3_u8);
-    }
-    if window.inner[0_u64] != 7_u8 {
-      return std::process::exit_status(code: 4_u8);
-    }
-    if window.inner[1_u64] != 7_u8 {
-      return std::process::exit_status(code: 5_u8);
-    }
-    let removed = take_front(window: &window.inner);
-    if removed != 7_u8 {
-      return std::process::exit_status(code: 6_u8);
+    if window.inner.len < window.inner.cap {
+      let observed = observe_and_append(source: &window, target: &window);
+      if observed != i {
+        return std::process::exit_status(code: 1_u8);
+      }
+      if window.inner.head != i {
+        return std::process::exit_status(code: 2_u8);
+      }
+      if window.inner.len != 2_u64 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      if window.inner[0_u64] != 7_u8 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if window.inner[1_u64] != 7_u8 {
+        return std::process::exit_status(code: 5_u8);
+      }
+      let removed = take_front(window: &window.inner);
+      if removed != 7_u8 {
+        return std::process::exit_status(code: 6_u8);
+      }
+    } else {
+      return std::process::exit_status(code: 11_u8);
     }
   }
   if window.inner.head != 16_u64 {
@@ -239,7 +244,8 @@ fn main() -> status: std::process::ExitStatus pure {
         );
     }
     // The same Box reaches both formals. A stale head produces code 1 or 2;
-    // corrupt boundary or element updates produce codes 3 through 10. The IR
+    // corrupt boundary or element updates produce codes 3 through 10; an
+    // unexpectedly full window produces code 11. The IR
     // assertions additionally catch metadata UB even when an unchanged-value
     // head rewrite happens not to change this native execution's result.
     for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {

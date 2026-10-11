@@ -288,7 +288,7 @@ impl FunctionEmitter<'_, '_> {
                 .map_err(|_| BackendFailure::TextEmission),
             FrameOperand::Stored { ty, value } => {
                 let source = self.value_place(*value)?;
-                self.copy_storage(*ty, &source, field)
+                self.copy_storage_from(*ty, &source, field, TransferSource::Value(*value))
             }
         }
     }

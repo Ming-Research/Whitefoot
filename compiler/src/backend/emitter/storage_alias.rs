@@ -174,10 +174,13 @@ fn readonly_formals(function: &IrFunction) -> Vec<usize> {
         .collect()
 }
 
+/// Each readonly formal's index and its singleton scope-list metadata ID.
+type FormalScopeLists = Vec<(usize, usize)>;
+
 /// Numbered metadata is one module-wide namespace, shared with the fixed TBAA
 /// definitions above. Headers accompany every fragment and cached roundtrip.
 pub(super) struct OwnerScopePlan {
-    definitions: Vec<(usize, Vec<(usize, usize)>, usize)>,
+    definitions: Vec<(usize, FormalScopeLists, usize)>,
     functions: BTreeMap<String, (BTreeMap<usize, usize>, usize)>,
 }
 
@@ -278,10 +281,9 @@ impl OwnerAliases {
                     operation,
                     ..
                 } = instruction
+                    && !matches!(operation, IrOperation::ProjectAddress { .. })
                 {
-                    if !matches!(operation, IrOperation::ProjectAddress { .. }) {
-                        result.roots.insert(*value, BTreeSet::from([UNKNOWN]));
-                    }
+                    result.roots.insert(*value, BTreeSet::from([UNKNOWN]));
                 }
             }
         }

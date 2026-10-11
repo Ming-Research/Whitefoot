@@ -891,7 +891,11 @@ key entry capture reads 16 bytes (`bench.opt.ll:17728`,
 or rebuilt candidate output. Destination-result parameter placement can remove
 some captures independently; this experiment addresses copies that remain.
 
-### Proposed emission rule
+### Original emission rule approved with #345
+
+The original rule below records the approved experiment; the proposed
+[producer-sensitive selection](#producer-sensitive-transfer-selection) narrows
+when its unchanged layout plan is used.
 
 Target layout owns transfer planning alongside variant and aggregate layout.
 Structs recursively transfer scalar leaves with their original LLVM types and
@@ -1549,12 +1553,13 @@ coalescing and `value_place(result)` already pass unchanged callee results
 into the caller's public destination. A relay witness now asserts that
 behavior without changing its implementation.
 
-The proposed policy keeps one whole-value memory intrinsic for a top-level
-union enum transferred into the public result destination. LLVM can lower
-that intrinsic after its inlining decision in caller context. Internal
+The first #357 policy kept one whole-value memory intrinsic for a top-level
+union enum transferred into the public result destination; that exception is
+now superseded by [producer-sensitive transfer selection](#producer-sensitive-transfer-selection). LLVM can lower
+that intrinsic after its inlining decision in caller context. Under that initial policy, internal
 union transfers and every stored struct transfer, including structs with
-union fields, retain the typed granules that motivated PR #345. The choice
-is provisional: the supplied cost difference motivates the boundary, but
+union fields, retained the typed granules that motivated PR #345. Its grounds
+were provisional: the supplied cost difference motivates the boundary, but
 the candidate's cost and inlining have not been measured. It changes no
 layout, snapshot, effect or result/input alias contract; `memmove` preserves
 partial overlap, and captures still precede potentially invalidating result
@@ -1567,10 +1572,11 @@ transfers would unnecessarily change internal transfer behavior without
 corresponding cost evidence; inline hints or thresholds would tune a
 consumer instead of addressing the emitted transfer.
 
-`backend/tests/layout_transfers.rs` requires one direct intrinsic and no
+Under that first #357 policy, `backend/tests/layout_transfers.rs` required one direct intrinsic and no
 interval expansion for public union snapshots, while checking the exact
 original intervals for internal unions, public structs and structs containing
-unions. Its executed heap-array/relay case checks an old snapshot of 17,
+unions. Those transfer-form expectations are superseded by the matrix below.
+Its native heap-array/relay case checks an old snapshot of 17,
 a replacement observed as 30, and an untouched element of 17, with call
 boundaries retained. A stale snapshot would observe the replacement; a
 missing transfer would leave the result incorrect. The old compiler fails
@@ -1884,3 +1890,185 @@ fixtures and design/specification correspondence. It found no issue within
 that inspection scope. Fixture admission, negative-control failures, native
 execution, LLVM scope handling, CI gates and performance remain unverified;
 no local build, test, formatter, optimizer or check was run.
+
+
+## Producer-sensitive transfer selection
+
+Question: does retaining one intrinsic for transfers without function-local
+field-producer provenance restore Halo and Snowghost inlining without losing
+more of #345's forwarding benefit than it gains? Compare the same sources
+with `d9abe90b3`, the candidate and a byte-identical control twin through CI;
+inspect full-LTO inline remarks and disassembly before paired timing on the
+14900K. Rejection criteria are failure to recover the affected inline sites,
+or a regression in previously improved kernels beyond the control spread.
+No new optimizer run or timing is reported here.
+
+### Evidence and instruction costs
+
+The supplied Snowghost layout-oracle IR compares `wf-9497f0a54fec` with
+`wf-exp-b8cf83108946`. `set_links.body` formerly copied its untouched incoming
+40-byte Links value into a heap field with one memmove. After #345:
+
+```llvm
+; layout-bounded transfer from %wf.arg.v2 to %v10
+%t7 = load i32, ptr %wf.arg.v2, align 1
+%t8 = getelementptr inbounds i8, ptr %wf.arg.v2, i64 4
+%t9 = load i32, ptr %t8, align 1
+```
+
+The remaining fields repeat this pattern through offset 36, then ten stores
+write offsets 0 through 36. There are ten loads, ten stores and eighteen
+address GEPs instead of one intrinsic. The supplied O2 remarks give the
+body's inline cost as -15015 before and -14920 after, an increase of 95;
+`set_links` into `unlink.body` changes from cost 0 to 45 at threshold 45.
+Other supplied call sites change from 5 to 50 at that threshold. These are
+saved observations, not candidate measurements.
+
+LLVM 22's [InlineCost.cpp](https://raw.githubusercontent.com/llvm/llvm-project/release/22.x/llvm/lib/Analysis/InlineCost.cpp)
+sets the ordinary threshold to 225, the cold threshold to 45 and the default
+instruction cost to 5. Uneliminated loads/stores pay that instruction cost;
+a memory intrinsic is assessed as one instruction, not its eventual machine
+copy sequence. Acceptance requires cost strictly below threshold. Thus the
+95-point increase is consistent with twenty memory instructions replacing
+one (19 times 5); it is not a new independently measured cost breakdown.
+Caller-specific SROA savings, simplification and other instructions can
+change the actual inline cost. LLVM's
+[SROA implementation](https://raw.githubusercontent.com/llvm/llvm-project/release/22.x/llvm/lib/Transforms/Scalar/SROA.cpp)
+can split alloca-backed memcpy accesses when its analysis permits, while
+preserving external transfer regions when scalarization is unhelpful. An
+intrinsic does not guarantee a wide load, nor do frontend granules guarantee
+that LLVM will retain their widths.
+
+Halo `table_get` has two unavoidable Value snapshots already addressed
+directly into `%wf.result`, as documented above: `%v46` is a heap-array value
+and `%v81` a node value field. Each post-#345 result transfer is three loads
+and three stores; neither source has a local field producer. The proposed
+policy selects one memmove on each path: zero explicit transfer loads and
+stores, two intrinsic sites total. Snowghost `set_links.body` likewise
+selects one memmove instead of twenty explicit memory instructions. These
+counts follow the saved source identities and the candidate selection rule;
+rebuilt downstream LLVM and its optimized costs remain unverified.
+
+### Chosen rule and alternatives
+
+Select existing layout granules only for a physical source with retained
+function-local MAY field-producer provenance. Constructors and field
+insertions seed it; local field stores and initialized local backing can
+supply it; typed inline projections, snapshots and CFG value transfers
+propagate it. Formal inputs, opaque calls and Box/heap/container projections
+supply no producer evidence. Actual read-through/incoming storage is checked
+before using a value marker, so a coalesced slot cannot confer local provenance
+on an unrelated external source. Mixed value flows may retain a possible
+local producer. The marker is flow-insensitive: a later or branch-local
+field write can influence selection, and calls do not clear it. This is a
+profitability heuristic, not proof of a reaching store, exclusivity, capture,
+initialization or lifetime. No new target
+metadata or language fact follows from it.
+
+The existing target plan decides whether scalarization is representable,
+with the same types, offsets, pointer/Bool byte intervals, overlap-safe
+capture ordering, 128-byte and 16-granule limits. Every untracked source
+retains the intrinsic. The criterion is independent of function names,
+destination ABI and struct versus union layout; the public-union exception
+is removed. Waiting/split code gains no new storage reuse permission.
+
+This is a provisional cost tradeoff, not a claim that local provenance solves
+the original cross-call Frame witness. The historical Halo IR constructs
+Frame with eleven stores in `enter_lua`, forwards it through `push_frame`,
+and copies it in `place_back` from `%wf.arg.v1`. A function-local classifier
+intentionally leaves that boundary copy as an intrinsic. #345's final Frame
+machine-width criterion already failed because LLVM remerged field pairs,
+while its Value scalarization and runtime improvements survived. This policy
+may relinquish some of those observed external-Value benefits; only the
+comparison above can establish the net result. The new local-producer tests
+preserve the narrower emitted-boundary obligation, not the retired promise
+that every incoming Frame copy expands.
+
+- Merging adjacent plain integer leaves is representation-safe only under
+  the existing representation rules; layout adjacency alone cannot establish
+  the absence of a forwarding hazard from separate narrow stores.
+- Lowering the cap cannot retain eleven-leaf Frame while excluding ten-leaf
+  Links, and a cap small enough to exclude three-interval Value would discard
+  the earlier Value experiment. The existing limits remain size safeguards,
+  not a demonstrated profitability model.
+- A caller-propagated field-written bit does not discriminate: the inspected
+  Snowghost DOM source also updates Links fields immediately before
+  `set_links`. Its exact identity with the saved experiment was not asserted.
+- A complete reaching-byte-write analysis or deferred target-aware lowering
+  could make a more informed decision, but neither is supplied by the current
+  backend. Cross-call store widths and LLVM recombination remain an explicit
+  optimization gap; the function-local policy does not pretend to solve it.
+- Whole intrinsics everywhere would also discard locally visible narrow
+  producers; union/result-only selection misses Snowghost's internal struct
+  copy. Inline hints and threshold changes select consumers instead of fixing
+  the general transfer cost.
+
+### Approved sentence changed
+
+The owner-approved #345 sentence in `storage-placement.md` began:
+“Transfer stored structs of at most 128 bytes and at most 16 granules by
+recursively loading each scalar leaf with its own LLVM type and width at
+the selected-target field offset”. Its unconditional eligibility is changed
+to require retained function-local producer provenance; the original layout
+plan, bounds and capture order remain. `payload-enum-layout.md`'s corresponding
+unconditional internal union expansion and the later proposed public-result
+exception are replaced by the same source-sensitive rule. These decision
+changes are proposed for owner approval; this record grants no approval.
+
+
+### Backend evidence and retired expectations
+
+`layout_transfers` retains the exact typed-load/store, target-offset,
+SSA-correspondence and all-source-before-destination oracle. It now applies
+to actual local field producers rather than incoming copies. This is an
+intentional narrowing of the tested policy, not evidence that the earlier
+cross-call Frame forwarding requirement still holds.
+
+| Existing #345 guard | Proposed-policy observation |
+| --- | --- |
+| `struct_and_union_transfers_respect_leaf_boundaries` | Local Frame keeps eight mixed-width leaves, local Value keeps 4+4+8-byte intervals, and local Boundary keeps sixteen 8-byte leaves. Incoming Frame/Value/Boundary/Overlay copies now require intrinsics. Local 17-leaf, 136-byte and array-containing producers still check the original fallback conditions independently of source eligibility. As before, the 136-byte scalar fixture exceeds both bounds rather than isolating the byte bound. |
+| Former `whole_union_results_keep_one_intrinsic_without_changing_internal_transfers` | Replaced by `nonproducer_transfers_keep_one_intrinsic_for_structs_unions_and_results`: external public struct/union/wrapped-union and internal ten-u32 copies require one intrinsic and no granule region; the same ten-field layout with a local constructor requires ten exact i32 load/store pairs. The incoming internal-union expansion expectation is retired. |
+| `union_pointer_and_one_bit_intervals_use_byte_capture` | Local Overlay Bits construction, observed before consumption, retains the exact byte-interval captures, scratch object and all-captures-before-restores oracle; an incoming Overlay copy is now an intrinsic control. Representation checks still cover pointer/Bool overlays. |
+| `bounded_transfer_preserves_equal_and_overlapping_storage_natively` | Extracts the actual emitted local Frame transfer region instead of the incoming copy. The same C byte-snapshot oracle still tests equal pointers and overlap in both directions; the copy emitter's overlap obligation is unchanged. |
+| `handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` and `each_dispatch_family_gets_a_word_only_when_all_families_fit` | Exact pointer-word intervals at offsets 12 and 20 move to a locally constructed Cell copy. Incoming internal and public Cell copies require intrinsics. The local copy is executed and its tag/payload observed before the original handler-copy/replacement sequence. |
+| `payload_enums`, `read_through`, arrays, windows, owning swaps and container checks | Their existing complete-copy counts, source identities, snapshot placement, no-copy assertions, native values and unsupported-shape/large-copy fallback requirements already accept either transfer form and remain unchanged. |
+
+The external ten-u32 intrinsic assertion fails the pre-policy compiler's
+twenty-memory-instruction transfer. Public struct and internal union controls
+also distinguish the policy from the former union/result exception. The
+new native ten-field case checks all ten values through local construction,
+public return and internal copy in both normal optimized and retained-call
+forms. The handler fixture checks the locally copied Add(7,2) and observer
+result 9 before its earlier sequence. These are execution paths wired into
+the maintained backend group, not locally obtained results.
+
+A positive public union-result control requires the local 4+4+8-byte
+transfer into `%wf.result`, so reinstating the former public-result exception
+would fail it. An untouched local clone of the ten-field input remains an
+intrinsic; changing one local field selects ten exact granules. Native
+observations check the public union payload and both ten-field copies. These
+controls distinguish local producer provenance from merely allocating local
+backing, and destination-independent selection from the superseded exception.
+
+Remaining evidence: Rust compilation, WF fixture admission, the new IR
+assertions, native execution/overlap, source-classifier analysis cost and
+supported LLVM verification await CI. Downstream instruction counts above
+are predictions from saved IR identities; actual inline costs, recovered
+sites, retained machine widths and net Halo/Snowghost timing are unverified.
+No specification, target layout, ABI or alias contract changes. The explicit
+gap is target-aware profitability across calls; neither a local MAY bit nor
+the unchanged layout bounds establish it.
+
+A fresh independent read-only completion review, requested as `gpt-6-astra`
+at high effort, inspected `d9abe90b3..working tree`, all twelve changed files
+including the new transfer helper, affected callers, specification grounds,
+design ancestors and saved inline remarks. It found no remaining issue within
+source-inspection scope after adding the positive public local union-result
+control and repairing atom-only WF operands. Exact emitted-boundary,
+capture-order, handler-word and native-overlap obligations remain represented;
+unconditional incoming expansion is intentionally retired. Rust compilation,
+fixture admission, negative-control failures, emitted LLVM, native execution,
+CI gates, analysis cost and downstream profitability remain unverified.
+No local build, test, formatter, optimizer or check ran, and no board or
+approval log was changed. The final prose clarification marks the earlier
+union-only test policy as historical; it changes no additional decision.

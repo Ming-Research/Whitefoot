@@ -1544,6 +1544,18 @@ fn copy_cell_into(cell: &Cell, target: &Cell) -> result: unit reads(cell), write
   return unit;
 }
 
+fn make_cell_into(target: &Cell) -> result: u32 writes(target) {
+  let value = Cell::Add(value: 7_u32, extra: 2_u8);
+  set target^ = value;
+  match value {
+    Add(value: v, extra: e) => {
+      let extra = cvt::<u8, u32>(e^);
+      return v^ +wrap extra;
+    }
+    _ => { return 0_u32; }
+  }
+}
+
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
     Add(value: v, extra: e) => {
@@ -1570,6 +1582,15 @@ fn main() -> status: ExitStatus pure {
   let first = make_add();
   let copied = copy_cell(cell: &first);
   let internal_copy = Cell::Halt(value: 0_u32, extra: 0_u8);
+  let made = make_cell_into(target: &internal_copy);
+  if made != 9_u32 { return exit_status(code: 3_u8); }
+  match internal_copy {
+    Add(value: v, extra: e) => {
+      if v^ != 7_u32 { return exit_status(code: 4_u8); }
+      if e^ != 2_u8 { return exit_status(code: 4_u8); }
+    }
+    _ => { return exit_status(code: 4_u8); }
+  }
   copy_cell_into(cell: &copied, target: &internal_copy);
   push(code: &code, cell: internal_copy);
   push(code: &code, cell: first);
@@ -1667,15 +1688,24 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     assert_handler_load(&module, "wf_run", 12, 4);
     let made = emitted_body(&module, "make_add");
     assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
-    // Whole result copies keep one intrinsic before inlining; the ordinary
-    // source-to-target copy still checks every typed interval and handler word.
+    // External copies keep one intrinsic at either destination. The local
+    // constructor copy checks every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
     assert_eq!(copied.matches("@llvm.memmove.").count(), 1, "{copied}");
     assert!(copied.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"), "{copied}");
     assert!(!copied.contains("; layout-bounded transfer "), "{copied}");
     let copied_into = emitted_body(&module, "copy_cell_into");
+    assert_eq!(
+        copied_into.matches("@llvm.memmove.").count(),
+        1,
+        "{copied_into}"
+    );
+    assert!(
+        !copied_into.contains("; layout-bounded transfer "),
+        "{copied_into}"
+    );
     super::layout_transfers::assert_typed_transfer(
-        copied_into,
+        emitted_body(&module, "make_cell_into"),
         &[(0, "i32"), (4, "i32"), (8, "i8"), (9, "i24"), (12, "ptr")],
     );
     let main = emitted_body(&module, "main");
@@ -1712,7 +1742,7 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         assert_handler_load(&module, "wf_run", 12, 4);
         assert_handler_load(&module, "wf_other_run", 20, 4);
         super::layout_transfers::assert_typed_transfer(
-            emitted_body(&module, "copy_cell_into"),
+            emitted_body(&module, "make_cell_into"),
             &[
                 (0, "i32"),
                 (4, "i32"),

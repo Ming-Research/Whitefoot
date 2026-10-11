@@ -138,7 +138,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.storage.slot(result).is_some() {
             let source = self.value_place(run)?;
             let destination = self.value_place(result)?;
-            self.copy_storage(ty, &source, &destination)?;
+            self.copy_storage_from(ty, &source, &destination, TransferSource::Value(run))?;
             Ok(result)
         } else {
             Ok(run)
@@ -397,7 +397,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let offset = self.value_name(offset);
         let physical = self.wrap_offset(shape, run_type, run, &head, &offset)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.load_place_result(result, ty, &format!("%{element_pointer}"))
+        self.load_place_result(result, ty, &format!("%{element_pointer}"), None)
     }
 
     /// [OP-10] capture the old physical slot, move the descriptor and return
@@ -425,7 +425,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
         self.move_run_boundary(shape, run_type, run, row)?;
-        self.load_place_result(result, ty, &format!("%{element_pointer}"))
+        self.load_place_result(result, ty, &format!("%{element_pointer}"), None)
     }
 
     /// [OP-10] place an element, then move the boundary.

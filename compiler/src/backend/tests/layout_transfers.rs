@@ -159,7 +159,150 @@ fn return_wrapped(value: &Wrapped) -> result: Wrapped reads(value) {
   return value^;
 }
 
+struct TenWords {
+  a: u32;
+  b: u32;
+  c: u32;
+  d: u32;
+  e: u32;
+  f: u32;
+  g: u32;
+  h: u32;
+  i: u32;
+  j: u32;
+}
+
+fn copy_ten(target: &TenWords, value: TenWords) -> result: unit writes(target) {
+  set target^ = value;
+  return unit;
+}
+
+fn return_ten(value: &TenWords) -> result: TenWords reads(value) {
+  return value^;
+}
+
+fn make_frame_into(target: &Frame) -> result: u64 writes(target) {
+  let value = Frame(a: 1_u64, b: 2_u64, c: 3_u32, d: 4_i64, e: 5_u32, f: 6_u8, g: 7_u64, h: 8_u64);
+  set target^ = value;
+  return value.a;
+}
+
+fn make_boundary_into(target: &Boundary) -> result: u64 writes(target) {
+  let value = Boundary(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64, i: 9_u64, j: 10_u64, k: 11_u64, l: 12_u64, m: 13_u64, n: 14_u64, o: 15_u64, p: 16_u64);
+  set target^ = value;
+  return value.a;
+}
+
+fn make_ten_into(target: &TenWords) -> result: u32 writes(target) {
+  let value = TenWords(a: 1_u32, b: 2_u32, c: 3_u32, d: 4_u32, e: 5_u32, f: 6_u32, g: 7_u32, h: 8_u32, i: 9_u32, j: 10_u32);
+  set target^ = value;
+  return value.a;
+}
+
+fn make_value_into(target: &Value) -> result: u32 writes(target) {
+  let value = Value::H1(h: 7_u32);
+  set target^ = value;
+  match value {
+    H1(h: h) => { return h^; }
+    _ => { return 0_u32; }
+  }
+}
+
+fn make_many_into(target: &ManyLeaves) -> result: u8 writes(target) {
+  let value = ManyLeaves(a: 1_u8, b: 2_u8, c: 3_u8, d: 4_u8, e: 5_u8, f: 6_u8, g: 7_u8, h: 8_u8, i: 9_u8, j: 10_u8, k: 11_u8, l: 12_u8, m: 13_u8, n: 14_u8, o: 15_u8, p: 16_u8, q: 17_u8);
+  set target^ = value;
+  return value.a;
+}
+
+fn make_scalars_into(target: &LargeScalars) -> result: u64 writes(target) {
+  let value = LargeScalars(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64, i: 9_u64, j: 10_u64, k: 11_u64, l: 12_u64, m: 13_u64, n: 14_u64, o: 15_u64, p: 16_u64, q: 17_u64);
+  set target^ = value;
+  return value.a;
+}
+
+fn make_array_into(target: &SmallArray) -> result: u8 writes(target) {
+  let bytes = array_filled::<u8, 8>(value: 7_u8);
+  let value = SmallArray(bytes: bytes);
+  set target^ = value;
+  return value.bytes[0_u64];
+}
+
+fn make_large_into(target: &Large) -> result: u8 writes(target) {
+  let bytes = array_filled::<u8, 129>(value: 7_u8);
+  let value = Large(bytes: bytes);
+  set target^ = value;
+  return value.bytes[0_u64];
+}
+
+fn observe_overlay(value: &Overlay) -> result: u32 reads(value) {
+  match value^ {
+    Bits(lo: lo, hi: hi) => { return lo^; }
+    _ => { return 0_u32; }
+  }
+}
+
+fn observe_value(value: &Value) -> result: u32 reads(value) {
+  match value^ {
+    H1(h: h) => { return h^; }
+    _ => { return 0_u32; }
+  }
+}
+
+fn return_local_value(seed: u32) -> result: Value pure {
+  let inner = Value::H1(h: seed);
+  let holder = Wrapped(prefix: 19_u64, value: inner);
+  let observed = observe_value(value: &holder.value);
+  if observed != seed { return Value::Nil(); }
+  return holder.value;
+}
+
+fn copy_local_ten(source: &TenWords, target: &TenWords) -> result: u32 reads(source), writes(target) {
+  let local = source^;
+  set target^ = local;
+  return local.a;
+}
+
+fn update_local_ten(source: &TenWords, target: &TenWords, replacement: u32) -> result: u32 reads(source), writes(target) {
+  let local = source^;
+  set local.a = replacement;
+  set target^ = local;
+  return local.a;
+}
+
+fn make_overlay_into(target: &Overlay) -> result: u32 writes(target) {
+  let value = Overlay::Bits(lo: 11_u32, hi: 22_u32);
+  let observed = observe_overlay(value: &value);
+  set target^ = move value;
+  return observed;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
+  let target = TenWords(a: 0_u32, b: 0_u32, c: 0_u32, d: 0_u32, e: 0_u32, f: 0_u32, g: 0_u32, h: 0_u32, i: 0_u32, j: 0_u32);
+  let observed = make_ten_into(target: &target);
+  if observed != 1_u32 { return std::process::exit_status(code: 1_u8); }
+  let returned = return_ten(value: &target);
+  let copied = TenWords(a: 0_u32, b: 0_u32, c: 0_u32, d: 0_u32, e: 0_u32, f: 0_u32, g: 0_u32, h: 0_u32, i: 0_u32, j: 0_u32);
+  copy_ten(target: &copied, value: returned);
+  if copied.a != 1_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.b != 2_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.c != 3_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.d != 4_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.e != 5_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.f != 6_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.g != 7_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.h != 8_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.i != 9_u32 { return std::process::exit_status(code: 2_u8); }
+  if copied.j != 10_u32 { return std::process::exit_status(code: 2_u8); }
+  let local_result = return_local_value(seed: 37_u32);
+  let observed_result = observe_value(value: &local_result);
+  if observed_result != 37_u32 { return std::process::exit_status(code: 3_u8); }
+  let updated = update_local_ten(source: &target, target: &copied, replacement: 41_u32);
+  if updated != 41_u32 { return std::process::exit_status(code: 4_u8); }
+  if copied.a != 41_u32 { return std::process::exit_status(code: 4_u8); }
+  if copied.j != 10_u32 { return std::process::exit_status(code: 4_u8); }
+  let unchanged = copy_local_ten(source: &target, target: &copied);
+  if unchanged != 1_u32 { return std::process::exit_status(code: 5_u8); }
+  if copied.a != 1_u32 { return std::process::exit_status(code: 5_u8); }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -231,7 +374,7 @@ pub(super) fn transfer_region(body: &str) -> (&str, &str, &str) {
 #[test]
 fn struct_and_union_transfers_respect_leaf_boundaries() {
     let module = emit(SOURCE);
-    let frame = emitted_function(&module, "copy_frame");
+    let frame = emitted_function(&module, "make_frame_into");
     assert_typed_transfer(
         frame,
         &[
@@ -249,7 +392,7 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
         !frame.contains("@llvm.memmove") && !frame.contains("@llvm.memcpy"),
         "{frame}"
     );
-    let value = emitted_function(&module, "copy_value");
+    let value = emitted_function(&module, "make_value_into");
     assert_typed_transfer(value, &[(0, "i32"), (4, "i32"), (8, "i64")]);
     assert!(
         !value.contains("@llvm.memmove") && !value.contains("@llvm.memcpy"),
@@ -258,14 +401,27 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
     // Inclusive limit: a 128-byte/16-leaf scalar record still expands. The
     // 17-byte ManyLeaves fixture independently detects a missing leaf bound;
     // LargeScalars exceeds both limits (current scalar leaves are <=8 bytes).
-    let boundary = emitted_function(&module, "copy_boundary");
+    let boundary = emitted_function(&module, "make_boundary_into");
     let expected: Vec<_> = (0..16).map(|leaf| (leaf * 8, "i64")).collect();
     assert_typed_transfer(boundary, &expected);
     assert!(
         !boundary.contains("@llvm.memmove") && !boundary.contains("@llvm.memcpy"),
         "{boundary}"
     );
-    for name in ["copy_large", "copy_array", "copy_many", "copy_scalars"] {
+    for name in [
+        "copy_large",
+        "copy_array",
+        "copy_many",
+        "copy_scalars",
+        "copy_frame",
+        "copy_value",
+        "copy_boundary",
+        "copy_overlay",
+        "make_many_into",
+        "make_scalars_into",
+        "make_array_into",
+        "make_large_into",
+    ] {
         let body = emitted_function(&module, name);
         assert!(body.contains("call void @llvm.memmove."), "{body}");
         assert!(!body.contains("; layout-bounded transfer "), "{body}");
@@ -273,47 +429,53 @@ fn struct_and_union_transfers_respect_leaf_boundaries() {
 }
 
 #[test]
-fn whole_union_results_keep_one_intrinsic_without_changing_internal_transfers() {
+fn nonproducer_transfers_keep_one_intrinsic_for_structs_unions_and_results() {
     let module = emit(SOURCE);
-    let value = emitted_function(&module, "return_value");
-    assert_eq!(value.matches("call void @llvm.memmove.").count(), 1, "{value}");
-    assert!(
-        value.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result, ptr %v0,"),
-        "copy directly from the source into the public destination: {value}"
-    );
-    assert!(!value.contains("; layout-bounded transfer "), "{value}");
-    assert!(!value.contains("alloca"), "{value}");
-
-    // The ABI destination alone does not suppress struct leaf transfers,
-    // including a stored struct whose fields contain a union enum.
-    let frame = emitted_function(&module, "return_frame");
-    assert_typed_transfer(
-        frame,
-        &[
-            (0, "i64"),
-            (8, "i64"),
-            (16, "i32"),
-            (24, "i64"),
-            (32, "i32"),
-            (36, "i8"),
-            (40, "i64"),
-            (48, "i64"),
-        ],
-    );
-    let wrapped = emitted_function(&module, "return_wrapped");
-    assert_typed_transfer(
-        wrapped,
-        &[(0, "i64"), (8, "i32"), (12, "i32"), (16, "i64")],
-    );
-    for body in [frame, wrapped] {
-        assert!(!body.contains("@llvm.memmove"), "{body}");
-        assert_eq!(transfer_region(body).2, "%wf.result", "{body}");
+    for name in [
+        "return_value",
+        "return_frame",
+        "return_wrapped",
+        "return_ten",
+        "copy_ten",
+    ] {
+        let body = emitted_function(&module, name);
+        assert_eq!(body.matches("call void @llvm.memmove.").count(), 1, "{body}");
+        assert!(!body.contains("; layout-bounded transfer "), "{body}");
+        assert!(!body.contains("alloca"), "{body}");
+        if name.starts_with("return_") {
+            assert!(
+                body.contains("@llvm.memmove.p0.p0.i64(ptr %wf.result,"),
+                "{body}"
+            );
+        }
     }
-    // An internal union store retains the original interval oracle.
-    assert_typed_transfer(
-        emitted_function(&module, "copy_value"),
-        &[(0, "i32"), (4, "i32"), (8, "i64")],
-    );
+    // The same ten-leaf layout expands only beside its local field stores.
+    // The external copy above used to emit twenty memory instructions.
+    let expected: Vec<_> = (0..10).map(|leaf| (leaf * 4, "i32")).collect();
+    assert_typed_transfer(emitted_function(&module, "make_ten_into"), &expected);
+    let updated = emitted_function(&module, "update_local_ten");
+    assert_typed_transfer(updated, &expected);
+    let untouched = emitted_function(&module, "copy_local_ten");
+    assert!(untouched.contains("call void @llvm.memmove."), "{untouched}");
+    assert!(!untouched.contains("; layout-bounded transfer "), "{untouched}");
+    // A local parent retains its union field independently of the public
+    // destination. This distinguishes the rule from the former union-result
+    // exception, which would suppress these producer-width loads.
+    let local_result = emitted_function(&module, "return_local_value");
+    let result_write = local_result
+        .find(" to %wf.result\n")
+        .expect("public result copy");
+    let result_start = local_result[..result_write]
+        .rfind("  ; layout-bounded transfer from ")
+        .expect("producer transfer to the public result");
+    let result_copy = &local_result[result_start..];
+    assert_typed_transfer(result_copy, &[(0, "i32"), (4, "i32"), (8, "i64")]);
+    assert_eq!(transfer_region(result_copy).2, "%wf.result", "{local_result}");
+    // Missing/truncated transfers fail the ten independently observed fields.
+    for native in [module.clone(), super::owned_places::retain_calls(&module)] {
+        let output = super::compile_and_run(&native);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
 }
 
 #[test]
@@ -556,7 +718,7 @@ fn union_pointer_and_one_bit_intervals_use_byte_capture() {
         }
     });
     let module = emit(SOURCE);
-    let body = emitted_function(&module, "copy_overlay");
+    let body = emitted_function(&module, "make_overlay_into");
     let (region, source, destination) = transfer_region(body);
     // Resolve all byte addresses back to their root. A restore before a later
     // source capture, a wrong byte width or a wrong offset fails independently
@@ -637,7 +799,7 @@ fn union_pointer_and_one_bit_intervals_use_byte_capture() {
 #[test]
 fn bounded_transfer_preserves_equal_and_overlapping_storage_natively() {
     let module = emit(SOURCE);
-    let body = emitted_function(&module, "copy_frame");
+    let body = emitted_function(&module, "make_frame_into");
     let (region, source, destination) = transfer_region(body);
     let region = region
         .replace(source, "%source")
