@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-11 Destination results read their inputs in place, and small values move by layout granules
+
+Nodes: compiler/storage-placement, compiler/payload-enum-layout
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner answered "agree" (translated) on item lm-bl-frame-store-forward to the request "approve #345's three design decisions: (1) storage placement: a function returning its result through a destination pointer keeps reading a by-value aggregate parameter through the caller's pointer until it may be changed, and takes a private copy only on the path that may change it, before the change (writing the result destination counts as a possible change); (2) storage placement: whole-value copies of small structs (at most 128 bytes and 16 granules) are split by field width; (3) payload enum layout: union-laid-out values are copied in granules at every variant's field boundaries, falling back to one memmove for pointers, one-bit leaves and oversized cases" (translated). The direction was the owner's choice of A on the card lm-dec-store-forward on 2026-10-10.
+
+Summary: Halo's frames and register values were written field by field and read back by 16-byte loads that store forwarding cannot serve. A definition returning through a destination now reads an immutable by-value aggregate parameter through the caller's pointer and captures it privately only on a path that may invalidate it, counting every write of the result destination as one because the caller may pass the same storage; this removes `table_get`'s key copy. Stored structs of at most 128 bytes and 16 granules move leaf by leaf at their own widths, and union enum values move by the intervals between every variant's leaf boundaries, capturing every source granule before any destination store. On the 14900K all seven Halo kernels got faster (fib 0.955, integer-table 0.858, twin within 0.8%) ([Halo timing of both steps](../research/investigations/in-place-parameters/DESIGN.md#halo-timing-of-both-steps)); LLVM still merges two adjacent 8-byte Frame fields into one 16-byte load, so the frame stall is only partly removed.
 ## 2026-10-11 A scan bounded by the heap it may grow
 
 Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
