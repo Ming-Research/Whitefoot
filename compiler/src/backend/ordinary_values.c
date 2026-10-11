@@ -92,10 +92,10 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
     result->ok.value = start + bytes;
 }
 
-/* GNU strerror_r reports unknown codes by returning fabricated text. Its
- * XSI entry instead reports EINVAL, which distinguishes an unavailable host
- * description from a description whose bytes happen to say "Unknown error".
- * _GNU_SOURCE selects the GNU declaration, so name glibc's XSI entry here. */
+/* The XSI entry writes into caller storage and reports EINVAL for an unknown
+ * code. In contrast, glibc's strerror_l unknown-code path allocates a hidden
+ * thread-local string. _GNU_SOURCE selects the GNU strerror_r declaration,
+ * so name glibc's allocation-free XSI entry here. */
 #if !defined(_WIN32) && defined(__GLIBC__)
 extern int __xpg_strerror_r(int code, char *buffer, size_t length);
 #endif
@@ -202,14 +202,19 @@ void wf__body_error_copy_description(wf_copy_result *result,
         wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
 #else
     if (code > INT_MAX) return;
-    /* One private immutable locale per call avoids global initialization or
-     * mutation, and keeps all description lookup independent of setlocale. */
+#if defined(__APPLE__)
+    /* Darwin exports an immutable C locale object. Borrow it directly rather
+     * than asking newlocale to allocate a host-owned locale structure. */
+    locale_t c_locale = _c_locale;
+#else
+    /* glibc returns its static immutable C object for this exact request;
+     * neither newlocale here nor the matching freelocale allocates. */
     locale_t c_locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
     if (c_locale == (locale_t)0) return;
-#if defined(__APPLE__)
-    /* Darwin exports strerror_r, not strerror_l. Select the private C
-     * locale for this thread and measure only a complete scratch result;
-     * ERANGE may have written a truncated string, never a usable prefix. */
+#endif
+    /* Lookup into caller-owned storage first, so unknown-code formatting
+     * cannot allocate an uncounted host buffer. A complete scratch result is
+     * required: ERANGE may have written a truncated string. */
     char local[128];
     char *text = local;
     size_t capacity = sizeof(local);
@@ -217,7 +222,11 @@ void wf__body_error_copy_description(wf_copy_result *result,
     if (previous != (locale_t)0) {
         int status;
         for (;;) {
+#if defined(__GLIBC__)
+            status = __xpg_strerror_r((int)code, text, capacity);
+#else
             status = strerror_r((int)code, text, capacity);
+#endif
             if (status != ERANGE) break;
             if (capacity > SIZE_MAX / 2) wf__runtime_exhausted();
             size_t next_capacity = capacity * 2;
@@ -231,31 +240,9 @@ void wf__body_error_copy_description(wf_copy_result *result,
             wf_description_copy(result, text, strlen(text), destination, start, end);
         if (text != local) wf__runtime_give(text, capacity);
     }
-#else
-    const char *text = strerror_l((int)code, c_locale);
-    if (text != NULL) {
-        const size_t length = strlen(text);
-        char local[128];
-        /* Measure before validation. Neither a truncated scratch string nor
-         * an unknown-code string ever reaches destination. */
-        if (length == SIZE_MAX) wf__runtime_exhausted();
-        char *validation = length < sizeof(local) ? local
-            : wf__runtime_take(length + 1);
-        locale_t previous = uselocale(c_locale);
-        if (previous != (locale_t)0) {
-#if defined(__GLIBC__)
-            const int status = __xpg_strerror_r((int)code, validation, length + 1);
-#else
-            const int status = strerror_r((int)code, validation, length + 1);
-#endif
-            (void)uselocale(previous);
-            if (status == 0)
-                wf_description_copy(result, text, length, destination, start, end);
-        }
-        if (validation != local) wf__runtime_give(validation, length + 1);
-    }
-#endif
+#if !defined(__APPLE__)
     freelocale(c_locale);
+#endif
 #endif
 }
 
