@@ -1,0 +1,69 @@
+struct Sample {
+  byte: u8;
+  marker: u64;
+}
+
+enum Packet {
+  Empty();
+  Full(sample: Sample);
+}
+
+fn option_byte(observed: &[Option<u8>]) -> result: u8 reads(observed) {
+  if 0_u64 < observed^.len {
+    match observed^[0_u64] {
+      None() => {
+        return 2_u8;
+      }
+      Some(value: duplicate_byte) => {
+        return duplicate_byte^;
+      }
+    }
+  }
+  return 1_u8;
+}
+
+fn packet_byte(observed: &[Packet]) -> result: u8 reads(observed) {
+  if 0_u64 < observed^.len {
+    match observed^[0_u64] {
+      Full(sample: selected_sample) => {
+        if selected_sample^.marker == 99_u64 {
+          return selected_sample^.byte;
+        }
+        return 3_u8;
+      }
+      Empty() => {
+        return 4_u8;
+      }
+    }
+  }
+  return 5_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let present = Some<u8>(value: 42_u8);
+  let absent = None<u8>();
+  let bytes = array_filled::<Option<u8>, 2>(value: absent);
+  set bytes[1_u64] = present;
+  let empty_code = option_byte(observed: &bytes[0_u64..0_u64]);
+  if empty_code != 1_u8 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  let absent_code = option_byte(observed: &bytes[0_u64..1_u64]);
+  if absent_code != 2_u8 {
+    return std::process::exit_status(code: 11_u8);
+  }
+  let selected_byte = option_byte(observed: &bytes[1_u64..2_u64]);
+  let sample = Sample(byte: 21_u8, marker: 99_u64);
+  let packet = Packet::Full(sample: sample);
+  let packets = array_filled::<Packet, 1>(value: packet);
+  let selected_record_byte = packet_byte(observed: &packets[0_u64..1_u64]);
+  if selected_record_byte != 21_u8 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  set packets[0_u64] = Packet::Empty();
+  let empty_packet_code = packet_byte(observed: &packets[0_u64..1_u64]);
+  if empty_packet_code != 4_u8 {
+    return std::process::exit_status(code: 13_u8);
+  }
+  return std::process::exit_status(code: selected_byte);
+}

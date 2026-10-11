@@ -34,6 +34,119 @@
 use super::BoundedOutput;
 use super::*;
 
+/// The range path must retain fields after the element and the payload's
+/// original storage. Window and Array references use the same match entry;
+/// an own window element still copies its payload. One image observes all
+/// paths, including a value-initializer match and a re-sliced range.
+#[test]
+fn element_matches_preserve_nested_places_across_storage_origins() {
+    let source = br#"struct Sample {
+  byte: u8;
+  marker: u64;
+}
+
+enum Packet {
+  Empty();
+  Full(sample: Sample);
+}
+
+struct Envelope {
+  packet: Packet;
+}
+
+fn from_range(observed: &[Envelope]) -> result: u8 writes(observed) {
+  if 0_u64 < observed^.len {
+    match observed^[0_u64].packet {
+      Empty() => {
+        return 1_u8;
+      }
+      Full(sample: range_sample) => {
+        let previous = range_sample^.byte;
+        set range_sample^.byte = 99_u8;
+        return previous;
+      }
+    }
+  }
+  return 2_u8;
+}
+
+fn from_subrange(observed: &[Envelope]) -> result: u8 writes(observed) {
+  if 1_u64 < observed^.len {
+    return from_range(observed: &observed^[1_u64..2_u64]);
+  }
+  return 3_u8;
+}
+
+fn from_window(observed: &Slots<Envelope, 2>) -> result: u8 reads(observed) {
+  if 1_u64 < observed^.len {
+    match observed^[1_u64].packet {
+      Full(sample: window_sample) => {
+        return window_sample^.byte;
+      }
+      Empty() => {
+        return 4_u8;
+      }
+    }
+  }
+  return 5_u8;
+}
+
+fn from_array(observed: &Array<Envelope, 2>) -> result: u8 reads(observed) {
+  let selected = match observed^[1_u64].packet {
+    Empty() => {
+      give 6_u8;
+    }
+    Full(sample: array_sample) => {
+      give array_sample^.byte;
+    }
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let sample = Sample(byte: 42_u8, marker: 17_u64);
+  let packet = Packet::Full(sample: sample);
+  let envelope = Envelope(packet: packet);
+  let records = slots_new::<Envelope, 2>();
+  place_back(window: &records, value: envelope);
+  place_back(window: &records, value: envelope);
+  let array = array_filled::<Envelope, 2>(value: envelope);
+  let window_byte = from_window(observed: &records);
+  if window_byte != 42_u8 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  let array_byte = from_array(observed: &array);
+  if array_byte != 42_u8 {
+    return std::process::exit_status(code: 11_u8);
+  }
+  let previous = from_subrange(observed: &records[0_u64..2_u64]);
+  if previous != 42_u8 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  let changed = from_window(observed: &records);
+  if changed != 99_u8 {
+    return std::process::exit_status(code: 13_u8);
+  }
+  match records[0_u64].packet {
+    Empty() => {
+      return std::process::exit_status(code: 14_u8);
+    }
+    Full(sample: own_sample) => {
+      if own_sample.marker != 17_u64 {
+        return std::process::exit_status(code: 15_u8);
+      }
+      return std::process::exit_status(code: own_sample.byte);
+    }
+  }
+}
+"#;
+    let llvm = compile(source);
+    let output = compile_and_run(&llvm);
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
 /// Use the formal program's binding path, including pool-off world selection.
 fn bind_compute_host_adapter(module: &str, adapter: &str) -> String {
     let directory = test_directory();

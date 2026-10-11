@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-10 v0.125: an empty contiguous runtime window allocates nothing
+
+Rules: changed OP-13, STOR-1, STOR-3, TYPE-9
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a capacity-0 Box<Slots/Ring/Array> avoid allocating heap memory? (changes STOR-1)" (translated), whose option A read "change the specification: a runtime-capacity contiguous window (`Array<T>`, `Slots<T>`, `Ring<T>`) of capacity 0 in a Box occupies no allocation and its release frees nothing, the first `grow` allocates; every such Box points at one read-only static empty header, release and growth recognize it and skip the free, and `append` and `split_off` moving no element write no header" (translated).
+
+Summary: STOR-1 required every `Box` content to be one allocation, so `box_slots_new::<T>(capacity: 0)` took a header from the heap and freed it again; Halo pays two such allocations per table, and its binary-trees spent at least a quarter of its time in the allocator. A runtime-capacity `Array<T>`, `Slots<T>` or `Ring<T>` content of capacity 0 is now the shared empty header, immutable static storage that no release frees (STOR-1, TYPE-9's description of `Box`); a `Box` release frees each allocation its content occupies (STOR-3); a construction of count 0 builds the shared header and allocates nothing (OP-13). `Segments` and `Paged` keep their allocations. Selection ground: an empty window holds no element and only its header is read, so sharing one zero header changes no observable value, while the heap meter, which counts allocations, now reads no bytes for it.
+
 ## 2026-10-10 v0.124: a swap's exchange is a placement
 
 Rules: changed TYPE-9, TYPE-10

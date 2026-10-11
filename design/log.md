@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-10 Empty contiguous runtime windows share one header
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-10, written in Chinese, the owner chose option A on the card "can a capacity-0 Box<Slots/Ring/Array> avoid allocating heap memory? (changes STOR-1)" (translated).
+
+Summary: An empty runtime-capacity Array, Slots or Ring Box points at one read-only shared header that release and retake recognize, because Halo's binary-trees spent at least 25.6% of its time in glibc malloc and free with a capacity-0 header allocated per table and Rust's `Vec::new` and PUC Lua's dummynode allocate nothing; a null cell pointer tested on every header read and a fat Box carrying its header were rejected. The one-allocation owner, `grow` and small-block copy decisions now state the capacity they apply to: positive-capacity growth from the shared header always takes a writable block, including for a zero-stride element whose size equals the header's.
+
 ## 2026-10-10 Lazy syntax paths and descendant index, shared declaration reads and indexed generic provenance
 
 Nodes: compiler/typed-syntax-access, compiler/generic-validation-scope
