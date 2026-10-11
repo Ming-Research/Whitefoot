@@ -17,7 +17,6 @@ defaults:
 
 jobs:
   inspect:
-    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -27,26 +26,25 @@ jobs:
           ref: claude/halo-pin-7062f3a
           submodules: true
           path: halo
-      - name: Emit IR before and after #345 and record inlining remarks
+      - name: Build Halo with each release and count out-of-line table_get calls and per-byte reloads
         working-directory: halo
         run: |
           set -euo pipefail
           make toolchain
           out="$PWD/build/bisect-out"; mkdir -p "$out"
-          OPT=$(command -v opt || ls /usr/lib/llvm-*/bin/opt 2>/dev/null | sort -V | tail -1)
-          echo "opt = $OPT"; "$OPT" --version | head -3
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
+          for release in wf-78223721f77d wf-7062f3ac4ac7 wf-exp-4753d28fb4ae; do
             echo "release = $release" > whitefoot.pin
             make compiler
             make toolchain-check
-            wfc=build/whitefoot/$release/whitefootc
-            "$wfc" --graph research/experiments/halo-bench/modules.wfg --entry bench --emit-llvm -o "$out/$release.ll"
-            awk '/^define .*halo\.heap\.table_get[(\"]/,/^}/' "$out/$release.ll" > "$out/ir-table_get-$release.ll"
-            grep -n 'halo.heap.table_get(' "$out/$release.ll" | grep -v '^[0-9]*:define' | head -20 > "$out/ir-calls-$release.txt" || true
-            "$OPT" -passes='default<O3>' -pass-remarks-missed=inline -pass-remarks-analysis=inline -pass-remarks=inline \
-              "$out/$release.ll" -o /dev/null 2> "$out/remarks-$release.txt" || echo "opt failed for $release"
-            echo "$release: inline remarks for table_get"
-            grep -E "table_get'|table_get\b" "$out/remarks-$release.txt" | grep -v table_get_str | sed -E 's/ at callsite.*//' | sort | uniq -c | sort -rn | head -8
+            bin="$out/halo-$release"
+            build/whitefoot/$release/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o "$bin"
+            objdump -d --no-show-raw-insn -M intel "$bin" > "$out/all-$release.txt"
+            calls=$(grep -cE 'call +[0-9a-f]+ <wf_package.halo.heap.table_get>' "$out/all-$release.txt" || true)
+            f=$(nm "$bin" | awk '/concat_step/ {print $3}' | head -1)
+            objdump -d --no-show-raw-insn -M intel --disassemble="$f" "$bin" > "$out/concat_step-$release.txt"
+            reload=$(grep -cE 'mov +r[0-9a-z]+,QWORD PTR \[r[0-9a-z]+\+0x28\]' "$out/concat_step-$release.txt" || true)
+            echo "$release: table_get out-of-line calls $calls; concat_step loads at +0x28: $reload; concat_step lines $(wc -l < "$out/concat_step-$release.txt")"
+            rm -f "$out/all-$release.txt"
           done
           git checkout -- whitefoot.pin
       - uses: actions/upload-artifact@v4
@@ -71,7 +69,7 @@ jobs:
           git log --oneline -1
           make -s toolchain
           out="$PWD/build/sg-bisect"; mkdir -p "$out"
-          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946 wf-exp-4753d28fb4ae; do
             echo "release = $release" > whitefoot.pin
             make -s compiler
             if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
@@ -88,6 +86,10 @@ jobs:
           done
           git checkout -- whitefoot.pin
           for b in layout style; do
+            echo "== $b: out-of-line calls before #345 / after #345 / Whitefoot#357 head, for callees that changed"
+            join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-$b-wf-9497f0a54fec.txt" "$out/calls-$b-wf-exp-b8cf83108946.txt" > "$out/j1-$b.txt"
+            join -1 1 -2 2 -a1 -a2 -e 0 -o 0,1.2,1.3,2.1 "$out/j1-$b.txt" "$out/calls-$b-wf-exp-4753d28fb4ae.txt" \
+              | awk '$2 != $3 || $3 != $4 {print $2, "/", $3, "/", $4, $1}' | sort -k7 | head -60
             echo "== $b: callees whose out-of-line call count changed (before -> after)"
             join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-$b-wf-9497f0a54fec.txt" "$out/calls-$b-wf-exp-b8cf83108946.txt" \
               | awk '$2 != $3 {d=$3-$2; print (d<0?-d:d), $2, "->", $3, $1}' | sort -rn | head -40
