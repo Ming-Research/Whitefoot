@@ -1675,7 +1675,7 @@ At 2000 iterations the score moves in steps of about 0.26%, too coarse to
 separate the change from the twin; at 20000 every candidate launch is
 above its base and its smallest ratio exceeds the twin's median. All
 engines report the same final CRC (0x4983 at 2000, 0x382f at 20000). The
-candidate's median is 0.946 of wasmi's (base 0.941) and 0.802 of
+candidate's median score is 0.946 of wasmi's (base 0.940) and 0.801 of
 Silverfir-nano's; wasmi is 0.847 of nano. The `BrTable` arm shrinks from 50
 to 27 instructions and `BrTableN` from 30 to 20; `BrTableNC`'s arm was not
 located by the name-to-arm map in that run, so its code is unverified, and
