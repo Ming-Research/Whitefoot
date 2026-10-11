@@ -63,6 +63,18 @@ jobs:
           python3 "$gen" "$out/profile.wf" --profile
           "$wfc" "$out/profile.wf" -o "$out/wasm-profile" > /dev/null
           python3 "$gen" "$out/names.wf" --names > "$out/names.txt"
+          for side in step prev; do
+            objdump -d --no-show-raw-insn "$out/wasm-$side" > "$out/$side.s"
+            for name in BrTable BrTableN BrTableNC; do
+              index=$(awk -v n="$name" '$0 == n {print NR - 1; exit}' "$out/names.txt")
+              [ -n "$index" ] || continue
+              echo "=== $side $name: arm $index"
+              awk -v sym="wf_run([.]body)?[.]arm[.]$index" '
+                $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+                on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+                on {print; count++}' "$out/$side.s"
+            done
+          done
           rm -rf "$RUNNER_TEMP/sf"
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
           git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
@@ -80,6 +92,6 @@ jobs:
           paste "$out/names.txt" "$out/counts.txt" | awk -F'\t' '$2 + 0 > 0 {printf "%s\t%d\n", $1, $2 + 0; s += $2} END {printf "total\t%d\n", s}' | sort -t$'\t' -k2,2nr | head -40
           engines=(step="$out/wasm-step" prev="$out/wasm-prev" twin="$out/wasm-twin")
           engines+=(wasmi="$RUNNER_TEMP/wasmi/bin/wasmi" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
-          python3 "$probe" --module coremark.wasm --iterations 2000 \
+          python3 "$probe" --module coremark.wasm --iterations 20000 \
             --launches "$ROUNDS" --tsv "$out/run.tsv" "${engines[@]}"
           cat "$out/run.tsv"
