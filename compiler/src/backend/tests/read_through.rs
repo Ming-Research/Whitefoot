@@ -1599,7 +1599,18 @@ fn main() -> status: std::process::ExitStatus pure {
     // Dropping all loop exclusions also fails split_boundary; ignoring exposure
     // fails mutation_boundary. Existing destination-parameter cases separately
     // require original observations when a result overwrites an aliased input.
-    let output = compile_and_run(&super::owned_places::retain_calls(&module));
+    let retained = super::owned_places::retain_calls(&module);
+    for callee in ["classify", "loop_reader", "mutating_loop", "split_reader"] {
+        let header = emitted_function(&retained, callee)
+            .lines()
+            .next()
+            .expect("retained consumer header");
+        assert!(
+            header.split_whitespace().any(|word| word == "noinline"),
+            "{header}"
+        );
+    }
+    let output = compile_and_run(&retained);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(
         output.stdout.is_empty() && output.stderr.is_empty(),
