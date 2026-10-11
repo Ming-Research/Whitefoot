@@ -78,6 +78,61 @@ fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   }
 }
 
+fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
+  doc "Capacity-zero Array, Slots and Ring owners share a static header, zero growth allocates nothing, and positive Slots growth counts only its header and elements, including zero-byte elements.";
+  let before = std::process::heap_in_use(meter: meter);
+  let slots = box_slots_new::<u64>(capacity: 0_u64);
+  let ring = box_ring_new::<u64>(capacity: 0_u64);
+  let array = box_array_filled::<u64>(count: 0_u64, value: 7_u64);
+  let empty = std::process::heap_in_use(meter: meter);
+  if empty != before {
+    return 1_u64;
+  }
+  append(destination: &slots.inner, source: &ring.inner);
+  split_off(source: &slots.inner, index: 0_u64, destination: &ring.inner);
+  grow(cell: &slots, capacity: 0_u64);
+  let unchanged = std::process::heap_in_use(meter: meter);
+  if unchanged != before {
+    return 1_u64;
+  }
+  grow(cell: &slots, capacity: 4_u64);
+  place_back(window: &slots.inner, value: 73_u64);
+  let grown = std::process::heap_in_use(meter: meter);
+  if grown >= before {
+    let bytes = grown - before;
+    if bytes != 48_u64 {
+      return 1_u64;
+    }
+  } else {
+    return 1_u64;
+  }
+  let empty_value = array_filled::<u64, 0>(value: 7_u64);
+  let zero_bytes = box_slots_new::<Array<u64, 0>>(capacity: 0_u64);
+  grow(cell: &zero_bytes, capacity: 0_u64);
+  grow(cell: &zero_bytes, capacity: 4_u64);
+  place_back(window: &zero_bytes.inner, value: empty_value);
+  let with_zero_bytes = std::process::heap_in_use(meter: meter);
+  if with_zero_bytes >= grown {
+    let bytes = with_zero_bytes - grown;
+    if bytes != 16_u64 {
+      return 1_u64;
+    }
+  } else {
+    return 1_u64;
+  }
+  if slots.inner.len != 1_u64 {
+    return 1_u64;
+  }
+  if zero_bytes.inner.len != 1_u64 {
+    return 1_u64;
+  }
+  if array.inner.len != 0_u64 {
+    return 1_u64;
+  }
+  free_empty(window: move ring);
+  return 0_u64;
+}
+
 fn map_key(index: u64) -> key: Array<u8, 3> pure {
   let middle = index / 256_u64;
   let high = index / 65536_u64;
@@ -199,6 +254,14 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let after_grow = std::process::heap_in_use(meter: &meter);
   if after_grow != before {
     return exit_status(code: 7_u8);
+  }
+  let empty_windows = measure_empty_windows(meter: &meter);
+  if empty_windows != 0_u64 {
+    return exit_status(code: 15_u8);
+  }
+  let after_empty_windows = std::process::heap_in_use(meter: &meter);
+  if after_empty_windows != before {
+    return exit_status(code: 16_u8);
   }
   let shared_meter = std::process::meter_share(meter: &meter);
   let same = std::process::heap_in_use(meter: &shared_meter);

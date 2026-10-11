@@ -716,7 +716,183 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
                 .affine_target_proof(&target, &assumptions, context)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed, rebuilt, "{target:?}");
+            analyzer.vocabulary.affine_l0_cache = None;
+            let reference = analyzer
+                .reasoning()
+                .reference_affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed, reference, "allocating route: {target:?}");
             assert_eq!(observed.is_some(), expected, "{target:?}");
+        }
+    });
+}
+
+#[test]
+fn affine_scratch_preserves_late_winners_cancellation_and_boundary_routes() {
+    with_analyzer(|analyzer| {
+        let [a, b] = [0; 2].map(|_| {
+            analyzer
+                .vocabulary
+                .new_affine_atom(IntegerType::I32)
+                .unit_term()
+                .unwrap()
+        });
+        let inequality = |terms: &[(AffineTermId, i128)], upper| {
+            AffineInequality::from_terms(terms, upper, &mut AffineCheckState::new()).unwrap()
+        };
+        let source = |ordinal| {
+            SourceAffineFactRef::LoopInvariant(SourceLoopInvariantRef {
+                loop_id: CheckedLoopId(0),
+                source_ordinal: ordinal,
+            })
+        };
+        let cases = [
+            (
+                "unrepresentable single before first of two successes",
+                inequality(&[(a, 1)], 4),
+                vec![
+                    inequality(&[(a, i128::MIN), (b, 1)], 0),
+                    inequality(&[(a, 1)], 4),
+                    inequality(&[(a, 1)], 3),
+                ],
+                Some(vec![(1, 1)]),
+            ),
+            (
+                "failed and overflowing pairs before the successful pair",
+                inequality(&[(a, 1), (b, 1)], 10),
+                vec![
+                    inequality(&[(a, i128::MAX)], 0),
+                    inequality(&[(a, 1)], 4),
+                    inequality(&[(b, 1)], 6),
+                ],
+                Some(vec![(1, 1), (2, 1)]),
+            ),
+            (
+                "pair cancellation then zero residual",
+                inequality(&[(a, 1)], 0),
+                vec![
+                    inequality(&[(a, 2), (b, -2)], 0),
+                    inequality(&[(a, -1), (b, 2)], 0),
+                ],
+                Some(vec![(0, 1), (1, 1)]),
+            ),
+            (
+                "MIN coefficient cancellation still fails before addition",
+                inequality(&[(a, i128::MIN)], 0),
+                vec![inequality(&[(a, i128::MIN)], 0)],
+                None,
+            ),
+            (
+                "residual coefficient overflow is not a proof",
+                inequality(&[(a, i128::MAX)], 0),
+                vec![inequality(&[(a, -1)], 0)],
+                None,
+            ),
+            (
+                "upper overflow does not hide the later exact MIN bound",
+                inequality(&[(a, 1)], i128::MIN),
+                vec![inequality(&[(a, 1)], 1), inequality(&[(a, 1)], i128::MIN)],
+                Some(vec![(1, 1)]),
+            ),
+        ];
+        let facts = FactState::new();
+        let affine = AffineFlowState::default();
+        for (name, target, premises, expected_sources) in cases {
+            let assumptions = premises
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, inequality)| ActiveAffineFact {
+                    inequality,
+                    evidence: AffineFactEvidence::Source(source(u32::try_from(ordinal).unwrap())),
+                })
+                .collect::<Vec<_>>();
+            let context = ProofContext::new(&facts, &affine);
+            analyzer.vocabulary.affine_l0_cache = None;
+            let actual = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            analyzer.vocabulary.affine_l0_cache = None;
+            let expected = analyzer
+                .reasoning()
+                .reference_affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(actual, expected, "{name}");
+            assert_eq!(
+                actual.as_ref().map(|(premises, _)| premises.clone()),
+                expected_sources.map(|selected| selected
+                    .into_iter()
+                    .map(|(ordinal, factor)| {
+                        AffinePremiseUse {
+                            source: source(ordinal),
+                            factor,
+                        }
+                    })
+                    .collect::<Vec<_>>()),
+                "source selection pins the single/pair route: {name}"
+            );
+        }
+    });
+}
+
+#[test]
+fn canonical_interval_requests_keep_endpoint_ties_and_selected_parents() {
+    with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), a.clone());
+        affine.values.insert(BindingId(2), b.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, candidates[1].term, ZERO, 5);
+        cache_bound(analyzer, &mut facts, candidates[2].term, ZERO, 5);
+        cache_bound(analyzer, &mut facts, ZERO, candidates[3].term, 2);
+        let (closed, l0) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        let mut selected = vec![
+            closed
+                .bound_proof(
+                    candidates[1].term,
+                    ZERO,
+                    5,
+                    &mut analyzer.vocabulary.derivations,
+                )
+                .unwrap(),
+            closed
+                .bound_proof(
+                    ZERO,
+                    candidates[3].term,
+                    2,
+                    &mut analyzer.vocabulary.derivations,
+                )
+                .unwrap(),
+        ];
+        selected.sort_unstable_by_key(|parent| parent.0);
+        selected.dedup();
+        let mut query = AffineDirectQuery::new(&l0, &affine, &closed);
+        let mut reference = AffineDirectQuery::new(&l0, &affine, &closed);
+        for upper in [9, 8, 9] {
+            let target = AffineInequality::from_terms(
+                &[(b.unit_term().unwrap(), -2), (a.unit_term().unwrap(), 1)],
+                upper,
+                &mut AffineCheckState::new(),
+            )
+            .unwrap();
+            let actual = analyzer.reasoning().affine_interval_proof(
+                &target,
+                &mut query,
+                &mut AffineCheckState::new(),
+            );
+            let expected = analyzer.reasoning().reference_affine_interval_proof(
+                &target,
+                &mut reference,
+                &mut AffineCheckState::new(),
+            );
+            assert_eq!(actual, expected);
+            assert_eq!(actual, Ok((upper == 9).then(|| selected.clone())));
         }
     });
 }
@@ -1160,4 +1336,299 @@ fn offset_extremes_survive_delivery_and_call_term_replacement() {
             );
         }
     }
+}
+
+// Allocating traversal retained from the base revision. It deliberately keeps
+// the original pair clones, residual formation and sorted atom requests so
+// comparisons do not simply run the new scratch path twice.
+use crate::semantic::entailment::affine::{
+    integer_tightenings, reference_residual_after, sum_explicit_inequalities,
+};
+
+impl Reasoning<'_, '_, '_> {
+    pub(super) fn reference_affine_interval_proof(
+        &mut self,
+        inequality: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let mut requested = inequality
+            .terms()
+            .iter()
+            .map(|coefficient| coefficient.term())
+            .collect::<Vec<_>>();
+        requested.sort_unstable();
+        requested.dedup();
+
+        if query.measures.is_none() {
+            query.measures = Some(self.vocabulary.measure_terms_by_atom(query.values));
+        }
+        let measures = query
+            .measures
+            .as_ref()
+            .expect("measure index prepared above");
+        for atom_id in requested {
+            if query.intervals.contains_key(&atom_id) {
+                continue;
+            }
+            let atom = *self
+                .vocabulary
+                .affine_atoms
+                .get(atom_id.index() as usize)
+                .ok_or(AffineCheckError::CoefficientMismatch)?;
+            let mut interval = AffineAtomInterval {
+                minimum: atom.minimum,
+                maximum: atom.maximum,
+                minimum_parent: None,
+                maximum_parent: None,
+            };
+            let mut bindings = query
+                .values
+                .values
+                .iter()
+                .filter_map(|(binding, value)| {
+                    (value.unit_term() == Some(atom_id)).then_some(*binding)
+                })
+                .collect::<Vec<_>>();
+            bindings.sort_by_key(|binding| binding.0);
+            let mut terms = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    if self.input.affine_binding_type(binding) != Some(atom.ty) {
+                        return None;
+                    }
+                    Some(self.vocabulary.terms.intern(TermKind::Place(
+                        ResolvedPlace::spelled(PlaceRoot::Binding(binding), false, Vec::new()),
+                        atom.ty,
+                    )))
+                })
+                .collect::<Vec<_>>();
+            if let Some(measures) = measures.get(&atom_id) {
+                terms.extend(measures.iter().copied());
+            }
+            for term in terms {
+                if let Some(upper) = query.closed.tight_bound(term, ZERO)
+                    && upper < interval.maximum
+                {
+                    interval.maximum = upper;
+                    interval.maximum_parent = Some((term, ZERO, upper));
+                }
+                if let Some(negative_lower) = query.closed.tight_bound(ZERO, term)
+                    && let Some(lower) = negative_lower.checked_neg()
+                    && lower > interval.minimum
+                {
+                    interval.minimum = lower;
+                    interval.minimum_parent = Some((ZERO, term, negative_lower));
+                }
+            }
+            query.intervals.insert(atom_id, interval);
+        }
+
+        if query.closed.contradictory() {
+            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+        }
+        let proved = interval_proves(
+            inequality,
+            |term| {
+                query
+                    .intervals
+                    .get(&term)
+                    .map(|interval| (interval.minimum, interval.maximum))
+            },
+            check,
+        )?;
+        if !proved {
+            return Ok(None);
+        }
+        let mut parents = Vec::new();
+        for coefficient in inequality.terms() {
+            let interval = query
+                .intervals
+                .get(&coefficient.term())
+                .ok_or(AffineCheckError::CoefficientMismatch)?;
+            let selected = if coefficient.coefficient() > 0 {
+                interval.maximum_parent
+            } else {
+                interval.minimum_parent
+            };
+            if let Some((left, right, bound)) = selected {
+                let parent = query
+                    .closed
+                    .bound_proof(left, right, bound, &mut self.vocabulary.derivations)
+                    .ok_or(AffineCheckError::CoefficientMismatch)?;
+                parents.push(parent);
+            }
+        }
+        parents.sort_unstable_by_key(|parent| parent.0);
+        parents.dedup();
+        Ok(Some(parents))
+    }
+
+    pub(super) fn reference_affine_residual_proof(
+        &mut self,
+        inequality: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        if query.closed.contradictory() {
+            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+        }
+        if let Some(parents) =
+            self.vocabulary
+                .affine_l0_proof(inequality, query.l0, query.closed, check)?
+        {
+            return Ok(Some(parents));
+        }
+        self.reference_affine_interval_proof(inequality, query, check)
+    }
+
+    pub(super) fn reference_affine_candidate_residual_proof(
+        &mut self,
+        target: &AffineInequality,
+        candidate: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Option<Vec<DerivationId>> {
+        let tightenings = integer_tightenings(candidate, target, check);
+        for accumulated in std::iter::once(candidate).chain(tightenings.iter()) {
+            let Ok(residual) = reference_residual_after(target, accumulated, check) else {
+                continue;
+            };
+            if let Ok(Some(parents)) = self.reference_affine_residual_proof(&residual, query, check)
+            {
+                return Some(parents);
+            }
+        }
+        None
+    }
+
+    pub(super) fn reference_affine_l0_then_direct_proof(
+        &mut self,
+        target: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Option<Vec<DerivationId>> {
+        super::super::super::work::affine_final_family_start();
+        let l0 = query.l0;
+        let mut ordinal = 0;
+        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
+            ordinal += 1;
+            let Some(mut parents) = self.reference_affine_candidate_residual_proof(
+                target,
+                &entry.inequality,
+                query,
+                check,
+            ) else {
+                continue;
+            };
+            let Some(parent) = query.closed.bound_proof(
+                entry.left,
+                entry.right,
+                entry.bound,
+                &mut self.vocabulary.derivations,
+            ) else {
+                continue;
+            };
+            parents.push(parent);
+            parents.sort_unstable_by_key(|parent| parent.0);
+            parents.dedup();
+            return Some(parents);
+        }
+        super::super::super::work::affine_final_family_exhausted();
+        None
+    }
+
+    pub(super) fn reference_affine_target_proof(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        let values = context.affine;
+        let mut check = AffineCheckState::new();
+        let (closed, l0) = self.affine_query_view(context);
+        let mut query = AffineDirectQuery::new(&l0, values, &closed);
+        if let Ok(Some(parents)) =
+            self.reference_affine_residual_proof(target, &mut query, &mut check)
+        {
+            return Some(AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            });
+        }
+        let automatic = automatic_affine_premises(assumptions, &mut check).ok()?;
+
+        // Preserve the complete coefficient-one single-premise route. Every
+        // premise is tried independently; an arithmetic error in one candidate
+        // cannot suppress a later source or value-image fact.
+        for (index, assumption) in automatic.iter().enumerate() {
+            // A candidate that cannot participate in an i128 residual grants
+            // no authority, but it must not hide a later independently
+            // representable source fact in the same deterministic order.
+            if let Some(parents) = self.reference_affine_candidate_residual_proof(
+                target,
+                &assumption.inequality,
+                &mut query,
+                &mut check,
+            ) {
+                return Some(affine_consequence_from_residual(
+                    &[(index, 1)],
+                    &automatic,
+                    parents,
+                ));
+            }
+        }
+
+        // R2 exhausts the source-shaped set of unordered coefficient-one
+        // pairs, including one premise used twice. There is no greedy state,
+        // backtracking cutoff, or cumulative work budget: fact order changes
+        // only which successful derivation is retained, never acceptance.
+        if let Some((first, second, parents)) =
+            reference_first_two_premise_candidate(&automatic, &mut check, |sum, check| {
+                self.reference_affine_candidate_residual_proof(target, sum, &mut query, check)
+            })
+        {
+            let selected = if first == second {
+                vec![(first, 2)]
+            } else {
+                vec![(first, 1), (second, 1)]
+            };
+            return Some(affine_consequence_from_residual(
+                &selected, &automatic, parents,
+            ));
+        }
+
+        // Ordinary L0 relations remain outside the affine premise set. This
+        // is the specification's final `DIRECT(T - R)` family: subtract each
+        // strongest indexed L0 image once, then run the ordinary DIRECT check
+        // on the residual. DIRECT may itself close an exact L0 image, but the
+        // route never publishes or recursively saturates either relation.
+        self.reference_affine_l0_then_direct_proof(target, &mut query, &mut check)
+            .map(|parents| AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            })
+    }
+}
+
+pub(super) fn reference_first_two_premise_candidate<T>(
+    premises: &[AutomaticAffinePremise],
+    check: &mut AffineCheckState,
+    mut prove: impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<T>,
+) -> Option<(usize, usize, T)> {
+    for first in 0..premises.len() {
+        for second in first..premises.len() {
+            let pair = [
+                premises[first].inequality.clone(),
+                premises[second].inequality.clone(),
+            ];
+            let Ok(sum) = sum_explicit_inequalities(&pair, check) else {
+                continue;
+            };
+            if let Some(proof) = prove(&sum, check) {
+                return Some((first, second, proof));
+            }
+        }
+    }
+    None
 }

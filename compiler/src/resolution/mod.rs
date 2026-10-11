@@ -13,6 +13,9 @@ mod scopes;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use tests::with_each_declaration_role;
+
 use crate::syntax::NodeId;
 use crate::{CanonicalSyntaxUnit, NodePath, SyntaxCoordinate};
 

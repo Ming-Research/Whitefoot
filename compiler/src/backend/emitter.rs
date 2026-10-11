@@ -635,6 +635,13 @@ fn emit_module(
             text.declare(signature);
         }
     }
+    if text
+        .entities
+        .iter()
+        .any(|entity| entity.references.symbols.contains("wf__empty_window"))
+    {
+        text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
+    }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);

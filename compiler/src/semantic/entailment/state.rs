@@ -2800,19 +2800,25 @@ impl BoundStore {
     /// every slotted term and the stride has room, otherwise by re-laying the
     /// store out over its live terms and these two.
     fn slots_for(&mut self, left: TermId, right: TermId) {
-        let mut missing = [left, right]
-            .into_iter()
-            .filter(|term| self.slot(*term).is_none())
-            .collect::<Vec<_>>();
+        let mut missing = [left, right];
+        let mut count = 0;
+        if self.slot(left).is_none() {
+            missing[count] = left;
+            count += 1;
+        }
+        if right != left && self.slot(right).is_none() {
+            missing[count] = right;
+            count += 1;
+        }
+        let missing = &mut missing[..count];
         missing.sort_unstable();
-        missing.dedup();
         let Some(first) = missing.first() else {
             return;
         };
         if self.terms.last().is_none_or(|last| last < first)
             && self.terms.len() + missing.len() <= self.stride
         {
-            for term in missing {
+            for &term in missing.iter() {
                 let index = term.0 as usize;
                 if index >= self.slots.len() {
                     self.slots.resize(index + 1, NO_SLOT);
@@ -9820,6 +9826,52 @@ pub(crate) mod tests {
                 (TermId(90), TermId(0), -7, strong)
             ]
         );
+    }
+
+    /// Both absent endpoints are sorted before append or relayout; equal
+    /// endpoints occupy one slot, and existing cells retain their proofs.
+    #[test]
+    fn a_bound_store_registers_both_missing_slots_in_term_order() {
+        let mut store = BoundStore::default();
+        store.store_single(TermId(4), TermId(4), 0, DerivationId(1));
+        store.store_single(TermId(9), TermId(7), 2, DerivationId(2));
+        assert_eq!(store.terms, vec![TermId(4), TermId(7), TermId(9)]);
+        store.store_single(TermId(10), TermId(10), 0, DerivationId(3));
+        assert_eq!(store.terms, vec![TermId(4), TermId(7), TermId(9), TermId(10)]);
+        // One missing endpoint, then neither missing, preserve existing slots.
+        store.store_single(TermId(9), TermId(12), -3, DerivationId(4));
+        store.store_single(TermId(9), TermId(7), 1, DerivationId(5));
+        let expected = vec![
+            (TermId(4), TermId(4), 0, DerivationId(1)),
+            (TermId(9), TermId(7), 1, DerivationId(5)),
+            (TermId(9), TermId(12), -3, DerivationId(4)),
+            (TermId(10), TermId(10), 0, DerivationId(3)),
+        ];
+        assert_eq!(store.cells().collect::<Vec<_>>(), expected);
+        let copy = store.clone();
+        // Two smaller missing endpoints force relayout instead of append.
+        store.store_single(TermId(3), TermId(1), -2, DerivationId(6));
+        assert_eq!(
+            store.terms,
+            vec![
+                TermId(1),
+                TermId(3),
+                TermId(4),
+                TermId(7),
+                TermId(9),
+                TermId(10),
+                TermId(12)
+            ]
+        );
+        let mut relaid = vec![(TermId(3), TermId(1), -2, DerivationId(6))];
+        relaid.extend(expected.iter().copied());
+        assert_eq!(store.cells().collect::<Vec<_>>(), relaid);
+        assert_eq!(copy.cells().collect::<Vec<_>>(), expected);
+        assert_eq!(store.live, expected.len() + 1);
+        assert_eq!(store.get(TermId(7), TermId(9)), None);
+        for (left, right, bound, proof) in relaid {
+            assert_eq!(store.get(left, right), Some((bound, proof)));
+        }
     }
 
     /// A remembered closed view is reused only for unchanged content: a new

@@ -93,8 +93,8 @@ use super::super::postcondition::{
 };
 use super::affine::{
     AffineCheckError, AffineCheckLimit, AffineCheckState, AffineCoefficient, AffineForm,
-    AffineInequality, AffineTermId, MAX_CERTIFICATE_PREMISES, ScaledAffinePremise,
-    integer_tightenings, interval_maximum, interval_proves, sum_explicit_inequalities,
+    AffineInequality, AffineInequalityView, AffineResidualScratch, AffineSumScratch, AffineTermId,
+    MAX_CERTIFICATE_PREMISES, ScaledAffinePremise, interval_maximum, interval_proves,
     sum_explicit_scaled_inequalities,
 };
 use super::polynomial::{CertificatePolynomial, PolynomialError};
@@ -785,6 +785,7 @@ struct AffineDirectQuery<'a> {
     closed: &'a ClosedState,
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -799,6 +800,7 @@ impl<'a> AffineDirectQuery<'a> {
             closed,
             intervals: WordHashMap::default(),
             measures: None,
+            residual: AffineResidualScratch::default(),
         }
     }
 }
@@ -2431,8 +2433,8 @@ mod goal_origin_kill_tests {
 #[cfg(test)]
 mod affine_pair_tests {
     use super::{
-        AffineCheckState, AffineInequality, AffineTermId, AutomaticAffinePremise,
-        first_two_premise_candidate, interval_proves,
+        AffineCheckState, AffineInequality, AffineInequalityView, AffineTermId,
+        AutomaticAffinePremise, first_two_premise_candidate, interval_proves,
     };
 
     fn inequality(terms: &[(u32, i128)], upper: i128) -> AffineInequality {
@@ -2467,7 +2469,7 @@ mod affine_pair_tests {
     /// checker does.
     fn interval_closes_after(
         target: &AffineInequality,
-    ) -> impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<()> {
+    ) -> impl FnMut(AffineInequalityView<'_>, &mut AffineCheckState) -> Option<()> {
         move |sum, check| {
             let residual = AffineInequality::residual_after(target, sum, check).ok()?;
             interval_closes_without_atoms(&residual, check)

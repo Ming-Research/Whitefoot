@@ -1322,12 +1322,15 @@ impl<'input> ModuleCheck<'input> {
             limits,
             cache,
             |_, resolved| {
+                let reads = reads::DeclarationReads::new(resolved);
                 Ok(std::iter::once(self.target)
                     .chain(graph.dependency_closure(self.target))
                     .map(|module| Judged {
                         module,
                         pending: pending_declarations(resolved, module),
-                        read: reads::read_declarations(resolved, module),
+                        read: reads
+                            .as_ref()
+                            .and_then(|reads| reads.read_declarations(module)),
                     })
                     .collect())
             },
