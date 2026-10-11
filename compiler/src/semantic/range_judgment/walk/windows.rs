@@ -15,9 +15,7 @@ impl Walker<'_> {
         };
         let (container, indices, projection, length, generation) = match view {
             View::Place(location) => {
-                let Some(container) = state.container(&mut self.world, location.clone(), 1) else {
-                    return None;
-                };
+                let container = state.container(&mut self.world, location.clone(), 1)?;
                 let generation = state.generation(container);
                 let length = self
                     .world
@@ -45,16 +43,12 @@ impl Walker<'_> {
             }
             _ => return None,
         };
-        let Some(next) = length.plus(&Linear::constant(if name == "place_back" { 1 } else { -1 }))
-        else {
-            return None;
-        };
+        let next =
+            length.plus(&Linear::constant(if name == "place_back" { 1 } else { -1 }))?;
         // Descriptor mutation is not an element-only access for RANGE-5.
         self.unplaced_view(view, true, node, state);
         let value = if name == "place_back" {
-            let Some(value) = arguments.get(1) else {
-                return None;
-            };
+            let value = arguments.get(1)?;
             let mut at = indices.clone();
             let mut path = projection.clone();
             if generation.is_none() {
