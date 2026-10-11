@@ -1307,7 +1307,7 @@ impl<'unit> Checker<'_, 'unit> {
 
 impl<'unit> DeclarationInventory<'unit> {
     /// Whether `node` is an opaque struct the prelude declares [PRE-1].
-    fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
+    pub(super) fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
         let source = self.tree.coordinate(node)?.source();
         Ok(self
             .resolved

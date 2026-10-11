@@ -3096,11 +3096,13 @@ typedef struct {
         wf_shared shared;
         unsigned char header[WF_SHARED_STATE_OFFSET];
     };
-    _Atomic uint32_t state;
+    _Atomic unsigned int state;
 } wf_decision_cell;
 _Static_assert(offsetof(wf_decision_cell, state) == WF_SHARED_STATE_OFFSET,
                "decision cells retain the ordinary shared header");
-_Static_assert(__atomic_always_lock_free(sizeof(uint32_t), 0),
+_Static_assert(UINT_MAX == UINT32_MAX && sizeof(unsigned int) == sizeof(uint32_t),
+               "decision cells require a 32-bit unsigned int word");
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2,
                "decision cells require a lock-free 32-bit atomic word");
 
 void *wf__decision_cell_new(void) {
@@ -3116,7 +3118,7 @@ uint32_t wf__decision_cell_read(void *object) {
 
 static uint32_t wf_decision_claim(void *object, uint32_t winner) {
     wf_decision_cell *cell = object;
-    uint32_t expected = WF_DECISION_OPEN;
+    unsigned int expected = WF_DECISION_OPEN;
     /* Exactly one strong CAS operation: failure returns the absorbing
      * winner, so there is no runtime retry loop. On an LL/SC target the
      * compiler may retry exclusive stores inside this lock-free operation;

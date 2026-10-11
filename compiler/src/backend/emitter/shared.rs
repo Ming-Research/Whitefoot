@@ -974,7 +974,7 @@ impl FunctionEmitter<'_, '_> {
         ty: IrType,
         nominal: IrNominalId,
     ) -> Result<(), BackendFailure> {
-        if ty != IrType::Nominal(nominal) || self.nominal(nominal)?.name() != "DecisionCell" {
+        if ty != IrType::Nominal(nominal) || self.nominal(nominal)?.name != "DecisionCell" {
             return Err(BackendFailure::InvalidIr);
         }
         self.names(&["wf__decision_cell_new"]);
@@ -993,8 +993,8 @@ impl FunctionEmitter<'_, '_> {
         object: IrValueId,
         winner: Option<u32>,
     ) -> Result<(), BackendFailure> {
-        if !matches!(ty, IrType::Nominal(id) if self.nominal(id)?.name() == "DecisionState")
-            || !matches!(self.value_type(object), Some(IrType::Nominal(id)) if self.nominal(id)?.name() == "DecisionCell")
+        if !matches!(ty, IrType::Nominal(id) if self.nominal(id)?.name == "DecisionState")
+            || !matches!(self.value_type(object), Some(IrType::Nominal(id)) if self.nominal(id)?.name == "DecisionCell")
         {
             return Err(BackendFailure::InvalidIr);
         }
