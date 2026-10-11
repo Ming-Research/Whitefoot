@@ -52,3 +52,43 @@ jobs:
         with:
           name: concat-bisect
           path: halo/build/bisect-out
+
+  snowghost:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Snowghost-wf
+          ref: main
+          submodules: true
+          path: sg
+      - name: Build layout_oracle before and after #345 and compare out-of-line calls
+        working-directory: sg
+        run: |
+          set -euo pipefail
+          git log --oneline -1
+          out="$PWD/build/sg-bisect"; mkdir -p "$out"
+          for release in wf-9497f0a54fec wf-exp-b8cf83108946; do
+            echo "release = $release" > whitefoot.pin
+            make -s compiler
+            if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
+            wfc=$(realpath build/whitefoot/$release/whitefootc)
+            (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o "$out/layout-$release")
+            (cd renderer && "$wfc" --graph modules.wfg --entry style_oracle -o "$out/style-$release")
+            for b in layout style; do
+              objdump -d --no-show-raw-insn "$out/$b-$release" | grep -oE 'call +[0-9a-f]+ <wf_package[^>+]*>' \
+                | sed -E 's/call +[0-9a-f]+ <//; s/>$//' | sort | uniq -c | sort -k2 > "$out/calls-$b-$release.txt"
+              nm --size-sort -S "$out/$b-$release" | grep wf_package > "$out/sizes-$b-$release.txt" || true
+            done
+          done
+          git checkout -- whitefoot.pin
+          for b in layout style; do
+            echo "== $b: callees whose out-of-line call count changed (before -> after)"
+            join -1 2 -2 2 -a1 -a2 -e 0 -o 0,1.1,2.1 "$out/calls-$b-wf-9497f0a54fec.txt" "$out/calls-$b-wf-exp-b8cf83108946.txt" \
+              | awk '$2 != $3 {d=$3-$2; print (d<0?-d:d), $2, "->", $3, $1}' | sort -rn | head -40
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sg-bisect
+          path: sg/build/sg-bisect
