@@ -79,9 +79,11 @@ jobs:
             (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o "$out/layout-$release")
             (cd renderer && "$wfc" --graph modules.wfg --entry style_oracle -o "$out/style-$release")
             for b in layout style; do
-              objdump -d --no-show-raw-insn "$out/$b-$release" | grep -oE 'call +[0-9a-f]+ <wf_package[^>+]*>' \
-                | sed -E 's/call +[0-9a-f]+ <//; s/>$//' | sort | uniq -c | sort -k2 > "$out/calls-$b-$release.txt"
-              nm --size-sort -S "$out/$b-$release" | grep wf_package > "$out/sizes-$b-$release.txt" || true
+              ls -la "$out/$b-$release"; nm "$out/$b-$release" | wc -l
+              { objdump -d --no-show-raw-insn "$out/$b-$release" | grep -oE 'call +[0-9a-f]+ <[^>+]*' || true; } \
+                | sed -E 's/call +[0-9a-f]+ <//' | sort | uniq -c | sort -k2 > "$out/calls-$b-$release.txt"
+              wc -l < "$out/calls-$b-$release.txt"
+              { nm --size-sort -S "$out/$b-$release" | grep wf_package || true; } > "$out/sizes-$b-$release.txt"
             done
           done
           git checkout -- whitefoot.pin
