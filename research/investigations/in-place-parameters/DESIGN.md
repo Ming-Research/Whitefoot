@@ -2517,8 +2517,8 @@ and a claim that the no-override candidate is identical to 4753d would be
 incorrect. The retained candidate includes the scopes and whole-root effect
 coverage as well as TBAA, read-through and source-independent granules.
 
-The proposed withdrawal is tracked on decision card `lm-357-inline-override`;
-the owner's ruling remains pending. The bounded-IR inlining mechanism and
+The withdrawal was decided on card `lm-357-inline-override`, where the
+owner chose it (option A). The bounded-IR inlining mechanism and
 its policy-only witnesses are removed, while mandatory dispatch-header
 inlining, granule transfers, both cause-level fixes and the constants code
 move remain. Acceptance is by downstream timing and forwarding counters;
@@ -2529,3 +2529,70 @@ Snowghost's edit/style/layout cells require their own paired comparison
 against `wf-78223721f77d`. The earlier successful library run validates the
 historical policy candidate, not this withdrawal. CI and fresh downstream
 measurements are still required.
+
+## Withdrawal outcome: downstream timing and the accessor attribution
+
+`wf-exp-ce22645f11a0` is the withdrawal candidate: granules for every
+source, looping-callee read-through, storage-role TBAA and owner scopes, no
+forced inlining.
+
+**Halo** (Halo-wf, i9-14900K run 38175367625, six interleaved pairs, twin
+0.992–1.003). Against `wf-78223721f77d`, before #344/#345: concat 0.980;
+binary-trees 0.793, integer-table 0.863 and loop 0.966 faster beyond the
+twin range; fib 0.957, string-key 0.972 and sort 0.976 within it. Against
+`wf-7062f3ac4ac7`: concat 0.942, the other six 0.962–1.003. Blocked store
+forwards: fib 8.08M on both; integer-table 2.52–2.55M against 7062's
+2.08–2.33M, about 10% more with no timing effect (0.996), unattributed.
+The Halo acceptance holds.
+
+**Snowghost** (Snowghost-wf, i9-14900K run 38176010375, two rounds, against
+`wf-78223721f77d`). html5 four-thread style 0.186 s against 7062's 0.192, as
+main; single-thread style 5–7% faster; block insert/delete 24–35% faster and
+four-thread full layout 10–15% faster. Every word-edit cell stays 8–11%
+slower (apollo11 single-thread 109/110 → 121/120 µs), html5 and apollo11
+sentence edits 3–10% slower, and apollo11 font-size, root-font and full
+layout slower; these cells match 7062's, so the candidate leaves them as
+main has them. The Snowghost acceptance fails.
+
+**Attribution** (Snowghost-wf callgrind 3.22 on a hosted runner, run
+38183553516; apollo11 single-thread word edit, first four edits, collection
+toggled to `wf_layout.text_changed` and `wf_layout.update`; an empty-edit
+control collected 0 Ir on both). Total 12,257,362 → 13,518,149 Ir (+10.3%).
+Self-Ir growth sits in small layout accessors that return a whole record:
+`computed_of` +622,811 (all inlined before), `font_of` +271,096,
+`read_item` +163,507, `write_item` +154,761, `text_of` +135,162,
+`next_glyphs` +125,109, `box_of` +54,624, with their former callers
+shrinking. Direct call sites of `computed_of`, `font_of`, `text_of` and
+`box_of` went from 4 to 160. `computed_of` returns a 48-byte record through
+the hidden result pointer, and `font_of` reads one field of it; inlined, the
+copy disappears. `set_links`, `set_glyph_class` and `add_scalar_piece` are
+not on this path (0 Ir on both sides), so the earlier structural proxies
+named the wrong functions for this cell.
+
+**Per-function threshold attribute** (branch
+`claude/transfer-inline-threshold`, b634ed248, not proposed): emitting
+`"function-inline-threshold"="225 + D"` with D the granules' extra charge
+cannot restore cold-site inlining. LLVM 22 replaces the threshold only in
+[`finalizeAnalysis`](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L1122-L1124),
+while [`shouldStop`](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L1143-L1152)
+already refused the callee once its running cost reached the cold call
+site's threshold of 45.
+
+**Other transfer spellings** (LLVM 22 source reading, with compile-only
+probes on Apple clang 21, arm64 and x86-64; no Whitefoot output, no
+timing). A first-class aggregate load/store costs one load and one store,
+but InstCombine's `unpackLoadToAggregate`/`unpackStoreToAggregate` split
+padding-free structs into members and early SROA and InstCombine run before
+the inliner, so the probe's cost matched explicit granules (135 against a
+cold threshold of 45, call kept); MemCpyOpt can turn a surviving pair back
+into memcpy or memmove. memcpy with `!tbaa.struct` inlined (cost 25) but
+copies with wide loads. Explicit granules of a standalone copy were also
+merged by the DAG combiner into 16-byte loads (`movups`, `ldr q`), so the
+granule form promises no final width, as the storage-placement decision
+already states. Masked gather followed by scatter was the only stock form
+that both inlined (cost 35) and kept 4-byte payload accesses in the probes,
+at much higher executed cost, and it keeps the whole copy after inlining.
+No stock LLVM 22 spelling was found that has memcpy's inline cost and a
+field-width lowering contract. The next steps are a gather/scatter
+feasibility experiment on LLVM 22 and, failing that, an LLVM-side transfer
+operation that expands after inlining; both belong to a separate item.
