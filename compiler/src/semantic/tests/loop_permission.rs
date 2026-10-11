@@ -34,7 +34,7 @@ mod fields;
 #[test]
 fn decision_cell_claims_do_not_gain_loop_overlap() {
     let source = br#"fn decide(cell: &DecisionCell) -> result: unit reads(cell) {
-  for i in 0_u64..4_u64 {
+  for (i in 0_u64..4_u64) {
     let winner = claim_written(cell: cell);
   }
   return unit;

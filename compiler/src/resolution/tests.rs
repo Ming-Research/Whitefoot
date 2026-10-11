@@ -162,7 +162,11 @@ fn minimal_function_publishes_the_closed_prelude_and_source_declaration() {
         let ResolutionOutcome::Complete(resolved) = outcome else {
             panic!("minimal canonical function must resolve: {outcome:?}");
         };
-        assert_eq!(resolved.prelude_declarations().len(), 31);
+        // Without parsed opaque/function records, PRE-1 contributes just
+        // its enum catalog and Int, Float, Eq, Run. The enum preorders have
+        // 3 (Bool), 5 (Option), 7 (Result), 2 (Overflow), 3 (DivError),
+        // 2 (NarrowError), 5 (ScanStep), and 4 (DecisionState) records.
+        assert_eq!(resolved.prelude_declarations().len(), 35);
         assert_eq!(resolved.declarations().len(), 1);
         assert_eq!(resolved.declarations()[0].role(), DeclarationRole::Function);
         assert_eq!(resolved.declarations()[0].spelling(), "probe");
@@ -2658,12 +2662,13 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
             );
         },
     );
-    // [TYPE-6] a source variant belongs to its enum and enters no
-    // constructor domain, so it shares a PRE-1 variant's spelling freely.
+    // [TYPE-6] a source variant belongs to its enum and enters no constructor
+    // domain, so it shares PRE-1 decision-state and PRE-2 host variants'
+    // spellings freely.
     with_resolution_sources(
         &[SourceInput::new(
             "owned.wf",
-            b"enum Collision {\n  NotFound();\n}\n",
+            b"enum Collision {\n  NotFound();\n  Open();\n  Written();\n  Killed();\n}\n",
         )],
         true,
         |outcome| {
@@ -2753,9 +2758,13 @@ fn supplied_signature_locals_do_not_capture_writer_global_names() {
 fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // The opaque structs first, each with the nominal and the refused
     // constructor [TYPE-2] its collision names in both domains; `Bool` and
-    // its variants follow. `Bool` collides on its nominal alone, because an
-    // enum contributes its variants' spellings to the constructor domain and
-    // not its own.
+    // its variants follow. `Bool` collides on its nominal alone, because a
+    // prelude enum contributes its variants' spellings to the constructor
+    // domain and not its own. DecisionCell's fieldless opaque declaration
+    // contributes records 51 and 52, placing Bool at 53; Bool, Option and
+    // Result contribute 3 + 5 + 7 records before Overflow at 68. The enums
+    // through ScanStep occupy 27 records, so DecisionState is at 80 and its
+    // three tag-only variants occupy 81 through 83.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
         ("Paged", vec![22, 23]),
@@ -2764,8 +2773,13 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
         ("Frozen", vec![37, 38]),
         ("ConcurrentHashMap", vec![41, 42]),
         ("KeySet", vec![44, 45]),
-        ("Bool", vec![51]),
-        ("Overflow", vec![66, 67]),
+        ("DecisionCell", vec![51, 52]),
+        ("Bool", vec![53]),
+        ("Overflow", vec![68, 69]),
+        ("DecisionState", vec![80]),
+        ("Open", vec![81]),
+        ("Written", vec![82]),
+        ("Killed", vec![83]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2859,9 +2873,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[28].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[29].1, "T");
     assert_eq!(first[30].1, "inner");
-    // The shared-object handles, the keyed table, the key set and the keyed
-    // entries [SHARE-1] close the opaque phase: each nominal, its refused
-    // constructor, its type parameter and its readonly measure field.
+    // Shared handles, the keyed table, the key set, keyed entries and the
+    // decision cell close the opaque phase: each nominal, its refused
+    // constructor, and any type parameters and readonly measure fields.
     assert_eq!(first[31].1, "Shared");
     assert_eq!(first[31].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[32].1, "Shared");
@@ -2890,6 +2904,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[47].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[49].1, "V");
     assert_eq!(first[50].1, "len");
+    assert_eq!(first[51].1, "DecisionCell");
+    assert_eq!(first[51].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[52].1, "DecisionCell");
+    assert_eq!(first[52].2, Some(DeclarationClass::StructConstructor));
     // Then each enum with its variants and their fields, then `Int`,
     // `Float`, `Eq` and the reference-kind name `Run` [TYPE-8], then the
     // construction functions [OP-13], then the window operations in written
@@ -2899,13 +2917,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
     // `key_set_insert` and `key_set_read_key` [SHARE-1] and `free_empty`
-    // [OP-14] and `release` [PRE-1], each with its type, const and value
-    // parameters in declared order and then its range postconditions' names and bound variables
-    // [RANGE-1].
+    // [OP-14], `release` and the five decision-cell functions [PRE-1], each
+    // with its type, const and value parameters in declared order and then
+    // its range postconditions' names and bound variables [RANGE-1].
     assert_eq!(first[53].1, "Bool");
     assert_eq!(first[75].1, "ScanStep");
     assert_eq!(first[76].1, "Next");
     assert_eq!(first[78].1, "Needs");
+    assert_eq!(first[80].1, "DecisionState");
+    assert_eq!(first[80].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[81].1, "Open");
+    assert_eq!(first[81].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[82].1, "Written");
+    assert_eq!(first[82].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[83].1, "Killed");
+    assert_eq!(first[83].2, Some(DeclarationClass::EnumVariant));
     assert_eq!(first[84].1, "Int");
     assert_eq!(first[85].1, "Float");
     assert_eq!(first[86].1, "Eq");
@@ -2955,13 +2981,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[241].1, "release");
     assert_eq!(first[242].1, "T");
     assert_eq!(first[243].1, "value");
-    // PRE-1 v0.128 adds two opaque, four enum and nine function records.
-    assert_eq!(first[51].1, "DecisionCell");
-    assert_eq!(first[52].1, "DecisionCell");
-    assert_eq!(first[80].1, "DecisionState");
-    assert_eq!(first[81].1, "Open");
-    assert_eq!(first[82].1, "Written");
-    assert_eq!(first[83].1, "Killed");
+    // The nullary constructor contributes one function record; each other
+    // decision-cell function contributes its function and cell parameter.
     assert_eq!(first[244].1, "decision_cell_new");
     assert_eq!(first[245].1, "decision_cell_share");
     assert_eq!(first[247].1, "decision_cell_read");

@@ -703,6 +703,8 @@ fn relay(cell: Box<u64>) -> result: Box<u64> pure {
 fn main() -> status: std::process::ExitStatus pure {
   let first = box_new::<u64>(value: 1_u64);
   let second = box_new::<u64>(value: 2_u64);
+  let first_decision = decision_cell_new();
+  let second_decision = decision_cell_new();
   let ready = relay(cell: move first);
   observe(cell: &ready, witness: &second);
   observe(cell: &second, witness: &ready);
@@ -712,19 +714,25 @@ fn main() -> status: std::process::ExitStatus pure {
     with_checked(source, |checked| {
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("accepted call inventory must close");
+        // This fixture calls both constructors twice. PRE-1's ordinary ABI
+        // needs one definition per reached instance, not one for every
+        // available declaration. The remaining compiler-owned records have
+        // no call here and must not introduce runtime link dependencies.
+        // These expectations come from the source above, not the plan.
+        let called_records = ["box_new", "decision_cell_new"];
+        let expected_emitted = |function: &crate::semantic::CheckedFunction| {
+            function.body.is_some()
+                || !crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
+                    .contains(&function.name.as_str())
+                || called_records.contains(&function.name.as_str())
+        };
         for function in checked.data.executable_functions() {
             let variants = plan
                 .variants
                 .iter()
                 .filter(|variant| variant.source == function.id)
                 .count();
-            // A compiler-owned [PRE-1] record is emitted where a call reaches
-            // it: a generic one's instance exists only where called, and the
-            // key set's four, which take no type parameter, are not called
-            // here.
-            let record = function.body.is_none()
-                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
-            let expected = usize::from(!record || !function.name.starts_with("key_set_"));
+            let expected = usize::from(expected_emitted(function));
             assert_eq!(
                 variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \
@@ -753,7 +761,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .copied()
                 .filter(|source| {
                     let function = &checked.data.functions[source.0 as usize];
-                    function.body.is_some() || !function.name.starts_with("key_set_")
+                    expected_emitted(function)
                 })
                 .collect::<Vec<_>>(),
             "physical order follows ordinary discovery order"
