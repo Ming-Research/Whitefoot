@@ -164,7 +164,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Own1,
                 use_node,
                 SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the copy place without `move`",
+                    mechanical_fix: self.copy_move_repair(use_node)?,
                 },
             );
         }
@@ -340,7 +340,16 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Own1,
                     use_node,
                     SemanticIssueKind::BareAffineUse {
-                        mechanical_fix: "write `move p` for the affine place",
+                        mechanical_fix: if self
+                            .types
+                            .declarations
+                            .tree
+                            .place_has_dereference(node)?
+                        {
+                            OWN1_ROOTED_CONSUME
+                        } else {
+                            "write `move p` for the affine place"
+                        },
                     },
                 );
             }

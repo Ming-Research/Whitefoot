@@ -1091,8 +1091,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             2
@@ -1288,8 +1287,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             2
@@ -1326,8 +1324,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             1

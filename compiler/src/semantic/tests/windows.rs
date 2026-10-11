@@ -558,7 +558,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#
         .as_slice(),
-        br#"fn release(window: Box<Slots<u8>>) -> result: unit pure {
+        br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure {
   free_empty(window: move window);
   return unit;
 }
