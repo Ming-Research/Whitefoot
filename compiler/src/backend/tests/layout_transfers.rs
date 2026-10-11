@@ -2,7 +2,7 @@
 //! backend CI group; source editing uses only prebuilt --check admission.
 
 use super::system::with_ir;
-use super::{compile_link_and_run, emit, emitted_function};
+use super::{compile_link_and_run, emit, emitted_function, host_optimized_module};
 use crate::IrType;
 use crate::target::{TargetLayout, TransferAccess, bounded_transfer};
 
@@ -104,6 +104,12 @@ struct LargeScalars {
 
 fn copy_boundary(target: &Boundary, value: Boundary) -> result: unit writes(target) {
   set target^ = value;
+  return unit;
+}
+
+fn copy_boundary_twice(target: &Boundary, other: &Boundary, value: Boundary) -> result: unit writes(target), writes(other) {
+  set target^ = value;
+  set other^ = value;
   return unit;
 }
 
@@ -438,6 +444,116 @@ pub(super) fn transfer_region(body: &str) -> (&str, &str, &str) {
         .find("  ; end layout-bounded transfer ")
         .expect("transfer end");
     (&text[header.len() + 1..end], source, destination)
+}
+
+fn inline_threshold_attribute(function: &str) -> Option<&str> {
+    let header = function.lines().next().expect("function header");
+    let start = header.find("\"function-inline-threshold\"=\"")?;
+    let end = header[start..]
+        .find("\" #0")
+        .expect("threshold precedes the common attribute group");
+    Some(&header[start..start + end + 1])
+}
+
+#[test]
+fn granule_transfer_inline_thresholds_follow_actual_bodies() {
+    let module = emit(SOURCE);
+    for (name, transfers, pairs, threshold) in [
+        ("copy_frame", 1, 8, 300),
+        ("copy_ten", 1, 10, 320),
+        ("copy_value", 1, 3, 250),
+        ("copy_overlay", 1, 4, 260),
+        ("copy_boundary", 1, 16, 380),
+        ("copy_boundary_twice", 2, 16, 535),
+    ] {
+        let body = emitted_function(&module, name);
+        let regions: Vec<_> = body
+            .match_indices("  ; layout-bounded transfer from ")
+            .map(|(start, _)| transfer_region(&body[start..]).0)
+            .collect();
+        assert_eq!(regions.len(), transfers, "{body}");
+        for region in regions {
+            let instructions = region
+                .lines()
+                .filter(|line| {
+                    line.contains(" = load ")
+                        || line.trim_start().starts_with("store ")
+                        || line.contains("call void @llvm.memmove.")
+                })
+                .count();
+            assert_eq!(instructions, 2 * pairs, "{region}");
+            if name == "copy_overlay" {
+                assert_eq!(region.matches(" = load ").count(), 1, "{region}");
+                assert_eq!(
+                    region.matches("call void @llvm.memmove.").count(),
+                    6,
+                    "{region}"
+                );
+            }
+        }
+        assert_eq!(
+            inline_threshold_attribute(body),
+            Some(format!("\"function-inline-threshold\"=\"{threshold}\"").as_str()),
+            "{body}"
+        );
+    }
+    for name in ["copy_large", "copy_array", "observe_value"] {
+        let body = emitted_function(&module, name);
+        assert!(!body.contains("; layout-bounded transfer "), "{body}");
+        assert_eq!(inline_threshold_attribute(body), None, "{body}");
+    }
+}
+
+#[test]
+fn llvm_honors_the_emitted_callee_inline_threshold() {
+    use std::fmt::Write;
+
+    let module = emit(SOURCE);
+    let attribute = inline_threshold_attribute(emitted_function(&module, "copy_boundary_twice"))
+        .expect("two sixteen-granule transfers emit a threshold correction");
+    assert_eq!(attribute, "\"function-inline-threshold\"=\"535\"");
+    // External linkage prevents the last-local-call bonus. Volatile loads
+    // keep the fold above even the default single-block threshold of 337;
+    // its cost remains below 535 without constant inputs or a callsite hint.
+    let mut body = String::new();
+    for index in 0..48 {
+        writeln!(
+            body,
+            "  %value{index} = load volatile i64, ptr %source, align 8"
+        )
+        .unwrap();
+    }
+    writeln!(body, "  %fold1 = xor i64 %value0, %value1").unwrap();
+    for index in 2..48 {
+        writeln!(
+            body,
+            "  %fold{index} = xor i64 %fold{}, %value{index}",
+            index - 1
+        )
+        .unwrap();
+    }
+    let plain = format!(
+        "define i64 @wf_threshold_probe(ptr %source) {{\nentry:\n{body}  ret i64 %fold47\n}}\n\n\
+         define i64 @wf_threshold_caller(ptr %source) {{\nentry:\n  \
+         %value = call i64 @wf_threshold_probe(ptr %source)\n  ret i64 %value\n}}\n"
+    );
+    let attributed = plain.replacen(
+        "@wf_threshold_probe(ptr %source) {",
+        &format!("@wf_threshold_probe(ptr %source) {attribute} {{"),
+        1,
+    );
+    let plain = host_optimized_module(&plain);
+    let attributed = host_optimized_module(&attributed);
+    let plain = emitted_function(&plain, "threshold_caller");
+    let attributed = emitted_function(&attributed, "threshold_caller");
+    assert!(plain.contains("call i64 @wf_threshold_probe("), "{plain}");
+    assert!(plain.contains("ret i64"), "{plain}");
+    assert!(!attributed.contains("@wf_threshold_probe("), "{attributed}");
+    assert_eq!(
+        attributed.matches("load volatile i64").count(),
+        48,
+        "{attributed}"
+    );
 }
 
 #[test]

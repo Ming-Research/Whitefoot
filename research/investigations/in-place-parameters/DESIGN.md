@@ -2529,3 +2529,76 @@ Snowghost's edit/style/layout cells require their own paired comparison
 against `wf-78223721f77d`. The earlier successful library run validates the
 historical policy candidate, not this withdrawal. CI and fresh downstream
 measurements are still required.
+
+## Option B: per-function threshold correction (experiment)
+
+Question: does correcting the granule transfer charge restore LLVM's
+pre-granule inlining decisions and recover Snowghost's four cells, and at
+what code-size cost? This is an experiment on the withdrawn-policy head
+`ce22645f11a09b4dad71621b9fb6c21bfa22a69d`, not an owner-selected policy.
+
+For each emitted LLVM function, sum the additional instruction charge of
+its emitted layout-bounded transfers and, when that sum D is positive,
+emit `"function-inline-threshold"="<225 + D>"`. Each scalar, pointer or
+integer granule emits one load and one store. A byte-only union interval
+instead emits two `llvm.memmove` calls, first into shared scratch and then
+into the destination; it does not emit one load/store pair per byte. Each
+of those instructions costs 5 in the LLVM 22 model. Subtract 5 once per
+nonempty expanded transfer for the whole-transfer intrinsic it replaces.
+Thus a ten-u32 transfer contributes `5 * 20 - 5 = 95`; two such transfers
+in one function give D = 190 and threshold 415. Whole intrinsics,
+elided self-copies and empty transfers contribute nothing. Count emitted
+instructions, not source copies or a transitive callee estimate.
+
+The baseline 225 is LLVM 22's ordinary threshold. The shipped optimization
+arguments are `-O2 -falign-functions=64` in
+`compiler/src/driver.rs::HOST_OPTIMIZATION_ARGUMENTS`, consumed by
+`compiler/src/bin/whitefootc.rs::link`; `compile_executable` adds `-flto=full`
+when full LTO is selected. This experiment compares full-LTO builds.
+
+LLVM 22's [InlineCost.cpp](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L1979-L1986)
+first caps cold call sites in `updateThreshold` at 45. Later,
+[`finalizeAnalysis`](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L1031-L1048)
+replaces the threshold with the attribute's value. The
+[`CallBase::getFnAttr` fallback](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/include/llvm/IR/InstrTypes.h#L1484-L1488)
+reads the callee's attribute when the call has none. If analysis reaches
+finalization, cold sites receive 225 + D, not 45 + D: this permits
+additional growth beyond the transfer correction. It also replaces other
+threshold bonuses, so it does not guarantee the old decisions. D describes
+emission before host simplification, not the surviving cost at every call
+site.
+
+The attribute-only experiment has a host-toolchain limitation:
+[`shouldStop`](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L1050-L1058)
+still uses the original threshold, and
+[`analyzeBlock`](https://github.com/llvm/llvm-project/blob/release/22.x/llvm/lib/Analysis/InlineCost.cpp#L2591-L2593)
+can reject the call before finalization. Full cost analysis bypasses that
+early cutoff. LLVM 22.1.0's
+[`InlineAdvisor`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.0/llvm/lib/Analysis/InlineAdvisor.cpp#L152-L158)
+passes an optimization remark emitter to cost analysis only when missed
+inline remarks are enabled; that emitter enables full cost analysis.
+Thus a probe with `-Rpass-missed=inline` does not establish behavior under
+the shipped flags. Ordinary sites may reach finalization through the
+speculative single-block and vector bonuses; cold sites disable those
+bonuses and can stop at 45 before reading the attribute. The backend
+witness deliberately uses the ordinary optimization helper without
+remarks or a full-cost override; its outcome remains CI-unverified.
+Enabling full cost analysis consistently in compilation and full LTO
+would extend the experiment and remains an owner decision. No host flag
+has been added and no expected test result has been weakened to conceal
+this limitation.
+
+Comparison, fixed before measurement: run Snowghost's four cells and
+Halo's seven kernels on the 14900K through CI, comparing this experiment
+with both `wf-78223721f77d` and `wf-exp-ce22645f11a0`. Use the same source,
+workloads, settings and machine for each comparison, interleave runs and
+include a twin of each baseline to establish noise. Compare hosted Halo
+and Snowghost `.text` sizes under identical build settings as well.
+
+Rejection criterion, fixed before measurement: reject B if any Snowghost
+cell remains slower than `wf-78223721f77d` beyond twin noise, or if either
+Halo or Snowghost `.text` grows more than 5% over
+`wf-exp-ce22645f11a0`. Record all Halo kernels even though this criterion
+sets no additional Halo timing cutoff. Inlining remarks and call counts
+explain results; they do not replace those timing and size comparisons.
+No measurements or downstream recovery results are established here.

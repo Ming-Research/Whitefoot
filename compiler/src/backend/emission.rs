@@ -31,9 +31,31 @@ pub(crate) struct FunctionBody {
     current_label: Option<String>,
     exits: Vec<Option<String>>,
     pub(crate) references: References,
+    /// LLVM's additional instruction cost over one intrinsic per expanded
+    /// transfer, retained with this body's instructions across split emission.
+    transfer_inline_cost: i32,
 }
 
 impl FunctionBody {
+    pub(crate) fn record_granule_transfer(
+        &mut self,
+        instructions: u32,
+    ) -> Result<(), BackendFailure> {
+        if instructions == 0 {
+            return Ok(());
+        }
+        let extra = i32::try_from(instructions)
+            .ok()
+            .and_then(|count| count.checked_mul(5))
+            .and_then(|cost| cost.checked_sub(5))
+            .ok_or(BackendFailure::CounterOverflow)?;
+        self.transfer_inline_cost = self
+            .transfer_inline_cost
+            .checked_add(extra)
+            .ok_or(BackendFailure::CounterOverflow)?;
+        Ok(())
+    }
+
     pub(crate) fn instructions(&mut self, text: &str, symbols: &[&str]) {
         self.references
             .symbols
@@ -263,6 +285,14 @@ impl Signature {
         body: FunctionBody,
         entry_allocations: &str,
     ) -> Result<Entity, BackendFailure> {
+        if body.transfer_inline_cost > 0 {
+            // Option B uses clang -O2's default before the transfer correction.
+            let threshold = 225_i32
+                .checked_add(body.transfer_inline_cost)
+                .ok_or(BackendFailure::CounterOverflow)?;
+            write!(self.suffix, " \"function-inline-threshold\"=\"{threshold}\"")
+                .map_err(|_| BackendFailure::TextEmission)?;
+        }
         self.references.attributes.insert(0);
         self.suffix.push_str(" #0");
         let declaration_references = self.references.clone();

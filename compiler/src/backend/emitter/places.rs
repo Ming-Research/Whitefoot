@@ -1019,8 +1019,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         // Producer fields can have been stored separately in another function.
         // Retain the same layout boundaries for incoming and heap values as
-        // for local values. The host's inline cost charges this expansion;
-        // the in-place-parameters research record tracks its consequences.
+        // for local values. The emitted body retains the host's additional
+        // inline cost for the experimental per-function threshold correction.
         if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
             .map_err(BackendFailure::TargetLayout)?
         {
@@ -1060,6 +1060,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  ; layout-bounded transfer from {source} to {destination}"
         )?;
         let mut captured = Vec::with_capacity(granules.len());
+        let mut instructions = 0;
         for granule in granules {
             let pointer = self.transfer_pointer(source, granule.offset)?;
             let llvm = match granule.access {
@@ -1070,6 +1071,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let scratch = self.entry_slot(FunctionSlot::TransferScratch)?;
                     let scratch = self.transfer_pointer(&scratch, granule.offset)?;
                     self.copy_transfer_bytes(granule.size, &pointer, &scratch)?;
+                    instructions += 1;
                     captured.push((None, scratch));
                     continue;
                 }
@@ -1079,6 +1081,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output,
                 "  {value} = load {llvm}, ptr {pointer}, align 1"
             )?;
+            instructions += 1;
             captured.push((Some(llvm), value));
         }
         for (granule, (llvm, value)) in granules.iter().zip(captured) {
@@ -1091,7 +1094,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } else {
                 self.copy_transfer_bytes(granule.size, &value, &pointer)?;
             }
+            instructions += 1;
         }
+        // Each scalar access and each scratch memmove costs five in LLVM 22;
+        // constant-offset GEPs are free. Subtract the one replaced intrinsic.
+        self.output.record_granule_transfer(instructions)?;
         writeln!(
             self.output,
             "  ; end layout-bounded transfer from {source} to {destination}"

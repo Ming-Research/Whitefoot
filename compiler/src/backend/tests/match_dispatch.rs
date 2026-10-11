@@ -1736,6 +1736,32 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     // Incoming and local copies preserve every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
     super::layout_transfers::assert_typed_transfer(copied, &fields);
+    assert!(
+        copied
+            .lines()
+            .next()
+            .unwrap()
+            .contains("\"function-inline-threshold\"=\"270\""),
+        "five scalar granules add 45 to this body's threshold: {copied}"
+    );
+    for name in [
+        "wf_run",
+        "wf_run.dispatch",
+        "wf_run.arm.0",
+        "wf_run.arm.1",
+        "wf_run.arm.2",
+    ] {
+        let part = definition(&module, name);
+        assert!(!part.contains("; layout-bounded transfer "), "{part}");
+        assert!(
+            !part
+                .lines()
+                .next()
+                .unwrap()
+                .contains("function-inline-threshold"),
+            "copy_cell's transfer correction must not reach a separate definition: {part}"
+        );
+    }
     assert_eq!(
         super::layout_transfers::transfer_region(copied).2,
         "%wf.result",
