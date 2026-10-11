@@ -934,6 +934,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let head_label = run_transfer_head_label(result);
         let body = run_transfer_body_label(result);
         let done = run_transfer_done_label(result);
+        let commit = format!("{done}.commit");
+        let empty = self.next_temporary()?;
         {
             writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(pre.to_string());
@@ -954,11 +956,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             write!(
                 self.output,
-                "  %{count} = sub i64 {source_length}, {index}\n  br label %{head_label}\n"
+                "  %{count} = sub i64 {source_length}, {index}\n  %{empty} = icmp eq i64 %{count}, 0\n  br i1 %{empty}, label %{done}, label %{head_label}\n"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(head_label.to_string());
-            write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{commit}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(body.to_string());
             writeln!(self.output, "  %{stepped} = add i64 %{counter}, 1")
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1001,7 +1003,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             writeln!(self.output, "  br label %{head_label}")
                 .map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(done.to_string());
+            self.output.open_block(commit);
         };
         let grown = self.next_temporary()?;
         writeln!(
@@ -1033,14 +1035,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  store i64 %{grown}, ptr {destination_length_address}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
     /// [OP-13] one runtime-capacity window block and the cell that owns it.
     ///
-    /// The block is `[len | cap | head? | slots]` in one allocation, so the
-    /// cell pointer is the block pointer and every later access reaches the
-    /// header and the slots through one address
+    /// The block is `[len | cap | head? | slots]`: positive capacity owns
+    /// one allocation and zero capacity shares the immutable empty header.
+    /// The cell pointer is the block pointer and every later access reaches
+    /// the header and the slots through one address
     /// (compiler/storage-representation). The window starts empty, which is
     /// exactly what the row's `ensures` publishes.
     pub(super) fn emit_window_block_new(
@@ -1075,57 +1080,58 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let element_size = self.window_element_size(shape)?;
         let header_size = self.window_header_size(shape, block_type)?;
-        let block = self.output.type_name(self.program, block_type)?;
         let nonnull = self.next_temporary()?;
+        let fresh = self.next_temporary()?;
+        let empty_count = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         let allocate = window_block_allocate_label(result);
-        {
-            let count = self.value_name(capacity);
-            let address = self.value_name(result);
-            let bytes =
-                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-            {
-                self.output.symbol("wf__heap_take");
-                write!(
-                    self.output,
-                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
-                )
-            }?;
-            self.output.open_block(oom.to_string());
-            {
-                self.output.symbol("wf_resource_abort");
-                write!(
-                    self.output,
-                    "  call void @wf_resource_abort()\n  unreachable\n"
-                )
-            }?;
-            self.output.open_block(ready.to_string());
-        };
-        let block_address = self.value_name(result);
+        let empty = format!("{allocate}.empty");
+        let size = format!("{allocate}.size");
+        let init = format!("{allocate}.init");
+        let count = self.value_name(capacity);
+        self.output.symbol("wf__empty_window");
+        writeln!(
+            self.output,
+            "  %{empty_count} = icmp eq i64 {count}, 0\n  br i1 %{empty_count}, label %{empty}, label %{size}"
+        )?;
+        self.output.open_block(empty.clone());
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(size);
+        let bytes =
+            self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
+        self.output.symbol("wf__heap_take");
+        writeln!(
+            self.output,
+            "  %{fresh} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+        )?;
+        self.output.open_block(oom);
+        self.output.symbol("wf_resource_abort");
+        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        self.output.open_block(init.clone());
+        let block_address = format!("%{fresh}");
         let length_address = self.aggregate_field_pointer(
             block_type,
             &block_address,
             shape.length_field() as usize,
         )?;
-        writeln!(self.output, "  store i64 0, ptr {length_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  store i64 0, ptr {length_address}")?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let capacity_address =
             self.aggregate_field_pointer(block_type, &block_address, capacity_field as usize)?;
-        writeln!(
-            self.output,
-            "  store i64 {}, ptr {capacity_address}",
-            self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  store i64 {count}, ptr {capacity_address}")?;
         if let Some(head) = shape.head_field() {
             let head_address =
                 self.aggregate_field_pointer(block_type, &block_address, head as usize)?;
-            writeln!(self.output, "  store i64 0, ptr {head_address}")
-                .map_err(|_| BackendFailure::TextEmission)?;
+            writeln!(self.output, "  store i64 0, ptr {head_address}")?;
         }
-        let _ = block;
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(ready);
+        writeln!(
+            self.output,
+            "  {} = phi ptr [ @wf__empty_window, %{empty} ], [ %{fresh}, %{init} ]",
+            self.value_name(result)
+        )?;
         Ok(())
     }
 
@@ -1134,7 +1140,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ///
     /// One `wf__heap_retake` keeps the header and the filled slots: the
     /// runtime copies a block below 1024 bytes into a fresh one and calls
-    /// `realloc`, possibly in place, for a larger block. The cell's pointer
+    /// `realloc`, possibly in place, for a larger block. Zero growth leaves
+    /// the shared empty header alone; positive growth of zero-stride
+    /// elements takes a writable header when the old capacity is zero.
+    /// The cell's pointer
     /// slot takes the returned block, which then records the new capacity.
     /// [STOR-7] makes an address change legal at every value, because no
     /// judgment depends on the block's address; a failed retake leaves the
@@ -1190,46 +1199,52 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)?;
         let fresh = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
+        let empty_count = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         let allocate = window_block_allocate_label(result);
-        {
-            let old_bytes = self.emit_allocation_size(
-                &format!("%{old_capacity}"),
-                &element_size,
-                &header_size,
-                &oom,
-                &format!("{allocate}.old_size"),
-            )?;
-            let count = self.value_name(capacity);
-            let bytes =
-                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-            {
-                self.output.symbol("wf__heap_retake");
-                write!(
-                    self.output,
-                    "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
-                )
-            }?;
-            self.output.open_block(oom.to_string());
-            {
-                self.output.symbol("wf_resource_abort");
-                write!(
-                    self.output,
-                    "  call void @wf_resource_abort()\n  unreachable\n"
-                )
-            }?;
-            self.output.open_block(ready.to_string());
-        };
+        let size = format!("{allocate}.size");
+        let init = format!("{allocate}.init");
+        let count = self.value_name(capacity);
+        // PRE-1 proves new cap >= old cap: new cap zero means the old
+        // window is empty too, and no header or owner store is necessary.
+        writeln!(
+            self.output,
+            "  %{empty_count} = icmp eq i64 {count}, 0\n  br i1 %{empty_count}, label %{ready}, label %{size}"
+        )?;
+        self.output.open_block(size);
+        let old_bytes = self.emit_allocation_size(
+            &format!("%{old_capacity}"),
+            &element_size,
+            &header_size,
+            &oom,
+            &format!("{allocate}.old_size"),
+        )?;
+        let bytes =
+            self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
+        // Every positive growth retakes: from the shared empty header the
+        // runtime always takes a writable block and copies the header.
+        self.output.symbol("wf__heap_retake");
+        writeln!(
+            self.output,
+            "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})"
+        )?;
+        writeln!(
+            self.output,
+            "  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+        )?;
+        self.output.open_block(oom);
+        self.output.symbol("wf_resource_abort");
+        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        self.output.open_block(init);
         let fresh_block = format!("%{fresh}");
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(
             self.output,
-            "  store i64 {}, ptr {fresh_capacity_address}\n  store ptr %{fresh}, ptr {cell_address}",
-            self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            "  store i64 {count}, ptr {fresh_capacity_address}\n  store ptr %{fresh}, ptr {cell_address}\n  br label %{ready}"
+        )?;
+        self.output.open_block(ready);
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 

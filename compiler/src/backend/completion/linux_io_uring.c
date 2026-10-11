@@ -225,33 +225,17 @@ int wf_linux_io_uring_init(
      * kernel's twice-the-depth default, because the depth is a throughput
      * choice about submission and the queue's size is a bound on how many
      * completions can be posted before the overflow path. */
-    /* IORING_SETUP_COOP_TASKRUN: a completion the kernel finishes on the
-     * submitting thread's behalf (a receive whose poll fired) is posted when
-     * that thread next enters the kernel, which every scheduler thread does
-     * within a bounded spin, instead of by an inter-processor interrupt that
-     * stops whatever the thread was running.  Measured on the TCP echo
-     * control test at 64 connections it is the difference between 200 to
-     * 225 thousand and 240 to 250 thousand round trips a second, with the
-     * same parks and the same enters (`research/investigations/io-model/RESULTS.md`,
-     * the batch 0108 section).  A kernel before 5.19 refuses the flag with EINVAL, and
-     * the ring is then made without it. */
-    parameters.flags = IORING_SETUP_CQSIZE | IORING_SETUP_COOP_TASKRUN;
+    /* A role may be serviced by a replacement while its submitter computes.
+     * Do not defer task work until that submitter's next kernel transition.
+     * The prior COOP_TASKRUN throughput advantage must be compared separately
+     * from handoff bookkeeping in the ordinary-I/O acceptance experiment. */
+    parameters.flags = IORING_SETUP_CQSIZE;
     parameters.cq_entries = (unsigned)completions;
     adapter->ring_descriptor = (int)syscall(
         __NR_io_uring_setup,
         (unsigned)depth,
         &parameters
     );
-    if (adapter->ring_descriptor < 0 && errno == EINVAL) {
-        memset(&parameters, 0, sizeof(parameters));
-        parameters.flags = IORING_SETUP_CQSIZE;
-        parameters.cq_entries = (unsigned)completions;
-        adapter->ring_descriptor = (int)syscall(
-            __NR_io_uring_setup,
-            (unsigned)depth,
-            &parameters
-        );
-    }
     if (adapter->ring_descriptor < 0) {
         error = errno;
         adapter->ring_descriptor = -1;

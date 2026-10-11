@@ -16,6 +16,9 @@ fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
 fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
     // PRE-1: release returns a nonempty boxed window and its boxed element,
     // a header-only empty window, and a struct owning two cells to the baseline.
+    // STOR-1: status 15 catches counted empty headers, zero growth or
+    // wrong growth extents (48 bytes for u64, 16 for zero-byte elements);
+    // status 16 catches release imbalance after those owners leave scope.
     // PRE-2: the map's two waves distinguish newly carved and reused nodes.
     // A presized table avoids moves masking node deltas: on the unfixed
     // runtime insertion contributes zero bytes and exits with status 8.
@@ -31,7 +34,7 @@ fn owned_element_assignments_release_displaced_boxes_at_commit_and_scope_exit() 
     let program = build_program(&compile_program("element_assignment_release.wf"));
     // args_count includes argv[0]. Each case runs in a fresh process so a
     // failure in one target shape cannot hide the other shapes' observations.
-    // Capacities zero and sixteen check header-only and nonempty allocations.
+    // Capacities zero and sixteen check shared empty headers and nonempty allocations.
     let failures = [
         "direct Slots Box field control",
         "direct Slots payload struct",

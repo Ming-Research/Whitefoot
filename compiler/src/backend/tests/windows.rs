@@ -208,6 +208,146 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
+/// The zero branch reaches only the pointer phi and return; initialization
+/// and Array element stores must stay on the allocating path.
+fn assert_shared_empty_construction(body: &str, stores: usize) {
+    let lines = body.lines().collect::<Vec<_>>();
+    let phi = lines
+        .iter()
+        .position(|line| line.contains(" = phi ptr [ @wf__empty_window, %"))
+        .expect("capacity zero returns the shared header");
+    let empty = lines[phi]
+        .split_once("[ @wf__empty_window, %")
+        .unwrap()
+        .1
+        .split_once(" ]")
+        .unwrap()
+        .0;
+    let empty_block = lines
+        .iter()
+        .position(|line| *line == format!("{empty}:"))
+        .expect("the empty path has its own block");
+    let jump = lines[empty_block + 1].trim();
+    let join = jump.strip_prefix("br label %").expect("empty path jumps");
+    assert!(
+        lines[empty_block + 2].ends_with(':'),
+        "empty path contains only its jump: {body}"
+    );
+    assert_eq!(lines[phi - 1], format!("{join}:"), "{body}");
+    let zero = lines
+        .iter()
+        .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
+        .expect("construction tests its count");
+    assert!(
+        lines[..zero].iter().all(|line| {
+            !line.trim().starts_with("store ")
+                && !line.contains("@wf__heap_take")
+                && !line.contains("@llvm.mem")
+        }),
+        "construction has no writes or allocation before testing zero: {body}"
+    );
+    let predicate = lines[zero].trim().split_once(" = ").unwrap().0;
+    assert!(
+        lines[zero + 1]
+            .trim()
+            .starts_with(&format!("br i1 {predicate}, label %{empty}, label %")),
+        "zero count takes the empty branch: {body}"
+    );
+    assert!(
+        lines[phi + 1..].iter().all(|line| {
+            !line.trim().starts_with("store ")
+                && !line.contains("@wf__heap_take")
+                && !line.contains("@llvm.mem")
+        }),
+        "{body}"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.trim().starts_with("store i64 "))
+            .count(),
+        stores,
+        "the allocating path retains its header and element stores: {body}"
+    );
+}
+
+#[test]
+fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
+    for shape in ["slots", "ring"] {
+        let source = format!(
+            "fn main() -> status: std::process::ExitStatus pure {{\n  doc \"Zero-capacity construction and empty transfers must never write the shared header.\";\n  let source = box_{shape}_new::<u64>(capacity: 0_u64);\n  let destination = box_{shape}_new::<u64>(capacity: 0_u64);\n  let array = box_array_filled::<u64>(count: 0_u64, value: 7_u64);\n  append(destination: &destination.inner, source: &source.inner);\n  split_off(source: &source.inner, index: 0_u64, destination: &destination.inner);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let module = compile(source.as_bytes());
+        assert!(module.contains("@wf__empty_window = external constant [64 x i8], align 64"));
+        assert_shared_empty_construction(
+            emitted_prelude_row(&module, &format!("box_{shape}_new")),
+            if shape == "slots" { 2 } else { 3 },
+        );
+        assert_shared_empty_construction(emitted_prelude_row(&module, "box_array_filled"), 2);
+        for row in ["append", "split_off"] {
+            let body = emitted_prelude_row(&module, row);
+            let lines = body.lines().collect::<Vec<_>>();
+            let zero = lines
+                .iter()
+                .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
+                .expect("transfer tests the moved count");
+            let count = lines[zero]
+                .split_once(" = icmp eq i64 ")
+                .unwrap()
+                .1
+                .strip_suffix(", 0")
+                .unwrap();
+            assert!(
+                lines[zero - 1]
+                    .trim()
+                    .starts_with(&format!("{count} = sub i64 ")),
+                "{body}"
+            );
+            let predicate = lines[zero].trim().split_once(" = ").unwrap().0;
+            let branch = lines[zero + 1].trim();
+            let tail = branch
+                .strip_prefix(&format!("br i1 {predicate}, label %"))
+                .expect("zero branch");
+            let (done, head) = tail.split_once(", label %").unwrap();
+            assert!(done.starts_with("run.move.done."), "{body}");
+            assert!(head.starts_with("run.move.head."), "{body}");
+            let done = lines
+                .iter()
+                .position(|line| *line == format!("{done}:"))
+                .unwrap();
+            assert!(
+                lines[done + 1..]
+                    .iter()
+                    .all(|line| !line.contains("store ") && !line.contains("@llvm.mem")),
+                "{body}"
+            );
+            assert_eq!(body.matches("  store i64 ").count(), 2, "{body}");
+            let commit = lines
+                .iter()
+                .position(|line| line.ends_with(".commit:"))
+                .expect("positive transfer commits its headers");
+            assert!(
+                lines[..commit]
+                    .iter()
+                    .all(|line| !line.trim().starts_with("store i64 ")),
+                "header stores occur only after positive transfer: {body}"
+            );
+            assert_eq!(
+                lines[commit + 1..done]
+                    .iter()
+                    .filter(|line| line.trim().starts_with("store i64 "))
+                    .count(),
+                2,
+                "{body}"
+            );
+            assert!(
+                body.contains("@llvm.memmove"),
+                "positive transfers still move their elements: {body}"
+            );
+        }
+    }
+}
+
 /// One IR-only compilation covers recursive layout selection and the
 /// unchanged inactive-payload and ordinary-Array initialization boundaries.
 #[test]
