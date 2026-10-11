@@ -1,0 +1,19 @@
+fn observe(slot: &Option<u8>, target: &Option<u8>) -> result: Bool reads(slot), writes(target) {
+  match &slot^ {
+    None() => {
+      set target^ = Some<u8>(value: 1_u8);
+      return False();
+    }
+    Some(value: inner) => {
+      set target^ = None<u8>();
+      return True();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slot = None<u8>();
+  let target = None<u8>();
+  let seen = observe(slot: &slot, target: &target);
+  return std::process::exit_status(code: 0_u8);
+}
