@@ -423,7 +423,8 @@ that explanation is falsified for this workload even if timing improves.
 Counters cannot apportion elapsed time among overlapping effects. Compare
 diagnostic runtimes with the uninstrumented rows only to disclose observer
 perturbation; diagnostics judge no performance criterion. No timing or
-counter result has yet been collected for step B.
+counter result had been collected when this protocol was registered; the
+results below apply it without changing its thresholds.
 
 ### Reservation lifetime and progress obligations
 
@@ -477,5 +478,184 @@ reservation. The shared watch lock serializes reservation publication and
 retirement across objects; object locks remain outside it in the lock order.
 The deterministic cross-unit test fixes that release/write order with a
 native-thread acknowledgement and checks both notifications, the early wake
-and fresh acquisitions after both contexts exit. Its execution, like the
-ordinary single-object ordering tests, remains to be validated in CI.
+and fresh acquisitions after both contexts exit. At registration, its
+execution, like the ordinary single-object ordering tests, remained to be
+validated in CI; the results below distinguish the owner's CI report from
+the downloaded evidence.
+
+## Oldest-only handoff results
+
+Temporary workflow run [38140292139](https://github.com/Ming-Research/Whitefoot/actions/runs/38140292139)
+measured revision `ba0e7c5e73d5e304b85c122ed1303d6f2530056a` (implementation
+`d5eebbd9011c008542e441499d2d6598abe70479`, followed by the owner's workflow
+repairs). The machine was the native i9-14900K, Linux 7.0.0-38-generic,
+two drivers pinned to CPUs 2 and 4 (different physical performance cores;
+their sibling lists were 2–3 and 4–5). Construction used clang and LLD
+22.1.8, C11, `-O2 -falign-functions=64` and full LTO. All arms used the
+same emitted LLVM, SHA-256
+`3a8f2c6388cb238c44a35498927a4b2736e787fea4069d51c6327dfd0b8f0c09`.
+The construction record gives identical baseline/twin executable hashes.
+The executables themselves are not included in the downloaded evidence.
+
+Evidence is the run's `guard-fairness-evidence` artifact: construction and
+run logs, `gf-timing/verdict.txt`, `gf-timing/measurements.csv`,
+`gf-counters/{measurements.csv,counters.csv}`, both saved LLVM files and
+all raw stdout/stderr. The separate `guard-fairness-negative-controls`
+artifact records the five intended failures. All 32 timing and 17
+diagnostic raw outputs agree with their CSV records. Every full row
+completed N × 1,000 checkouts with equal checksums across arms. Both N and
+arm orders match the registration. Two small timing pilots per arm took
+1.462–1.494 ms, so expansion met the registered pilot limit.
+
+### Registered verdict
+
+These are the six lines of the uninstrumented verdict, with maximum wait
+converted from ns to ms. Cost passes only at a ratio at most 1.10; the twin
+control passes only in [0.95, 1.05]. The registered maximum-wait test applies
+at N = 50, although the smaller-N maxima are also shown.
+
+| Pass | N | Twin/base runtime | Oldest/base runtime | Oldest max wait, ms | Cost | Twin |
+|---:|---:|---:|---:|---:|---|---|
+| 1 | 2 | 0.996407 | 1.043602 | 1.009142 | pass | pass |
+| 1 | 8 | 1.008035 | 1.153808 | 1.036914 | fail | pass |
+| 1 | 50 | 1.018313 | 1.608172 | 1.848877 | fail | pass |
+| 2 | 2 | 0.995460 | 1.045513 | 1.009429 | pass | pass |
+| 2 | 8 | 0.988462 | 1.080677 | 1.039376 | pass | pass |
+| 2 | 50 | 0.992909 | 1.613733 | 1.820695 | fail | pass |
+
+**Reject under the registered rule.** Both N = 50 waits meet 3.3 ms,
+against baseline maxima of 530.965 and 533.353 ms, but both N = 50 cost
+ratios and the first N = 8 ratio fail. The twin agrees in every cell;
+averaging orders cannot erase a failing cell. This establishes the sampled
+tail improvement, not a universal wait bound. Under this protocol it does
+not warrant asking firn to measure its engine. Accepting the observed cost
+would require a new owner decision, rather than reclassifying this result.
+
+The owner reports that the hosted build, positive tests and TSan passed.
+Their execution logs are not in these downloaded artifacts. The five
+negative outputs do contain the intended failures: baseline permits newcomer
+overtaking; age wakes two guards instead of the oldest one; disabling false
+handoff lets the newcomer run before both false attempts; disabling successful
+release leaves a turn at context exit; a zero threshold blocks the young
+watch. The output files alone do not establish the child exit codes; the
+owner reports that CI checked all five expected failures.
+
+### Diagnostic counters
+
+Counts are whole-process events divided by successful guarded checkouts,
+not individually tagged acquisitions. These are the separate instrumented
+N = 2, 8, 50 runs, K = 1,000; they have no vote in acceptance.
+
+| N | Arm | Woken/checkout | False re-parks/checkout | Refused lock grabs/checkout | Fairness clock reads/checkout |
+|---:|---|---:|---:|---:|---:|
+| 2 | baseline | 0.499500 | 0.499000 | 0 | 0 |
+| 2 | age | 0.973000 | 0.965500 | 0.227500 | 0.980500 |
+| 2 | oldest | 0.978000 | 0.970500 | 0.007000 | 0.985500 |
+| 8 | baseline | 3.622125 | 3.468375 | 0 | 0 |
+| 8 | age | 6.608500 | 6.405625 | 44.680500 | 1.202125 |
+| 8 | oldest | 6.755500 | 6.663500 | 0.052750 | 1.142250 |
+| 50 | baseline | 34.634460 | 33.716780 | 0 | 0 |
+| 50 | age | 45.057140 | 44.041980 | 1592.548280 | 1.994040 |
+| 50 | oldest | 48.603000 | 47.604520 | 2.007360 | 2.892760 |
+
+At N = 50 oldest has 40.3% more wakes and 41.2% more false re-parks than
+baseline, and 7.9%/8.1% more than age. Thus the registered explanation
+that oldest reduces herd notifications and false retries is falsified for
+this diagnostic workload. Refused-turn lock grabs fall 99.874% from age
+to oldest: the admission storm is removed, while the notification work is
+not. Clock reads increase 45.1% over age; that is frequency, not clock cost.
+The uninstrumented N = 50 age runtime is 5.309/4.958 s, oldest
+0.865/0.872 s and baseline 0.538/0.540 s. Removing the admission storm
+accompanies a large improvement over age, but does not recover baseline.
+
+The diagnostic N = 50 runtime exceeds the two corresponding
+uninstrumented runtimes by 8.9–9.4% for baseline, 12.1–13.0% for oldest
+and 24.5–33.3% for age. These are separate invocations, so their differences
+also include run variation. They disclose material observer perturbation,
+not a paired estimate of instrumentation overhead. No wake-to-run timestamps,
+CPU profile, wake-path split or lock-duration samples were collected.
+
+### Attribution from the code
+
+Oldest-only means one outstanding reserved attempt at a time, not one
+notification in total per write. In `wf_watch_wake_locked`, a write whose
+oldest watcher is older than 1 ms starts a sweep with that watcher alone.
+When it reads false and re-registers, `wf_guard_release_locked` passes the
+same notification to the next oldest watcher in the original age cutoff.
+This includes young watchers in that cohort; it is necessary to avoid
+losing a write which enabled a different condition. The sweep can therefore
+resume every watcher, serially, without any further write. The below-T
+path still broadcasts. Exempt writes during a sweep can also request a
+rescan of watches already tried or registered beyond its cutoff.
+
+This probe writes both `out = 1` at successful checkout and `out = 0` at
+return. The checkout write starts notifications while every other
+`out == 0` guard is false. Failed reserved attempts pass the reservation
+onward. The holder does its mixing work outside the physical object hold;
+its separate unguarded return statement has no earlier hold and is a
+newcomer to the reservation. It can therefore wait behind the false-attempt
+sweep before writing `out = 0`. This is a direct source explanation for
+approximately N notifications per checkout even in the oldest-only regime.
+The measured 48.603 wakes and 47.605 false parks at N = 50 fit it. The
+aggregate counters cannot say what fraction came from that sweep, below-T
+broadcasts or rescans; they do not prove that broadcasts dominate.
+
+Against baseline, the extra false attempts require more driver resumes,
+object acquisitions, watch registration and parking. Baseline allows the
+running holder to return and check out again before notified contexts run;
+writes can occur while those contexts are detached from the watch list.
+Oldest prevents this overtaking and serializes reservation transfer.
+Furthermore `wf_guard_oldest` scans the linked watch list on each false
+transfer, skipping already visited watches which re-registered. A sweep of
+M false watchers can do quadratic list-search work under the global watch
+lock. The counters measure neither these comparisons nor lock contention.
+These are source-supported additional costs, not separately timed causes.
+
+The measured extra N = 50 runtime is 6.540/6.631 µs per checkout.
+Mean reported hold grows from 6.613/6.611 µs to 11.556/11.719 µs, although
+the mixing workload is unchanged. Crucially, the saved LLVM samples
+`returned = now()` **before** its lazy acquisition of the return statement's
+object. Consequently this interval includes work and scheduling delay
+before that sample, but can exclude reservation waiting after it. It is
+neither physical lock occupancy nor the complete `out == 1` residence time.
+It cannot quantify return-lock delay or partition the slowdown into
+computation and synchronization. More false retries, serialized sweeps,
+list searches and delayed return are credible contributors to the 1.61×
+cost; these data cannot assign an elapsed-time share to any of them or
+establish clocks as the dominant cause.
+
+### Related spinner progress gap (static, not a timing result)
+
+`wf__shared_take` only spins, periodically yielding the host thread, and
+may borrow an unclaimed handed physical hold. It does not use the guard
+reservation or the ordinary parked acquisition queue's missed-wake
+escalation. No call to it appears in the saved probe LLVM, so it is not
+the explanation for this measured regression.
+
+It should share a progress obligation and acquisition accounting, but
+cannot simply join this reservation queue: a caller already holding map
+entries or an earlier object must keep running, and the selected guard
+may need those earlier locks. Parking that caller or making it await the
+selected guard can deadlock. The handed-hold borrowing case must also be
+preserved when the grantee is ready on the caller's own driver.
+
+A minimal contested schedule is X holding map entry E and attempting O,
+while Y on another driver repeatedly executes finite unguarded statements
+on O. Let E precede O in the permitted lock order. If Y wins every free
+interval, X has no queue entry or accumulated missed-acquisition state
+that forces a later admission. This is a pre-existing, statically identified
+gap in the [WAIT-2] eventual-effect argument, not an observed failing run.
+Unlike the fluctuating guarded condition in the probe, X's unguarded
+statement is covered by that guarantee.
+
+There is also an entry-path gap: `wf__atomic_group_take` uses this spinner
+for every ordinary member, including the first when no earlier target is
+held. Such a newcomer can bypass a guard reservation without needing the
+earlier-lock exemption. A one-driver context looping over finite
+unguarded grouped atomics also bypasses the `wf__shared_acquire` context-pass
+yield; yielding the host thread cannot resume another ready coroutine on
+that driver. A proposed next progress investigation needs a same-type
+two-object atomic-loop witness alongside the mixed map/object contention
+witness, with no guards required. Both findings are deferred for a separate
+progress design and CI witnesses; this results change implements no fix
+and changes no specification rule.

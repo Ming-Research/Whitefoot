@@ -10,7 +10,10 @@ the mean hold and the run time.
 
 The current protocol is the oldest-only handoff experiment registered in
 [the investigation](../../investigations/guard-fairness/DESIGN.md#step-b-oldest-only-handoff-registered-before-measurement).
-No result has been collected for this implementation yet.
+Run 38140292139 on revision `ba0e7c5e7` rejected this candidate under that
+rule: its N = 50 tail passes, but runtime is 1.61× baseline. The
+[results and attribution](../../investigations/guard-fairness/DESIGN.md#oldest-only-handoff-results)
+include the twin control and separate diagnostic counters.
 
 `build.sh` emits the unchanged probe's LLVM once with `WFC`, then uses
 `Makefile` and the maintained `compiler/runtime.mk` native source list to
