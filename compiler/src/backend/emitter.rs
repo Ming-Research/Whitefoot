@@ -363,20 +363,19 @@ fn emit_module(
         && !thunks.queries_demand
         && !thunks.queries_split_budget()
         && !thunks.queries_recursion_budget
+        && let Some(canonical) = canonical
     {
-        if let Some(canonical) = canonical {
-            let selected = prepare_dispatch_layout(canonical, target, fragments)?;
-            let mut module = emit_module(
-                &selected.program,
-                target,
-                window_address_facts,
-                &selected.plan,
-                selected.fragments,
-            )?;
-            module.ledger.extend(frontiers.ledger().iter().cloned());
-            module.ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
-            return Ok(module);
-        }
+        let selected = prepare_dispatch_layout(canonical, target, fragments)?;
+        let mut module = emit_module(
+            &selected.program,
+            target,
+            window_address_facts,
+            &selected.plan,
+            selected.fragments,
+        )?;
+        module.ledger.extend(frontiers.ledger().iter().cloned());
+        module.ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
+        return Ok(module);
     }
     let (canonical_roots, crossovers) = if let Some(canonical) = canonical {
         canonical_clone_roots(program, canonical, &mut clones)?

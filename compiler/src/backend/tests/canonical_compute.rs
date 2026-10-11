@@ -26,7 +26,7 @@ fn assert_metadata(
     }
 }
 
-const SOURCE: &[u8] = br#"const increments: Array<u64, 2> = [7_u64, 9_u64];
+const SOURCE: &[u8] = br#"const increments: Array<u64, 2> =[7_u64, 9_u64];
 
 fn helper(seed: u64, count: u64) -> result: u64 pure {
   let total = seed +wrap increments[0_u64];
