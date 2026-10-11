@@ -46,6 +46,7 @@ use crate::target::{
 
 use super::system::with_ir;
 use super::*;
+use crate::{IrInstruction, IrOperation, IrType};
 
 /// Only descriptor words may be stored by an empty-window constructor.
 /// Inspect the shared row: callers use the same ordinary construction body.

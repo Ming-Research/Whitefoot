@@ -17,7 +17,7 @@ use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId,
+    CheckedValue, FunctionId, IntegerType,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
