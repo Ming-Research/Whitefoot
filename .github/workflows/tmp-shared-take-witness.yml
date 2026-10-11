@@ -4,12 +4,16 @@ name: tmp-shared-take-witness
 
 on:
   workflow_dispatch:
+  push:
+    branches: [claude/shared-take-fair]
+    paths: [.github/workflows/tmp-shared-take-witness.yml]
 
 permissions:
   contents: read
 
 jobs:
   witness:
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
