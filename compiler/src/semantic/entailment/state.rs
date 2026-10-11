@@ -1400,51 +1400,6 @@ impl DerivationLedger {
         self.implicit_only[id.0 as usize]
     }
 
-    /// Whether a closed L0 proof depends on one established relation rather
-    /// than only on the universal implicit type/reflexive inventory. Delivery
-    /// transports writer-visible facts and their closure; it does not create
-    /// roots merely because every fresh integer term has implicit bounds.
-    pub(crate) fn depends_on_explicit_relation(
-        &self,
-        id: DerivationId,
-        memo: &mut HashMap<DerivationId, bool>,
-    ) -> bool {
-        if let Some(depends) = memo.get(&id) {
-            return *depends;
-        }
-        let node = &self.nodes[id.0 as usize];
-        let mut depends = matches!(
-            node,
-            DerivationNode::SourceBound { .. }
-                | DerivationNode::SourceDistinct { .. }
-                | DerivationNode::OperationFact { .. }
-                | DerivationNode::PostconditionCall { .. }
-                | DerivationNode::PostconditionDirectResult { .. }
-                | DerivationNode::PostconditionDirectReceiver { .. }
-                | DerivationNode::PostconditionGive { .. }
-                | DerivationNode::PostconditionDeliveryJoin { .. }
-        );
-        depends |= matches!(
-            node,
-            DerivationNode::AffineConsequence {
-                premises,
-                ..
-            } if !premises.is_empty()
-        );
-        if !depends
-            && !matches!(
-                node,
-                DerivationNode::ImplicitBound { .. } | DerivationNode::SourceGoal { .. }
-            )
-        {
-            node.for_each_parent(|parent| {
-                depends |= self.depends_on_explicit_relation(parent, memo);
-            });
-        }
-        memo.insert(id, depends);
-        depends
-    }
-
     fn better(&self, candidate: DerivationId, current: DerivationId) -> bool {
         let candidate_depth = self.depth(candidate);
         let current_depth = self.depth(current);
@@ -4099,12 +4054,106 @@ impl ImplicitStructure {
         self.zero[term.0 as usize].1.map(|(bound, _)| bound)
     }
 
+    fn cluster(&mut self, terms: &TermTable, term: TermId) -> Option<Rc<DormantCluster>> {
+        let component = self.find(term);
+        if let Some(cluster) = self.clusters.get(&component) {
+            return Some(Rc::clone(cluster));
+        }
+        let members = self.members.get(&component)?;
+        let cluster = Rc::new(dormant_cluster(terms, members));
+        self.clusters.insert(component, Rc::clone(&cluster));
+        Some(cluster)
+    }
+
+    fn closed_zero_bound(&mut self, terms: &TermTable, term: TermId, upward: bool) -> Option<i128> {
+        if term == ZERO {
+            return Some(0);
+        }
+        if let Some(cluster) = self.cluster(terms, term) {
+            let position = cluster
+                .members
+                .binary_search(&term)
+                .expect("a term is a member of its implicit cluster");
+            return if upward {
+                cluster.cell(position, 0)
+            } else {
+                cluster.cell(0, position)
+            }
+            .map(|(bound, _)| bound);
+        }
+        if upward {
+            self.upper(term)
+        } else {
+            self.lower(term)
+        }
+    }
+
+    fn value(&mut self, terms: &TermTable, left: TermId, right: TermId) -> Option<i128> {
+        if left == right {
+            return Some(0);
+        }
+        if left != ZERO && right != ZERO && self.find(left) == self.find(right) {
+            let cluster = self
+                .cluster(terms, left)
+                .expect("distinct component members have an implicit cluster");
+            let from = cluster
+                .members
+                .binary_search(&left)
+                .expect("the left term belongs to its implicit cluster");
+            let to = cluster
+                .members
+                .binary_search(&right)
+                .expect("the right term belongs to its implicit cluster");
+            return cluster.cell(from, to).map(|(bound, _)| bound);
+        }
+        self.closed_zero_bound(terms, left, true)
+            .zip(self.closed_zero_bound(terms, right, false))
+            .map(|(upper, lower)| compose_transitive_bounds(upper, lower))
+    }
+
     /// Whether `left - right <= bound` between two nonzero terms is tighter
     /// than the path through zero.
     fn tighter_than_zero(&self, left: TermId, right: TermId, bound: i128) -> bool {
         self.upper(left)
             .zip(self.lower(right))
             .is_none_or(|(upper, lower)| bound < compose_transitive_bounds(upper, lower))
+    }
+}
+
+/// Exact ENT-4 derivability from ENT-2 implicit facts alone. The term table's
+/// cached component closures answer each query without preparing a reading
+/// for every registered term or constructing proof nodes.
+/// The implicit inventory must be consistent; delivery establishes this by
+/// closing its source state and handling contradiction before querying.
+pub(crate) fn implicit_derives(terms: &TermTable, relation: &Relation) -> bool {
+    let mut structure = implicit_structure(terms);
+    let mut derives_bound = |left, right, bound| {
+        structure
+            .value(terms, left, right)
+            .is_some_and(|held| held <= bound)
+    };
+    match *relation {
+        Relation::Bound { left, right, bound } => derives_bound(left, right, bound),
+        Relation::Equal {
+            left,
+            right,
+            difference,
+        } => {
+            derives_bound(left, right, difference)
+                && derives_bound(right, left, difference.saturating_neg())
+        }
+        Relation::Distinct {
+            left,
+            right,
+            difference,
+        } => {
+            derives_bound(left, right, difference.saturating_sub(1))
+                || derives_bound(
+                    right,
+                    left,
+                    difference.saturating_neg().saturating_sub(1),
+                )
+        }
     }
 }
 
@@ -7570,6 +7619,7 @@ fn join_at_once(
         .flat_map(|left| rows.iter().map(move |right| (*left, *right)))
         .collect::<Vec<_>>();
     let pairs_evaluated = pairs.len();
+    let implicit = close(&FactState::new(), terms, goals, ledger);
     for (left, right) in pairs {
         let pair = (left, right);
         let Some(bound) = first.value(left, right) else {
@@ -7578,20 +7628,47 @@ fn join_at_once(
         let stored = first.matrix.lookup(left, right).map(|(_, proof)| proof);
         let mut weakest = bound;
         let mut same_proof = stored.is_some();
-        let held = rest_indices.iter().all(|index| {
-            closed[*index].value(left, right).is_some_and(|other| {
+        let implicit_bound = implicit.value(left, right);
+        let mut implicit_hit = implicit_bound == Some(bound);
+        // Preserve the existing independently live shared selection. A
+        // temporary consequence may instead use the exact implicit proof.
+        let preserve_shared = contributing.len() == closed.len()
+            && stored.is_some_and(|proof| {
+                !ledger.implicit_only(proof)
+                    && matches!(
+                        ledger.nodes[proof.0 as usize],
+                        DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
+                            if (l, r, b) == (left, right, bound)
+                    )
+            });
+        let mut held = true;
+        if implicit_hit && !preserve_shared {
+            same_proof = false;
+        } else {
+            for index in rest_indices {
+                let Some(other) = closed[*index].value(left, right) else {
+                    held = false;
+                    break;
+                };
                 same_proof &= other == bound
                     && closed[*index]
                         .matrix
                         .lookup(left, right)
                         .map(|(_, proof)| proof)
                         == stored;
-                if other > weakest {
-                    weakest = other;
+                weakest = weakest.max(other);
+                implicit_hit |= implicit_bound == Some(other);
+                // Every predecessor derives the implicit bound. Once one
+                // contributes that exact value, none can weaken it further.
+                // An early stop does not establish that all proofs match.
+                if implicit_hit && !(preserve_shared && same_proof) {
+                    same_proof = false;
+                    break;
                 }
-                true
-            })
-        });
+            }
+        }
         if held {
             // A temporary transitive/strengthened proof may still mention a
             // middle that the next kill removes. Even when all incoming
@@ -7610,6 +7687,13 @@ fn join_at_once(
                     ))
             {
                 bounds.store_single(left, right, bound, shared);
+                continue;
+            }
+            if implicit_hit {
+                let (bound, proof) = implicit
+                    .cell(left, right, ledger)
+                    .expect("an implicit value has an implicit proof");
+                bounds.store_single(left, right, bound, proof);
                 continue;
             }
             let mut parents = Vec::with_capacity(states.len());
@@ -8944,6 +9028,327 @@ pub(crate) mod tests {
         assert!(closed.derives_bound(second, first, 0));
         assert!(closed.derives_bound(parameter, ZERO, u64::MAX.into()));
         assert!(closed.derives_bound(ZERO, parameter, 0));
+    }
+
+    #[test]
+    fn implicit_join_bounds_have_quadratic_parent_references() {
+        for count in [8_u32, 16, 32] {
+            let mut terms = TermTable::new();
+            let values = (0..count)
+                .map(|binding| {
+                    terms.intern(TermKind::Place(
+                        super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                        IntegerType::U64,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let goals = GoalTable::default();
+            let mut ledger = DerivationLedger::default();
+            let incoming = values
+                .iter()
+                .enumerate()
+                .map(|(ordinal, value)| {
+                    let source = ledger.event(FlowEventKind::S5, None);
+                    let mut state = FactState::new();
+                    state.establish(
+                        &Relation::Equal {
+                            left: *value,
+                            right: ZERO,
+                            difference: i128::try_from(ordinal + 1).unwrap(),
+                        },
+                        &mut ledger,
+                        source,
+                    );
+                    state
+                })
+                .collect::<Vec<_>>();
+            let mut reference_ledger = ledger.clone();
+            let joined = join(&incoming, &terms, &goals, &mut ledger);
+            let parent_references = ledger
+                .nodes
+                .iter()
+                .map(DerivationNode::parent_count)
+                .sum::<usize>();
+            let width = values.len() + 1;
+            assert!(
+                parent_references <= 4 * width * width,
+                "{count} predecessors retained {parent_references} parent references"
+            );
+            // The old join attaches all K predecessors to nearly every
+            // union-row pair, exceeding this bound already at K = 8.
+            let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+            assert_flow_states_agree(
+                &[joined, reference],
+                &terms,
+                &goals,
+                &mut [ledger, reference_ledger],
+            );
+        }
+    }
+
+    #[test]
+    fn correlated_join_bounds_keep_every_parent_and_a_neutral_contradiction() {
+        let mut terms = TermTable::new();
+        let [left, right] = [0, 1].map(|binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                IntegerType::U64,
+            ))
+        });
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let assert_correlated = |joined: &FactState, ledger: &DerivationLedger, count: usize| {
+            for (left, right) in [(left, right), (right, left)] {
+                let (bound, proof) = joined.bounds.get(left, right).expect("correlated equality");
+                assert_eq!(bound, 0);
+                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize] else {
+                    panic!("an equality stronger than implicit bounds retains a join boundary");
+                };
+                assert_eq!(parents.len(), count);
+                assert_eq!(
+                    parents.last().unwrap().ordinal,
+                    u32::try_from(count - 1).unwrap()
+                );
+                assert!(!ledger.implicit_only(proof));
+            }
+        };
+        let mut incoming = (1..=8)
+            .map(|value| {
+                let source = ledger.event(FlowEventKind::S5, None);
+                let mut state = FactState::new();
+                for term in [left, right] {
+                    state.establish(
+                        &Relation::Equal {
+                            left: term,
+                            right: ZERO,
+                            difference: value,
+                        },
+                        &mut ledger,
+                        source,
+                    );
+                }
+                state
+            })
+            .collect::<Vec<_>>();
+        let mut reference_ledger = ledger.clone();
+        let joined = join(&incoming, &terms, &goals, &mut ledger);
+        assert_correlated(&joined, &ledger, incoming.len());
+        let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+        assert_flow_states_agree(
+            &[joined, reference],
+            &terms,
+            &goals,
+            &mut [ledger.clone(), reference_ledger],
+        );
+
+        let source = ledger.event(FlowEventKind::S1, None);
+        let mut contradiction = FactState::new();
+        contradiction.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: ZERO,
+                bound: -1,
+            },
+            &mut ledger,
+            source,
+        );
+        incoming.push(contradiction);
+        let mut reference_ledger = ledger.clone();
+        let joined = join(&incoming, &terms, &goals, &mut ledger);
+        assert_correlated(&joined, &ledger, incoming.len());
+        let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+        assert_flow_states_agree(
+            &[joined, reference],
+            &terms,
+            &goals,
+            &mut [ledger, reference_ledger],
+        );
+    }
+
+    #[test]
+    fn an_implicit_component_bound_stops_at_the_first_middle_or_last_input() {
+        let mut terms = TermTable::new();
+        let place = super::super::term::ResolvedPlace::binding(BindingId(0));
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, place.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, place));
+        terms.set_measure_bound(capacity, MeasureBound::Constant(5));
+        let goals = GoalTable::default();
+        for implicit_input in [0, 2, 4] {
+            let mut ledger = DerivationLedger::default();
+            let incoming = (0..5)
+                .map(|ordinal| {
+                    let mut state = FactState::new();
+                    if ordinal != implicit_input {
+                        let source = ledger.event(FlowEventKind::S16, None);
+                        state.establish(
+                            &Relation::Bound {
+                                left: length,
+                                right: capacity,
+                                bound: -1,
+                            },
+                            &mut ledger,
+                            source,
+                        );
+                    }
+                    state
+                })
+                .collect::<Vec<_>>();
+            let mut reference_ledger = ledger.clone();
+            let joined = join(&incoming, &terms, &goals, &mut ledger);
+            let (bound, proof) = joined
+                .bounds
+                .get(length, capacity)
+                .expect("the active predecessors supply both component rows");
+            assert_eq!(bound, 0);
+            assert!(ledger.implicit_only(proof));
+            // The exact standing ordering is zero; the two loose u64 type
+            // bounds through zero would miss the shortcut.
+            let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+            assert_flow_states_agree(
+                &[joined, reference],
+                &terms,
+                &goals,
+                &mut [ledger, reference_ledger],
+            );
+        }
+    }
+
+    #[test]
+    fn a_shared_explicit_bound_equal_to_the_implicit_value_keeps_its_identity() {
+        let mut terms = TermTable::new();
+        let [left, right] = [0, 1].map(|binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                IntegerType::U8,
+            ))
+        });
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let source = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Bound {
+                left,
+                right,
+                bound: 255,
+            },
+            &mut ledger,
+            source,
+        );
+        let (_, proof) = state.bounds.get(left, right).unwrap();
+        // The disequality admits both endpoints independently of the bound
+        // equal to their implicit path, keeping the depth-zero source selected.
+        state.establish(
+            &Relation::Distinct {
+                left,
+                right,
+                difference: 0,
+            },
+            &mut ledger,
+            source,
+        );
+        let joined = join(&[state.clone(), state], &terms, &goals, &mut ledger);
+        assert_eq!(joined.bounds.get(left, right), Some((255, proof)));
+        assert!(!ledger.implicit_only(proof));
+        assert!(matches!(
+            ledger.nodes[proof.0 as usize],
+            DerivationNode::SourceBound { .. }
+        ));
+    }
+
+    fn assert_implicit_queries_match_complete_closure(terms: &TermTable) {
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let closed = with_every_term(|| close(&FactState::new(), terms, &goals, &mut ledger));
+        for left in terms.ids() {
+            for right in terms.ids() {
+                let exact = closed.value(left, right).unwrap();
+                for bound in [exact.saturating_sub(1), exact, exact.saturating_add(1)] {
+                    for relation in [
+                        Relation::Bound { left, right, bound },
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: bound,
+                        },
+                        Relation::Distinct {
+                            left,
+                            right,
+                            difference: bound,
+                        },
+                    ] {
+                        assert_eq!(
+                            implicit_derives(terms, &relation),
+                            closed.derives(&relation),
+                            "implicit query differs from complete closure: {relation:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_queries_include_components_and_invalidate_changed_measure_bounds() {
+        let mut terms = TermTable::new();
+        let parameter = terms.intern(TermKind::ConstParameter(
+            DeclarationId::from_index(0).expect("zero declaration identity exists"),
+            IntegerType::U8,
+        ));
+        let place = super::super::term::ResolvedPlace::binding(BindingId(0));
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, place.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, place));
+        terms.set_measure_bound(capacity, MeasureBound::Equal(parameter));
+        let other = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(1)),
+            IntegerType::U64,
+        ));
+        let bounded = Relation::Bound {
+            left: capacity,
+            right: other,
+            bound: 255,
+        };
+        assert!(implicit_derives(&terms, &bounded));
+        assert!(!implicit_derives(
+            &terms,
+            &Relation::Bound {
+                left: capacity,
+                right: other,
+                bound: 254,
+            }
+        ));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Bound {
+                left: length,
+                right: capacity,
+                bound: 0,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
+
+        let constant = terms.intern(TermKind::Constant(7));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Equal {
+                left: constant,
+                right: ZERO,
+                difference: 7,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
+
+        terms.set_measure_bound(capacity, MeasureBound::Constant(300));
+        assert!(!implicit_derives(&terms, &bounded));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Equal {
+                left: capacity,
+                right: ZERO,
+                difference: 300,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
     }
 
     /// A predecessor contradictory only through call-dependent facts is
