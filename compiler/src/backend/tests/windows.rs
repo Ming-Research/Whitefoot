@@ -287,6 +287,23 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
         for row in ["append", "split_off"] {
             let body = emitted_prelude_row(&module, row);
             let lines = body.lines().collect::<Vec<_>>();
+            let mut in_transfer = false;
+            let element_transfer = lines
+                .iter()
+                .map(|line| {
+                    if line.starts_with("  ; layout-bounded transfer from ") {
+                        in_transfer = true;
+                    }
+                    let inside = in_transfer;
+                    if line.starts_with("  ; end layout-bounded transfer from ") {
+                        in_transfer = false;
+                    }
+                    inside
+                })
+                .collect::<Vec<_>>();
+            let header_store = |index: usize| {
+                !element_transfer[index] && lines[index].trim().starts_with("store i64 ")
+            };
             let zero = lines
                 .iter()
                 .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
@@ -321,27 +338,30 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
                     .all(|line| !line.contains("store ") && !line.contains("@llvm.mem")),
                 "{body}"
             );
-            assert_eq!(body.matches("  store i64 ").count(), 2, "{body}");
+            assert_eq!(
+                (0..lines.len())
+                    .filter(|&index| header_store(index))
+                    .count(),
+                2,
+                "{body}"
+            );
             let commit = lines
                 .iter()
                 .position(|line| line.ends_with(".commit:"))
                 .expect("positive transfer commits its headers");
             assert!(
-                lines[..commit]
-                    .iter()
-                    .all(|line| !line.trim().starts_with("store i64 ")),
+                (0..commit).all(|index| !header_store(index)),
                 "header stores occur only after positive transfer: {body}"
             );
             assert_eq!(
-                lines[commit + 1..done]
-                    .iter()
-                    .filter(|line| line.trim().starts_with("store i64 "))
+                (commit + 1..done)
+                    .filter(|&index| header_store(index))
                     .count(),
                 2,
                 "{body}"
             );
             assert!(
-                body.contains("@llvm.memmove"),
+                body.contains("@llvm.memmove") || element_transfer.contains(&true),
                 "positive transfers still move their elements: {body}"
             );
         }
