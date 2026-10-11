@@ -4876,6 +4876,22 @@ void wf__completion_file_close_submit(
     wf_bridge_dispatch(held);
 }
 
+int wf__completion_snapshot_finish_submit(void *owner, uint32_t abort_requested,
+                                         void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    if (owner == NULL || abort_requested > 1u) {
+        wf_bridge_fail("a snapshot completion has no owned job");
+    }
+    held->request.kind = WF_FILE_SNAPSHOT_FINISH;
+    held->request.operation.snapshot.owner = owner;
+    held->request.operation.snapshot.abort_requested = abort_requested;
+    /* A child can wait for output capacity. Its collector must run off the
+     * executor so other contexts continue, including the writer being served.
+     * No deadline is invented; finish and abort await confirmed termination. */
+    wf_bridge_dispatch_bound(held, 1, 0);
+    return wf__completion_pending(held) ? 2 : 1;
+}
+
 void wf__completion_file_append_submit(
     int descriptor,
     const void *buffer,

@@ -3104,7 +3104,7 @@ public fn prepare(scratch_bytes: u64, output_bytes: u64) -> result: Result<Reser
 public fn discard(reserve: Reserve) -> result: unit pure waits doc "Consumes an unused reserve and releases its prepared resources under SNAP-3.";
 
 public fn capture_export<V: drop>(reserve: Reserve, map: &ConcurrentHashMap<V>, cut: &u64) -> result: Result<Job, CreateError> reads(map), reads(cut) contract {
-    requires held(map, cut);
+  requires held(map, cut);
 } doc "Attempts the typed export whose graph is admitted by SNAP-1, with bytes specified by SNAP-2 and lifetime and outcomes by SNAP-3.";
 
 public fn read(job: &Job, out: &[u8], deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadError> reads(cancel), writes(job), writes(out) waits contract {

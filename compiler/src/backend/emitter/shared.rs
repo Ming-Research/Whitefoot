@@ -138,6 +138,22 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
 }
 
 impl FunctionEmitter<'_, '_> {
+    pub(super) fn emit_snapshot_atomic(
+        &mut self,
+        result: IrValueId,
+        begin: bool,
+    ) -> Result<(), BackendFailure> {
+        if snapshot::required(self.program) {
+            self.emit_unit_call(result, if begin {
+                "wf_snapshot_atomic_begin"
+            } else {
+                "wf_snapshot_atomic_end"
+            }, "")
+        } else {
+            self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+        }
+    }
+
     pub(super) fn emit_atomic_group_target(
         &mut self,
         result: IrValueId,
@@ -990,18 +1006,40 @@ impl FunctionEmitter<'_, '_> {
         let retries = entry == "wf__shared_acquire";
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
+        let snapshot = snapshot::required(self.program);
+        let before = if snapshot && retries {
+            self.names(&["wf_snapshot_atomic_begin"]);
+            "  call void @wf_snapshot_atomic_begin()\n"
+        } else {
+            ""
+        };
+        let after = if snapshot && !retries {
+            // The native watch has released its single object before it
+            // returns either answer. Activation therefore occurs outside
+            // every hold and before a parked frame can move executors.
+            self.names(&["wf_snapshot_atomic_end"]);
+            "  call void @wf_snapshot_atomic_end()\n"
+        } else {
+            ""
+        };
         writeln!(
             self.output,
             "  br label %{prefix}.try\n\
-             {prefix}.try:\n  \
+             {prefix}.try:\n{before}  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
              %{prefix}.parked = call i32 @{entry}(ptr {}, i32 1, ptr {HANDLE})\n  \
-             %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
+             {after}%{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
             self.value_name(object)
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        if snapshot && retries {
+            // This attempt acquired nothing. Restore this executor's mask
+            // before suspension; the retry arms whichever executor resumes.
+            self.names(&["wf_snapshot_atomic_end"]);
+            writeln!(self.output, "  call void @wf_snapshot_atomic_end()")?;
+        }
         let resumed = if retries {
             format!("{prefix}.try")
         } else {

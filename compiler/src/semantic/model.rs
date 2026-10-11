@@ -3040,6 +3040,15 @@ pub(crate) enum CheckedEffectStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldCall {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
+    /// None denotes the enclosing callable's symbolic caller statement.
+    pub(crate) atomic: Option<NodePath>,
+    pub(crate) protected: Vec<super::places::ResolvedPlace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
@@ -3076,6 +3085,9 @@ pub(crate) struct CheckedFunction {
     pub(crate) declared_state_reads: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    /// [HOLD-1] normalized callable requirement and accepted call judgments.
+    pub(crate) held_parameters: Vec<u32>,
+    pub(crate) held_calls: Vec<CheckedHeldCall>,
     /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
     /// aligned with `requirements`: its own, and those of every definition
     /// whose expansion it is the first requirement to reach. Each is formed
@@ -3175,6 +3187,8 @@ pub(crate) struct CheckedCallSeparation {
     /// A demanded REF-2 use; the separation is still proved at `site`, before
     /// the invalidating write, and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
+    /// HOLD-1 uses the same position families, retaining its call diagnostic.
+    pub(crate) held_use: Option<CheckedHeldProtectionUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
     /// The window a position beside one of its parts reads `r.len` of
     /// [WIN-2]: the place both paths reach above the divergence.
@@ -3193,6 +3207,12 @@ pub(crate) struct CheckedReferencePreservationUse {
     pub(crate) site: NodePath,
     pub(crate) binder: String,
     pub(crate) event: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldProtectionUse {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3355,6 +3375,7 @@ pub(crate) struct CheckedContractQuery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallContract {
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    pub(crate) held_parameters: Vec<u32>,
     /// One accepted formal-requires => actual-requires implication for every
     /// actual requirement, in that declaration's source order.
     pub(crate) requirement_queries: Vec<ContractQueryId>,

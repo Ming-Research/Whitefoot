@@ -525,6 +525,13 @@ impl<'unit> Checker<'_, 'unit> {
         let atomic_target =
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
         self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
+        self.check_held_call(node, function, signature, &actual_paths, bindings)?;
+        let selected = self.types.signatures.get(target.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        self.qualify_snapshot_selection(node, selected.declaration, &selected.substitution)?;
+        for entry in substituted.iter().filter(|entry| entry.write) {
+            self.record_held_write(node, &entry.place);
+        }
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -816,6 +823,7 @@ impl<'unit> Checker<'_, 'unit> {
                         site: self.types.declarations.tree.path(node)?.clone(),
                         exchange,
                         reference_use: None,
+                        held_use: None,
                         positions,
                         window,
                         left_spelling: self

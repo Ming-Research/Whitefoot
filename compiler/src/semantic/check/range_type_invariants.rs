@@ -37,6 +37,7 @@ impl Checker<'_, '_> {
             effects_node: invariant,
             declared_effects: EffectSet::default(),
             waits: false,
+            held_parameters: Vec::new(),
             formal_parameter: None,
             substitution: GenericSubstitution::default(),
         };

@@ -821,6 +821,29 @@ const BODY_CHECK_STATEMENT: &[u8] =
 
 const UNIFIED_CONTRACT: &[u8] = b"fn probe(value: i32) -> result: i32 pure contract {\n  define admitted = value == value;\n  requires admitted;\n  ensures result == value;\n} {\n  return value;\n}\n";
 
+#[test]
+fn held_requirements_parse_in_declarations_and_function_formals() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) contract {\n  requires held(left, right);\n} {\n  return left^;\n}\n".as_slice(),
+        b"interface Observation {\n  fn observe(value: &u64) -> result: u64 reads(value) contract {\n    requires held(value);\n  };\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
+    }
+}
+
+#[test]
+fn a_held_group_requires_a_nonempty_comma_separated_parameter_list() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held();\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value,);\n} {\n  return value^;\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::SourceIssue(_)), "{outcome:?}");
+    }
+}
+
 const COUNTED_RANGE_STATEMENT: &[u8] = b"fn probe(lower: u64, upper: u64) -> result: unit pure {\n  for @range (\n    index in lower..upper,\n    invariant limit: index + 1_u64 * (1_u64) <= upper\n  ) {\n    break @range;\n  }\n  return unit;\n}\n";
 
 const LOCAL_INVARIANT_STATEMENT: &[u8] = b"fn probe(left: i32, right: i32) -> result: unit pure {\n  invariant ordered: left + 1_i32 <= right + 1_i32 {\n    use 2 times (left <= right);\n    use prior_order;\n  }\n  return unit;\n}\n";

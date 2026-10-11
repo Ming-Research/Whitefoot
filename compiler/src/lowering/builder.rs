@@ -165,11 +165,25 @@ pub(crate) fn lower_checked_from(
         .variants
         .iter()
         .map(|variant| {
-            checked.data.functions[variant.source.0 as usize]
-                .symbol
-                .clone()
+            let function = &checked.data.functions[variant.source.0 as usize];
+            if function.body.is_none() && function.symbol == "std.snapshot.capture_export" {
+                let map = function
+                    .parameters
+                    .get(1)
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                let IrType::Nominal(id) = lower_type(types, map.ty)? else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                Ok(format!(
+                    "{}.typed.{}",
+                    function.symbol,
+                    nominals[id.index()].link_name()
+                ))
+            } else {
+                Ok(function.symbol.clone())
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, LoweringFailure>>()?;
     let mut functions = physical
         .variants
         .iter()
@@ -447,6 +461,21 @@ fn lower_function<'program>(
     permissions: Option<&'program FunctionPermissions>,
     overlap: OverlapLowering,
 ) -> Result<IrFunction, LoweringFailure> {
+    // Held calls share their caller's native executor preparation and deferred
+    // activation. Keep both their ordinary forwarding bodies and atomic owners
+    // on that executor, including conditional calls and nested counted loops.
+    // The checked inventory includes calls through function-kind formals; this
+    // chooses a sequential actualization without changing PAR permission.
+    let overlap = if overlap == OverlapLowering::On
+        && (!function.held_parameters.is_empty() || !function.held_calls.is_empty())
+    {
+        context.synthesis.borrow_mut().note_narrowing(format!(
+            "PAR actualization  {symbol}  narrowed: held contracts retain the caller's native executor"
+        ));
+        OverlapLowering::Off
+    } else {
+        overlap
+    };
     // One of the compiler-owned [PRE-1] records: declared body-less exactly
     // like a host function, but with no trusted-base object behind it, so the
     // compiler emits the body here. Only a program that called the row
@@ -1102,7 +1131,7 @@ impl<'program> IrBuilder<'program> {
                     }
                 });
                 if let Some(line) = conflict {
-                    self.synthesis.borrow_mut().note_storage_conflict(line);
+                    self.synthesis.borrow_mut().note_narrowing(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let Some(value) = value else {

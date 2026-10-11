@@ -124,6 +124,7 @@ const ENUM_ORDER: &[&str] = &[
     "range_relation",
     // v0.90 [GRAM-2, MOD-11]: a graph's package bindings.
     "package_decl",
+    "held_clause",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.

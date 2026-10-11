@@ -10,12 +10,6 @@ comparisons; it establishes no implemented capability or performance result.
 Phase 1 changes the specification, design decisions and conformance cases.
 Compiler and runtime implementation follow review of that draft.
 
-The implementation attempt exposed a contradiction between PRE-2's exact
-snapshot declaration bytes and FORM-2's canonical indentation. The
-[merge and implementation report](phase-2-merge-report.md) records the minimal
-witness, native integration prerequisites and verbatim specification amendment.
-The declaration remains unchanged pending correction of that contradiction.
-
 The owner's 2026-10-11 choice was a fixed typed export with no user execution
 in the child, using one value-type argument and an ordinary callable surface.
 It rejected a restricted callback and a dedicated capture statement. The

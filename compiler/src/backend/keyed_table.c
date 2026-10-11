@@ -45,6 +45,43 @@ static _Thread_local void *wf_key_set_spare;
 #define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
 #include "concurrent_map.c"
 
+#include "completion/snapshot_export.h"
+
+/* The fork image has no writers and the capture held the whole map. This
+ * walk reads representation words only: no current user, lock, allocation,
+ * hashing, comparison or mutation is reachable in its child closure. */
+#if defined(__clang__)
+__attribute__((disable_sanitizer_instrumentation))
+#elif defined(__GNUC__)
+__attribute__((no_sanitize_address, no_sanitize_thread, no_sanitize_undefined))
+#endif
+int wf_snapshot_map_next(const void *image, uint64_t *cursor,
+    uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+    const unsigned char **key, uint64_t *length, const void **slot) {
+    const wf_cmap *map = image;
+    const table *t = atomic_load_explicit(&map->current, memory_order_relaxed);
+    while (*cursor < t->capacity) {
+        cell *c = &t->cells[(*cursor)++];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed) & KEY_MASK;
+        if (k == EMPTY || k == REMOVED) continue;
+        const node *n = (const node *)(uintptr_t)
+            (atomic_load_explicit(&c->value, memory_order_relaxed) & ADDRESS_MASK);
+        uint64_t offset = sizeof(node) + n->length;
+        offset = (offset + map->slot_align - 1) / map->slot_align * map->slot_align;
+        const unsigned char *s = (const unsigned char *)n + offset;
+        uint64_t tag = 0;
+        for (uint32_t i = 0; i < tag_width; ++i)
+            tag |= (uint64_t)s[tag_offset + i] << (8u * i);
+        if (tag_width == 1) tag &= 1u;
+        if (tag == none_tag) continue;
+        *key = n->bytes;
+        *length = n->length;
+        *slot = s;
+        return 1;
+    }
+    return 0;
+}
+
 /* What a statement on one key keeps in its frame: the entry's unlock, the
  * table's user, whether the statement only reads the entry, and whether the
  * user held the whole table when it took the entry. */

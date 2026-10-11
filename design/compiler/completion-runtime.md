@@ -36,6 +36,10 @@ Decision: Proposed: Parent completion drains or discards the data pipe while the
 
 Decision: Proposed: The first source exporter targets Linux x86-64 with glibc and other compositions report an explicit target capability failure, because the capsule's signal, syscall and copied-runtime audit qualifies only that platform and does not prove the corresponding contract elsewhere, instead of rejecting otherwise valid source or silently using another snapshot algorithm.
 
+Decision: Proposed: A composition using the restricted exporter prepares signal exclusion at ordinary atomic entry and retries, restores the executor's mask before suspended acquisition, and activates all queued prepared jobs after releasing every target, because a forwarding wrapper may discover its reserve only inside the held block and a resumed acquisition may run on another executor, instead of discovering direct capture calls or performing signal and descriptor setup inside the hold.
+
+Decision: Proposed: Consuming snapshot completion is a closed helper-adapter request carrying the owned job and an abort flag, because draining a full pipe and confirming a reap can wait while service contexts must continue, instead of blocking the source executor or installing a user callback or a generic runtime thunk in the completion record.
+
 Rejected:
 - Running ordinary runtime or Whitefoot code in a snapshot child: rejected because the child inherits locks and allocator state held by threads that no longer exist in it, so any lock or allocation there can hang or corrupt.
 - A fixed global slot pool with generation-checked tokens and a capacity wait: rejected because the native call activation already owns the request until return and the pool only added refusals nothing could act on.

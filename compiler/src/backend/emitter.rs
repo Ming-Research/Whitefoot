@@ -30,6 +30,7 @@ mod runs;
 mod segments;
 mod shared;
 mod slice;
+mod snapshot;
 mod union_enums;
 mod value_equality;
 
@@ -71,6 +72,7 @@ use parallel::{
 pub enum BackendFailure {
     TargetLayout(TargetLayoutFailure),
     InvalidIr,
+    SnapshotTargetUnsupported,
     CounterOverflow,
     TextEmission,
 }
@@ -263,6 +265,9 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
+        return Err(BackendFailure::SnapshotTargetUnsupported);
+    }
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
     let mut thunks = ParallelThunks::default();
@@ -2033,6 +2038,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
+        if let Some(module) = snapshot::definition(self.program, self.target, self.function)? {
+            return Ok(module);
+        }
         let declaration = self.function.blocks().is_empty();
         let reachable = self.reachable_blocks()?;
         let waiting = self.function.waits();
@@ -2806,6 +2814,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
+            IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {
                 self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
             }

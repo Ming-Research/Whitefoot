@@ -2927,6 +2927,13 @@ fn lower_selected(
             Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
+            if failure == BackendFailure::SnapshotTargetUnsupported {
+                return CompilationFailure::new(
+                    CompilationStage::Backend,
+                    CompilationFailureKind::Unsupported,
+                    "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
+                );
+            }
             let (stage, kind) = match failure {
                 BackendFailure::TargetLayout(_) => (
                     CompilationStage::TargetLayout,

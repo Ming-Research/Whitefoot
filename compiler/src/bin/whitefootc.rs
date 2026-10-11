@@ -8,15 +8,17 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER,
-    CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
-    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE,
+    COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain,
+    CheckOutcome, CheckVerdict, CompilationFailure, CompilerLimits, DISPATCH_LEDGER_PREFIX,
+    DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE,
     FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
-    OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER,
-    build_module_entry_for_emission, check, check_module_program, check_with_cache, clang_executable,
-    compile_for_emission, content_digest, discover_module_sources, entry_verdict,
+    OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER,
+    SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
+    SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput, WINDOWS_RUNTIME_HEADER,
+    build_module_entry_for_emission, check, check_module_program, check_with_cache,
+    clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
     running_compiler_identity, split_module, stack_ledger,
 };
@@ -130,6 +132,10 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/contract.h", COMPLETION_CONTRACT_HEADER),
     unit("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     unit("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+    unit("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+    unit("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
+    unit("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
+    unit("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),
     unit("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
     unit(
         "completion/socket_address.h",
@@ -165,6 +171,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
@@ -183,6 +191,8 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_windows.c",
     "completion/bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/windows_iocp.c",
     "keyed_table.c",
@@ -967,6 +977,33 @@ fn compile_executable(
         let mut command = Command::new(clang_executable());
         unit_arguments(&mut command, &directory);
         for relative_path in &compiled {
+            let restricted = restricted_child_arguments(relative_path);
+            if !restricted.is_empty() {
+                // Per-unit flags must not disable ordinary runtime checks or
+                // sanitizers. Compile only the child closure separately.
+                let object = directory.join(relative_path).with_extension("o");
+                let mut child = Command::new(clang_executable());
+                unit_arguments(&mut child, &directory);
+                child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
+                if full_lto {
+                    child.arg("-flto=full");
+                }
+                let compiled = child
+                    .arg("-c")
+                    .arg(directory.join(relative_path))
+                    .arg("-o")
+                    .arg(&object)
+                    .output()
+                    .map_err(|error| format!("cannot compile restricted child unit: {error}"))?;
+                if !compiled.status.success() {
+                    return Err(format!(
+                        "restricted child unit {relative_path}: {}",
+                        String::from_utf8_lossy(&compiled.stderr)
+                    ));
+                }
+                command.arg("-x").arg("none").arg(object);
+                continue;
+            }
             command
                 .arg("-x")
                 .arg(unit_language(relative_path))
@@ -997,6 +1034,18 @@ fn unit_arguments(command: &mut Command, directory: &Path) {
         .arg(directory)
         .arg("-I")
         .arg(directory.join("completion"));
+}
+
+/// Options required by the restricted child closure, in every build mode.
+fn restricted_child_arguments(relative_path: &str) -> &'static [&'static str] {
+    if matches!(
+        relative_path,
+        "completion/snapshot_export.c" | "completion/fork_capsule.c"
+    ) {
+        RESTRICTED_CHILD_COMPILE_ARGUMENTS
+    } else {
+        &[]
+    }
 }
 
 /// The clang input language of one runtime unit.
@@ -1050,7 +1099,7 @@ fn link_cached_objects(
         material.extend_from_slice(&runtime);
         material.extend_from_slice(
             format!(
-                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n"
+                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {:?}\n", restricted_child_arguments(relative_path)
             )
             .as_bytes(),
         );
@@ -1065,6 +1114,7 @@ fn link_cached_objects(
             }
             command
                 .args(thin)
+                .args(restricted_child_arguments(relative_path))
                 .arg("-x")
                 .arg(unit_language(relative_path))
                 .arg(directory.join(relative_path));
@@ -1873,6 +1923,8 @@ mod tests {
             "sched/core.c",
             "sched/entry.c",
             "completion/bridge.c",
+            "completion/snapshot_export.c",
+            "completion/fork_capsule.c",
             "completion/stop_signals.c",
         ] {
             assert!(

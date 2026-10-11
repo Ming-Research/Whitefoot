@@ -49,6 +49,15 @@ pub const COMPLETION_FILE_WINDOWS_SOURCE: &str = include_str!("completion/file_w
 pub const COMPLETION_STOP_SIGNALS_SOURCE: &str = include_str!("completion/stop_signals.c");
 /// The compiler-owned file-completion bridge embedded in the compiler.
 pub const COMPLETION_BRIDGE_SOURCE: &str = include_str!("completion/bridge.c");
+/// Qualified fixed snapshot encoder and its immutable descriptor ABI.
+pub const SNAPSHOT_EXPORT_SOURCE: &str = include_str!("completion/snapshot_export.c");
+pub const SNAPSHOT_EXPORT_HEADER: &str = include_str!("completion/snapshot_export.h");
+/// Restricted fork capsule used by the supplied snapshot implementation.
+pub const FORK_CAPSULE_SOURCE: &str = include_str!("completion/fork_capsule.c");
+pub const FORK_CAPSULE_HEADER: &str = include_str!("completion/fork_capsule.h");
+/// Child code cannot acquire hidden libc, stack-protector or sanitizer calls.
+pub const RESTRICTED_CHILD_COMPILE_ARGUMENTS: &[&str] =
+    &["-fno-builtin", "-fno-stack-protector", "-fno-sanitize=all"];
 /// The target-guarded Linux io_uring adapter embedded in the compiler.
 pub const COMPLETION_LINUX_IO_URING_SOURCE: &str = include_str!("completion/linux_io_uring.c");
 /// The target-guarded Windows IOCP ring embedded in the compiler.
@@ -164,6 +173,10 @@ mod tests {
             ("completion/file_posix.c", COMPLETION_FILE_POSIX_SOURCE),
             ("completion/file_windows.c", COMPLETION_FILE_WINDOWS_SOURCE),
             ("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
+            ("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
+            ("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+            ("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),
+            ("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
             ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
             (
                 "completion/linux_io_uring.c",

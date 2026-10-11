@@ -35,8 +35,8 @@ mod integer_absolute;
 mod integer_conversion;
 mod integer_extended;
 mod integer_negation;
-mod loop_split;
 mod layout_transfers;
+mod loop_split;
 mod match_dispatch;
 mod owned_places;
 mod parallel;
@@ -73,6 +73,7 @@ mod requires;
 mod resource_enums;
 mod result_abi;
 mod shared_maps;
+mod snapshot;
 mod stack_ledger;
 mod system;
 mod tail_calls;
@@ -400,6 +401,16 @@ fn append_runtime_units_with_library_defines(
         ("completion/contract.h", COMPLETION_CONTRACT_HEADER),
         ("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
         ("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+        (
+            "completion/snapshot_export.h",
+            crate::SNAPSHOT_EXPORT_HEADER,
+        ),
+        ("completion/fork_capsule.h", crate::FORK_CAPSULE_HEADER),
+        (
+            "completion/snapshot_export.c",
+            crate::SNAPSHOT_EXPORT_SOURCE,
+        ),
+        ("completion/fork_capsule.c", crate::FORK_CAPSULE_SOURCE),
         ("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
         (
             "completion/socket_address.h",
@@ -446,6 +457,39 @@ fn append_runtime_units_with_library_defines(
             || (name == "heap.c" && !needs_heap)
             || (name == "ordinary_values.c" && !library_defines.is_empty())
         {
+            continue;
+        }
+        if matches!(
+            name,
+            "completion/snapshot_export.c" | "completion/fork_capsule.c"
+        ) {
+            let object = directory.join(name).with_extension("o");
+            let output = Command::new(crate::clang_executable())
+                .args(HOST_OPTIMIZATION_ARGUMENTS)
+                .args(crate::RESTRICTED_CHILD_COMPILE_ARGUMENTS)
+                .arg("-std=c11")
+                .arg("-pthread")
+                .arg("-I")
+                .arg(directory)
+                .arg("-I")
+                .arg(directory.join("completion"))
+                .arg("-c")
+                .arg(directory.join(name))
+                .arg("-o")
+                .arg(&object)
+                .output()
+                .expect("compile restricted child unit");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            command.arg("-x").arg("none").arg(object);
+            artifacts.push(if name.ends_with("snapshot_export.c") {
+                "completion/snapshot_export.o"
+            } else {
+                "completion/fork_capsule.o"
+            });
             continue;
         }
         command

@@ -7,6 +7,7 @@ pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod frozen;
 mod generics;
+mod held;
 mod inventory;
 mod linearity;
 mod nominal_instances;
@@ -143,6 +144,8 @@ struct FunctionSignature {
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
+    /// Normalized reference parameter ordinals of the ordinary held contract.
+    held_parameters: Vec<usize>,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -647,6 +650,13 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// Current atomic target origins and protection obligations before framing.
+    held_atomic_roots: Vec<BindingId>,
+    held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
+    held_writes: Vec<(NodeId, ResolvedPlace)>,
+    checked_held_calls: Vec<super::model::CheckedHeldCall>,
+    held_atomic_node: Option<crate::NodePath>,
+    held_guard: bool,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -2158,6 +2168,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),

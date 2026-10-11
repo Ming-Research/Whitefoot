@@ -2536,6 +2536,7 @@ impl<'unit> TypeContext<'unit> {
                     binder: String::new(),
                     event: event.phrase(),
                 }),
+                held_use: None,
                 positions,
                 window,
                 left_spelling: self.render_resolved_place(written, bindings)?,

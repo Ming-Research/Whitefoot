@@ -199,7 +199,7 @@ impl Judging<'_, '_, '_> {
             let discharged = self.judge_one_separation(query, &separation, state);
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
-            all_discharged &= discharged || separation.reference_use.is_some();
+            all_discharged &= discharged || separation.reference_use.is_some() || separation.held_use.is_some();
         }
         all_discharged
     }
@@ -267,8 +267,9 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: separation.reference_use.as_ref()
-                .map_or_else(|| separation.site.clone(), |use_site| use_site.site.clone()),
+            node_path: separation.reference_use.as_ref().map(|use_site| use_site.site.clone())
+                .or_else(|| separation.held_use.as_ref().map(|use_site| use_site.site.clone()))
+                .unwrap_or_else(|| separation.site.clone()),
             family: if separation.reference_use.is_some() {
                 ObligationFamily::ReferencePreservation(
                     u32::try_from(query).expect("reference-preservation queries exceed u32"),

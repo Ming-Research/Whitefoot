@@ -676,6 +676,17 @@ impl<'unit> TypeContext<'unit> {
                     disposition,
                 }
             }
+            (SemanticRule::Hold1, ObligationFamily::CallSeparation(query)) => {
+                let use_site = function.call_separations.get(query as usize)
+                    .and_then(|separation| separation.held_use.as_ref())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let requirement = self.declarations.tree.node_with_path(&use_site.requirement)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                SemanticIssueKind::InvalidHeldContract {
+                    reason: format!("{}: {residual}", self.declarations.tree.source_spelling(requirement)?),
+                    mechanical_fix: super::held::REPAIR,
+                }
+            }
             (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
                 let separation = function
                     .call_separations

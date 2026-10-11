@@ -227,6 +227,7 @@ impl<'unit> Checker<'_, 'unit> {
             )
             .collect();
         Ok(CheckedCallContract {
+            held_parameters: formal.checked_held_parameters()?,
             requirements: formal_contracts
                 .requires
                 .into_iter()
@@ -646,6 +647,8 @@ impl<'unit> DeclarationInventory<'unit> {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: Vec::new(),
             requirement_places,
             postconditions: Vec::new(),
             range_facts: Default::default(),

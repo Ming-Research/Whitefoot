@@ -2,6 +2,7 @@
 
 #![allow(clippy::panic)]
 
+mod held_placement;
 mod overlap_storage;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};

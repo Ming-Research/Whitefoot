@@ -60,6 +60,11 @@ fn obligation_records(
                 use_site.site.clone(),
                 ObligationFamily::ReferencePreservation(query),
             ),
+            None if separation.held_use.is_some() => (
+                SemanticRule::Hold1,
+                separation.held_use.as_ref().expect("held diagnostic site").site.clone(),
+                ObligationFamily::CallSeparation(query),
+            ),
             None if separation.exchange => (
                 SemanticRule::Op11,
                 separation.site.clone(),

@@ -216,6 +216,7 @@ impl<'unit> Checker<'_, 'unit> {
             effects_node: invariant,
             declared_effects: EffectSet::default(),
             waits: false,
+            held_parameters: Vec::new(),
             formal_parameter: None,
             substitution: GenericSubstitution::default(),
         };

@@ -13,6 +13,7 @@
  */
 
 #include "file_adapter.h"
+#include "snapshot_export.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -61,6 +62,9 @@ int wf_file_request_valid(const wf_file_request *request) {
             || request->operation.pread.count == 0;
     case WF_FILE_CLOSE:
         return 1;
+    case WF_FILE_SNAPSHOT_FINISH:
+        return request->operation.snapshot.owner != NULL
+            && request->operation.snapshot.abort_requested <= 1u;
     /* A listen and a connect name an address and create their own socket, so
      * there is no descriptor and no buffer to check; the address is a value
      * the emitter built and every combination of its operands is one address
@@ -96,9 +100,8 @@ int wf_file_request_valid(const wf_file_request *request) {
     }
 }
 
-/* Whether this request's kind waits on a peer; see the header for what the
- * four kinds have in common and why a listen and a shutdown are not among
- * them.
+/* Whether this request's kind waits on a peer or an owned snapshot child;
+ * see the header for why a listen and a shutdown are not among these kinds.
  *
  * It is a switch over the kind and nothing else.  A wait this adapter cannot
  * end is a property of what the request asks the host for, so knowing it needs
@@ -113,6 +116,7 @@ int wf_file_request_is_peer_bound(const wf_file_request *request) {
     case WF_FILE_SOCKET_RECEIVE:
     case WF_FILE_SOCKET_CONNECT:
     case WF_FILE_SOCKET_SEND:
+    case WF_FILE_SNAPSHOT_FINISH:
         return 1;
     default:
         return 0;
@@ -370,6 +374,21 @@ static void wf_file_finish_execution(
 }
 
 
+/* The adapter's closed runtime operation owns a child, not a host file.
+ * Only this trusted kind reaches the runtime collector; no callback or
+ * source function pointer is installed in a completion record. */
+static wf_file_result wf_file_execute_target(wf_file_request *request) {
+    if (request->kind == WF_FILE_SNAPSHOT_FINISH) {
+        wf_file_result result;
+        memset(&result, 0, sizeof(result));
+        result.head.kind = request->kind;
+        wf_snapshot_run_finish(request->operation.snapshot.owner,
+                               request->operation.snapshot.abort_requested);
+        return result;
+    }
+    return wf_file_execute_direct(request);
+}
+
 wf_file_result wf_file_execute_timed(
     wf_file_adapter *adapter,
     wf_file_request *request
@@ -378,7 +397,7 @@ wf_file_result wf_file_execute_timed(
     uint64_t started;
     wf_file_result result;
     if (!wf_file_adapter_initialized(adapter)) {
-        return wf_file_execute_direct(request);
+        return wf_file_execute_target(request);
     }
     /* A peer-bound execution is not part of the population this average is
      * about.  The average answers one question -- whether this program's own
@@ -393,7 +412,7 @@ wf_file_result wf_file_execute_timed(
     timed = !wf_file_request_is_peer_bound(request)
         && wf_file_execution_should_be_timed(adapter);
     started = timed ? wf_file_monotonic_ns() : 0u;
-    result = wf_file_execute_direct(request);
+    result = wf_file_execute_target(request);
     if (timed) {
         wf_file_note_execution(adapter, started);
     }

@@ -1208,6 +1208,11 @@ pub enum IrOperation {
         nominal: IrNominalId,
         object: IrValueId,
     },
+    /// Native snapshot signal preparation before any atomic acquisition.
+    /// Erased when the composition uses no snapshot export.
+    SnapshotAtomicBegin,
+    /// Activates prepared captures after all atomic targets are released.
+    SnapshotAtomicEnd,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.
     SharedAcquire {

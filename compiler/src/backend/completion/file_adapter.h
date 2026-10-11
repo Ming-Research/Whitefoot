@@ -276,7 +276,7 @@ int wf_file_readiness_supported(void);
  * it before it makes any host call. */
 int wf_file_request_valid(const wf_file_request *request);
 
-/* Whether this request's kind waits on a peer.
+/* Whether this request's kind waits on a peer or an owned snapshot child.
  *
  * An accept waits for a connection nobody in this program makes, a receive for
  * bytes the far side has not sent, a connect for the far side to answer, and a
@@ -285,6 +285,9 @@ int wf_file_request_valid(const wf_file_request *request);
  * and no measurement is needed to know it is there: the kind is the whole
  * condition.  A listen and a shutdown act on this program's own socket and
  * answer at once, so they are not peer-bound.
+ * Snapshot completion drains and reaps a separately running child; it shares
+ * this classification so a child waiting for output capacity cannot block a
+ * scheduler thread or enter the short host-call timing average.
  *
  * Three rules read it: growth adds a helper for a peer-bound submission
  * whatever the measured verdict says, a scheduler thread's progress pass

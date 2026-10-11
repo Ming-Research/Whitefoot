@@ -421,6 +421,8 @@ pub enum DeferredUseRole {
     FunctionMember,
     /// A statically selected field after an effect-path root.
     EffectField,
+    /// A reference parameter named by its callable held requirement.
+    HeldParameter,
 }
 
 /// Exact source origin of one resolver role.
