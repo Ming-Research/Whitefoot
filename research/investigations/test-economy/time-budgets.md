@@ -571,13 +571,31 @@ Every successful `gate.yml` run created between 2026-10-11 12:04Z and
 | macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
 
 A run's wall from its first job's creation to its last job's completion had
-a median of 8.4 minutes and a maximum of 43.6. Several sessions pushed work
-branches during the window, and every push queued four macOS jobs; the
-macOS wait, not the jobs, made the slow runs. The coordinator's earlier count
-over 25 runs from 12:00Z gave a 13.5-minute mean macOS wait; the narrower
-window covered the busiest hours. From this, the gate runs macOS only where
-its answer decides a merge (a ready pull request, `main`, a manual run) and
-checks both platforms per revision in a final job
+a median of 8.4 minutes and a maximum of 43.6.
+
+The wait follows load. By the hour the run was created, the slowest macOS
+job's wait per run (job creation to start, minutes):
+
+| Hour (UTC) | Runs | Median | Max |
+| --- | ---: | ---: | ---: |
+| 12 | 10 | 5.5 | 11.4 |
+| 13 | 4 | 2.3 | 7.0 |
+| 14 | 8 | 3.1 | 5.3 |
+| 15 | 7 | 0.9 | 2.4 |
+| 16–20 | 9 | 0.1–0.2 | 0.2 |
+| 21 | 13 | 13.6 | 37.5 |
+| 22 | 7 | 10.3 | 26.8 |
+
+Measured instead from the run's creation to its slowest macOS job's start,
+which adds the selection job and any later re-run of failed jobs, the median
+is 5.4, the mean 9.6 and the 21Z and 22Z medians 15.9 and 22.4; the
+coordinator's count over 55 of these runs gave a median of 5.1, a mean of 8.7
+and a maximum of 39.7, and its earlier 13.5-minute mean covered the 25 most
+recent runs, all in the busy hours. Several sessions pushed work branches in
+those hours, and every push queued four macOS jobs; the macOS wait, not the
+jobs, made the slow runs. From this, the gate runs macOS only where its
+answer decides a merge (a ready pull request, `main`, a manual run) and checks
+both platforms per revision in a final job
 ([decision](../../../design/compiler/verification.md)).
 
 ## Daily loop
