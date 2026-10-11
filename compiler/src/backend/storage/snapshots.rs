@@ -514,7 +514,8 @@ impl<'a> SnapshotFacts<'a> {
     }
 
     /// A sufficient subset of the emitter's immutable-parameter rule. The
-    /// acyclic-body restriction ensures it cannot become a split definition;
+    /// possible-split exclusion keeps ordinary loops whose incoming storage
+    /// remains unchanged, without admitting a separately emitted dispatch part;
     /// a declaration supplies no implementation evidence. Destination-result
     /// callees are also safe consumers: they preserve the original indirect
     /// inputs across possibly aliased result writes, with entry or proved lazy
@@ -537,9 +538,9 @@ impl<'a> SnapshotFacts<'a> {
             && !function.waits()
             && (self.sequential || function.overlaps().is_empty())
         {
-            let graph = FlowGraph::from_function(self.program, function, self.sequential)?;
             let abi = FunctionAbi::build(self.program, function)?;
-            if !(0..graph.blocks.len()).any(|block| graph.reentered(block)) {
+            let parts = crate::backend::emitter::dispatch::storage_parts(function)?;
+            if parts.iter().all(|part| *part == Some(0)) {
                 let plan =
                     FunctionStoragePlan::build_copies(self.program, function, self.sequential)?;
                 let returned =

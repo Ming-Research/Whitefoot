@@ -1039,3 +1039,201 @@ optimized/LTO widths and timing are in [Halo timing of both
 steps](#halo-timing-of-both-steps). Baseline failures of the new cases were not
 executed, and other-target code generation remains unverified. No local build,
 Cargo, Make, native test or performance run was made.
+
+## Transfer inline-cost regression
+
+Question: does recognizing ordinary looping immutable consumers remove the
+unnecessary capture that PR #345 introduced into Halo's `table_get`, restore
+its full-LTO inlining, and account for part of the reported concat slowdown? Compare
+the unchanged Halo source with the pre-#345 compiler, current compiler and
+candidate through CI, inspecting emitted IR, actual full-LTO remarks and
+final disassembly before paired 14900K timing. A remaining private key
+capture rejects the placement claim; unchanged full-LTO call sites reject
+the inlining claim. Restored inlining without restored timing rejects an
+explanation of the entire concat regression. Snowghost
+requires its own same-source compiler comparison and hot-function evidence.
+
+### Supplied evidence and inspection
+
+The supplied artifacts compare `wf-9497f0a54fec` and
+`wf-exp-b8cf83108946`, whose merged change is PR #345 at `13243c0af`.
+The owner reports 74 non-inlined `table_get` calls after that change versus
+one before, and a 3.2% concat slowdown on the 14900K in a later compiler
+comparison. These are supplied observations, not measurements made here.
+The following quotations were inspected in the supplied artifacts on
+2026-10-11; line numbers identify those files, not newly generated output.
+
+Before, `ir-table_get-wf-9497f0a54fec.ll:7–8` captures both inputs at entry:
+
+```llvm
+call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.0, ptr %wf.arg.v1, i64 ptrtoint (ptr getelementptr (%wf.t.90128e7f982cc38a, ptr null, i32 1) to i64), i1 false)
+call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.1, ptr %wf.arg.v2, i64 ptrtoint (ptr getelementptr (%wf.t.90128e7f982cc38a, ptr null, i32 1) to i64), i1 false)
+```
+
+After, `ir-table_get-wf-exp-b8cf83108946.ll:44` reads the key directly,
+but lines 70–82 materialize three granules before the looping consumer:
+
+```llvm
+%v16 = call i64 @wf_package.halo.heap.integer_key(ptr %wf.arg.v2)
+; layout-bounded transfer from %wf.arg.v2 to %wf.slot.1
+%t13 = load i32, ptr %wf.arg.v2, align 1
+%t14 = getelementptr inbounds i8, ptr %wf.arg.v2, i64 4
+%t15 = load i32, ptr %t14, align 1
+%t16 = getelementptr inbounds i8, ptr %wf.arg.v2, i64 8
+%t17 = load i64, ptr %t16, align 1
+store i32 %t13, ptr %wf.slot.1, align 1
+%t18 = getelementptr inbounds i8, ptr %wf.slot.1, i64 4
+store i32 %t15, ptr %t18, align 1
+%t19 = getelementptr inbounds i8, ptr %wf.slot.1, i64 8
+store i64 %t17, ptr %t19, align 1
+; end layout-bounded transfer from %wf.arg.v2 to %wf.slot.1
+%v53 = call %wf.t.612fba5367897926 @wf_package.halo.heap.node_find(ptr %v19, ptr %v52, ptr %wf.slot.1)
+```
+
+`wf-exp-b8cf83108946.ll:27038,27068` shows that `node_find.body`
+already passes its incoming key directly to `main_position` and `equal`.
+Its backedge at line 27056 returns to an `i1` bounds test, not a nominal
+enum dispatch header. The consumer classifier nevertheless rejects every
+reentered CFG block to ensure the body cannot split. The call's checked
+read-only reference facts and inline own-value representation admit source
+stability; no earlier result write requires this capture on this path.
+
+The supplied O3 remarks show `heap.table_get` cost 230 becoming 250 at
+`heap.table_border`, whose threshold is 250. At `embed.install`, the before
+cost 220 names `embed.table_get`, whereas the after cost 240 names
+`heap.table_get` after the wrapper separately inlined at cost 40; those are
+different callee symbols and stages, not a same-callee cost comparison.
+Another direct pair has `heap.table_get` into `embed.table_get` cost 220
+before (inlined) and 270 after (not inlined), at threshold 250. These direct
+pairs establish a cost change for the combined transformation, not
+an isolated cost attribution to one capture or every result transfer.
+The redundant cold copy is one concrete source of additional instructions;
+other layout-granule result transfers also differ. Caller address passing
+predates #345: the before and after function headers use the same indirect
+input ABI.
+
+The actual driver hands the complete WF module and runtime units to clang
+with `-flto=full` and the shared `-O2` optimization arguments
+(`compiler/src/bin/whitefootc.rs`, `compile_executable` and `link`;
+`compiler/src/driver.rs`, `HOST_OPTIMIZATION_ARGUMENTS`). LLVM therefore
+performs compile-time and full-link-time optimization with the native
+consumer's pipeline; `opt -passes='default<O3>'` is supporting evidence,
+not its inlining oracle. No full-LTO cost or candidate speedup is established
+by the saved O3 remarks.
+
+### Proposed remedy and alternatives
+
+Replace acyclicity with the existing conservative dispatch storage
+partition: a callee qualifies only when every block remains in the enclosing
+partition. Complete unexposed single-origin own storage, nonreturned slots,
+synchronous execution and all existing source-stability tests remain
+required. A possible split remains excluded even if a particular target
+would ultimately emit it whole. No recursive storage-plan selection is
+introduced. This removes a redundant transfer rather than changing the
+representation of required transfers.
+
+Blanket `noalias` on indirect inputs is incompatible with the ABI's permitted
+result/input overlap. `readonly` alone does not forbid writes through an
+aliasing result pointer. Neither is a substitute for the missing consumer
+classification. Reverting all granule transfers would also affect #345's
+independent producer-store forwarding benefit; it would hide an avoidable
+copy and needs separate cost and forwarding evidence for required copies.
+Function-name-specific inline attributes and source workarounds are excluded.
+
+No source-language, specification, conformance or callable ABI change is
+proposed. Baseline failures, candidate emission, native behavior, full-LTO
+inlining and Halo/Snowghost timing remain for CI and the owner's experiments;
+no local build, check, test or optimization run is authorized for this task.
+
+The backend case `destination_parameters_read_through_ordinary_loop_consumers`
+uses a union-laid-out Value and explicitly checks the caller's public
+destination ABI and the reader's real CFG cycle. It requires the early scalar
+reader and later counted-loop reader to receive the same incoming pointer
+without private capture. The old cyclic-body guard rejects that consumer,
+requesting a capture and failing both observations. In the same native image,
+an exposed mutating consumer and a possible split-dispatch consumer must still
+receive captures; hot, cold and zero-iteration results and an unchanged source
+are observed with retained calls. Existing destination-alias and layout-width
+cases remain unchanged. Fixture admission and executed baseline failure are
+unverified until CI.
+
+### Concat loop: established limits
+
+Direct inspection finds the entire emitted `concat_batch_copy` function
+identical before and after (`wf-9497f0a54fec.ll:56178–56459` and
+`wf-exp-b8cf83108946.ll:60564–60845`). Its byte `place_back` helper is also
+identical (lines 177414–177429 and 194443–194458 respectively). The loop
+already has the same reference alias facts on both sides:
+
+```llvm
+define i8 @wf_package.halo.vm.concat_batch_copy(ptr noalias nonnull captures(none) dereferenceable(728) %v0, ptr noalias nonnull captures(none) dereferenceable(8) %v1, ptr noalias nonnull captures(none) dereferenceable(8) %v2, i64 %v3, i64 %v4, i64 %v5) #0 align 64 {
+```
+
+`concat_step`'s parameter signature also remains identical. Its local change
+is two stack Value relocations changing from memmove to granules after the
+main concat call; `concat_batch.body` changes its final Value transfer too.
+The immediately-before-#345 disassembly already has the same scalar byte loop
+and reloads, at `56ab8–56adb`, as the after image at `58068–5808b`:
+
+```text
+before 56ab8 / after 58068: mov r8,QWORD PTR [rdx+0x28]
+before 56abc / after 5806c: cmp rdi,QWORD PTR [r8]
+before 56ac1 / after 58071: mov r9,QWORD PTR [rbx]
+before 56ac4 / after 58074: cmp r9,QWORD PTR [rbx+0x8]
+before 56aca / after 5807a: movzx r8d,BYTE PTR [r8+rdi*1+0x10]
+before 56ad0 / after 58080: mov BYTE PTR [rbx+r9*1+0x10],r8b
+before 56ad8 / after 58088: mov QWORD PTR [rbx],r9
+```
+
+Thus this pair disproves a hoisting/unrolling loss at the #345 boundary.
+The loop loss reported against the older `wf-78223721f77d` comparison must
+be investigated separately; its originating revision is not supplied here.
+No new in-place byte-loop input, destination parameter or removed alias
+attribute appears in the raw loop. Changing alias promises to repair this
+purported #345 loop regression has no supporting evidence.
+
+The saved O3 remarks reject `concat_batch_copy` into `concat_batch.body`
+with cost 150 and threshold 45 on both sides, and reject `concat_batch`
+into `concat_step` with costs 1015 before and 1010 after at threshold 250.
+The full-LTO disassembly nevertheless contains the byte loop inside
+`concat_step`, demonstrating why these O3 remarks cannot identify that
+build's decisive inlining event. Candidate full-LTO inspection must settle
+whether removing the redundant consumer captures restores `table_get`
+inlining; the older loop regression needs its own before/after boundary.
+
+### Snowghost: bounded source inspection
+
+The inspected Snowghost source at
+`903dafc2f20452b2e6ea0362b4c259c112051c54` has an aggregate append path:
+[`push_component`](https://github.com/Ming-Research/Snowghost-wf/blob/903dafc2f20452b2e6ea0362b4c259c112051c54/renderer/css/syntax/buffers.wf#L47)
+passes Component to `push_within`, which grows if needed and calls
+`place_back`. The
+[Component payload](https://github.com/Ming-Research/Snowghost-wf/blob/903dafc2f20452b2e6ea0362b4c259c112051c54/renderer/css/syntax/module.wfm#L32)
+includes Numeric and Span records, so this path exercises aggregate transfer
+machinery. Neither append helper loops; this is not a witness of the
+ordinary-loop consumer exclusion fixed here. Required granule transfer cost
+remains a plausible investigation target. No Snowghost benchmark workload,
+measured source revision, emitted IR or before/after optimization evidence
+was supplied, so this inspection establishes no slowdown attribution and
+does not claim that this patch resolves it.
+
+### Review and validation state
+
+A fresh read-only `gpt-6.1-sol` review at high effort inspected the complete
+four-file working-tree diff against
+`0f779c7f4bf924bfc315400d8773fd04ebd881cd`, changed contexts and direct
+storage/emission consumers, the applicable repository, documentation, safety,
+case and validation checklist items, and design checks G1–G3/DC1–DC4.
+It found one cost-comparison wording defect: the initial `embed.install`
+comparison named different callees. That was corrected and reread against
+the remarks. No remaining finding was reported within scope. The primary
+agent verified the added direct same-callee cost pair and Snowghost source
+excerpts. No specification or interface change or additional contract gap
+was identified; target-dependent unsplit dispatch candidates remain
+conservatively excluded.
+
+Review is inspection only. Fixture admission, baseline failure, candidate
+IR, native outcomes, existing store-forwarding checks, full-LTO recovery and
+performance remain unverified. No local build, test, formatter, lint, gate,
+optimizer or measurement ran. The changes are uncommitted for the owner's
+CI and timing work; no approval record or status board was written.
