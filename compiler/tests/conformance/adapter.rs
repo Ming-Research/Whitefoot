@@ -287,9 +287,7 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let mut command = Command::new("/usr/bin/clang");
     command.arg("-x").arg("ir").arg(&assembly);
     command.arg("-pthread");
-    let needs_heap = module.contains("@wf__heap_take(")
-        || module.contains("@wf__heap_give(")
-        || module.contains("@wf__heap_retake(");
+    let needs_heap = whitefoot::module_requires_heap_runtime(module);
     let (_sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let linked = command

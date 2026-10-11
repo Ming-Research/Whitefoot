@@ -150,7 +150,8 @@ pub use backend::{
     HEAP_SOURCE, KEYED_TABLE_SOURCE, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
     SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
     SCHED_PRIM_HEADER, SCHED_PRIM_HOST_SOURCE, SCHED_PRIM_WINDOWS_SOURCE, WINDOWS_RUNTIME_HEADER,
-    WINDOWS_RUNTIME_SOURCE, module_requires_parallel_runtime, stack_ledger,
+    WINDOWS_RUNTIME_SOURCE, module_requires_heap_runtime, module_requires_parallel_runtime,
+    stack_ledger,
 };
 pub use backend::{FragmentGranularity, LlvmModule, SplitFailure, split_module};
 pub use driver::*;

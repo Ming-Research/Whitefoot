@@ -10,6 +10,15 @@ pub const ORDINARY_VALUES_LLVM: &str = include_str!("ordinary_values.ll");
 /// Counted libc allocation wrappers, linked only for emitted heap references.
 pub const HEAP_SOURCE: &str = include_str!("heap.c");
 
+/// True when this emitted module references the heap unit: an allocation
+/// wrapper or the shared empty window header [STOR-1] that it defines.
+pub fn module_requires_heap_runtime(module: &str) -> bool {
+    module.contains("@wf__heap_take(")
+        || module.contains("@wf__heap_give(")
+        || module.contains("@wf__heap_retake(")
+        || module.contains("@wf__empty_window")
+}
+
 /// The finite completion core contract embedded in the compiler.
 pub const COMPLETION_CONTRACT_HEADER: &str = include_str!("completion/contract.h");
 /// The typed file-adapter contract embedded in the compiler.

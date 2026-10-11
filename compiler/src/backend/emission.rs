@@ -348,6 +348,16 @@ impl Module {
         self.declarations
             .insert(signature.name.clone(), signature.declaration());
     }
+    pub(crate) fn declare_global(&mut self, name: String, ty: &str, align: u64) {
+        self.parts.push(ModulePart::Declaration(name.clone()));
+        self.declarations.insert(
+            name.clone(),
+            Declaration {
+                text: format!("@{name} = external constant {ty}, align {align}"),
+                references: References::default(),
+            },
+        );
+    }
     pub(crate) fn declare_named(&mut self, signature: Signature) {
         let parameters = signature
             .parameters

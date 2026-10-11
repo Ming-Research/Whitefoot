@@ -970,11 +970,12 @@ fn emit_cleanup_jobs(
                         IrNominalKind::Box { referent, release } => {
                             // A boxed runtime-capacity shape is thin: the
                             // cell pointer is the block, whose header and
-                            // elements are the same allocation
-                            // (compiler/storage-representation), which is
-                            // what [TYPE-9]'s "exactly one heap object" and
-                            // [STOR-3]'s "one compiler-derived heap free"
-                            // say. Loading the block would read past its
+                            // elements are one allocation, or the shared
+                            // empty header at capacity 0 [STOR-1], which
+                            // `wf__heap_give` recognizes and does not free
+                            // (compiler/storage-representation); [STOR-3]
+                            // frees each allocation the content occupies.
+                            // Loading the block would read past its
                             // declared zero-length element array, so its
                             // walk takes the pointer and the cell's own free
                             // is the block's.
