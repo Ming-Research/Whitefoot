@@ -2,6 +2,7 @@ mod acceptance;
 mod behavior;
 mod cleanup;
 mod control;
+mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
@@ -476,7 +477,7 @@ impl EffectSet {
     };
     fn union(mut self, other: Self) -> Self {
         for path in other.reads {
-            self.add_read(path);
+            Self::add_path(&mut self.reads, path.into());
         }
         for path in other.writes {
             Self::add_path(&mut self.writes, path.into());
@@ -492,11 +493,16 @@ impl EffectSet {
     }
 
     fn add_read(&mut self, path: impl Into<EffectPath>) {
-        Self::add_path(&mut self.reads, path.into());
+        let path = path.into();
+        Self::add_path(&mut self.reads, path);
     }
 
     fn add_write(&mut self, path: impl Into<EffectPath>) {
         let path = path.into();
+        self.add_projected_write(path);
+    }
+
+    fn add_projected_write(&mut self, path: EffectPath) {
         if !path.inside_payload && !self.variant_writes.contains(&path.path.root) {
             self.variant_writes.push(path.path.root);
             self.variant_writes.sort_unstable();
@@ -602,12 +608,16 @@ struct TypeContext<'unit> {
     /// [EFF-2] the row each checked body exhibits, rendered as a writer
     /// declares it, which such a repair offers word for word.
     exhibited_rows: HashMap<FunctionId, String>,
+    /// Diagnostic replay is entered only after an ordinary EFF-2 rejection.
+    effect_repairs: effect_repairs::RepairMode,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
 /// a reference-summary retry; the completed attempt publishes its own facts.
 #[derive(Default)]
 struct BodyChecker {
+    /// Allocated and populated only by an EFF-2 rejection replay.
+    repair_calls: Option<Vec<effect_repairs::EffectCall>>,
     /// [LIV-2] the target places of the `set` commit whose right-hand side is
     /// being checked, and whether that right-hand side has read each out.
     /// Empty everywhere else: `check_commit` installs it around exactly that
@@ -775,8 +785,79 @@ fn check_semantics_with(
     reject_entailment: bool,
     receipts: Option<&dyn receipts::ProofReceipts>,
 ) -> SemanticOutcome {
-    let result = DeclarationInventory::new(resolved).and_then(|declarations| {
+    let result = check_semantics_attempt(
+        resolved,
+        reject_entailment,
+        receipts,
+        effect_repairs::RepairMode::Ordinary,
+    );
+    let result = match result {
+        Err(CheckStop::Issue(mut issue))
+            if issue.rule == SemanticRule::Eff2
+                && matches!(
+                    issue.kind,
+                    SemanticIssueKind::EffectMismatch {
+                        expected_row: None,
+                        ..
+                    }
+                ) =>
+        {
+            // A replay may encounter another failure while completing the view.
+            // In that case keep the established rejection, without an unvalidated row.
+            match check_semantics_attempt(
+                resolved,
+                reject_entailment,
+                None,
+                effect_repairs::RepairMode::Capture(HashMap::new()),
+            ) {
+                Err(CheckStop::Issue(repaired)) if repaired.rule == SemanticRule::Eff2 => {
+                    Err(CheckStop::Issue(repaired))
+                }
+                _ => {
+                    if let SemanticIssueKind::EffectMismatch {
+                        expected_row,
+                        mechanical_fix,
+                        ..
+                    } = &mut issue.kind
+                    {
+                        *expected_row = None;
+                        *mechanical_fix = None;
+                    }
+                    Err(CheckStop::Issue(issue))
+                }
+            }
+        }
+        result => result,
+    };
+    match result {
+        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
+        Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
+        Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
+        Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
+        Err(CheckStop::Compiler(failure)) => SemanticOutcome::CompilerFailure { failure },
+        // A loop-summary change is consumed by its body-attempt driver;
+        // reaching the program boundary means the driver failed its contract.
+        Err(CheckStop::ReferenceSummaryChanged) => SemanticOutcome::CompilerFailure {
+            failure: SemanticCompilerFailure::InvalidResolution,
+        },
+        Err(CheckStop::PostconditionPrerequisiteUnavailable) => SemanticOutcome::CompilerFailure {
+            failure: SemanticCompilerFailure::InvalidResolution,
+        },
+    }
+}
+
+/// The same semantic path, with private diagnostic replay inputs. A replay
+/// publishes no authority; validation disables receipts and substitutes all
+/// proposed component rows before any call is checked.
+fn check_semantics_attempt(
+    resolved: &ResolvedSyntaxUnit,
+    reject_entailment: bool,
+    receipts: Option<&dyn receipts::ProofReceipts>,
+    repair_mode: effect_repairs::RepairMode,
+) -> Result<CheckedProgramData, CheckStop> {
+    DeclarationInventory::new(resolved).and_then(|declarations| {
         let mut types = TypeContext::new(&declarations);
+        types.effect_repairs = repair_mode;
         if !resolved.postconditions().is_empty() {
             let mut body = BodyChecker::default();
             let mut analysis = AnalysisState::default();
@@ -806,22 +887,7 @@ fn check_semantics_with(
         );
         let result = checker.check_program(&CheckContext::default());
         checker.analysis.finish_musttail_checks(result)
-    });
-    match result {
-        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
-        Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
-        Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
-        Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
-        Err(CheckStop::Compiler(failure)) => SemanticOutcome::CompilerFailure { failure },
-        // A loop-summary change is consumed by its body-attempt driver;
-        // reaching the program boundary means the driver failed its contract.
-        Err(CheckStop::ReferenceSummaryChanged) => SemanticOutcome::CompilerFailure {
-            failure: SemanticCompilerFailure::InvalidResolution,
-        },
-        Err(CheckStop::PostconditionPrerequisiteUnavailable) => SemanticOutcome::CompilerFailure {
-            failure: SemanticCompilerFailure::InvalidResolution,
-        },
-    }
+    })
 }
 
 impl<'unit> DeclarationInventory<'unit> {
@@ -1704,7 +1770,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 && !signature.substitution.is_symbolic(),
             ..*check_context
         };
-        let mut body = BodyChecker::default();
+        let mut body = BodyChecker {
+            repair_calls: self.types.effect_repairs.is_capture().then(Vec::new),
+            ..BodyChecker::default()
+        };
         let queries = self.analysis.contract_queries.len();
         let tail_rejections = self.analysis.musttail_rejections.len();
         loop {
@@ -1725,6 +1794,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             match outcome {
                 Err(CheckStop::ReferenceSummaryChanged) => {
                     body = BodyChecker {
+                        repair_calls: self.types.effect_repairs.is_capture().then(Vec::new),
                         loop_reference_summaries: std::mem::take(
                             &mut body.loop_reference_summaries,
                         ),
@@ -1991,15 +2061,34 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             self.types
                 .exhibited_writes
                 .insert(signature.id, exhibited.writes.clone());
-            let row = self
+            if let effect_repairs::RepairMode::Capture(bodies) = &mut self.types.effect_repairs {
+                bodies.insert(
+                    signature.id,
+                    effect_repairs::RepairBody {
+                        direct: exhibited.clone(),
+                        calls: self.body.repair_calls.take().unwrap_or_default(),
+                    },
+                );
+            }
+            // This optional diagnostic cache supplies KillingCall companions.
+            // Rendering cannot turn an accepted body into a compiler failure;
+            // EFF-2 mismatch reporting below renders its required payload strictly.
+            if let Ok(row) = self
                 .types
-                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
-            self.types.exhibited_rows.insert(signature.id, row);
+                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)
+            {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
         } else if let Some(source) = summary_source {
             // The renamed body writes what the canonical body writes: both
             // root their paths at the declaration's own parameters.
             if let Some(writes) = self.types.exhibited_writes.get(&source).cloned() {
                 self.types.exhibited_writes.insert(signature.id, writes);
+            }
+            if let effect_repairs::RepairMode::Capture(bodies) = &mut self.types.effect_repairs
+                && let Some(effects) = bodies.get(&source).cloned()
+            {
+                bodies.insert(signature.id, effects);
             }
             if let Some(row) = self.types.exhibited_rows.get(&source).cloned() {
                 self.types.exhibited_rows.insert(signature.id, row);
@@ -2015,7 +2104,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         //
         // Each category is judged by [EFF-2]'s own two-way covering relation
         // rather than by set equality.
-        if !Checker::effect_row_matches(&signature.declared_effects, &exhibited) {
+        if self.types.effect_repairs.checks_row(signature.declaration)
+            && !Checker::effect_row_matches(&signature.declared_effects, &exhibited)
+        {
             let suggested = Checker::suggested_effect_row(&exhibited);
             let (missing, extra) = self.types.effect_row_difference(
                 &exhibited,
@@ -2023,18 +2114,31 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &signature.declared_effects,
                 signature,
             )?;
-            // [EFF-2] the repair is the suggested row itself: a row EFF-1 and
-            // EFF-2 admit for this body and no call refuses against itself.
-            let expected_row = self.types.render_effect_row(&suggested, signature)?;
+            // An acyclic repair keeps origin/main's exact text. Recursive
+            // rows are withheld until the rejection-only replay validates them.
+            // If source graph classification is unavailable, replay is conservative.
+            let recursive = self.types.effect_repairs.is_ordinary()
+                && self
+                    .requires_recursive_row_repair(signature)
+                    .unwrap_or(true);
+            let (expected_row, mechanical_fix) = if recursive {
+                (None, None)
+            } else {
+                let expected = self.types.render_effect_row(&suggested, signature)?;
+                let fix = format!(
+                    "declare the row as `{expected}`, which covers every access the body makes and no other"
+                );
+                (Some(expected), Some(fix))
+            };
             return self.types.declarations.issue_node(
                 SemanticRule::Eff2,
                 signature.effects_node,
                 SemanticIssueKind::EffectMismatch {
-                    mechanical_fix: format!(
-                        "declare the row as `{expected_row}`, which covers every access the body makes and no other"
-                    ),
+                    mechanical_fix,
                     expected_row,
-                    found_row: self.types.render_effect_row(&signature.declared_effects, signature)?,
+                    found_row: self
+                        .types
+                        .render_effect_row(&signature.declared_effects, signature)?,
                     missing,
                     extra,
                 },
@@ -3350,124 +3454,6 @@ impl<'unit> TypeContext<'unit> {
             entries.join(", ")
         })
     }
-    /// One `effect_path` in its written spelling [EFF-1]: the parameter's own
-    /// name followed by the suffixes that produced it. An internal `Deref`
-    /// step selects a Box's `.inner`; references add no row wrapper.
-    ///
-    /// The walk carries the selected type only as far as it can name a step:
-    /// a field name needs its containing struct and a payload field needs its
-    /// containing enum. A step the checked program cannot name renders as its
-    /// ordinal, which is honest rather than invented.
-    fn render_effect_path(
-        &self,
-        path: &super::model::CheckedStatePath,
-        signature: &FunctionSignature,
-    ) -> Result<String, CheckStop> {
-        let parameter = signature
-            .parameters
-            .iter()
-            .find(|parameter| parameter.declaration == path.root);
-        let (mut rendered, mut ty) = match parameter {
-            Some(parameter) => (parameter.name.clone(), Some(parameter.ty)),
-            None => (self.declarations.declaration_spelling(path.root)?, None),
-        };
-        for step in &path.steps {
-            match step {
-                super::model::CheckedEffectStep::Field(field) => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
-                                .get(*field as usize)
-                                .map(|declared| (declared.name.clone(), declared.ty)),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    match selected {
-                        Some((name, field_type)) => {
-                            rendered.push('.');
-                            rendered.push_str(&name);
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{field}"));
-                            ty = None;
-                        }
-                    }
-                }
-                // The internal content step retains the referent type so
-                // fields below `.inner` keep their source names [TYPE-9].
-                super::model::CheckedEffectStep::Deref => {
-                    rendered.push_str(".inner");
-                    ty = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Box { referent, .. } => Some(referent),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                }
-                super::model::CheckedEffectStep::Payload { variant, field } => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Enum { variants } => {
-                                variants.get(*variant as usize).and_then(|declared| {
-                                    declared.fields.get(*field as usize).map(|payload| {
-                                        (declared.name.clone(), payload.name.clone(), payload.ty)
-                                    })
-                                })
-                            }
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    match selected {
-                        Some((variant_name, field_name, payload_type)) => {
-                            rendered.push_str(&format!(".{variant_name}.{field_name}"));
-                            ty = Some(payload_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = None;
-                        }
-                    }
-                }
-                super::model::CheckedEffectStep::Page(index) => {
-                    rendered.push_str(&format!(
-                        ".pages[{}]",
-                        self.declarations.declaration_spelling(*index)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Index(index) => {
-                    rendered.push_str(&format!(
-                        "[{}]",
-                        self.declarations.declaration_spelling(*index)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Range { start, end } => {
-                    rendered.push_str(&format!(
-                        "[{}..{}]",
-                        self.declarations.declaration_spelling(*start)?,
-                        self.declarations.declaration_spelling(*end)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Part(part) => {
-                    rendered.push('.');
-                    rendered.push_str(part.spelling());
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = None;
-                }
-            }
-        }
-        Ok(rendered)
-    }
     /// The declared row's two [EFF-2] failures, each named by the entry the
     /// writer adds or deletes.
     ///
@@ -3889,6 +3875,7 @@ impl<'unit> TypeContext<'unit> {
             range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),
+            effect_repairs: effect_repairs::RepairMode::Ordinary,
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

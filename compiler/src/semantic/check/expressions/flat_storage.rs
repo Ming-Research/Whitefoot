@@ -2046,13 +2046,8 @@ impl<'unit> Checker<'_, 'unit> {
                         range = false;
                     } else {
                         selected_run = pages || matches!(ty, CheckedType::Segments { .. });
-                        let element = match ty {
-                            CheckedType::Array { element, .. }
-                            | CheckedType::Buffer { element }
-                            | CheckedType::Window { element, .. }
-                            | CheckedType::Segments { element }
-                            | CheckedType::Entries { element } => element,
-                            _ => return Ok(false),
+                        let Some(element) = ty.storage_element() else {
+                            return Ok(false);
                         };
                         ty = self.types.element_type(element)?;
                         range = selected_run;
