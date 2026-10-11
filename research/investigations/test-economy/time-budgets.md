@@ -559,6 +559,27 @@ map's runtime or its test. Three runs on Whitefoot#311's branch (37918319834,
 
 Each budget is 1.25 times the slowest run, rounded up to 5 s.
 
+### macOS runner queue
+
+Every successful `gate.yml` run created between 2026-10-11 12:04Z and
+22:53Z, 58 runs of 4 groups on each platform, read from the Actions API
+(each job's `created_at`, `started_at` and `completed_at`):
+
+| Platform | Jobs | Job run, median / max (min) | Slowest job's wait per run, median / mean / max (min) |
+| --- | ---: | --- | --- |
+| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 0.0 / 12.0 |
+| macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
+
+A run's wall from its first job's creation to its last job's completion had
+a median of 8.4 minutes and a maximum of 43.6. Several sessions pushed work
+branches during the window, and every push queued four macOS jobs; the
+macOS wait, not the jobs, made the slow runs. The coordinator's earlier count
+over 25 runs from 12:00Z gave a 13.5-minute mean macOS wait; the narrower
+window covered the busiest hours. From this, the gate runs macOS only where
+its answer decides a merge (a ready pull request, `main`, a manual run) and
+checks both platforms per revision in a final job
+([decision](../../../design/compiler/verification.md)).
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

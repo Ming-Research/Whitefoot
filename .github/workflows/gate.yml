@@ -13,14 +13,28 @@
 # reads those same groups into its matrix and invokes their common recipes.
 # Only host setup and job scheduling belong here; adding a correctness group
 # or changing its commands requires no second workflow inventory update.
+#
+# Every push runs the groups on Linux. macOS joins where its answer decides a
+# merge: a push to a branch with an open pull request marked ready, the event
+# of marking one ready, main, and a manual run (compiler/verification). The
+# last job then requires every group green on both platforms for the revision.
 name: gate
 
 on:
   push:
+  pull_request:
+    types: [ready_for_review]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+# A ready event and a push to the same branch share one group, so the later
+# run, which covers both platforms whenever the pull request is ready, wins.
 concurrency:
-  group: gate-${{ github.ref }}
+  group: gate-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -35,14 +49,50 @@ jobs:
     timeout-minutes: 2
     outputs:
       groups: ${{ steps.select.outputs.groups }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
+      both: ${{ steps.platforms.outputs.both }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Read the canonical group inventory
         id: select
         run: |
           groups=$(make --no-print-directory --silent check-groups)
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
+      # A failed query fails the run rather than quietly dropping macOS.
+      - name: Choose the platforms
+        id: platforms
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) both=true reason='pull request marked ready' ;;
+            workflow_dispatch) both=true reason='manual run' ;;
+            push)
+              if [ "$GITHUB_REF" = refs/heads/main ]; then
+                both=true reason='push to main'
+              else
+                ready=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
+                  --jq '[.[] | select(.draft == false) | .number] | join(" ")')
+                if [ -n "$ready" ]; then
+                  both=true reason="push to ready pull request $ready"
+                else
+                  both=false reason='push to a branch with no ready pull request'
+                fi
+              fi
+              ;;
+            *) echo "unsupported gate event: $GITHUB_EVENT_NAME" >&2; exit 1 ;;
+          esac
+          if [ "$both" = true ]; then
+            platforms='["ubuntu-24.04","macos-15"]'
+          else
+            platforms='["ubuntu-24.04"]'
+          fi
+          echo "both=$both" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          echo "Platforms: $platforms ($reason)" >> "$GITHUB_STEP_SUMMARY"
 
   gate:
     needs: groups
@@ -54,11 +104,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: ${{ fromJSON(needs.groups.outputs.platforms) }}
         stage: ${{ fromJSON(needs.groups.outputs.groups) }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           # The design-tree skill's lint and CI base script, design/skill.
           submodules: true
@@ -231,3 +282,39 @@ jobs:
       - name: Hold every stage to its time budget
         if: always()
         run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
+  # The merge precondition, read from the revision's own check runs rather
+  # than from this run's matrix: every group green on both platforms. Draft
+  # pushes skip it, so its success marks a revision that may be merged.
+  platforms:
+    name: Gate on both platforms
+    needs: [groups, gate]
+    if: always() && needs.groups.outputs.both == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every group green on Linux and macOS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GATE_GROUPS: ${{ needs.groups.outputs.groups }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest&per_page=100" \
+            --jq '.check_runs[] | "\(.name)\t\(.conclusion)"' > "$RUNNER_TEMP/checks.tsv"
+          missing=0
+          for group in $(echo "$GATE_GROUPS" | jq -r '.[]'); do
+            for os in ubuntu-24.04 macos-15; do
+              name="$group ($os)"
+              conclusion=$(awk -F '\t' -v name="$name" '$1 == name { print $2 }' "$RUNNER_TEMP/checks.tsv" | head -n 1)
+              if [ "$conclusion" = success ]; then
+                echo "ok      $name"
+              else
+                echo "MISSING $name: ${conclusion:-no check run}"
+                missing=1
+              fi
+            done
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::$HEAD_SHA is not green on both platforms"
+            exit 1
+          fi
