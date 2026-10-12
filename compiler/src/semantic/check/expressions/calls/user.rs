@@ -1211,7 +1211,8 @@ impl<'unit> TypeContext<'unit> {
         // [ENT-2] the actual is identified by the proof path of the place it
         // names: the resolved path where that path is exact and the place is
         // not written through a reference variable that is not exact, and
-        // otherwise the place as written through that variable.
+        // otherwise the place as written through that variable, or through
+        // its source where it is a range alias.
         let spelled =
             crate::semantic::places::named_place(&argument.expression).and_then(|named| {
                 let PlaceRoot::Binding(root) = named.root else {
@@ -1221,7 +1222,7 @@ impl<'unit> TypeContext<'unit> {
                 (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
                     let mut place = ResolvedPlace {
                         atomic_aliases: Vec::new(),
-                        root: named.root,
+                        root: PlaceRoot::Binding(exactness.proof_binding(root)),
                         path: named.steps,
                     };
                     place.path.extend(named.suffix);
@@ -1251,9 +1252,10 @@ impl<'unit> TypeContext<'unit> {
             // whose captured endpoints are what [REF-4] makes the range's
             // `len`.
             return Ok(match &argument.expression {
+                // A range alias names its source's term [ENT-2].
                 CheckedExpression::Binding { binding, .. } => {
                     GoalExpression::Datum(GoalDatum::Place {
-                        root: *binding,
+                        root: exactness.proof_binding(*binding),
                         projections: Vec::new(),
                         ty: expected_type,
                         admission: GoalAdmission::plain_range(expected_type),
@@ -1600,7 +1602,7 @@ impl<'unit> TypeContext<'unit> {
                                 // the reference's identity so proof kills can
                                 // resolve every candidate.
                                 None => GoalExpression::Datum(GoalDatum::Place {
-                                    root: local.binding,
+                                    root: exactness.proof_binding(local.binding),
                                     projections: Vec::new(),
                                     ty: local.ty,
                                     admission,

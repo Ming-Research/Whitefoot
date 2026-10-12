@@ -671,6 +671,10 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
