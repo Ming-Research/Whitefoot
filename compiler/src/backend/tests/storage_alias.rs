@@ -258,15 +258,15 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_filled_range_read_can_share_an_owner_with_a_back_append() {
-    let source = br#"fn append_range_length(source: &Box<Slots<u64>>, target: &Box<Slots<u64>>, lo: u64, hi: u64) -> result: unit reads(source.inner[lo..hi]), writes(target.inner.next), writes(target.inner.len) contract {
+    let source = br#"fn append_range_length(window: &Box<Slots<u64>>, lo: u64, hi: u64) -> result: unit reads(window.inner[lo..hi]), writes(window.inner.next), writes(window.inner.len) contract {
   requires lo <= hi;
-  requires hi <= source^.inner.len;
-  requires target^.inner.len < target^.inner.cap;
-  ensures target^.inner.len == entry(target)^.inner.len + 1_u64;
+  requires hi <= window^.inner.len;
+  requires window^.inner.len < window^.inner.cap;
+  ensures window^.inner.len == entry(window)^.inner.len + 1_u64;
 } {
-  let run = &source^.inner[lo..hi];
+  let run = &window^.inner[lo..hi];
   let count = run^.len;
-  place_back(window: &target^.inner, value: count);
+  place_back(window: &window^.inner, value: count);
   return unit;
 }
 
@@ -278,7 +278,7 @@ fn main() -> status: std::process::ExitStatus pure {
     i in 2_u64..18_u64,
     invariant length: window.inner.len == i
   ) {
-    append_range_length(source: &window, target: &window, lo: 0_u64, hi: i);
+    append_range_length(window: &window, lo: 0_u64, hi: i);
     if window.inner[i] != i {
       return std::process::exit_status(code: 1_u8);
     }
@@ -312,14 +312,16 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     assert!(
         lengths.iter().all(|line| !line.contains("!alias.scope")),
-        "the implicit full-length load is outside reads(source.inner[lo..hi]): {append}"
+        "the implicit full-length load is outside reads(window.inner[lo..hi]): {append}"
     );
     assert!(
         !append.contains("!noalias"),
-        "the source header can be the written target header: {append}"
+        "the read run's header is the written window header: {append}"
     );
-    // WIN-2 separates the filled prefix from next, but not the implicit
-    // descriptor access from the len write. Native execution checks every
+    // One parameter supplies both the read run and the append, as EFF-5
+    // requires once the contract reads the length the append writes. WIN-2
+    // separates the filled prefix from next, but not the implicit descriptor
+    // access from the len write. Native execution checks every
     // appended count (codes 1/5), the prefix (2/3), and final length (4).
     // The preliminary full-length load is later replaced by hi - lo: the
     // metadata absence, not a predicted native miscompile, detects the old UB.
