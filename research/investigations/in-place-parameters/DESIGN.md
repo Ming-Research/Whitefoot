@@ -3302,3 +3302,31 @@ gap remains, which decides whether the result-origin contract is still
 worth its mechanism. Rejection records the result here and returns the
 direction to the owner with the remaining candidates: the result-origin
 contract (about 35% estimated coverage) and the LLVM-side change (e′).
+
+#### Step 1 at 200: the mechanism holds and the link-time bound fails
+
+Whitefoot run 38202354322 (branch head a6596b3e2, one round, ubuntu-24.04
+hosted, a fresh cache per build, Snowghost-wf `c8f5e1776`, Halo-wf
+`641eb29f4` halo-bench `bench`):
+
+| Program, compiler | Build, s | Link, s | Text bytes (vs base) | Direct call sites: computed_of, font_of, box_of, text_of, read_item, write_item, next_glyphs |
+| --- | --- | --- | --- | --- |
+| Snowghost, base | 285.1 | 29.9 | 2,077,203 | 88, 7, 41, 24, 5, 54, 13 |
+| Snowghost, twin | 284.4 | 29.8 | 2,077,203 (1.0000) | 88, 7, 41, 24, 5, 54, 13 |
+| Snowghost, limit 200 | 292.0 | 38.3 | 2,130,579 (1.0257) | 20, 0, 0, 0, 0, 51, 14 |
+| Halo, base | 47.5 | 10.0 | 555,603 | - |
+| Halo, twin | 47.7 | 10.0 | 555,603 (1.0000) | - |
+| Halo, limit 200 | 54.6 | 16.8 | 556,051 (1.0008) | - |
+
+The predicted mechanism holds: the three styles accessors lose their direct
+call sites. `text_of`, predicted to stay out of line, also loses all 24,
+and `read_item` its 5. Text grows 2.6% and 0.1%, inside the 10% bound. Link
+time grows 28% for Snowghost and 68% for Halo, against a bound of 25%;
+base and twin agree within 0.5%, so one round decides it. By the criterion
+fixed above, a limit of 200 is rejected before timing.
+
+The ruling chose the limit by measurement, starting at 200. The next probe
+uses 150, the smallest round value above all four styles accessors'
+summary counts (104 to 119), under the same criterion; it is chosen after
+seeing the 200 result, so its outcome is exploratory evidence for the
+owner, not a confirmed prediction.

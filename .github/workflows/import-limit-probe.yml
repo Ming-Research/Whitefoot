@@ -20,6 +20,10 @@ on:
         description: Builds per compiler and program, each with an empty cache
         type: string
         default: "3"
+      limit:
+        description: The candidate's import limit in summary instructions
+        type: string
+        default: "200"
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ jobs:
     timeout-minutes: 180
     env:
       ROUNDS: ${{ inputs.rounds || '1' }}
+      LIMIT: ${{ inputs.limit || '200' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +76,9 @@ jobs:
           for side in base twin candidate; do
             if [ "$side" = candidate ]; then
               tree="$PWD"
+              # The candidate takes the requested limit in place of the branch's 200.
+              perl -pi -e 's/import-instr-limit=200/import-instr-limit=$ENV{LIMIT}/g' "$source_file"
+              grep -n "import-instr-limit" "$source_file"
             else
               tree="$out/source-$side"
               mkdir -p "$tree"
@@ -92,7 +100,7 @@ jobs:
           (cd "$out" && sha256sum whitefootc-*) | tee "$out/compilers.sha256"
           # The candidate carries the argument and the base and twin do not.
           for side in base twin candidate; do
-            found=$(strings -a "$out/whitefootc-$side" | grep -c 'import-instr-limit=200' || true)
+            found=$(strings -a "$out/whitefootc-$side" | grep -c "import-instr-limit=$LIMIT" || true)
             echo "$side: import limit argument present in $found strings"
             if [ "$side" = candidate ] && [ "$found" -eq 0 ]; then exit 1; fi
             if [ "$side" != candidate ] && [ "$found" -ne 0 ]; then exit 1; fi
