@@ -94,6 +94,165 @@ fn a_read_only_statement_releases_unwritten() {
     );
 }
 
+/// A program whose one guarded statement waits on `guard` over a `Dial`,
+/// whose fields have each scalar form an atom reads, with the locals
+/// `limit`, `shut` and `high` in scope.
+fn scalars(guard: &str) -> String {
+    format!(
+        r#"enum Door {{
+  Open();
+  Shut();
+}}
+
+enum Speed {{
+  Low();
+  Mid();
+  High();
+}}
+
+struct Dial {{
+  turn: u64;
+  level: i32;
+  small: u8;
+  half: u16;
+  word: u32;
+  door: Door;
+  speed: Speed;
+  ready: Bool;
+  open: Bool;
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  let no = False();
+  let opened = Door::Open();
+  let low = Speed::Low();
+  let start = Dial(turn: 0_u64, level: 0_i32, small: 0_u8, half: 0_u16, word: 0_u32, door: opened, speed: low, ready: no, open: no);
+  let state = shared_new::<Dial>(value: start);
+  let seen = 0_u64;
+  let limit = -2_i32;
+  let shut = Door::Shut();
+  let high = Speed::High();
+  atomic g = &state when {guard} {{
+    set g^.turn = seen;
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+/// The store of an atom's last eight bytes: its width, flags and
+/// comparison (`completion/bridge.h`), then zeros.
+fn atom_tail(width: u8, flags: u8, comparison: u8) -> String {
+    format!(
+        "store [8 x i8] [i8 {width}, i8 {flags}, i8 {comparison}, i8 0, i8 0, i8 0, i8 0, i8 0], ptr"
+    )
+}
+
+/// The store of the test's header: its program's length, its codes, then
+/// zeros.
+fn header(codes: &[u8]) -> String {
+    let mut bytes = vec![u8::try_from(codes.len()).expect("a short program")];
+    bytes.extend_from_slice(codes);
+    bytes.resize(8, 0);
+    let items = bytes
+        .iter()
+        .map(|byte| format!("i8 {byte}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("store [8 x i8] [{items}], ptr %wf.wake.v")
+}
+
+/// Whether `main` extends a `from` value to 64 bits by `extension` and
+/// stores the result as an atom's operand.
+fn stores_extended(main: &str, extension: &str, from: &str) -> bool {
+    main.lines()
+        .filter_map(|line| {
+            let (name, rest) = line.trim().split_once(" = ")?;
+            (rest.starts_with(&format!("{extension} {from} ")) && rest.ends_with(" to i64"))
+                .then_some(name)
+        })
+        .any(|name| main.contains(&format!("store i64 {name}, ptr")))
+}
+
+/// `main` of `scalars(guard)`, after checking that its watch passes a test.
+fn watched(guard: &str) -> String {
+    let llvm = compile(scalars(guard).as_bytes());
+    let main = emitted_function(&llvm, "main").to_owned();
+    let watch = call_line(&main, "wf__shared_watch");
+    assert!(watch.contains(", ptr %wf.wake.v"), "`{guard}` registers a test: {watch}");
+    main
+}
+
+/// `completion/bridge.h`'s comparison codes and flags.
+const EQUAL: u8 = 0;
+const LESS: u8 = 2;
+const GREATER_EQUAL: u8 = 5;
+const NOT_EQUAL: u8 = 1;
+const SIGNED: u8 = 1;
+const BIT: u8 = 2;
+
+#[test]
+fn a_signed_field_is_read_signed_and_its_operand_sign_extended() {
+    // A negative constant and a captured local: the runtime compares the
+    // field read as signed with the operand extended as the field is, so a
+    // zero-extended -2 would be a large positive number.
+    for (guard, comparison) in [("g^.level < -2_i32", LESS), ("g^.level >= limit", GREATER_EQUAL)] {
+        let main = watched(guard);
+        assert!(main.contains(&header(&[1])), "{guard}: {main}");
+        assert!(
+            main.contains(&atom_tail(4, SIGNED, comparison)),
+            "{guard}: a 4-byte signed atom: {main}"
+        );
+        assert!(stores_extended(&main, "sext", "i32"), "{guard}: {main}");
+        assert!(!stores_extended(&main, "zext", "i32"), "{guard}: {main}");
+    }
+}
+
+#[test]
+fn a_narrow_unsigned_field_is_read_at_its_width() {
+    for (guard, width, llvm) in [
+        ("g^.small == 7_u8", 1, "i8"),
+        ("g^.half == 7_u16", 2, "i16"),
+        ("g^.word == 7_u32", 4, "i32"),
+    ] {
+        let main = watched(guard);
+        assert!(
+            main.contains(&atom_tail(width, 0, EQUAL)),
+            "{guard}: a {width}-byte unsigned atom: {main}"
+        );
+        assert!(stores_extended(&main, "zext", llvm), "{guard}: {main}");
+        assert!(!stores_extended(&main, "sext", llvm), "{guard}: {main}");
+    }
+}
+
+#[test]
+fn a_tag_only_enum_field_is_read_at_its_tag_s_width() {
+    // Two variants have a one-bit tag, a byte read by its low bit; three
+    // have a byte tag, read whole.
+    let main = watched("g^.door == shut");
+    assert!(main.contains(&atom_tail(1, BIT, EQUAL)), "{main}");
+    assert!(stores_extended(&main, "zext", "i1"), "{main}");
+    let main = watched("g^.speed == high");
+    assert!(main.contains(&atom_tail(1, 0, EQUAL)), "{main}");
+    assert!(stores_extended(&main, "zext", "i8"), "{main}");
+}
+
+#[test]
+fn an_and_or_an_or_of_two_atoms_is_one_postfix_program() {
+    // Atoms 1 and 2, then the bridge's WF_WAKE_AND (8) or WF_WAKE_OR (9);
+    // each atom is a Bool read by its low bit as "not false".
+    for (guard, code) in [("band(g^.ready, g^.open)", 8), ("bor(g^.ready, g^.open)", 9)] {
+        let main = watched(guard);
+        assert!(main.contains(&header(&[1, 2, code])), "{guard}: {main}");
+        assert_eq!(
+            main.matches(&atom_tail(1, BIT, NOT_EQUAL)).count(),
+            2,
+            "{guard}: two Bool atoms: {main}"
+        );
+    }
+}
+
 #[test]
 fn the_emitted_codes_are_the_bridge_s_own() {
     let header = crate::COMPLETION_BRIDGE_HEADER;

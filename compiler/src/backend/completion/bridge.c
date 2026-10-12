@@ -2822,10 +2822,8 @@ static void wf_context_finish(wf_context *context) {
 #if WF_GUARD_COUNTERS
 enum { WF_GUARD_COUNT_WOKEN, WF_GUARD_COUNT_SPURIOUS,
        WF_GUARD_COUNT_REFUSED, WF_GUARD_COUNT_CLOCK,
-       WF_GUARD_COUNT_BATCH_YOUNG, WF_GUARD_COUNT_AGE_SELECTION,
+       WF_GUARD_COUNT_AGE_SELECTION,
        WF_GUARD_COUNT_FALSE_HANDOFF, WF_GUARD_COUNT_RESCAN,
-       WF_GUARD_COUNT_PASS_LINK, WF_GUARD_COUNT_BATCH_GRANTED,
-       WF_GUARD_COUNT_BATCH_CLOCK,
        WF_GUARD_COUNT_RETURN_MARKED, WF_GUARD_COUNT_RETURN_SAMPLES,
        WF_GUARD_COUNT_RETURN_NS, WF_GUARD_COUNT_RETURN_MAX,
        WF_GUARD_COUNT_RETURN_CLOCK_FAILURE,
@@ -2921,16 +2919,13 @@ static void wf_guard_report(void) {
             (unsigned long long)totals[WF_GUARD_COUNT_REFUSED],
             (unsigned long long)totals[WF_GUARD_COUNT_CLOCK]);
     /* The first, fifth, sixth and seventh fields counted runtime variants
-     * the guard-fairness experiment compared and stay zero; they keep the
-     * line's seven fields, which that experiment's summary reads. */
-    fprintf(stderr, "guard_events,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
-            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_YOUNG],
+     * the guard-fairness experiment compared, which this runtime no longer
+     * has, so they print as literal zeros; they keep the line's seven
+     * fields, which that experiment's summary reads. */
+    fprintf(stderr, "guard_events,0,%llu,%llu,%llu,0,0,0\n",
             (unsigned long long)totals[WF_GUARD_COUNT_AGE_SELECTION],
             (unsigned long long)totals[WF_GUARD_COUNT_FALSE_HANDOFF],
-            (unsigned long long)totals[WF_GUARD_COUNT_RESCAN],
-            (unsigned long long)totals[WF_GUARD_COUNT_PASS_LINK],
-            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_GRANTED],
-            (unsigned long long)totals[WF_GUARD_COUNT_BATCH_CLOCK]);
+            (unsigned long long)totals[WF_GUARD_COUNT_RESCAN]);
     fprintf(stderr, "guard_return_wait,%llu,%llu,%llu,%llu,%llu\n",
             (unsigned long long)totals[WF_GUARD_COUNT_RETURN_MARKED],
             (unsigned long long)totals[WF_GUARD_COUNT_RETURN_SAMPLES],

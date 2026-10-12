@@ -3,6 +3,11 @@
 # adding a compiler option or copying the production runtime build rules.
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ROOT := $(abspath $(HERE)/../../..)
+# The arms exist only in the measured revision's runtime (build.sh).
+REVISION := faccdca4e883d4f18c2b4fab52be50e8e6b8e703
+ifneq ($(shell git -C $(ROOT) rev-parse HEAD),$(REVISION))
+$(error the guard-fairness arms build only at revision $(REVISION), whose runtime has them; check it out first, e.g. git worktree add <dir> $(REVISION))
+endif
 BUILD ?= /tmp/guard-fairness-build
 CLANG ?= /usr/bin/clang
 MODE ?= 3

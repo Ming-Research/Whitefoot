@@ -369,3 +369,40 @@ fn main() -> status: std::process::ExitStatus pure waits {
         assert_eq!(flags, [false, false, false, true]);
     });
 }
+
+#[test]
+fn a_write_through_a_called_helper_releases_written() {
+    // The block writes the target only inside `advance`, whose row declares
+    // the write, and reads it only inside `peek`: the first release passes
+    // that it may have written, so it wakes watchers, and the second that
+    // it wrote nothing.
+    let source = br#"struct Gate {
+  turn: u64;
+}
+
+fn advance(gate: &Gate) -> result: unit writes(gate) {
+  set gate^.turn = 1_u64;
+  return unit;
+}
+
+fn peek(gate: &Gate) -> result: u64 reads(gate) {
+  return gate^.turn;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let start = Gate(turn: 0_u64);
+  let state = shared_new::<Gate>(value: start);
+  let seen = 0_u64;
+  atomic g = &state {
+    advance(gate: g);
+  }
+  atomic g = &state {
+    set seen = peek(gate: g);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        assert_eq!(unlock_flags(program), [true, false]);
+    });
+}

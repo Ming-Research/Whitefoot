@@ -1,6 +1,7 @@
 /* Cancellation runtime probe: includes the private bridge so a deterministic
  * schedule can observe registration, park, notification-before-sleep, and
- * exactly one ready-queue insertion. The other pthread stands for another
+ * exactly one ready-queue insertion; and, since it owns that translation
+ * unit, the private wake-test reader on states it writes. The other pthread stands for another
  * driver's firing context, as in shared_object_test.c. Socketpairs carry
  * real receives; the silent peer remains open throughout cancellation.
  * No test-specific branch is compiled into the runtime. */
@@ -135,6 +136,158 @@ static void *race_write(void *opaque) {
     wf_context_current = NULL;
     wf_driver_self = NULL;
     return NULL;
+}
+
+/* The wake-test reader (bridge.h's wf_wake_test), which this translation
+ * unit reaches because it includes the bridge: on states written here, each
+ * form answers its guard's value, on states chosen so that a reader that
+ * ignored the sign, read another width or more than the low bit, or combined
+ * atoms otherwise would answer the opposite. Bytes the atom does not read
+ * hold 0xa5, which a wider read sees. */
+enum { READER_STATE_BYTES = 32 };
+static _Alignas(16) unsigned char reader_object[WF_SHARED_STATE_OFFSET + READER_STATE_BYTES];
+
+static void reader_put(uint32_t offset, const void *value, size_t bytes) {
+    memcpy(reader_object + WF_SHARED_STATE_OFFSET + offset, value, bytes);
+}
+
+static wf_wake_test reader_atom(uint32_t offset, uint8_t width, uint8_t flags, uint8_t comparison,
+                                uint64_t value) {
+    wf_wake_test test;
+    memset(&test, 0, sizeof(test));
+    test.length = 1u;
+    test.program[0] = 1u;
+    test.atoms[0].offset = offset;
+    test.atoms[0].value = value;
+    test.atoms[0].width = width;
+    test.atoms[0].flags = flags;
+    test.atoms[0].comparison = comparison;
+    return test;
+}
+
+static int reader_holds(const wf_wake_test *test) {
+    CHECK(wf_wake_used(test, READER_STATE_BYTES) >= 1u);
+    return wf_wake_holds(test, (const wf_shared *)(const void *)reader_object);
+}
+
+static void wake_reader(void) {
+    wf_test_guard_phase("wake-test reader");
+    memset(reader_object, 0xa5, sizeof(reader_object));
+    /* A signed 4-byte field below -2: a zero-extending load makes -5 large
+     * and positive, an unsigned comparison puts 3 below -2, and an 8-byte
+     * read of 3 sees the 0xa5 bytes above it as a negative number. */
+    wf_wake_test test = reader_atom(0u, 4u, WF_WAKE_SIGNED, WF_WAKE_LESS, (uint64_t)(int64_t)-2);
+    int32_t level = -5;
+    reader_put(0u, &level, sizeof(level));
+    CHECK(reader_holds(&test));
+    level = 3;
+    reader_put(0u, &level, sizeof(level));
+    CHECK(!reader_holds(&test));
+    level = -2;
+    reader_put(0u, &level, sizeof(level));
+    CHECK(!reader_holds(&test));
+    /* A signed byte at least 0: unsigned, -1 is 255; a 2-byte read of 1
+     * sees 0xa501, negative. */
+    test = reader_atom(8u, 1u, WF_WAKE_SIGNED, WF_WAKE_GREATER_EQUAL, 0u);
+    int8_t tiny = -1;
+    reader_put(8u, &tiny, sizeof(tiny));
+    CHECK(!reader_holds(&test));
+    tiny = 1;
+    reader_put(8u, &tiny, sizeof(tiny));
+    CHECK(reader_holds(&test));
+    /* A signed 2-byte field equal to -1, whose operand is sign-extended:
+     * zero-extended, the field is 0xffff and differs. */
+    test = reader_atom(12u, 2u, WF_WAKE_SIGNED, WF_WAKE_EQUAL, UINT64_MAX);
+    int16_t half = -1;
+    reader_put(12u, &half, sizeof(half));
+    CHECK(reader_holds(&test));
+    half = 1;
+    reader_put(12u, &half, sizeof(half));
+    CHECK(!reader_holds(&test));
+    /* Unsigned narrow fields: a byte equal to 7, which a 2-byte read sees
+     * as 0xa507; a 2-byte field below 0x8000, which a signed read of 0xffff
+     * would find below it and a 4-byte read of 0x7fff would not; a 4-byte
+     * field above 0x7fffffff, which a signed read of 0x80000000 would not
+     * find above it and an 8-byte read of 5 would. */
+    memset(reader_object, 0xa5, sizeof(reader_object));
+    test = reader_atom(16u, 1u, 0u, WF_WAKE_EQUAL, 7u);
+    uint8_t byte = 7u;
+    reader_put(16u, &byte, sizeof(byte));
+    CHECK(reader_holds(&test));
+    byte = 8u;
+    reader_put(16u, &byte, sizeof(byte));
+    CHECK(!reader_holds(&test));
+    test = reader_atom(20u, 2u, 0u, WF_WAKE_LESS, 0x8000u);
+    uint16_t word = 0xffffu;
+    reader_put(20u, &word, sizeof(word));
+    CHECK(!reader_holds(&test));
+    word = 0x7fffu;
+    reader_put(20u, &word, sizeof(word));
+    CHECK(reader_holds(&test));
+    test = reader_atom(24u, 4u, 0u, WF_WAKE_GREATER, 0x7fffffffu);
+    uint32_t wide = 0x80000000u;
+    reader_put(24u, &wide, sizeof(wide));
+    CHECK(reader_holds(&test));
+    wide = 5u;
+    reader_put(24u, &wide, sizeof(wide));
+    CHECK(!reader_holds(&test));
+    /* A Bool or two-variant tag, one byte read as its low bit: "not
+     * false" holds for 1 and not for 2, and equality with 1 holds for
+     * 0xff, which a whole-byte reader would answer the other way. */
+    test = reader_atom(28u, 1u, WF_WAKE_BIT, WF_WAKE_NOT_EQUAL, 0u);
+    byte = 1u;
+    reader_put(28u, &byte, sizeof(byte));
+    CHECK(reader_holds(&test));
+    byte = 2u;
+    reader_put(28u, &byte, sizeof(byte));
+    CHECK(!reader_holds(&test));
+    byte = 0u;
+    reader_put(28u, &byte, sizeof(byte));
+    CHECK(!reader_holds(&test));
+    test = reader_atom(28u, 1u, WF_WAKE_BIT, WF_WAKE_EQUAL, 1u);
+    byte = 0xffu;
+    reader_put(28u, &byte, sizeof(byte));
+    CHECK(reader_holds(&test));
+    byte = 0xfeu;
+    reader_put(28u, &byte, sizeof(byte));
+    CHECK(!reader_holds(&test));
+    /* AND and OR of atoms a: word 0 == 1, b: word 1 == 2, c: word 2 == 3,
+     * as a and b, a or b, (a and b) or c, and a or (b and c), on all eight
+     * states; a reader that swapped the codes or the stack's operands fails
+     * one. */
+    wf_wake_test both = reader_atom(0u, 8u, 0u, WF_WAKE_EQUAL, 1u);
+    both.atoms[1] = both.atoms[0];
+    both.atoms[1].offset = 8u;
+    both.atoms[1].value = 2u;
+    both.atoms[2] = both.atoms[0];
+    both.atoms[2].offset = 16u;
+    both.atoms[2].value = 3u;
+    wf_wake_test either = both, left = both, right = both;
+    both.length = 3u;
+    both.program[1] = 2u;
+    both.program[2] = WF_WAKE_AND;
+    either.length = 3u;
+    either.program[1] = 2u;
+    either.program[2] = WF_WAKE_OR;
+    left.length = 5u;
+    left.program[1] = 2u;
+    left.program[2] = WF_WAKE_AND;
+    left.program[3] = 3u;
+    left.program[4] = WF_WAKE_OR;
+    right.length = 5u;
+    right.program[1] = 2u;
+    right.program[2] = 3u;
+    right.program[3] = WF_WAKE_AND;
+    right.program[4] = WF_WAKE_OR;
+    for (unsigned bits = 0u; bits < 8u; ++bits) {
+        int a = (bits & 1u) != 0u, b = (bits & 2u) != 0u, c = (bits & 4u) != 0u;
+        uint64_t words[3] = {a ? 1u : 0u, b ? 2u : 0u, c ? 3u : 0u};
+        reader_put(0u, words, sizeof(words));
+        CHECK(reader_holds(&both) == (a && b));
+        CHECK(reader_holds(&either) == (a || b));
+        CHECK(reader_holds(&left) == ((a && b) || c));
+        CHECK(reader_holds(&right) == (a || (b && c)));
+    }
 }
 
 /* Each schedule uses the production start/wait/finish and guard protocol.
@@ -418,6 +571,7 @@ static void guard_races(void) {
 
 int main(void) {
     wf_test_guard_start(30);
+    wake_reader();
     wf_test_guard_phase("find-at-fire cancellation");
     wf__context_root_begin();
     firing_driver.runtime = &firing_driver.own_runtime;

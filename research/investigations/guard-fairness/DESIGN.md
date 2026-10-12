@@ -1209,6 +1209,10 @@ Nothing approved in `design/language/waiting` is contradicted.
 
 ### 7. Implementation
 
+This section describes revision `faccdca4e`, the measured one; before merge
+the runtime kept only design A, and the other arms and the temporary
+workflow were removed.
+
 Built on top of `8c2ed0ff2` after the owner selected design A. Nothing below
 has been compiled or run yet: every build, test and measurement belongs to
 CI, and the workflow below is the registered experiment's construction.
@@ -1357,7 +1361,10 @@ baseline's runtime, while waking each waiter whose test was false; the
 candidate keeps the same bound and removes those wakes.
 
 **Limits.** One probe, one machine, two drivers. At N = 2, the candidate
-costs 5 to 6% over baseline, as do A1 and mode 2, so the cost there belongs
-to the age threshold's turn, not the tests. The candidate's p99 wait at
+costs 5 to 6% over baseline, as do A1 and mode 2. [inf] That cost is
+attributed to the age threshold's turn, not the tests, by inference only:
+the three arms share the turn, the registration clock sample, the holds
+accounting, the refusal check and the circular queue, and no arm separates
+them. The candidate's p99 wait at
 N = 8 and 50 is about 1 ms, the threshold itself: the tail is now set by
 the 1 ms turn. Firn's engine has not been measured with the candidate.

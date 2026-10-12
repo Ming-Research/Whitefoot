@@ -50,7 +50,7 @@
  * age retained over retries, and age reset for the next statement. No wall
  * clock selects any of these interleavings.
  *
- * Last, three watchers register wake tests over a two-word state: the
+ * Then three watchers register wake tests over a two-word state: the
  * oldest that the first word is 2, the other two equal copies of a test that
  * it is 1, the youngest's guard also needing the second word to be 5. A
  * release that wrote nothing evaluates no test; a write of 1 evaluates the
@@ -61,6 +61,11 @@
  * oldest. Below the threshold the writer's next statement is admitted at
  * once; past it, the writer waits until the notification has passed through
  * every watch whose test held.
+ *
+ * Then a write while another context owns the notification and has not
+ * retried, which makes true the test of an older watch behind the sweep's
+ * cursor, or of a watch registered after the notifying write's cutoff: the
+ * owner's release must sweep again and wake it, with no later write.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -1209,6 +1214,189 @@ static void wake_phase_end(void) {
         wf__shared_free(wake_object);
 }
 
+/* A write while another context owns the object's notification (bridge.c's
+ * lost-wake guard): such a write cannot pass the notification on, so it marks
+ * a rescan when a watch whose test it made true lies where the owner's pass
+ * will not reach it, and the owner's release sweeps again.
+ *
+ * Behind: watchers 1 (time 1, guard word0 == 1 and word1 == 5) and 2 (time 2,
+ * guard word0 == 1) both test word0 == 1. R's write of word0 = 1 at time 10
+ * notifies 1, whose false retry re-registers it behind the cursor and passes
+ * the notification to 2; before 2 runs, R writes word1 = 5, which makes 1's
+ * guard true. 2's read-only success finds no watch after it, so only the
+ * rescan wakes 1.
+ *
+ * Late: watcher 1 (time 1) tests word0 == 1, and R's write at time 10
+ * notifies it; before 1 runs, watcher 2 begins at time 20, past that write's
+ * cutoff, registers a test word1 == 5, and Z writes word1 = 5. 1's read-only
+ * success passes the notification to no watch inside the cutoff, so only the
+ * rescan wakes 2.
+ *
+ * No write follows the owner's release in either case, so a watch the rescan
+ * misses is never woken and R's wait for it fails. */
+enum { RESCAN_PASSES = 64 * 32 };
+static void *rescan_object;
+static wf_wake_test rescan_x_first, rescan_x_second, rescan_y;
+static int rescan_late, rescan_first_written;
+static unsigned rescan_ids, rescan_done;
+static unsigned rescan_evaluations[3], rescan_parks[3], rescan_order[2];
+static uint64_t rescan_ready;
+
+static void rescan_wait_bound(test_frame *f, const char *what, unsigned long long a,
+                              unsigned long long b) {
+    if (++f->statements > RESCAN_PASSES)
+        fail(what, a, b);
+}
+
+static void rescan_w_step(test_frame *f) {
+    if (!f->begun) {
+        f->begun = (int)++rescan_ids;
+        if (!rescan_late)
+            atomic_store(&guard_now, (uint64_t)f->begun);
+    }
+    unsigned id = (unsigned)f->begun;
+    /* The late watcher's statement begins only after R's first write. */
+    while (rescan_late && id == 2u && !rescan_first_written) {
+        rescan_wait_bound(f, "the late watcher never saw the first write (parks, late)", rescan_parks[1],
+                          (unsigned long long)rescan_late);
+        if (wf__context_pass(f))
+            return;
+    }
+    if (wf__shared_acquire(rescan_object, 1u, f))
+        return;
+    uint64_t *state = state_of(rescan_object);
+    int holds = rescan_late ? (id == 1u ? state[0] == 1u : state[1] == 5u)
+                            : (state[0] == 1u && (id == 2u || state[1] == 5u));
+    rescan_evaluations[id] += 1u;
+    if (holds) {
+        rescan_order[rescan_done++] = id;
+        wf__shared_unlock_unwritten(rescan_object, 1u);
+        f->done = 1;
+        return;
+    }
+    rescan_parks[id] += 1u;
+    const wf_wake_test *test =
+        rescan_late && id == 2u ? &rescan_y : (id == 1u ? &rescan_x_first : &rescan_x_second);
+    if (!wf__shared_watch(rescan_object, 1u, f, test))
+        fail("a rescan watch's park answered at once (watcher, parks)", id, rescan_parks[id]);
+}
+
+/* The late case's second writer, which runs after watcher 2 has registered
+ * and before watcher 1, the notification's owner, retries. */
+static void rescan_z_step(test_frame *f) {
+    while (rescan_parks[2] == 0u) {
+        rescan_wait_bound(f, "the late watcher never registered (parks, evaluations)", rescan_parks[2],
+                          rescan_evaluations[2]);
+        if (wf__context_pass(f))
+            return;
+    }
+    if (rescan_evaluations[1] != 1u)
+        fail("the notification's owner retried before the second write (evaluations, expected)",
+             rescan_evaluations[1], 1);
+    if (wf__shared_acquire(rescan_object, 1u, f))
+        fail("a newcomer waited behind a young notification (late, parks)", 1, rescan_parks[2]);
+    state_of(rescan_object)[1] = 5u;
+    uint64_t ready = atomic_load(&watch_ready);
+    wf__shared_unlock(rescan_object, 1u);
+    if (atomic_load(&watch_ready) != ready)
+        fail("a write while another context owned the notification woke a watch itself (woken, expected)",
+             atomic_load(&watch_ready) - ready, 0);
+    f->done = 1;
+}
+
+static void rescan_r_step(test_frame *f) {
+    uint64_t *state = state_of(rescan_object);
+    if (f->begun == 0) {
+        unsigned expected = rescan_late ? 1u : 2u;
+        if (rescan_parks[1] + rescan_parks[2] != expected)
+            fail("the rescan watchers had not parked before R ran (parks, expected)",
+                 rescan_parks[1] + rescan_parks[2], expected);
+        atomic_store(&guard_now, 10u);
+        if (wf__shared_acquire(rescan_object, 1u, f))
+            fail("an uncontended statement suspended (late)", (unsigned long long)rescan_late, 0);
+        state[0] = 1u;
+        rescan_ready = atomic_load(&watch_ready);
+        wf__shared_unlock(rescan_object, 1u);
+        if (atomic_load(&watch_ready) - rescan_ready != 1u)
+            fail("the first write woke other than the oldest watch whose test holds (woken, expected)",
+                 atomic_load(&watch_ready) - rescan_ready, 1);
+        if (rescan_late)
+            atomic_store(&guard_now, 20u);
+        rescan_first_written = 1;
+        f->begun = 1;
+    }
+    if (f->begun == 1 && !rescan_late) {
+        /* Watcher 1's false retry re-registers it behind the cursor and
+         * passes the notification to watcher 2, which has not retried. */
+        while (rescan_parks[1] != 2u) {
+            rescan_wait_bound(f, "the oldest watch's false retry did not re-register (parks, evaluations)",
+                              rescan_parks[1], rescan_evaluations[1]);
+            if (wf__context_pass(f))
+                return;
+        }
+        if (rescan_evaluations[2] != 1u || atomic_load(&watch_ready) - rescan_ready != 2u)
+            fail("watcher 2 did not own the notification unretried at the second write (evaluations, woken)",
+                 rescan_evaluations[2], atomic_load(&watch_ready) - rescan_ready);
+        if (wf__shared_acquire(rescan_object, 1u, f))
+            fail("a newcomer waited behind a young notification (late, parks)", 0, rescan_parks[1]);
+        state[1] = 5u;
+        uint64_t ready = atomic_load(&watch_ready);
+        wf__shared_unlock(rescan_object, 1u);
+        if (atomic_load(&watch_ready) != ready)
+            fail("a write while another context owned the notification woke a watch itself (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 0);
+        f->begun = 2;
+    }
+    while (rescan_done != 2u) {
+        rescan_wait_bound(f,
+                          rescan_late
+                              ? "a watch registered past the write's cutoff, whose test a later write made true, was never woken (done, its evaluations)"
+                              : "an older watch behind the sweep cursor, whose test a later write made true, was never woken (done, its evaluations)",
+                          rescan_done, rescan_evaluations[rescan_late ? 2 : 1]);
+        if (wf__context_pass(f))
+            return;
+    }
+    f->done = 1;
+}
+
+static void rescan_phase_begin(test_frame *root, int late) {
+    atomic_store(&guard_now, 1u);
+    rescan_late = late;
+    rescan_first_written = 0;
+    rescan_ids = rescan_done = 0u;
+    memset(rescan_evaluations, 0, sizeof(rescan_evaluations));
+    memset(rescan_parks, 0, sizeof(rescan_parks));
+    memset(rescan_order, 0, sizeof(rescan_order));
+    wake_equal(&rescan_x_first, 1u);
+    wake_equal(&rescan_x_second, 1u);
+    wake_equal(&rescan_y, 5u);
+    rescan_y.atoms[0].offset = (uint32_t)sizeof(uint64_t);
+    rescan_object = wf__shared_new(2u * sizeof(uint64_t));
+    state_of(rescan_object)[0] = state_of(rescan_object)[1] = 0u;
+    launch_guard(root, rescan_w_step);
+    launch_guard(root, rescan_w_step);
+    if (late)
+        launch(root, rescan_z_step);
+    launch(root, rescan_r_step);
+}
+
+static void rescan_phase_end(void) {
+    /* Behind: watcher 2 completes, then the rescan wakes watcher 1, which
+     * read its guard three times. Late: watcher 1, then watcher 2, twice
+     * each. */
+    unsigned first = rescan_late ? 1u : 2u, second = rescan_late ? 2u : 1u;
+    if (rescan_done != 2u || rescan_order[0] != first || rescan_order[1] != second)
+        fail("the rescan watchers did not complete owner first (done, first)", rescan_done, rescan_order[0]);
+    if (rescan_evaluations[first] != 2u || rescan_evaluations[second] != (rescan_late ? 2u : 3u))
+        fail("a rescan watcher retried other than its writes allow (owner's evaluations, other's)",
+             rescan_evaluations[first], rescan_evaluations[second]);
+    if (state_of(rescan_object)[0] != 1u || state_of(rescan_object)[1] != 5u)
+        fail("the rescan case's writes were not kept (word0, word1)", state_of(rescan_object)[0],
+             state_of(rescan_object)[1]);
+    if (wf__shared_release(rescan_object))
+        wf__shared_free(rescan_object);
+}
+
 /* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
@@ -1222,7 +1410,10 @@ static void root_step(test_frame *f) {
          * newcomer catches a newcomer barging past the one selected watch;
          * wake and wake-aged catch a write that ignores wake tests, skips
          * the oldest watch whose test holds, evaluates equal tests apart or
-         * reserves for a young watch, below and past the threshold. */
+         * reserves for a young watch, below and past the threshold; rescan
+         * and rescan-late catch a write during another context's
+         * notification that loses the wake of an older watch behind the
+         * sweep's cursor or of one registered past its cutoff. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1240,6 +1431,9 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "wake") || !strcmp(selected_case, "wake-aged")) {
                 root_phase = !strcmp(selected_case, "wake") ? 9 : 10;
                 wake_phase_begin(f, root_phase == 10);
+            } else if (!strcmp(selected_case, "rescan") || !strcmp(selected_case, "rescan-late")) {
+                root_phase = !strcmp(selected_case, "rescan") ? 11 : 12;
+                rescan_phase_begin(f, root_phase == 12);
             } else {
                 fail("unknown SHARED_OBJECT_TEST_CASE", 0, 0);
             }
@@ -1323,6 +1517,26 @@ static void root_step(test_frame *f) {
     }
     if (root_phase == 10) {
         wake_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 11;
+        rescan_phase_begin(f, 0);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 11) {
+        rescan_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 12;
+        rescan_phase_begin(f, 1);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 12) {
+        rescan_phase_end();
         f->done = 1;
         return;
     }

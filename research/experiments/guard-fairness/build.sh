@@ -2,6 +2,16 @@
 # CI only; compile each runtime arm from the checkout's same source.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+# Only the measured revision's runtime has the arms: a later runtime ignores
+# WF_GUARD_MODE, so every arm built there would be the same program.
+REVISION=faccdca4e883d4f18c2b4fab52be50e8e6b8e703
+if [ "$(git -C "$ROOT" rev-parse HEAD)" != "$REVISION" ]; then
+    printf 'build.sh builds the arms only at revision %s, whose runtime has them;
+' "$REVISION" >&2
+    printf 'check it out first, e.g. git worktree add <dir> %s, and run its build.sh
+' "$REVISION" >&2
+    exit 1
+fi
 WFC=${WFC:-"$ROOT/compiler/target/gate/whitefootc"}
 OUT=${OUT:-/tmp/guard-fairness}
 COUNTERS=${COUNTERS:-0}

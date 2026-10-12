@@ -31,7 +31,10 @@ record both runs and the remaining diagnostic work.
 
 `build.sh` emits the unchanged probe's LLVM once with `WFC`, then uses
 `Makefile` and the maintained `compiler/runtime.mk` native source list to
-build four runtime arms from this checkout: `WF_GUARD_MODE=0` baseline,
+build four runtime arms from a checkout of revision
+`faccdca4e883d4f18c2b4fab52be50e8e6b8e703`; both refuse to run at any other
+revision, whose runtime ignores `WF_GUARD_MODE`, so its arms would be one
+program. The arms are `WF_GUARD_MODE=0` baseline,
 `=3` candidate wake tests, `a1`, the same mode with
 `WF_GUARD_WAKE_ELIGIBLE=1` waking every watch whose test holds below the
 threshold, and `=2` oldest-only handoff with an ordered wait queue. A1 and
@@ -63,11 +66,12 @@ in every cell; a failed control makes the comparison inconclusive. No
 averaging can hide a failed cell. The references' ratios and the
 candidate's mean hold over baseline's are printed beside each cell and
 judge nothing. `summarize.py` validates completed work and applies these
-rules; its sensitivity fixtures run only in the temporary CI workflow.
+rules; its sensitivity fixtures (`summarize.py self-test`) ran in that
+revision's temporary CI workflow.
 Rejection or an inconclusive result is a research verdict, rather than a
 compiler correctness failure.
 
-The workflow's `path_diagnostics` boolean defaults to false: that dispatch
+At that revision, the workflow's `path_diagnostics` boolean defaults to false: that dispatch
 builds and runs only the uninstrumented comparison. With it true, the
 workflow also builds separate arms with `WF_GUARD_COUNTERS=1`. After each
 candidate, baseline, a1 and oldest timing cell in pass 1, it runs that arm's diagnostic
@@ -155,9 +159,9 @@ The new per-watch test observer is separately guarded by
 `WF_GUARD_TEST_HOOKS`, enabled only in native test builds, so counter-free
 production builds retain neither its call nor counter bookkeeping.
 
-All builds and runs use CI. The temporary workflow stores raw stdout/stderr,
+All builds and runs used CI at that revision. Its temporary workflow stores raw stdout/stderr,
 combined CSV, original and diagnostic LLVM, construction metadata and the paired verdict in
-the `guard-fairness-evidence` artifact. It is removed before branch readiness.
+the `guard-fairness-evidence` artifact; the workflow was removed before merge.
 Its hosted checks build every guard mode's runtime tests, require each
 intended negative control (the other modes, a zero threshold and runtime
 mutants of the candidate) to fail with its own assertion, run the
@@ -166,8 +170,10 @@ test under normal compilation and ThreadSanitizer, and smoke-run every
 probe arm, with and without counters, at N = 8 and K = 100 on the hosted
 runner, which validates their records and judges nothing.
 
+To repeat the run, push a branch at that revision and dispatch its workflow:
+
 ```sh
-gh workflow run tmp-guard-fairness.yml --repo Ming-Research/Whitefoot --ref claude/guard-fairness -f path_diagnostics=true
+gh workflow run tmp-guard-fairness.yml --repo Ming-Research/Whitefoot --ref <branch at faccdca4e883d4f18c2b4fab52be50e8e6b8e703> -f path_diagnostics=true
 ```
 
 Omit the input (or set it false) for the original timing-only experiment.
