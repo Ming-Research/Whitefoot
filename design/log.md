@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A one-shot decision cell decides a kill against a held write
+
+Nodes: compiler/waiting-contexts, language/ownership, language/waiting/shared-objects, language/waiting/shared-objects/frozen-objects
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#364 (head commit 5991bc527) changing the specification and the design tree to add the one-shot decision cell DecisionCell to the prelude?" (translated), whose background listed the thirteen changed rules, that no existing conformance verdict changes, and the four design-tree nodes with their proposed decisions, including the revised rejection of atomic fields and lock-free cells. The direction was the owner's choice of A on card gran-kill-decision-cell on 2026-10-11.
+
+Summary: A one-shot decision cell exposes only an Open, Written or Killed verdict through nonwaiting reads and competing claims, each with its own shared effect point and an absorbing winner, because deciding cancellation against an irrevocable step that holds shared keys requires the verdict to become visible before the statement ends without exposing the held state's contents, instead of publishing it at statement exit or exposing general atomic fields, which the shared-objects decision on mutable state now permits only for this separately decided control verdict. The cell is an opaque owning handle shared explicitly by retaining another handle, instead of reference-sharing permissions or a source-addressable atomic field. Guard admission and optional overlap use a declaration-derived decision-cell-free boundary covering contained types and callable parameters, instead of recognizing direct prelude calls or inferring effects from bodies. A frozen object's type contains no `Shared`, `SharedRead`, `DecisionCell` or host handle at any depth, instead of a shallow freeze. The runtime reuses the shared allocation and handle count with a private atomic 32-bit verdict, a sequentially consistent load for reads and one strong compare-and-swap from Open for claims, and requires an always-lock-free word atomic with no locking fallback, because a lock could wait while shared keys are held; this is a lock-free argument, not a wait-free latency promise.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
