@@ -512,11 +512,18 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_lock_order.wf", 2);
 }
 
-/// The status `meta_commit_overlap.wf` and `meta_commit_held.wf` give a run
-/// whose state checks passed and whose duration missed their criterion. It
-/// is the only status a repeat can change; every other nonzero status is a
-/// wrong log or table and fails the case at once.
-const META_COMMIT_DURATION_MISSED: i32 = 4;
+/// The computation of one statement in `meta_commit_overlap.wf` and
+/// `meta_commit_held.wf`, in nanoseconds: both programs run until the
+/// monotonic clock has advanced this far, whatever the host's load. It is
+/// two hundred milliseconds so that the start delay of the second context on
+/// a loaded hosted runner is a fraction of it: with ten milliseconds, the
+/// overlapping program took 23 to 31 ms on the macOS runner's three shared
+/// cores, more than the 20 ms two excluding computations need.
+const META_COMMIT_COMPUTATION: u64 = 200_000_000;
+
+/// The rounds the overlap case may use, each running the overlapping program
+/// and then its control.
+const META_COMMIT_ROUNDS: usize = 5;
 
 /// The nanoseconds a meta-commit program printed, as the first line of its
 /// standard output.
@@ -530,54 +537,70 @@ fn meta_commit_elapsed(output: &Output) -> u64 {
 
 /// [SHARE-1, SHARE-2, SHARE-3] two atomic statements that name different keys
 /// of one shared map and the same Meta object, and reach Meta only after a
-/// ten-millisecond computation, finish within fifteen milliseconds on two
-/// drivers: their computations overlap and the statements exclude one another
-/// only at the commit to Meta (compiler/waiting-contexts/state-locks, which
-/// takes a shared object at its first use in the block). Two computations one
-/// after the other need twenty. The program also fails a log whose sequence
-/// numbers are not 0 and 1 in log order, a replayed log that differs from the
-/// final table (statuses 1 to 3), and a run shorter than one computation
-/// (status 5), which a skipped computation would give.
+/// computation, compute at the same time on two drivers and exclude one
+/// another only at the commit to Meta (compiler/waiting-contexts/state-locks,
+/// which takes a shared object at its first use in the block). The program
+/// also fails a log whose sequence numbers are not 0 and 1 in log order, a
+/// replayed log that differs from the final table (statuses 1 to 3), and a
+/// run shorter than one computation (status 5), which a skipped computation
+/// would give.
 ///
-/// The duration bound is the best of three runs: a run that only missed it
-/// (status 4) is repeated, up to three runs in all, because a loaded hosted
-/// runner can delay the start of the second context. A repeat cannot hide a
-/// lock held through the computation, which makes every run take twenty.
+/// The duration is judged against the control `meta_commit_held.wf` measured
+/// in the same test, never against a fixed bound, because a loaded hosted
+/// runner delays the start of the second context by a time that only the
+/// load decides. With computation C, a run that overlaps takes C plus that
+/// delay and a run that excludes takes at least 2C plus it, and the delay
+/// moves both alike. Each round runs the overlapping program and then the
+/// control, and the case passes once the best overlapping run of the rounds
+/// so far (1) is shorter than 1.8 C, which no serialized run reaches because
+/// it takes at least 2 C, and (2) is shorter than the best control run by
+/// more than C / 2, half of the difference C an overlap leaves. A repeat
+/// cannot hide a lock held through the computation: every run of it takes at
+/// least 2 C and fails (1).
 #[test]
 fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commit() {
-    let program = build_program(&compile_program("meta_commit_overlap.wf"));
-    let mut runs = Vec::new();
-    for _ in 0..3 {
-        let output = program.run_with_settings(None, &[("WF_DRIVERS", "2")]);
-        let status = output.status.code();
-        assert!(
-            status == Some(0) || status == Some(META_COMMIT_DURATION_MISSED),
+    let overlap = build_program(&compile_program("meta_commit_overlap.wf"));
+    let held = build_program(&compile_program("meta_commit_held.wf"));
+    let mut overlap_best = u64::MAX;
+    let mut held_best = u64::MAX;
+    let mut rounds = Vec::new();
+    for _ in 0..META_COMMIT_ROUNDS {
+        let output = overlap.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
             "meta_commit_overlap.wf: {output:?}"
         );
-        let elapsed = meta_commit_elapsed(&output);
-        runs.push(elapsed);
-        if status == Some(0) {
-            assert!(
-                (10_000_000..=15_000_000).contains(&elapsed),
-                "status 0 with {elapsed} ns: {output:?}"
-            );
+        let overlap_elapsed = meta_commit_elapsed(&output);
+        let output = held.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "meta_commit_held.wf: {output:?}"
+        );
+        let held_elapsed = meta_commit_elapsed(&output);
+        rounds.push((overlap_elapsed, held_elapsed));
+        overlap_best = overlap_best.min(overlap_elapsed);
+        held_best = held_best.min(held_elapsed);
+        let cannot_be_serialized = overlap_best < META_COMMIT_COMPUTATION * 9 / 5;
+        let beats_the_control = overlap_best + META_COMMIT_COMPUTATION / 2 < held_best;
+        if cannot_be_serialized && beats_the_control {
             return;
         }
-        assert!(
-            elapsed > 15_000_000,
-            "status 4 with {elapsed} ns: {output:?}"
-        );
     }
-    panic!("no run of three finished within 15 ms: {runs:?} ns");
+    panic!(
+        "no best overlapping run was under 1.8 computations and more than half a \
+         computation under the best control run; (overlap, control) ns per round: {rounds:?}"
+    );
 }
 
 /// The control of the case above: the same statements, but each takes its
 /// sequence number from Meta before its computation, so Meta is held through
-/// it. Two computations of ten milliseconds that exclude one another need
-/// twenty, so every run must take at least eighteen. The control shows that
-/// the criterion of the case above separates the two lock timings: the same
-/// statements with Meta reached first end above the eighteen-millisecond floor
-/// and so above the fifteen-millisecond bound. It needs no repeat, because a
+/// it. Two computations that exclude one another need 2 C, so every run must
+/// take at least 1.8 C (the program's own status 4 floor). The control shows
+/// that the criterion of the case above separates the two lock timings: the
+/// same statements with Meta reached first end above the floor and so above
+/// the 1.8 C bound of the overlapping case. It needs no repeat, because a
 /// lock held through the computation can only lengthen a run.
 #[test]
 fn statements_that_take_meta_before_computing_run_one_after_the_other() {
@@ -591,7 +614,7 @@ fn statements_that_take_meta_before_computing_run_one_after_the_other() {
         );
         let elapsed = meta_commit_elapsed(&output);
         assert!(
-            elapsed >= 18_000_000,
+            elapsed >= META_COMMIT_COMPUTATION * 9 / 5,
             "round {round}, {elapsed} ns: {output:?}"
         );
     }
