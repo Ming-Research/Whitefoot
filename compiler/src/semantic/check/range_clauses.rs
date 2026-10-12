@@ -95,6 +95,8 @@ impl Checker<'_, '_> {
         clause: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<CheckedRangeClause>, CheckStop> {
+        self.types
+            .check_range_referent_places(context.check_context, clause, bindings)?;
         let declaration = self
             .types
             .declarations
@@ -1128,6 +1130,9 @@ impl Checker<'_, '_> {
                             "write `^` only after a reference binding",
                         );
                     };
+                    if mode.is_range() {
+                        self.types.declarations.check_range_referent(suffix)?;
+                    }
                     path.push(CheckedRangeStep::Referent);
                     selected = if mode.is_range() {
                         Selected::Run(ty)
