@@ -85,7 +85,7 @@ impl FunctionEmitter<'_, '_> {
         } else {
             format!("%{offset}")
         };
-        writeln!(self.output, "  %{page} = lshr i64 {index}, {shift}\n  %{offset} = and i64 {index}, {mask}\n  %{slot} = getelementptr inbounds ptr, ptr {directory}, i64 %{page}\n  %{pointer} = load ptr, ptr %{slot}\n  %{address} = getelementptr inbounds {llvm}, ptr %{pointer}, i64 {displacement}", shift=b.trailing_zeros(), mask=b-1).map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{page} = lshr i64 {index}, {shift}\n  %{offset} = and i64 {index}, {mask}\n  %{slot} = getelementptr inbounds ptr, ptr {directory}, i64 %{page}\n  %{pointer} = load ptr, ptr %{slot}{directory_alias}\n  %{address} = getelementptr inbounds {llvm}, ptr %{pointer}, i64 {displacement}", shift=b.trailing_zeros(), mask=b-1, directory_alias=storage_alias::Role::PagedDirectory.attachment()).map_err(|_| BackendFailure::TextEmission)?;
         Ok(address)
     }
 
@@ -118,7 +118,7 @@ impl FunctionEmitter<'_, '_> {
         let directory = self.paged_directory(&run)?;
         let length = self.next_temporary()?;
         let partial = self.next_temporary()?;
-        writeln!(self.output, "  %{length} = load i64, ptr {run}\n  %{partial} = insertvalue {{ ptr, i64, i64 }} zeroinitializer, ptr {directory}, 0\n  {} = insertvalue {{ ptr, i64, i64 }} %{partial}, i64 %{length}, 2", self.value_name(result)).map_err(|_| BackendFailure::TextEmission)
+        writeln!(self.output, "  %{length} = load i64, ptr {run}{length_alias}\n  %{partial} = insertvalue {{ ptr, i64, i64 }} zeroinitializer, ptr {directory}, 0\n  {} = insertvalue {{ ptr, i64, i64 }} %{partial}, i64 %{length}, 2", self.value_name(result), length_alias=storage_alias::Role::PagedLen.attachment()).map_err(|_| BackendFailure::TextEmission)
     }
 
     pub(super) fn emit_paged_page(
@@ -152,7 +152,7 @@ impl FunctionEmitter<'_, '_> {
         let full = self.next_temporary()?;
         let count = self.next_temporary()?;
         let partial = self.next_temporary()?;
-        writeln!(self.output, "  %{slot} = getelementptr inbounds ptr, ptr {directory}, i64 {index}\n  %{pointer} = load ptr, ptr %{slot}\n  %{length} = load i64, ptr {paged}\n  %{start} = shl nuw i64 {index}, {shift}\n  %{remaining} = sub nuw i64 %{length}, %{start}\n  %{full} = icmp uge i64 %{remaining}, {b}\n  %{count} = select i1 %{full}, i64 {b}, i64 %{remaining}\n  %{partial} = insertvalue {{ ptr, i64 }} poison, ptr %{pointer}, 0\n  {} = insertvalue {{ ptr, i64 }} %{partial}, i64 %{count}, 1", self.value_name(result), shift=b.trailing_zeros()).map_err(|_| BackendFailure::TextEmission)
+        writeln!(self.output, "  %{slot} = getelementptr inbounds ptr, ptr {directory}, i64 {index}\n  %{pointer} = load ptr, ptr %{slot}{directory_alias}\n  %{length} = load i64, ptr {paged}{length_alias}\n  %{start} = shl nuw i64 {index}, {shift}\n  %{remaining} = sub nuw i64 %{length}, %{start}\n  %{full} = icmp uge i64 %{remaining}, {b}\n  %{count} = select i1 %{full}, i64 {b}, i64 %{remaining}\n  %{partial} = insertvalue {{ ptr, i64 }} poison, ptr %{pointer}, 0\n  {} = insertvalue {{ ptr, i64 }} %{partial}, i64 %{count}, 1", self.value_name(result), shift=b.trailing_zeros(), directory_alias=storage_alias::Role::PagedDirectory.attachment(), length_alias=storage_alias::Role::PagedLen.attachment()).map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Allocation failure shares the ordinary resource-exhaustion exit.
@@ -230,7 +230,7 @@ impl FunctionEmitter<'_, '_> {
         let header = self.next_temporary()?;
         let oldcap = self.next_temporary()?;
         let olddircap = self.next_temporary()?;
-        writeln!(self.output, "  %{old} = load ptr, ptr {owner}\n  %{header} = load {HEADER}, ptr %{old}\n  %{oldcap} = extractvalue {HEADER} %{header}, 1\n  %{olddircap} = extractvalue {HEADER} %{header}, 2").map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{old} = load ptr, ptr {owner}{owner_alias}\n  %{header} = load {HEADER}, ptr %{old}\n  %{oldcap} = extractvalue {HEADER} %{header}, 1\n  %{olddircap} = extractvalue {HEADER} %{header}, 2", owner_alias=storage_alias::Role::BoxOwner.attachment()).map_err(|_| BackendFailure::TextEmission)?;
         let oldpages = self.paged_count(&format!("%{oldcap}"), element)?;
         let pages = self.paged_count(&capacity, element)?;
         let initial = self.next_temporary()?;
@@ -260,7 +260,7 @@ impl FunctionEmitter<'_, '_> {
             crate::target::PAGED_HEADER_BYTES,
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.symbol("wf__heap_give");
-        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @wf__heap_give(ptr %{old}, i64 %{old_bytes})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @wf__heap_give(ptr %{old}, i64 %{old_bytes})\n  store ptr {fresh}, ptr {owner}{owner_alias}\n  br label %{tag}.resized", owner_alias=storage_alias::Role::BoxOwner.attachment()).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.resized"));
         writeln!(self.output, "  br label %{tag}.ready")
             .map_err(|_| BackendFailure::TextEmission)?;
@@ -394,7 +394,7 @@ impl FunctionEmitter<'_, '_> {
         let nonzero = self.next_temporary()?;
         writeln!(self.output, "  %{nonzero}.empty = icmp eq i64 {page_bytes}, 0\n  %{nonzero} = select i1 %{nonzero}.empty, i64 1, i64 {page_bytes}").map_err(|_| BackendFailure::TextEmission)?;
         let page = self.paged_allocate(&format!("%{nonzero}"), oom)?;
-        writeln!(self.output, "  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.page\n  store ptr {page}, ptr %{tag}.slot\n  br label %{tag}.stored").map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.page\n  store ptr {page}, ptr %{tag}.slot{directory_alias}\n  br label %{tag}.stored", directory_alias=storage_alias::Role::PagedDirectory.attachment()).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.stored"));
         writeln!(
             self.output,
@@ -407,7 +407,7 @@ impl FunctionEmitter<'_, '_> {
             .push_str("  call void @wf_resource_abort()\n  unreachable\n");
         self.output.open_block(format!("{tag}.done"));
         let cap_address = self.next_temporary()?;
-        writeln!(self.output, "  %{cap_address} = getelementptr inbounds {CELL}, ptr {cell}, i32 0, i32 1\n  store i64 {capacity}, ptr %{cap_address}")
+        writeln!(self.output, "  %{cap_address} = getelementptr inbounds {CELL}, ptr {cell}, i32 0, i32 1\n  store i64 {capacity}, ptr %{cap_address}{}", storage_alias::Role::Capacity.attachment())
             .map_err(|_| BackendFailure::TextEmission)
     }
 

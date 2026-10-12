@@ -1231,7 +1231,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next()
         .expect("element store")
         .strip_prefix(&store_text)
-        .expect("element address operand");
+        .expect("element address operand")
+        .split(", !tbaa !")
+        .next()
+        .expect("element address before optional metadata");
     let prepared = main
         .find(&format!("{address} = getelementptr "))
         .expect("the complete element address is prepared once");
