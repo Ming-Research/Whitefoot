@@ -15,7 +15,7 @@ fn read_value(token: Token) -> result: u64 pure {
 }
 
 fn write_through(token: &Token) -> result: unit writes(token) {
-  doc "A field of a program-declared opaque struct is written through a reference parameter whose row writes the path [SET-1, EFF-5].";
+  doc "A field of a program-declared opaque struct is written through a reference parameter whose row writes the path [SET-1, EFF-1].";
   set token^.value = 9_u64;
   return unit;
 }
