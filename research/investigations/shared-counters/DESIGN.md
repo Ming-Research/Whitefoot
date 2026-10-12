@@ -51,7 +51,10 @@ compare the prelude records and the measure table with the specification,
 fail until the compiler implements the change. The registered comparison
 that could still reject the change after its implementation, the sharded
 state at most 1.25 times the array's rate at every CPU count (R2), waits for
-that implementation.
+that implementation. The criteria the implementation must meet, and a C model
+that gates it, were registered on 2026-10-12 before any implementation or
+C-model measurement, replacing the earlier prediction P1
+([section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)).
 
 Firn then asked that each driver's shard can own a buffer or a queue and that
 one statement can swap out every shard's content (Firn's analysis of writes
@@ -285,8 +288,11 @@ was rejected "because a displaced thread can still be inside a statement when
 its driver's role passes to a spare, so two threads would act as one user"
 ([design/compiler/waiting-contexts/concurrent-map.md](../../../design/compiler/waiting-contexts/concurrent-map.md),
 fifth decision and rejected list). Any per-driver part must therefore stay
-correct when two threads reach it; a lock on each part does, a single-writer
-store does not.
+correct when two threads reach it. The sharded state of section 5.4 avoids the
+case by keeping a part for each thread, not each driver: a displaced thread
+and its spare are two threads with two parts, so a part has one writing
+thread. Its lock excludes a whole target on another thread, not a second
+writer.
 
 ## 4. Prior positions this study must answer
 
@@ -630,18 +636,27 @@ cache line with its own lock word, after one header with the handle count.
 The runtime's shard index is the running thread's user index (the concurrent
 map's numbering, `concurrent-map.md`, fifth decision) modulo `len`; `len` is
 the thread inventory the runtime may run contexts on, at most `2 × drivers`.
-Because a displaced thread and its spare may meet on one shard, each shard
-keeps its lock (section 3.6). A one-shard statement must not write the header:
-the handle count must be skipped for it, which requires the compiler's
-existing skip to cover value handles that the block neither moves nor
-writes, or the shard path will contend on the header (an implementation
-obligation; see the found-along-the-way list). On a single-driver target,
+An atomic block never suspends, so it starts and ends on one thread, and a
+thread runs one statement at a time: a shard is written by one thread alone
+and writers never contend with each other (section 3.6). Each shard keeps a
+lock only to exclude a whole target on another thread, which reads the total
+or swaps out every shard's content and must know that no shard is half
+written. A one-shard statement must not write the header: the handle count
+must be skipped for it, which requires the compiler's existing skip to cover
+value handles that the block neither moves nor writes, or the shard path will
+contend on the header (an implementation obligation; see the
+found-along-the-way list). It also changes no holder count, and the lock's
+fast path is inlined in the generated code ([section
+12](#12-implementation-plan), runtime layout). On a single-driver target,
 `len` is one, and the object is a `Shared<T>` in all but name.
 
 **Expected cost (estimate, unmeasured).**
 - Count, `w_shared` rewritten with one-shard statements: each update is an
   uncontended statement on a line its own thread owns, the same work as
-  `w_private`, so near 89.6 / 171.4 / 348.1 / 438.5.
+  `w_private` on the ordinary statement path, so near 89.6 / 171.4 / 348.1 /
+  438.5 (the lean shard path of section 12 does less than that path, and
+  [section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)
+  registers the criteria it must meet).
 - Maximum: the same, or less than one statement when combined with a cached
   local value.
 - Read: `len` lock acquisitions and a loop, a few microseconds at `len` 32
@@ -970,6 +985,8 @@ Firn-wf runtime-contention harness (`6c0e973`: its gate, deadline, batches of
 | W4 `shards` | `+wrap 1` in a one-shard statement on one `Shared<Shards<u64>>`, value handle | the proposal |
 | W4r | W4 through a read-only reference parameter | separates a header-write defect from the design |
 | W6 `read-shared` | read-only statement on one `Shared<u64>` | ties the reported row 3 to a source |
+| W7 `c-model` | C model of the planned layout: a lock word and a value on each thread's own line, plus a reader of the total every 1 ms (added 2026-10-12, [section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12)) | gate before any implementation, against W5p |
+| W7t | W7 built twice from the same source | noise control for W7 |
 
 W3, W4 and W4r run with and without one extra reader context that every
 millisecond reads the total at one point (W3: its 16-target statement; W4: a
@@ -1027,7 +1044,9 @@ connections, server on 8 P-cores and on 16 hyperthreads, client on E-cores
 
 All thresholds are self-chosen and provisional.
 
-- **P1.** W4 ≥ 0.8 × W1 at 2, 4 and 8 P-cores; reported at 16 hyperthreads.
+- **P1.** Replaced on 2026-10-12 by the criteria of
+  [section 8.5](#85-criteria-for-the-implementation-registered-2026-10-12);
+  it asked W4 ≥ 0.8 × W1 at 2, 4 and 8 P-cores.
 - **P2.** W4 ≥ 1.25 × W3 at 8 P-cores and at 16 hyperthreads.
 - **P3.** W5 / W5p ≤ 0.25 at 8 P-cores (a contended hardware add stays far
   below private increments).
@@ -1038,8 +1057,9 @@ All thresholds are self-chosen and provisional.
 
 The recommendation is rejected if:
 
-- **R1** W4 < 0.8 × W1 at 8 P-cores while W4r ≥ 0.8 × W1 does not explain it
-  (a design cost, not a header-write defect);
+- **R1** W4 < 0.5 × W5p at 8 P-cores while W4r ≥ 0.5 × W5p does not explain it
+  (a design cost, not a header-write defect; threshold replaced on 2026-10-12,
+  section 8.5);
 - **R2** W3 ≥ 0.8 × W4 at every CPU list: the existing-language shard array
   serves counts nearly as well, and the language change is reduced to an
   ergonomic one, to be written as a pattern in `docs/patterns.md` instead;
@@ -1050,9 +1070,86 @@ The recommendation is rejected if:
   that may run often;
 - **R5** F3 < 0.97 × F0 at 8 P-cores, or F2 within `e` of F3.
 
-A W4r ≥ 0.8 × W1 with W4 < 0.8 × W1 is an implementation defect (header
+A W4r ≥ 0.5 × W5p with W4 < 0.5 × W5p is an implementation defect (header
 writes on one-shard statements) to fix before the result counts; it does not
 reject the design.
+
+### 8.5 Criteria for the implementation (registered 2026-10-12)
+
+Registered on 2026-10-12, before any implementation and before any C-model
+measurement, after the owner asked how the design guarantees its performance.
+It replaces P1 (W4 ≥ 0.8 × W1) and the 0.8 threshold of R1. W1, an object per
+context, runs at 0.17 to 0.18 of W5p, C with each thread adding to its own
+cache line, at 2, 4 and 8 P-cores (89.44 / 498.51, 171.82 / 997.04, 346.01 /
+1993.71, Tables 9.2a and 9.3), so 0.8 × W1 is only about 14% of C's rate, too
+low a bar for a design whose purpose is to approach it. W5p is called C
+own-line below.
+
+**What the lock is for.** A one-shard target selects the shard by the index of
+the running thread (`user mod len`, not the context number). An atomic block
+never suspends, so it starts and ends on one thread, and a thread runs one
+statement at a time: a shard is written by one thread alone, and writers never
+contend with each other. The per-shard lock exists only to exclude a whole
+target on another thread, which reads the total or swaps out every shard's
+content and must know that no shard is half written. Uncontended, taking it is
+one locked atomic instruction on the thread's own cache line, the same cost
+class as C own-line (each thread `atomic_fetch_add` on its own line).
+
+**The lean shard path.** A shard update does not change the handle count, does
+not change the holder count, and inlines the lock's fast path in the generated
+code instead of calling a runtime function. Each update then touches only the
+thread's own cache line; the header is read-only for it, so cross-core line
+migration for an update is zero. W1 runs the ordinary atomic-statement path
+(the handle count twice, the holder count, a runtime call) and reaches 0.17 to
+0.18 of C own-line, 5.6, 5.8 and 5.8 times slower at 2, 4 and 8 P-cores, so
+the lean path has that distance to close. The lean path depends on a separate board item, an atomic statement
+through a value handle does not change the handle count (gran-skip-handle-count,
+the prerequisite of section 12), which is completed before the implementation.
+
+**Step 1, a C model, before any implementation.** On the 14900K, a C model of
+the planned layout: one cache line per thread holding the lock word and the
+value together, and a reader that reads the total once per millisecond.
+Arms W7 `c-model` and its twin W7t, the same source built twice as the noise
+control, run interleaved with W5p under the procedure of section 8.3.
+
+- W7 below 0.5 × W5p: the locked approach itself is insufficient. Switch to
+  the design in which the writer side executes no atomic instruction (below)
+  and measure the C model again.
+- W7 at or above 0.5 × W5p: implement the compiler and the runtime.
+
+**Step 2, after implementation.**
+
+- On 2, 4 and 8 P-cores, W4 ≥ 0.5 × W5p. On 8 P-cores that is ≥ 1 billion
+  updates a second (0.5 × W5p there is 996.9 million a second; today one
+  shared object runs at 2.81 million and the hand-written 16-object array at
+  175.1 million). 16 hyperthreads are reported only.
+- With the total read once per millisecond, write throughput stays ≥ 0.95 of
+  its rate without the reader, and one whole read takes ≤ 50 µs (P4, kept).
+- Firn GET with sharded counting ≥ 0.97 × Firn GET with no counting (P5,
+  kept).
+- Kill line, kept: W4 below 1.25 × W3, the hand-written array, at 8 P-cores
+  and 16 hyperthreads withdraws the language change (P2 and R2 above).
+
+**If a criterion of step 2 is not met, in order.**
+
+1. Attribute with control variants: W4r, the same updates through a read-only
+   parameter, which shows whether the header is still written, and the C
+   model itself.
+2. Fix the step that is slow: the fast path not inlined, or the holder count
+   still written.
+3. If still short, switch to the design in which the writer side executes no
+   atomic instruction.
+4. If still short, return to the owner with the data.
+
+**The writer side without an atomic instruction (second step, not the first
+version).** A shard update is plain loads and stores, so it costs no locked
+instruction. A whole target takes the place of the lock by issuing the
+operating system's process-wide asymmetric barrier (Linux `membarrier`,
+Windows `FlushProcessWriteBuffers`), so that every shard update begun before it
+is complete and visible, and then reads or swaps the shards. macOS
+has no such call, so its mechanism is open and is derived only if this step is
+reached. The cost moves to the whole target, which becomes a system call per
+read, and the C model measures that cost again before the design is chosen.
 
 ## 9. Results: the arms that need no language change
 
@@ -1424,13 +1521,16 @@ Proposed on the work branch, each awaiting the owner's approval:
 - `design/compiler/waiting-contexts/state-locks.md`: first decision, a sharded
   object is held by one shard or whole; second decision, its shards are taken
   in index order; third decision, a whole hold absorbs shard holds and shard
-  targets on one object hold one shard; and six new decisions, each with its
+  targets on one object hold one shard; and seven new decisions, each with its
   own grounds and refused alternative: the one-allocation layout with the
-  header and each shard on lines of their own; a first-come lock per shard;
-  the number of shards (provisional); the selection `user mod len`; no watch
-  on a shard; and construction by the maker in index order before the first
-  handle, with the last release running the shard type's release on each
-  shard.
+  header and each shard on lines of their own; a first-come lock per shard,
+  which excludes only whole targets, with the design without a writer-side
+  atomic instruction as its second step; the number of shards (provisional);
+  the selection `user mod len`, which gives a shard one writer; the lean shard
+  update, which changes neither the handle count nor the holder count and
+  inlines the lock's fast path; no watch on a shard; and construction by the
+  maker in index order before the first handle, with the last release running
+  the shard type's release on each shard.
 - For (b) B2, if pursued: `design/language/waiting/shared-objects/keyed-tables.md`'s
   refusal of version-checked reads narrowed to blocks that run on racing
   state, with the account in 5.3; owner decision required. Not part of this
@@ -1442,12 +1542,18 @@ Not implemented on this branch. The order follows the gate: the checker first,
 so the reject cases pass, then lowering and the runtime, so the run cases
 pass, then the measurement.
 
+**Gate before any of it.** The C model of section 8.5 (W7) runs first; below
+0.5 × W5p the plan below is replaced by the design without a writer-side
+atomic instruction.
+
 **Prerequisite.** A shard statement must not write the object header. Today
 every statement through a value handle counts the handle on the header
 (section 2.2; W3 shows it, section 9.2), which would put one contended line
-back on every update. Board item gran-skip-handle-count (skip the count when
-the block neither moves nor writes the handle place) lands first or with this
-work; W4r in section 8.2 separates the two if it does not.
+back on every update. The board item "an atomic statement through a value
+handle does not change the handle count" (gran-skip-handle-count: skip the
+count when the block neither moves nor writes the handle place) is completed
+before this implementation; the lean shard path of section 8.5 depends on it.
+W4r in section 8.2 separates the two if it is not.
 
 **Checker.**
 
@@ -1490,10 +1596,12 @@ work; W4r in section 8.2 separates the two if it does not.
 
 **Lowering.**
 
-- A shard target lowers to one runtime call that returns the address of the
-  running thread's shard and takes its lock, and one that releases it; the
-  binding is that address. The statement's lock-order group is the object's
-  type, as for any target (state-locks, second decision).
+- A shard target lowers to the address of the running thread's shard, its
+  lock taken and released by a fast path inlined in the generated code, with
+  the runtime called only when a whole target holds the lock; the binding is
+  that address. The update changes neither the handle count nor the holder
+  count (section 8.5). The statement's lock-order group is the object's type,
+  as for any target (state-locks, second decision).
 - A whole target over a shards state takes every shard's lock in index order
   and binds the object's shard array; `all^.len` reads the header word and
   `all^[i]` is the address `first + i × stride`. Release is in any order after
@@ -1541,14 +1649,15 @@ work; W4r in section 8.2 separates the two if it does not.
   drivers that is 32 shards, 2 KiB plus T per object (section 5.4, Memory).
 - A shard target selects shard `user mod len`, `user` being the running
   thread's map-user number. A statement holding a shard never suspends, so it
-  ends on the thread that began it; a displaced thread and its spare can meet
-  on one shard, which is why each shard keeps a lock rather than a
-  single-writer store (section 3.6).
+  starts and ends on one thread, and a thread runs one statement at a time; a
+  displaced thread and its spare are two threads with two shards (section
+  3.6). A shard therefore has one writer, and its lock excludes only a whole
+  target on another thread.
 - Each shard's lock is first-come (a ticket lock): uncontended it costs one
-  atomic read-modify-write on the thread's own line, as the present object lock
-  does, and a whole statement waiting for a shard waits for at most one shard
-  statement per shard, which keeps WAIT-2's promise for the whole statement
-  however fast shard statements arrive.
+  locked atomic instruction on the thread's own line, the cost class of C
+  own-line (section 8.5), and a whole statement waiting for a shard waits for
+  at most one shard statement per shard, which keeps WAIT-2's promise for the
+  whole statement however fast shard statements arrive.
 
 **The read-all path.** A whole statement costs `len` lock acquisitions in
 index order plus the block's loop. At 32 shards the estimate is a few
@@ -1575,9 +1684,10 @@ already holds wait; ones on shards it has not reached proceed.
   registered predictions.
 - The registered experiment's remaining arms on the 14900K (section 8.2): W4,
   W4r and their reader variants, M1 to M4, and the Firn arms F0 to F3 from
-  Firn's session, deciding P1, P2, P4, P5 and R1, R2, R4, R5. If the noise rule
-  of section 8.3 is to change for that run, the change is recorded before it
-  measures (section 13).
+  Firn's session, deciding the criteria of section 8.5 (which replace P1), P2,
+  P4, P5 and R1, R2, R4, R5. The C model W7 runs before any of it (section
+  8.5). If the noise rule of section 8.3 is to change for that run, the change
+  is recorded before it measures (section 13).
 
 ## 13. Found along the way
 
@@ -1692,4 +1802,4 @@ test; that the conformance cases compile and reach their verdicts, which
 needs the implementation, each negative case having been read against the
 rules that could refuse it first; the reader's latency for a whole target; the shard
 selection's correctness under a driver handoff to a spare thread (argued from
-per-shard locks, section 3.6, not tested); that owned shard values are released exactly once at the object's end and that Firn's pending buffers scale as its acceptance needs, which the AddressSanitizer test and Firn's run of section 12 will show.
+distinct thread numbers giving each thread its own shard, section 3.6, not tested); that the lean shard path reaches the criteria of section 8.5, which the C model W7 and then W4 will show; that owned shard values are released exactly once at the object's end and that Firn's pending buffers scale as its acceptance needs, which the AddressSanitizer test and Firn's run of section 12 will show.
