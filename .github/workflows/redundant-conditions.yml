@@ -1,0 +1,82 @@
+# Temporary (status board item lm-r1): the migration inventory of the
+# conditions the OP-5 redundancy rule decides. It runs the library tests and
+# the corpus tests with WHITEFOOT_REDUNDANT_CONDITIONS set, without stopping at
+# the first failing test or test binary, and publishes every decided
+# condition as one deduplicated TSV (columns: thread or test name, source
+# display path, line, column, function, decided truth, condition). Remove this
+# workflow with compiler/src/semantic/check/redundancy_inventory.rs before the
+# branch is marked ready.
+name: redundant-conditions
+
+on:
+  push:
+    branches: [claude/redundant-test-r1]
+  workflow_dispatch:
+
+concurrency:
+  group: redundant-conditions-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  inventory:
+    name: redundant-condition inventory (${{ matrix.part }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [lib, corpus]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo sysctl -w kernel.core_pattern=core
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Run the ${{ matrix.part }} tests with the inventory enabled
+        env:
+          WHITEFOOT_REDUNDANT_CONDITIONS: ${{ runner.temp }}/redundant-conditions.tsv
+          WHITEFOOT_SCRATCH_ROOT: ${{ runner.temp }}/whitefoot
+          PART: ${{ matrix.part }}
+        run: |
+          ulimit -c 0
+          cd compiler
+          log="$RUNNER_TEMP/redundant-conditions-$PART.log"
+          if [ "$PART" = lib ]; then
+            cargo test --profile gate --lib --locked --offline --no-fail-fast > "$log" 2>&1 || true
+          else
+            cargo test --profile gate --bins --test '*' --locked --offline --no-fail-fast > "$log" 2>&1 || true
+          fi
+          grep -E '^test .* FAILED$|^    [A-Za-z_:]+$|^  Fail ' "$log" || true
+          tail -n 60 "$log"
+      - name: Publish the inventory
+        if: always()
+        run: |
+          inventory="$RUNNER_TEMP/redundant-conditions.tsv"
+          unique="$RUNNER_TEMP/redundant-conditions-${{ matrix.part }}.tsv"
+          touch "$inventory"
+          cut -f2- "$inventory" | sort -u > "$unique"
+          {
+            echo "### Decided conditions (${{ matrix.part }})"
+            echo
+            echo "Rows: $(wc -l < "$unique"); distinct sites: $(cut -f2-4 "$unique" | sort -u | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$unique"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redundant-conditions-${{ matrix.part }}
+          path: |
+            ${{ runner.temp }}/redundant-conditions-${{ matrix.part }}.tsv
+            ${{ runner.temp }}/redundant-conditions-${{ matrix.part }}.log

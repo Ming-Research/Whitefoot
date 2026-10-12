@@ -17,6 +17,7 @@ pub(crate) mod publication;
 mod range_clauses;
 mod range_type_invariants;
 mod receipts;
+mod redundancy_inventory;
 mod references;
 mod repairs;
 mod requires;

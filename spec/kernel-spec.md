@@ -1,4 +1,4 @@
-# Kernel Specification v0.134
+# Kernel Specification v0.135
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -332,7 +332,7 @@ The `^` alternative of `psuffix` follows a `place` whose selected kind is a refe
 The `compare_op` alternatives are the value equalities `==` and `!=` [OP-16] and the four integer orderings of [OP-1], and form `infix` expressions exactly as the `infix_op` arithmetic does; a `call` writes its type arguments after the `::` delimiter, `cvt::<u8, u32>(w)`, so that `IDENT "<"` begins a comparison and never a type-argument list, while a constructor `call` and a `type` write theirs bare.
 There is no `while`.
 Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
-An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other condition failure cites GRAM-6 at the condition `expr` node.
+An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other exact-mode or exact-type failure of a condition cites GRAM-6 at the condition `expr` node, and its source redundancy is [OP-5]'s judgment.
 An `if_stmt` `else` whose block is empty is a hard error citing GRAM-6 at that `if_stmt` node, with a repair [DIAG-1]; a `value_if`'s undelivering else is [GIVE-1]'s rejection, not this one.
 An `else` whose block contains exactly one `if_stmt` and nothing else is a hard error citing GRAM-6 at that nested `if_stmt` node, with a repair [DIAG-1]; in a `value_if` whose else block is exactly one else-free `if_stmt`, the branch cannot deliver, [GIVE-1] owns the rejection, and GRAM-6 forms no candidate there, so no repair demands a chain form that could not be spelled.
 A conditional value is a `let`-initializer `match` or `if` [GRAM-7, GIVE-1].
@@ -1085,6 +1085,16 @@ The implicit-read case already owned by [TYPE-7] is exclusive: when `e` uses a r
 Every other exact-mode or exact-type failure is a hard error citing OP-5 at the selected `expr` node, with `SourceCoordinate` equal to that expression node's complete checked half-open source extent.
 An `if` condition is executed control flow [GRAM-6], while a contract predicate, invariant relation, and `proof_use` are erased proof syntax [FN-8, FN-9, INV-1, PRF-1].
 This judgment alone creates no runtime check or effect.
+
+The source redundancy judgment applies to the condition `expr` of every `if_stmt` and `value_if`, including each `else if` link [GRAM-6, GRAM-7].
+Its query point is after the condition's ordinary evaluation, obligations, effects and fact publications and before its branch-entry facts [ENT-3.S1].
+A nongeneric body is judged at its ordinary instance; a generic body is judged once at the symbolic instance of its own parameters under their written bounds [FN-2], and a concrete-instance recheck does not judge it again.
+In a contradictory entering state [ENT-4] this judgment admits the condition; structural reachability remains [FN-1]'s judgment.
+In a noncontradictory entering state, the condition is decided True when every fact the then-block's entry would establish [ENT-3.S1] is already derivable there: each member of its goal-origin set [ENT-3], direct before expanded, is discharged by the Signed Goal query [ENT-6], whose numeric steps are [MSR-4]'s disposition in the [ENT-4.OT] view, and its comparison origin, when it has one, is derivable in the closed L0 state [ENT-4].
+It is decided False when every fact the else-block's entry or the false edge would establish is derivable: the Signed Goal query discharges `bnot` of each member, and the comparison origin's exact negation [ENT-4] is derivable in the closed L0 state.
+The queries use no `proof_use` and publish nothing; True is tried first, and a condition that neither truth decides is admitted.
+Deleting a decided test and its dead branch therefore removes no fact a later goal could use.
+A decided condition is a redundant source form and is a hard error citing OP-5 at its complete `expr` node, with `SourceCoordinate` equal to that node's complete checked half-open source extent, residual `RedundantCondition`, the condition and its decided truth, and a repair [DIAG-1] that names the deciding facts and directs removal of the test and its dead branch while retaining the selected branch's execution and delivery [GIVE-1].
 
 [OP-6] Exact numeric conversion has one partial value function `C(Src,Dst,x)` and one total Boolean domain predicate `D(Src,Dst,x)` over all 100 ordered pairs of the ten numeric primitives.
 Both endpoints are written type arguments [TYPE-5]; an endpoint may be a numeric primitive or a symbolic type parameter whose [FN-2] bound is `Int` or `Float`.
@@ -3925,7 +3935,7 @@ An unproved result exhausts the whole set; a proved result may stop at the first
 `AUTO` does not recurse, saturate newly derived residuals, search for a multiplier outside the two integer-tightening factors fixed above, choose a subset larger than two published affine premises, or publish an intermediate result.
 Consequently an author can determine from this rule alone whether a target is automatic: a derivation outside these exact shapes requires the explicit [PRF-1] `proof_use` list rather than compiler probing.
 
-An [FN-8] Signed Goal query first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
+A Signed Goal query [FN-8, OP-5] first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
 When neither sign is ordinarily derivable, its one remaining positive-proof route recursively follows exactly [ENT-4]'s fixed Boolean introduction table over the already-written goal tree: positive `band` and negative `bor` require every child in source order; negative `band` and positive `bor` visit every child in source order and retain the first successful witness; and `bnot` checks its sole child under the opposite sign.
 Visits use [ENT-4.OT]'s live definition links in the same query view.
 `bxor` has no introduction route.
@@ -3951,11 +3961,11 @@ Every step reads the origin-transport query view formed by [ENT-4.OT].
 
 Step 2 applies exactly when the submitted goal has an exact signed identity in [ENT-2]'s finite universe; a normalized affine relation with no opaque goal skips it.
 Step 6 visits its candidates in compiler-owned source-allocation order, measure terms before own integer bindings; when closed L0 has the tightest bound `m - r <= c` relating a candidate m to the goal's right-hand term r, it submits the one exact residual target to `AUTO` and composes a success transitively with that L0 bridge.
-An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved and is rejected by its owning rule.
+An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved, and its consumer applies its owning rule.
 
-The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
+The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [OP-5] condition redundancy, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
 Each keeps its own normalization — which proposition it forms from its source node — and none keeps a route grant of its own: an operation adds a goal, never a route.
-A rejection for a goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise.
+A rejection for a required goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise; [OP-5] states its own result judgment, under which a discharged query rejects.
 Each family paragraph below states its normalization and then submits.
 
 A derivation outside these exact automatic families requires the explicit [PRF-1] `proof_use` list; this rule admits no additional automatic candidates.

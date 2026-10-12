@@ -793,6 +793,7 @@ mod tests {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let context = EntailmentContext {
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],

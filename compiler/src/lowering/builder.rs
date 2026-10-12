@@ -1607,6 +1607,7 @@ impl<'program> IrBuilder<'program> {
                     enum_type,
                     arms,
                     continues,
+                    ..
                 } => {
                     if !self.lower_conditional_call(statement)? {
                         self.lower_match(

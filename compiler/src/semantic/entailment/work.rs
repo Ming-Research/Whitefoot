@@ -18,7 +18,10 @@
 //! - `function`: `joins` counts `join_at` calls; `join_passes` counts their
 //!   full, ordinary-fallback and expanded-row passes; `intern_calls` counts
 //!   ledger interning attempts before deduplication; `closure_cache_hits`
-//!   counts remembered closed-view reuse.
+//!   counts remembered closed-view reuse. `conditions` counts [OP-5]
+//!   condition judgments in a noncontradictory state, `condition_queries`
+//!   their per-origin and per-sign queries, and `redundant_conditions` the
+//!   conditions they decided.
 //! - `function` also aggregates affine work: `affine_attempts` counts query
 //!   preparations (ordinary targets and certificate residuals);
 //!   `affine_memo_hits` and `affine_memo_misses` partition those attempts by
@@ -122,6 +125,9 @@ struct FunctionWork {
     closure_cache_hits: u64,
     intern_calls: u64,
     affine: AffineWork,
+    conditions: u64,
+    condition_queries: u64,
+    redundant_conditions: u64,
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
@@ -171,6 +177,9 @@ pub(super) fn function(name: &str) -> FunctionScope {
             closure_cache_hits: 0,
             intern_calls: 0,
             affine: AffineWork::default(),
+            conditions: 0,
+            condition_queries: 0,
+            redundant_conditions: 0,
         }))
     });
     FunctionScope(previous, true)
@@ -192,6 +201,18 @@ impl Drop for FunctionScope {
 
 pub(super) fn join() {
     update(|work| work.joins = work.joins.saturating_add(1));
+}
+
+pub(super) fn condition() {
+    update(|work| work.conditions = work.conditions.saturating_add(1));
+}
+
+pub(super) fn condition_query() {
+    update(|work| work.condition_queries = work.condition_queries.saturating_add(1));
+}
+
+pub(super) fn redundant_condition() {
+    update(|work| work.redundant_conditions = work.redundant_conditions.saturating_add(1));
 }
 
 /// Each full, ordinary-fallback or expanded-row pass has its own row width.
@@ -320,6 +341,14 @@ impl FunctionWork {
         row("function", 0, "join_passes", self.passes.len() as u64);
         row("function", 0, "intern_calls", self.intern_calls);
         row("function", 0, "closure_cache_hits", self.closure_cache_hits);
+        row("function", 0, "conditions", self.conditions);
+        row("function", 0, "condition_queries", self.condition_queries);
+        row(
+            "function",
+            0,
+            "redundant_conditions",
+            self.redundant_conditions,
+        );
         for (metric, value) in [
             ("affine_attempts", self.affine.attempts),
             ("affine_memo_hits", self.affine.memo_hits),

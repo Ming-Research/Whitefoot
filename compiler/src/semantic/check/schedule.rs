@@ -33,6 +33,18 @@ impl Checker<'_, '_> {
         judged: Option<&[bool]>,
     ) -> Result<PostconditionSchedule, CheckStop> {
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
+        // [OP-5, FN-2] condition redundancy is a source judgment: symbolic
+        // validation judges each canonical generic body under its written
+        // bounds, and the concrete inventory judges every function that is
+        // not an instance of a generic body, whose concrete arguments may
+        // decide a test the body needs for others.
+        let judge_conditions = match judged {
+            Some(judged) => judged.to_vec(),
+            None => functions
+                .iter()
+                .map(|checked| !self.types.is_generic_instance(&checked.function))
+                .collect::<Vec<_>>(),
+        };
         let const_parameter_types: HashMap<_, _> = self.types.const_generic_types().collect();
         let copy_type_parameters = self.types.copy_type_parameters();
         let renaming_classes = (0..functions.len())
@@ -99,6 +111,7 @@ impl Checker<'_, '_> {
                 crate::in_parallel(&fresh, |index| {
                     let checked = &functions[*index];
                     let context = EntailmentContext {
+                        judge_conditions: judge_conditions[*index],
                         declarations: types.declarations.resolved.declarations(),
                         callees,
                         constants: &types.checked_constants,
@@ -266,6 +279,7 @@ impl Checker<'_, '_> {
                     crate::in_parallel(&fresh, |index| {
                         let checked = &functions[*index];
                         let context = EntailmentContext {
+                            judge_conditions: judge_conditions[*index],
                             declarations: types.declarations.resolved.declarations(),
                             callees,
                             constants: &types.checked_constants,

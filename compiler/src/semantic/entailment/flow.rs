@@ -27,6 +27,7 @@
 //! canonical [`render`]ing.
 
 mod certificates;
+mod conditions;
 mod conversions;
 mod domain;
 mod events;
@@ -1201,6 +1202,7 @@ fn analyze_candidate_inner(
 ) -> FunctionEntailment {
     let run = run(function, context);
     let mut entailment = FunctionEntailment {
+        conditions: run.conditions,
         body_disposition: run.body_disposition,
         operation_intervals: run.operation_intervals,
         obligations: run.obligations,
@@ -1223,6 +1225,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    conditions: Vec<super::ConditionOutcome>,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
@@ -1318,6 +1321,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        conditions: analyzer.output.conditions,
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
@@ -1371,6 +1375,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 loop_induction_roots: 0,
             },
             output: Output {
+                conditions: Vec::new(),
                 operation_intervals: BTreeMap::new(),
                 obligations: Vec::new(),
                 call_goals: Vec::new(),
@@ -1797,6 +1802,8 @@ struct Vocabulary {
 /// What the analysis publishes: every judgment's outcome, the retained
 /// derivation sets, and which separation questions have been asked.
 struct Output {
+    /// [OP-5] each source condition's redundancy judgment, in walk order.
+    conditions: Vec<super::ConditionOutcome>,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
@@ -2006,6 +2013,7 @@ mod indexed_goal_kill_tests {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let context = EntailmentContext {
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],
@@ -2245,6 +2253,7 @@ mod range_argument_kill_tests {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let context = EntailmentContext {
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],

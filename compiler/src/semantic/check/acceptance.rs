@@ -100,7 +100,8 @@ impl<'unit> DeclarationInventory<'unit> {
                 .get(index)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .rejection_node_path(),
-            RecordAnswer::Obligation(_)
+            RecordAnswer::Condition(_)
+            | RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
@@ -139,6 +140,43 @@ impl<'unit> DeclarationInventory<'unit> {
             path.clone(),
             self.tree.coordinate(node)?,
         ))
+    }
+    /// [OP-5, DIAG-1] a decided condition is a redundant source form: the
+    /// repair deletes the test and its dead branch and keeps the selected
+    /// branch, citing the facts that decided it.
+    fn redundant_condition(
+        &self,
+        entailment: &FunctionEntailment,
+        index: usize,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let outcome = entailment
+            .conditions
+            .get(index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let decided = outcome
+            .decided
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let repair = if decided {
+            "the condition always holds here: delete the test and its else branch, keep the then branch's statements and delivery in place, and delete any statement that leaves unreachable"
+        } else {
+            "the condition never holds here: delete the test and its then branch and keep the else branch's statements and delivery in place, or delete the whole statement when it has no else"
+        };
+        let facts = if outcome.facts.is_empty() {
+            String::new()
+        } else {
+            format!("; it is decided by {}", outcome.facts.join("; "))
+        };
+        Ok(SemanticIssue {
+            rule: SemanticRule::Op5,
+            location: self.source_location(&outcome.node_path)?,
+            kind: SemanticIssueKind::RedundantCondition {
+                residual: outcome.residual.clone(),
+                decided: if decided { "True" } else { "False" }.to_owned(),
+                facts: outcome.facts.clone(),
+                mechanical_fix: format!("{repair}{facts}"),
+            },
+            request: None,
+        })
     }
     fn undischarged_loop_invariant(
         &self,
@@ -429,6 +467,13 @@ impl<'unit> TypeContext<'unit> {
             if answer.discharged(entailment) {
                 continue;
             }
+            if let RecordAnswer::Condition(condition) = answer {
+                super::redundancy_inventory::record(
+                    self.declarations,
+                    function,
+                    entailment.conditions.get(condition),
+                );
+            }
             if record.rule == SemanticRule::Fn9 {
                 relations.push((record, answer));
             } else {
@@ -473,6 +518,9 @@ impl<'unit> TypeContext<'unit> {
         answer: RecordAnswer,
     ) -> Result<SemanticIssue, CheckStop> {
         match (record.rule, answer) {
+            (SemanticRule::Op5, RecordAnswer::Condition(index)) => self
+                .declarations
+                .redundant_condition(&function.entailment, index),
             (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => self
                 .declarations
                 .undischarged_loop_invariant(&function.entailment, index),

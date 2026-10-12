@@ -18,6 +18,7 @@ mod content_moves;
 mod floats;
 mod prelude_opaque;
 mod recursive_effects;
+mod redundant_conditions;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -3778,6 +3779,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(floats::FLOATS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(redundant_conditions::REDUNDANT_CONDITIONS)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
