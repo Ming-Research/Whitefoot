@@ -51,9 +51,11 @@ pub const COMPLETION_STOP_SIGNALS_SOURCE: &str = include_str!("completion/stop_s
 pub const COMPLETION_BRIDGE_SOURCE: &str = include_str!("completion/bridge.c");
 /// Qualified fixed snapshot encoder and its immutable descriptor ABI.
 pub const SNAPSHOT_EXPORT_SOURCE: &str = include_str!("completion/snapshot_export.c");
+/// The snapshot encoder's descriptor ABI header.
 pub const SNAPSHOT_EXPORT_HEADER: &str = include_str!("completion/snapshot_export.h");
 /// Restricted fork capsule used by the supplied snapshot implementation.
 pub const FORK_CAPSULE_SOURCE: &str = include_str!("completion/fork_capsule.c");
+/// The fork capsule's interface header.
 pub const FORK_CAPSULE_HEADER: &str = include_str!("completion/fork_capsule.h");
 /// Child code cannot acquire hidden libc, stack-protector or sanitizer calls.
 pub const RESTRICTED_CHILD_COMPILE_ARGUMENTS: &[&str] =
