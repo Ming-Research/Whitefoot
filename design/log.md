@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 An IoError's host description is copied into a caller window
+
+Nodes: language/system-interface
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#362 (head commit f38c25590) changing the specification and the design tree so that std::io can copy the host's description of an IoError into a window the caller supplies?" (translated), whose background listed the PRE-2 addition of error_copy_description, its text-selection rules, the code and origin meanings per host, the one design decision in system-interface.md, and that merging without the musl run planned on card gran-io-error-text-shape is accepted. The direction was the owner's choice of A on card gran-io-error-text-shape on 2026-10-11.
+
+Summary: An IoError exposes its complete host description through a nonwaiting ordinary function that copies into a proved destination window and returns the required length without writing when the window is too small, using C-locale POSIX text, US-English Windows system messages as UTF-8, fixed texts for code-less and synthesized conditions, and a distinct unavailable result, because diagnostics need the host's explanation while the caller keeps storage ownership and ambient locale must not select the bytes; an allocated writer-visible string, truncation, changing the process locale and formatting only the portable error class were rejected.
 ## 2026-10-12 Bool range guards, operation relations and `take_back` images
 
 Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
