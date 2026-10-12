@@ -3268,20 +3268,22 @@ impl CheckedCallSeparationPositions {
     /// as an atomic binder's own key subscript or an index actual read from
     /// an element: it has no term, and no index or range image is ever filed
     /// under it, so no fact separates it from anything. A range's endpoint
-    /// images are filed under its start's capture, so a range is unnamed
-    /// exactly when that start is the marker. A candidate reading an unnamed
-    /// value is never proved, and a pair with no other candidate is one no
+    /// images are found through both endpoints, so a range with either
+    /// endpoint the marker is unnamed. A candidate reading an unnamed value
+    /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
         let named = |value: super::places::CapturedValue| {
             value != super::places::CapturedValue::unknown()
         };
+        let named_range =
+            |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
             Self::Indices(left, right) => named(left) && named(right),
-            Self::Ranges(left, right) => named(left.start) && named(right.start),
+            Self::Ranges(left, right) => named_range(left) && named_range(right),
             Self::Live(index) => named(index),
-            Self::IndexOutsideRange(index, range) => named(index) && named(range.start),
-            Self::RangeWithinLength(range) => named(range.start),
+            Self::IndexOutsideRange(index, range) => named(index) && named_range(range),
+            Self::RangeWithinLength(range) => named_range(range),
         }
     }
 }

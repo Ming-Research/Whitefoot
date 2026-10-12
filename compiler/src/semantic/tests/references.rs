@@ -944,7 +944,7 @@ fn main() -> status: std::process::ExitStatus pure {
         matches!(
             kind,
             SemanticIssueKind::OverlappingCallEffects { mechanical_fix, .. }
-                if mechanical_fix.starts_with("these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them")
+                if mechanical_fix.starts_with("these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them")
         )
     });
 }
