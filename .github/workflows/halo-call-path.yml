@@ -1,0 +1,382 @@
+# Temporary: removed before the branch is ready. Serves
+# research/investigations/halo-call-path, the attribution of three costs on
+# Halo's Lua call path that Halo-wf's fib profile reported: Result and cursor
+# stores at the split dispatch join (R1), the four-word Step returned through
+# memory (R2) and loop state spilled in hot dispatch arms (R3). It changes no
+# compiler and times nothing: a hosted runner gives exact instruction counts
+# and the code itself, and the investigation reads its answers from those.
+#
+# One job on a hosted x86-64 runner, with the LLVM major .github/llvm-major
+# pins from apt.llvm.org (the clang Halo-wf's profile used), so the dispatch
+# parts take preserve_none as on the 14900K:
+# - this branch's compiler builds Halo-wf c900a68b2f06's bench host (the
+#   program halo-bench's README builds, entry `bench`) with full LTO, once
+#   plainly and once with lld keeping its LTO temporaries;
+# - the emitted module (Whitefoot's own LLVM, before clang), the merged
+#   module before LTO optimization and the module after it, each cut down to
+#   the dispatch loop, the Call, Return, SubRK, LtJmpRK and GetUpval arms and
+#   enter_lua, finish and their neighbours on the call path;
+# - objdump of those functions, and callgrind of fib(32) with per-instruction
+#   counts joined to the disassembly and divided by fib's 7,049,155 Lua calls.
+#
+# Temporary experiment branch, never merged; N is 32, the N of Halo-wf's profile (862.5 instructions per Lua call).
+name: halo-call-path
+
+on:
+  # A push to this experiment branch only: a dispatch needs the file on main,
+  # and this branch never merges.
+  push:
+    branches: [claude/halo-call-path]
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  # Halo-wf main on 2026-10-12, pinned to wf-d837678c6905, an ancestor of
+  # this branch's base; the profile that filed R1-R3 built this revision.
+  HALO_REVISION: c900a68b2f06af0de2adccfd0dd348d49af184de
+
+jobs:
+  attribute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # Full history, so the manifest can confirm Halo's pin is an ancestor.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The gate's toolchain step: the pinned LLVM major as /usr/bin/clang
+      # and ld.lld, which whitefootc runs, plus llvm-dis for the LTO
+      # temporaries and valgrind for callgrind. Ubuntu's own clang 18 lacks
+      # preserve_none, so the parts would take the C convention without it.
+      - name: Install the host toolchain, llvm-dis and valgrind
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y -q "llvm-$version" valgrind binutils
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo ln -sf "/usr/bin/llvm-dis-$version" /usr/local/bin/llvm-dis
+          /usr/bin/clang --version
+          ld.lld --version
+          llvm-dis --version
+          valgrind --version
+          rustup default stable
+          cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-${{ runner.arch }}-halo-call-path-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-halo-call-path-
+
+      - name: Build the compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+
+      # Three builds of one source by one compiler. `bench.emitted.ll` is the
+      # module whitefootc hands clang, with the dispatch ledger as `; dispatch:`
+      # comments. `halo` is built as halo-bench's README builds it and is the
+      # binary callgrind runs. `halo-temps` adds lld's --save-temps through
+      # clang's CCC_OVERRIDE_OPTIONS, which appends the argument to every
+      # clang command whitefootc runs (its probes compile with -c and ignore
+      # it), so lld writes the merged module before LTO optimization
+      # (`.0.0.preopt.bc`) and after it (`.0.4.opt.bc`, `.0.5.precodegen.bc`).
+      # The two binaries are compared, so the IR is known to be the profiled
+      # code's or the difference is recorded.
+      - name: Build Halo's bench host three ways
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-call-path"
+          halo="$RUNNER_TEMP/halo"
+          wfc="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          rm -rf "$out" "$halo"
+          mkdir -p "$out/ir" "$out/temps" "$out/disasm" "$out/callgrind"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$halo"
+          git -C "$halo" checkout --quiet "$HALO_REVISION"
+          cd "$halo"
+          graph=research/experiments/halo-bench/modules.wfg
+          "$wfc" --graph "$graph" --entry bench --emit-llvm --dispatch-ledger -o "$out/ir/bench.emitted.ll" > "$out/dispatch-ledger.txt"
+          SECONDS=0
+          "$wfc" --graph "$graph" --entry bench --full-lto -o "$out/halo"
+          echo "plain full-LTO build: ${SECONDS} s"
+          CCC_OVERRIDE_OPTIONS='+-Wl,--save-temps' \
+            "$wfc" --graph "$graph" --entry bench --full-lto -o "$out/temps/halo-temps"
+          ls -l "$out/temps"
+          for stage in 0.0.preopt 0.4.opt 0.5.precodegen; do
+            bc="$out/temps/halo-temps.$stage.bc"
+            if [ -f "$bc" ]; then
+              llvm-dis "$bc" -o "$out/ir/bench.$stage.ll"
+            else
+              echo "lld kept no $stage module" | tee -a "$out/missing.txt"
+            fi
+          done
+          mv "$out/temps/halo-temps" "$out/halo-temps"
+          if cmp -s "$out/halo" "$out/halo-temps"; then same=identical; else same=different; fi
+          {
+            echo "whitefoot $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD), halo $HALO_REVISION"
+            echo "wf-d837678c6905 is an ancestor of this branch: $(git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor d837678c6905 HEAD 2> /dev/null && echo yes || echo 'no or not fetched')"
+            echo "plain and save-temps binaries: $same"
+            sha256sum "$wfc" "$out/halo" "$out/halo-temps"
+            /usr/bin/clang --version | head -n 1
+            ld.lld --version
+            valgrind --version
+            uname -a
+            lscpu | grep -E 'Model name|^CPU\(s\)|Flags' || true
+          } | tee "$out/manifest.txt"
+          cat "$out/dispatch-ledger.txt"
+
+      # Which arm function holds each opcode. Arms are named `<run>.arm.<n>`
+      # in the order of the match's targets, so they are identified by what
+      # each calls in the emitted module: the one arm calling a helper only
+      # that opcode calls. `arms.tsv` lists every arm's callees as evidence.
+      - name: Name the arms and cut out the functions on the call path
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-call-path"
+          emitted="$out/ir/bench.emitted.ll"
+          body=$(sed -n 's/^; dispatch: \([^ ]*\): split: the loop over [^ ]*Cell into .*/\1/p' "$emitted" | head -n 1)
+          [ -n "$body" ] || { echo "no split loop over Cell in the emitted module"; grep '^; dispatch:' "$emitted" | head -n 40; exit 1; }
+          echo "run's split body: $body" | tee -a "$out/manifest.txt"
+          grep '^; dispatch:' "$emitted" > "$out/dispatch-ledger-module.txt" || true
+          BODY="$body" awk '
+            /^define / { name = $0; sub(/^[^@]*@"?/, "", name); sub(/"?\(.*/, "", name)
+                         arm = index(name, ENVIRON["BODY"] ".arm.") == 1 }
+            arm && /call / { line = $0
+              while (match(line, /@"?[^"(, ]+/)) {
+                callee = substr(line, RSTART + 1, RLENGTH - 1); gsub(/"/, "", callee)
+                base = callee; sub(/\$.*/, "", base); sub(/\.body$/, "", base)
+                n = split(base, part, "."); print name "\t" part[n] "\t" callee
+                line = substr(line, RSTART + RLENGTH) } }
+            /^}/ { arm = 0 }' "$emitted" | sort -u > "$out/arms.tsv"
+          : > "$out/hot-arms.tsv"
+          for pair in Call:instruction_call Return:instruction_return SubRK:fast_instruction_sub_rk \
+                      LtJmpRK:fast_instruction_lt_jmp_rk GetUpval:instruction_get_upval; do
+            op=${pair%%:*}; helper=${pair#*:}
+            arms=$(awk -F '\t' -v h="$helper" '$2 == h { print $1 }' "$out/arms.tsv" | sort -u)
+            count=$(printf '%s' "$arms" | grep -c . || true)
+            if [ "$count" = 1 ]; then
+              printf '%s\t%s\n' "$op" "$arms" | tee -a "$out/hot-arms.tsv"
+            else
+              echo "$op: $count arms call $helper: $arms" | tee -a "$out/missing.txt"
+            fi
+          done
+          # Every named function is cut out of every stage's module where it
+          # still exists: run's enclosing body, its dispatch function (inlined
+          # after optimization), the five arms, and the call path's helpers.
+          names=$(cut -f2 "$out/hot-arms.tsv"; echo "$body"; echo "$body.dispatch")
+          helpers='enter_lua|finish|checked_step|prepare|native_binding|push_frame|pop_frame|ensure_stack|instruction_call|instruction_return|instruction_get_upval|fast_instruction_sub_rk|fast_instruction_lt_jmp_rk|instruction_sub_rk|instruction_lt_jmp_rk'
+          for ll in "$out"/ir/bench.*.ll; do
+            stage=$(basename "$ll" .ll); stage=${stage#bench.}
+            NAMES="$names" HELPERS="$helpers" awk '
+              BEGIN { n = split(ENVIRON["NAMES"], list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") want[list[i]] = 1 }
+              /^define / { name = $0; sub(/^[^@]*@"?/, "", name); sub(/"?\(.*/, "", name)
+                           base = name; sub(/\$.*/, "", base); sub(/\.body$/, "", base); k = split(base, part, ".")
+                           keep = (name in want) || part[k] ~ ("^(" ENVIRON["HELPERS"] ")$") }
+              keep { print } keep && /^}/ { keep = 0; print "" }' "$ll" > "$out/ir/call-path.$stage.ll"
+            echo "$stage: $(grep -c '^define ' "$out/ir/call-path.$stage.ll") functions cut out" | tee -a "$out/manifest.txt"
+          done
+          gzip -9 "$out"/ir/bench.*.ll
+
+      # objdump of every cut-out function that the linked binary still holds
+      # as a symbol (an inlined one has none, which the list records).
+      - name: Disassemble the call path
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-call-path"
+          nm --defined-only "$out/halo" > "$out/halo-symbols.txt"
+          body=$(sed -n 's/^run.s split body: //p' "$out/manifest.txt")
+          helpers='enter_lua|finish|checked_step|prepare|native_binding|push_frame|pop_frame|ensure_stack|instruction_call|instruction_return|instruction_get_upval|fast_instruction_sub_rk|fast_instruction_lt_jmp_rk|instruction_sub_rk|instruction_lt_jmp_rk'
+          { cut -f2 "$out/hot-arms.tsv"; echo "$body"
+            HELPERS="$helpers" awk '$2 ~ /^[tT]$/ { base = $3; sub(/\$.*/, "", base); sub(/\.body$/, "", base); k = split(base, part, ".")
+                                     if (part[k] ~ ("^(" ENVIRON["HELPERS"] ")$")) print $3 }' "$out/halo-symbols.txt"
+          } | sort -u > "$out/disasm/symbols.txt"
+          while read -r sym; do
+            if awk -v s="$sym" '$3 == s { found = 1 } END { exit !found }' "$out/halo-symbols.txt"; then
+              file="$out/disasm/$(printf '%s' "$sym" | tr -c 'A-Za-z0-9_.\n-' '_' | cut -c1-150).txt"
+              objdump -d --no-show-raw-insn -M intel --disassemble="$sym" "$out/halo" > "$file"
+              printf '%s\t%s instructions\n' "$sym" "$(grep -c -E '^ +[0-9a-f]+:' "$file")"
+            else
+              printf '%s\tno symbol in the binary (inlined or removed)\n' "$sym"
+            fi
+          done < "$out/disasm/symbols.txt" | tee "$out/disasm/sizes.txt"
+
+      - name: Check fib's output
+        env:
+          FIB_N: "32"
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-call-path"
+          sed "s/^local N = 30\$/local N = $FIB_N/" "$RUNNER_TEMP/halo/research/experiments/halo-bench/kernels/fib.lua" > "$out/fib.lua"
+          grep -q "^local N = $FIB_N\$" "$out/fib.lua"
+          expected=$(python3 -c "a,b=0,1
+          for _ in range($FIB_N): a,b=b,a+b
+          print(a)")
+          "$out/halo" < "$out/fib.lua" > "$out/fib.out"
+          echo "expected $expected, halo printed $(cat "$out/fib.out")"
+          test "$(cat "$out/fib.out")" = "$expected"
+
+      # Callgrind counts every executed instruction exactly; --collect-jumps
+      # adds the taken and fall-through counts that show which path of an
+      # arm runs. The join below follows Halo-wf's fib-profile workflow
+      # (run 38236457893): each instruction of the disassembled functions with
+      # its executions per Lua call, and per function the executed
+      # instructions, stores and loads per Lua call by base register, so
+      # stack spills ([rsp...]) and frame stores (the frame pointer the parts
+      # pass) are counted apart.
+      - name: Count instructions with callgrind
+        env:
+          FIB_N: "32"
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-call-path"
+          calls=$(python3 -c "a,b=0,1
+          for _ in range($FIB_N + 1): a,b=b,a+b
+          print(2 * a - 1)")
+          echo "fib($FIB_N) makes $calls Lua calls of fib" | tee -a "$out/manifest.txt"
+          valgrind --tool=callgrind --dump-instr=yes --collect-jumps=yes --dump-line=no \
+            --compress-strings=no --compress-pos=no \
+            --callgrind-out-file="$out/callgrind/halo.out" "$out/halo" < "$out/fib.lua" \
+            > "$out/callgrind/halo.stdout" 2> "$out/callgrind/halo.stderr"
+          tail -n 5 "$out/callgrind/halo.stderr"
+          callgrind_annotate --inclusive=no "$out/callgrind/halo.out" > "$out/callgrind/annotate.txt" 2>&1 || true
+          python3 -I - "$out/callgrind/halo.out" "$out/halo" "$calls" "$out/disasm/symbols.txt" "$out/callgrind" <<'PY'
+          import collections, os, re, subprocess, sys
+
+          cg_out, exe, calls, symbols, outdir = sys.argv[1:6]
+          calls = int(calls)
+          exe_real = os.path.realpath(exe)
+          names = {'ob': {}, 'fn': {}}
+
+          def resolve(kind, rest):
+              m = re.match(r'\((\d+)\)\s*(.*)$', rest)
+              if not m:
+                  return rest
+              if m.group(2):
+                  names[kind][m.group(1)] = m.group(2)
+              return names[kind].get(m.group(1), rest)
+
+          cost, fn_min = collections.Counter(), {}
+          npos, last, ob, fn, skip = 1, [0, 0], None, None, False
+          with open(cg_out) as f:
+              for raw in f:
+                  line = raw.rstrip('\n')
+                  if line.startswith('positions:'):
+                      npos = len(line.split()) - 1
+                      continue
+                  m = re.match(r'^(ob|cob|fl|fi|fe|cfi|cfl|fn|cfn)=(.*)$', line)
+                  if m:
+                      if m.group(1) == 'ob':
+                          ob = os.path.realpath(resolve('ob', m.group(2)))
+                      elif m.group(1) == 'cob':
+                          resolve('ob', m.group(2))
+                      elif m.group(1) == 'fn':
+                          fn = re.sub(r"'\d+$", '', resolve('fn', m.group(2)))
+                      elif m.group(1) == 'cfn':
+                          resolve('fn', m.group(2))
+                      continue
+                  if line.startswith(('calls=', 'jump=', 'jcnd=')):
+                      skip = line.startswith('calls=')
+                      continue
+                  parts = line.split()
+                  if not parts or not re.match(r'^([+-]?(0x)?[0-9a-fA-F]+|\*)$', parts[0]):
+                      continue
+                  pos = []
+                  for i, tok in enumerate(parts[:npos]):
+                      pos.append(last[i] if tok == '*' else last[i] + int(tok, 0) if tok[0] in '+-' else int(tok, 0))
+                  last[:len(pos)] = pos
+                  if skip:
+                      skip = False
+                      continue
+                  if ob != exe_real or fn is None or len(parts) <= npos:
+                      continue
+                  cost[pos[0]] += int(parts[npos])
+                  fn_min[fn] = min(fn_min.get(fn, pos[0]), pos[0])
+
+          nm = {}
+          for row in subprocess.run(['nm', '--defined-only', exe], capture_output=True, text=True).stdout.splitlines():
+              bits = row.split(None, 2)
+              if len(bits) == 3 and bits[1] in 'tTwW':
+                  nm.setdefault(bits[2], int(bits[0], 16))
+          biases = collections.Counter(fn_min[f] - nm[f] for f in fn_min if f in nm)
+          bias = biases.most_common(1)[0][0] if biases else 0
+          total = sum(cost.values())
+          summary = [f'executable instructions {total}, per Lua call {total / calls:.2f}',
+                     f'load bias {bias:#x}', '',
+                     'per Lua call: function, executed, stores by base, loads by base, push, pop, call']
+          store_ops = re.compile(r'^(v?mov\w*|stos\w*)$')
+          for sym in open(symbols).read().split():
+              if sym not in nm:
+                  continue
+              dis = subprocess.run(['objdump', '-d', '--no-show-raw-insn', '-M', 'intel', f'--disassemble={sym}', exe],
+                                   capture_output=True, text=True).stdout
+              rows = [f'# {sym}', '# times executed, executions per Lua call, address, instruction']
+              executed, stores, loads, other = 0, collections.Counter(), collections.Counter(), collections.Counter()
+              for row in dis.splitlines():
+                  m = re.match(r'^\s*([0-9a-f]+):\s*(.*)$', row)
+                  if not m:
+                      if row.strip() and not row.startswith(exe):
+                          rows.append(row)
+                      continue
+                  n = cost.get(int(m.group(1), 16) + bias, 0)
+                  text = m.group(2)
+                  rows.append(f'{n:>12} {n / calls:8.3f}  {m.group(1)}: {text}')
+                  executed += n
+                  mnemonic, _, operands = text.partition(' ')
+                  operands = operands.strip()
+                  if mnemonic in ('push', 'pop', 'call'):
+                      other[mnemonic] += n
+                  if mnemonic.startswith(('lea', 'nop')) or '[' not in operands:
+                      continue
+                  found = re.search(r'\[([a-z0-9]+)', operands)
+                  base = found.group(1) if found else '?'
+                  first = operands.split(',', 1)[0]
+                  if store_ops.match(mnemonic) and '[' in first:
+                      stores[base] += n
+                  else:
+                      loads[base] += n
+              per = lambda c: ' '.join(f'{k}:{v / calls:.2f}' for k, v in sorted(c.items(), key=lambda kv: -kv[1])) or '-'
+              summary.append(f'{sym}\t{executed / calls:.2f}\tstores {per(stores)}\tloads {per(loads)}\t'
+                             f'push {other["push"] / calls:.2f}\tpop {other["pop"] / calls:.2f}\tcall {other["call"] / calls:.2f}')
+              safe = re.sub(r'[^A-Za-z0-9_.-]', '_', sym)[:150]
+              with open(os.path.join(outdir, f'counts-{safe}.txt'), 'w') as w:
+                  w.write('\n'.join(rows) + '\n')
+          with open(os.path.join(outdir, 'summary.txt'), 'w') as w:
+              w.write('\n'.join(summary) + '\n')
+          print('\n'.join(summary))
+          PY
+
+      - name: Publish
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/halo-call-path"
+          {
+            echo "## halo-call-path"
+            echo
+            echo '```text'
+            cat "$out/manifest.txt" "$out/hot-arms.tsv" "$out/missing.txt" "$out/disasm/sizes.txt" 2> /dev/null
+            echo
+            cat "$out/callgrind/summary.txt" 2> /dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: halo-call-path
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/halo-call-path/
+            !${{ runner.temp }}/halo-call-path/halo-temps
