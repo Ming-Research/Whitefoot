@@ -189,14 +189,26 @@ class CommonObjectTests(unittest.TestCase):
 
     def test_missing_dependencies_and_ambiguous_local_type_names_fail_closed(self):
         seq, demand, par = modules()
+        missing_seq = seq.replace('call ptr @wf_helper$instance$A(ptr %input)',
+                                  'call ptr @wf_missing(ptr %input)')
+        missing_demand = demand.replace('call ptr @wf__par_seq_helper$instance$A(ptr %input)',
+                                        'call ptr @wf_missing(ptr %input)')
         with self.assertRaisesRegex(DiagnosticIrError, 'missing LLVM dependency'):
-            build_fir_module(seq, demand.replace('define ptr @wf__par_seq_helper$instance$A', 'define ptr @wf_other'), par)
+            build_fir_module(missing_seq, missing_demand, par)
         missing = Module(function('f', '  %v0 = alloca %Missing\n  ret ptr %input', 'ptr %input') + 'attributes #0 = { nounwind }\n')
         with self.assertRaisesRegex(DiagnosticIrError, 'missing LLVM dependency'):
             closure(missing, {('@', 'f')})
         ambiguous = Module('%T = type { i64 }\n' + function('f', '  %T = alloca i64\n  ret ptr %input', 'ptr %input') + 'attributes #0 = { nounwind }\n')
         with self.assertRaisesRegex(DiagnosticIrError, 'ambiguous named type/local value'):
             closure(ambiguous, {('@', 'f')})
+
+    def test_changed_root_body_is_refused_with_complete_dependencies(self):
+        seq, demand, par = modules()
+        changed_root = demand.replace(
+            '  %r = call ptr @wf__par_seq_helper$instance$A(ptr %input)\n  ret ptr %r',
+            '  %r = call ptr @wf__par_seq_helper$instance$A(ptr %input)\n  ret ptr null')
+        with self.assertRaisesRegex(DiagnosticIrError, 'canonical FIR root differs from independent sequential source IR'):
+            build_fir_module(seq, changed_root, par)
 
     def test_shared_writer_must_already_be_latched_and_unchanged(self):
         seq, demand, par = modules()

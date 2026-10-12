@@ -1,4 +1,5 @@
 """Manual workflow wiring checks; these never build or execute a native image."""
+import re
 import unittest
 from pathlib import Path
 
@@ -22,12 +23,22 @@ class WorkflowTests(unittest.TestCase):
     def test_github_diagnostics_are_smoke_only_and_budget_label_is_reused(self):
         runner = self.workflow[self.workflow.index('  par-demand:\n'):]
         self.assertIn('diagnostic-*|1) ;;', runner)
-        self.assertIn('if [ "$RUNNER" = github ]; then diagnostic_options=(--smoke); fi', runner)
-        self.assertIn('WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl par-demand/measure', runner)
-        self.assertNotIn('par-demand/diagnostic', runner)
-        self.assertLess(runner.index('mode="${EXPERIMENT#diagnostic-}"'),
-                        runner.index('if [ "$EXPERIMENT" = 4 ]'))
-        self.assertIn('diagnostic-$mode.json" >> "$GITHUB_STEP_SUMMARY"', runner)
+        labels = re.findall(r'\.github/run-check\.pl\s+([^\s\\]+)', runner)
+        self.assertTrue(labels)
+        self.assertEqual(set(labels), {'par-demand/measure'})
+        diagnostic = re.search(r'(?ms)^\s*diagnostic-\*\)\n(.*?)^\s*;;\s*$', runner)
+        self.assertIsNotNone(diagnostic)
+        branch = diagnostic.group(1)
+        self.assertIn('diagnostic_options=()', branch)
+        self.assertIn('if [ "$RUNNER" = github ]; then diagnostic_options=(--smoke); fi', branch)
+        self.assertIn('WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl par-demand/measure', branch)
+        self.assertIn('python3 research/experiments/par-demand/diagnostics.py', branch)
+        self.assertIn('--mode "$mode" --build "$RUNNER_TEMP/par-demand" "${diagnostic_options[@]}"', branch)
+        self.assertIn('diagnostic-$mode.json" >> "$GITHUB_STEP_SUMMARY"', branch)
+        self.assertNotIn('measure.py', branch)
+        self.assertNotIn('summarize.py', branch)
+        self.assertRegex(branch, r'\bexit 0\s*$')
+        self.assertLess(diagnostic.end(), runner.index('sizing=()'))
 
     def test_inspection_is_explicit_bound_to_head_and_before_qualified_timing(self):
         self.assertIn('par_demand_inspection:', self.workflow)
