@@ -19,6 +19,15 @@ below as "the counter study"). The owner decides on a card; this record gives
 it its options and evidence, and registers the measurements the choice needs
 (section 7).
 
+Revised after the owner's first comment on the card (2026-10-12): the owner
+asked whether every atomic statement would pay for the take, whether Firn's
+code would need two statement forms for AOF on and off, found the take target
+inelegant, and asked whether a general shared atomic value, needed in more
+than one place, would serve better. Section 5.6 adds that candidate (V), and
+sections 6 to 9 now compare it with the take target (B) and recommend (V).
+The take target's analysis in sections 3 and 5.2 stands: (V) contains it as
+one use.
+
 ## 1. The question
 
 Firn's append-only file (AOF) work (Firn-wf's write-path study, "Writes
@@ -62,8 +71,10 @@ its change with a number, the logs are merged by number, and the merged
 stream must replay to the store's state.
 
 Minimal witness (sketch in the specification's style, not compiled; the
-surface `n = &seq^[ticket]` is candidate (B) of section 5.2, used here only to
-state the need):
+surface `n = &seq[ticket]` is candidate (B) of section 5.2, used here only to
+state the need; the recommended candidate (V) of section 5.6 writes the same
+statement as `s = &seq` with `atomic_add(cell: s, value: 1_u64)` in the
+block):
 
 ```whitefoot
 struct Record {
@@ -340,9 +351,12 @@ a statement names each object it holds.
 counter study's candidate (a) cut down to one operation.
 
 **Not recommended.** It buys nothing over (B) at the machine level and costs
-a new call property in the checker.
+a new call property in the checker. Candidate (V) of section 5.6 keeps its
+appeal, an operation called in the block, without its cost: the operation
+takes the statement's binding instead of a handle, so the header names the
+value and the one-operation count stays inside the block.
 
-### 5.2 (B) A take target: the statement's own ticket (recommended)
+### 5.2 (B) A take target: the statement's own ticket
 
 **Surface.** A new state kind, as `ConcurrentHashMap` and the drafted
 `Shards` are, held only as the state of a shared object, with one target form
@@ -664,21 +678,277 @@ write.
 Doing nothing therefore leaves Firn a choice between E1's bound and giving up
 P1, which is the gap the request reports.
 
+### 5.6 (V) A shared atomic value, held by an atomic statement without exclusion (recommended)
+
+The owner asked for a general atomic value, usable in more than one place,
+instead of a construct made for the take. This candidate gives one, and the
+take becomes one ordinary use of it.
+
+**The idea.** E3 above was sound only if every statement on a `Shared<u64>`
+in the whole program performed one read-modify-write on it. A state type can
+make that a property of the type instead of the program: a new state kind
+whose every access, in every statement, is at most one operation. A
+statement that performs one operation on a state and nothing else with it
+has the same outcome whether it holds the state exclusively for its whole
+block or performs that operation as one hardware step after its other locks
+are taken. SHARE-3's last sentence (`:2342`) already permits exactly that
+("hold less ... wherever the program's outcomes are those it has when every
+statement's block executes with exclusive access"). So the meaning is the
+ordinary atomic statement's, unchanged, and the lock-free lowering is an
+instance of an existing permission.
+
+**Surface** (sketch, not compiled; the name is a label to settle, see below):
+
+```whitefoot
+opaque nocopy struct Atomic<T> {
+}
+
+fn shared_atomic_new(value: u64) -> result: Shared<Atomic<u64>> pure;
+fn atomic_load(cell: &Atomic<u64>) -> value: u64 reads(cell);
+fn atomic_add(cell: &Atomic<u64>, value: u64) -> before: Option<u64> writes(cell);
+fn atomic_raise(cell: &Atomic<u64>, value: u64) -> before: u64 writes(cell);
+```
+
+`shared_atomic_new` owes `value <= 2^63`, `atomic_add` owes `value <= 2^32`
+and `atomic_raise` owes `value <= 2^63`, each as an [FN-8] requirement (a
+constant or a bounded quantity discharges it; section "Overflow" says why the
+bounds exist). Only `u64` is admitted in the first design. A whole target on
+a `Shared<Atomic<u64>>` handle binds `&Atomic<u64>`, the state, as any whole
+target does; a `SharedRead<Atomic<u64>>` target admits only `atomic_load`,
+by the existing read-only authority rule of SHARE-2, since the other two
+write their argument.
+
+Uses, each one statement:
+
+```whitefoot
+// Firn's AOF write: one form for AOF on and off.
+atomic slot = &keys^[k], p = &parts^[mine], s = &seq^ {
+  set slot^ = Some<u64>(value: payload);
+  if logging {
+    match atomic_add(cell: s, value: 1_u64) {
+      Some(value: number) => {
+        frame_append(log: &p^.log, sequence: number, bytes: k);
+      }
+      None() => {
+        set p^.refused = True();
+      }
+    }
+  }
+}
+
+// Firn's memory peak after a command: exact, no per-connection cache needed.
+atomic m = &peak^ {
+  let before = atomic_raise(cell: m, value: used);
+}
+
+// A connection identifier, as Redis gives each client one.
+let id = None<u64>();
+atomic c = &next_client^ {
+  set id = atomic_add(cell: c, value: 1_u64);
+}
+```
+
+The standard library can also offer one-call forms, such as
+`atomic_add_now(value: &Shared<Atomic<u64>>, amount: u64) -> Option<u64>
+reads(value) waits`, written in Whitefoot as the one-target statement above;
+they add no rule.
+
+**Rules sketched** (no specification edit made):
+
+- **V1, PRE-1.** The declarations above; `Atomic` joins the prelude's opaque
+  structs.
+- **V2, TYPE-9.** A row: `Atomic<u64>` [SHARE-1] is only the state of a shared
+  object.
+- **V3, SHARE-1, the value and its operations.** An atomic value holds a `u64`
+  of at most 2^63, which `shared_atomic_new` sets to its argument.
+  `atomic_load` returns it. `atomic_add` returns `Some(value: v)` and makes
+  the value `v + a` when `v + a < 2^63`, where `v` is the value before and `a`
+  the argument; otherwise it returns `None()` and makes the value 2^63, which
+  is then permanent for adds. `atomic_raise` makes the value `imax(v, a)` and
+  returns `v`.
+- **V4, SHARE-2, one operation per statement.** A binding of type
+  `&Atomic<u64>` is the `cell` argument of an atomic-value operation call in
+  the block and appears nowhere else: not in the guard, not as another call's
+  argument (`swap` included), not as an alias. On every path through the
+  block at most one atomic-value operation call executes, counting the calls
+  of every such binding of the statement together, and no such call is inside
+  a loop. A violation is a hard error citing SHARE-2 at the offending call,
+  `place` or guard, with a repair [DIAG-1].
+- **SHARE-3 is unchanged.** The operation is a read or write of the target's
+  state, so it takes effect at the statement's point, with exclusive access,
+  in the one order, as every other read and write of a target does. S6 of
+  section 5.2 (real time) is still needed, because numbers make the order
+  observable.
+
+Why V4 counts all bindings together (**deduction**): two operations in one
+statement, on one value or on two, must take effect at one point. Statement A
+adds to `x` then to `y`, statement B adds to `y` then to `x`. With one
+hardware step each, A's step on `x` can precede B's and B's step on `y`
+precede A's: A sees B's effect on `y` and B sees A's on `x`, a cycle no one
+order explains. Making both atomic together needs a lock, which is what the
+type is meant to avoid. So the rule is one operation per statement path, and
+it also covers two targets that name one value, which no static rule can rule
+out [SHARE-2].
+
+**Semantics of the uses.** A statement whose only targets are atomic values
+is a single step in the one order: it is linearizable and its result is an
+owned snapshot, with no fact about the value afterwards. A statement that
+also holds other targets performs the operation at its point, so the number
+an `atomic_add` returns has every property of section 3: distinct, increasing
+in the one order, consistent with conflict, context, spawn/join and real-time
+order, and the replay and prefix properties of section 3.4. The take of (B)
+is exactly `atomic_add(cell: s, value: 1_u64)` on a value only adds touch.
+
+**Overflow.** No silent wrap. `atomic_add` saturates at 2^63 and reports it
+as `None()`. The bounds let a fetch-and-add implement it without a
+compare-and-swap loop (**deduction**): an add whose fetch returns
+`v + a >= 2^63` reports `None()` and stores 2^63 back; while the word exceeds
+2^63 every fetch returns at least 2^63, so every later add reports `None()`;
+a load reports `min(word, 2^63)`; and the word exceeds 2^63 by at most one
+argument of at most 2^32 for each thread between its fetch and its store, at
+most twice the driver count of threads (bounded waits, third decision), so it
+stays far below 2^64 and never wraps in hardware. `atomic_raise` cannot
+overflow. Subtraction is left out: a decrement after saturation would leave
+the saturated range, so gauges such as a client count stay in `Shared<T>` or
+the sharded state until a program needs one here.
+
+**Guards.** V4 keeps atomic values out of guards. A guard that read one would
+need every write to wake its watchers. A write is a single hardware step with
+no lock to find a watch under, so every write of every atomic value would
+have to read a watcher flag after its step, with an ordering on both sides so
+that a watch registered before the write is never missed, and take the
+runtime's wake path when it finds one; the flag's check would be paid by
+programs that never wait on a value. Not proposed until a program needs to
+wait for a value, such as a ticket lock's "now serving".
+
+**Effect rows and footprints.** Nothing new. The state is a path of no row,
+reached only through a target, and the operations' rows `reads(cell)` and
+`writes(cell)` act on the binding, which the statement's footprint removes,
+as it removes every path into a target's state (SHARE-2). A function using
+one declares `waits` and reads its handle place, as for every shared object.
+
+**PAR-1 and PAR-2.** Unchanged: the operations exist only inside atomic
+statements, which count as waiting calls and have no overlap permission. A
+parallel compute loop cannot add to an atomic value; it reduces (PAR-2) or
+its contexts use the sharded state.
+
+**Progress.** `atomic_add` and `atomic_load` are single wait-free steps on
+x86-64 (`lock xadd`, `mov`) and on AArch64 with LSE (`ldaddal`).
+`atomic_raise` loads first and returns without writing when the value is not
+below its argument, a single step; otherwise it is `ldumaxal` on AArch64 with
+LSE and a compare-and-swap loop on x86-64, each retry following another raise
+that succeeded, so it is lock-free; without LSE every operation is an
+exclusive-monitor loop. These are the premises the existing spin locks already
+rest on, so WAIT-2's guarantee gains none.
+
+**No cost to anything that does not use it.** A statement without an
+atomic-value target is compiled exactly as today; no other statement, object
+or program gains a word, a flag, a check or a branch. A statement that names
+one but whose path performs no operation, such as Firn's write with AOF off,
+performs no hardware step and touches no shared line beyond reading its
+handle place, and keeps lazy lock taking on that path. A statement whose only
+targets are atomic values takes no lock and counts no handle (the same
+handle-count obligation as (B)). On a path that performs the operation, the
+first operation takes every lock group not yet taken (section 3.3), then
+performs one hardware step.
+
+**Firn's AOF on and off: one form.** The operation sits inside `if logging`,
+so AOF-off writes execute no operation and pay nothing for the sequence,
+while AOF-on writes take their number at the statement's point. The take
+target (B) has the same property only if its rule is changed to take on the
+paths that read the binding; as written in S5 it takes on every path, so with
+(B) Firn would need two statement forms or pay the take with AOF off.
+
+**Embedded targets.** On a target with one thread of execution, a plain load,
+add, compare and store. On a multicore target without hardware
+read-modify-write, the atomic value is an ordinary lock unit, taken in the
+lock order with the statement's other targets and held for the one operation.
+This is not the hidden lock refused by ruling 6 of 2026-10-09: that ruling
+refuses a lock behind a scalar operation that the source presents as
+lock-free. Here the source says what it means, an atomic statement that holds
+its targets, and the lock is that statement's own visible hold; the hardware
+step on capable targets is the permitted holding of less. The counter study's
+standalone cells could not make this argument, since their operations were
+not atomic statements.
+
+**Relation to the sharded state and to the earlier ruling.** The earlier
+ruling set single-step cells aside for counts on throughput alone: one
+contended line reaches 0.059 of private lines at 8 P-cores (118.06 against
+1993.71 million a second, run 38304337014). That stands, and hot always-write
+counts go to the sharded state. Atomic values serve what shards cannot or
+need not:
+
+| Use | Why an atomic value | Shards? |
+|---|---|---|
+| Ordered numbers taken in a statement (Firn's AOF sequence, rewrite cut) | one global order, at the statement's point | cannot: no global order |
+| Identifiers (client IDs, request IDs) | the global value back at once | cannot (counter study, section 5.4) |
+| Maxima that rarely rise (Firn's memory peak) | a raise that finds nothing to change only loads a line every core can share (estimate) | also can, with a whole read to combine |
+| Counts updated at a low rate (connections accepted, rewrites started) | one value, read at once, no combine | can, at more memory and a whole read |
+| Hot always-write counts (commands, hits) | no: one line at 0.059 of private | yes |
+
+**Name.** `Atomic` follows C11's `_Atomic` and Rust's `AtomicU64` for a
+value read and written in single indivisible steps. The meanings differ in
+two ways: those languages let one critical region perform any number of
+operations and offer weaker orderings, while here every operation is
+sequentially consistent and a statement performs at most one. The keyword
+`atomic` also names the statement. AGENTS.md asks to compare before borrowing
+a convention; the name is for the owner to settle, and `Counter` or `Cell`
+are alternatives (`Cell` already means unsynchronized interior mutability in
+Rust).
+
+**Cost.** As (B) for the sequence: one contended line per take, 17% of the
+measured 8-P-core ceiling at Firn's 20 million writes a second (section 5.2).
+A raise that does not rise costs a load of a shared line (estimate: near an
+uncontended statement; Q1 arm S4). An identifier allocation at connection
+rate costs nothing measurable (estimate).
+
+**Implementation cost.** Somewhat larger than (B): one state type and three
+operations instead of one target row and a selector; V4's per-path count in
+the checker (a count over the block's paths, like definite assignment, with
+loops refused); lowering of a lock-free target and of one-target statements
+with no lock; the saturation protocol; conformance cases for each V4
+refusal, saturation at `2^63 - 1` and raise.
+
+**Prior objections.** *Atomic fields and lock-free cells* exposed
+interleavings inside one step; V4 permits one operation per statement, so no
+interleaving inside a step exists. *Whole-program inference* (E3, counter
+study (d4)): the type carries the property, so no function body elsewhere
+changes a value's lowering. *The paused relaxed fields*: atomic values are
+separate objects, never fields of another state, so no whole hold has to
+exclude a lock-free field; the relaxed design stays paused. *Shared objects
+reached only inside atomic statements*: kept.
+
+**Variant (V'), an atomic value as a field of another state** (Firn's peak
+inside Meta): rejected, because a whole hold on the containing state would
+have to exclude the field's lock-free steps or let them fall between its
+reads, the coordination problem the relaxed-fields study left unsolved (its
+S2).
+
+**Variant (V''), standalone operations with their own meaning** (the counter
+study's candidate (a)): rejected as the base, because a value taken by a
+standalone operation is its own step and is not ordered with the write it
+labels (section 5.2, effect on the ruling), and its lock fallback on targets
+without read-modify-write is the hidden lock ruling 6 refuses. Standalone
+calls survive as library forms defined by the one-target statement.
+
 ## 6. Comparison
 
-| | (A) call in block | (B) take target | (C) per-driver | (D) stamps | (E1) exclusive object |
-|---|---|---|---|---|---|
-| Final-table replay (N2) | holds | holds | fails | holds if reads write stamps | holds |
-| Context and read chains (P1 inside the program) | holds | holds | fails | holds if reads write stamps | holds |
-| Real-time order (N3) | holds | holds | fails | fails | holds |
-| Distinct, dense (N1) | yes, one take per statement | yes | distinct, not dense | distinct pairs, not dense | yes |
-| Exhaustion without wrap | yes | yes | not stated | stamps grow one per statement | writer's `+checked` |
-| New specification | type, call, a "takes" call property | type, selector, target row, two SHARE-3 sentences | not statable | stamp semantics | none |
-| Shared line per take, many drivers | one | one | none | targets' lines; reads write too | runtime lock and header |
-| Measured or estimated rate at 8 P-cores | as (B) | estimate: 75 to 90% of no number (Q1) | near no number | every statement slower; unestimated | measured 2.81 M/s ceiling for the shortest section |
-| One-thread target | plain increment | plain increment | plain | plain | plain |
-| Multicore without RMW | as (B) | lock unit taken last, or refused (owner) | none needed | none needed | existing lock |
-| Prior rejections | lock-free cells (unless one take) | answered: one step, header names it | driver unobservable | host-completion stamps | none |
+| | (V) atomic value target | (A) call in block | (B) take target | (C) per-driver | (D) stamps | (E1) exclusive object |
+|---|---|---|---|---|---|---|
+| Final-table replay (N2) | holds | holds | holds | fails | holds if reads write stamps | holds |
+| Context and read chains (P1 inside the program) | holds | holds | holds | fails | holds if reads write stamps | holds |
+| Real-time order (N3) | holds | holds | holds | fails | fails | holds |
+| Distinct, dense (N1) | yes, among the adds performed | yes, one take per statement | yes | distinct, not dense | distinct pairs, not dense | yes |
+| Exhaustion without wrap | saturates at 2^63, reported | yes | yes | not stated | stamps grow one per statement | writer's `+checked` |
+| Serves other uses | identifiers, maxima, low-rate counts | identifiers only | no | no | no | everything, slowly |
+| Firn's AOF on and off | one form; the off path performs nothing | one form | two forms, or the off path pays | one form | one form | one form |
+| Cost to statements not using it | none | none | none | none | every statement stamps | none |
+| New specification | type, three operations, one SHARE-2 rule | type, call, a "takes" call property | type, selector, target row, two SHARE-3 sentences | not statable | stamp semantics | none |
+| Shared line per take, many drivers | one | one | one | none | targets' lines; reads write too | runtime lock and header |
+| Measured or estimated rate at 8 P-cores | as (B) | as (B) | estimate: 75 to 90% of no number (Q1) | near no number | every statement slower; unestimated | measured 2.81 M/s ceiling for the shortest section |
+| One-thread target | plain operation | plain increment | plain increment | plain | plain | plain |
+| Multicore without RMW | the statement's own visible hold | as (B) | lock unit taken last, or refused (owner) | none needed | none needed | existing lock |
+| Prior rejections | answered: one operation per statement, the type carries it | lock-free cells (unless one take) | answered: one step, header names it | driver unobservable | host-completion stamps | none |
 
 ## 7. Registered measurements (written before any measurement)
 
@@ -716,23 +986,26 @@ step counts are recorded.
 |---|---|---|
 | S0 | work only | the rate without a number |
 | S0t | S0 built a second time | noise control for uncontended arms |
-| S1 | work, then one sequentially consistent FAA on one shared 64-byte line | prices (B) and (A) |
+| S1 | work, then one sequentially consistent FAA on one shared 64-byte line | prices the take in (V), (B) and (A) |
 | S1t | S1 built a second time | noise control for the contended arm |
 | S2 | work, then one FAA on the thread's own line | the instruction's cost without sharing |
 | S3 | take a test-and-set lock on the thread's own line, work, FAA on the shared line, release | the take inside an uncontended hold, as in Firn's part |
+| S4 | work, then a load of one shared line that no thread writes after warm-up, and a compare | prices (V)'s raise of a maximum that has stopped rising |
 
 - **Question.** At `w` = 400 ns, Firn's budget per write per core at 20
   million writes a second on 8 P-cores, is S1 / S0 at least 0.75 at the
-  8-P-core list?
+  8-P-core list? Second, descriptive: is S4 / S0 at least 0.95 there?
 - **The comparison answers either way:** the line's transfer latency at 8
   cores may be well under 100 ns (S1 / S0 near 0.9) or above it (below 0.75).
 - **Prediction.** S1 / S0 >= 0.80 at `w` = 400 on 8 P-cores, and >= 0.75 at
   16 hyperthreads; S3 / S1 >= 0.95. Descriptive: the smallest `w` at which
   S1 / S0 reaches 0.75, and S2 / S0 at every `w`.
 - **Rejection.** If S1 / S0 < 0.75 at `w` = 400 on 8 P-cores beyond `e`, no
-  design with one shared line per take, (A) or (B), can meet Firn's bar at
-  Firn's size; the card returns to the owner with that result, and the
-  remaining choices are (D)'s costs and its loss of real-time order, or E1.
+  design with one shared line per take, (V), (A) or (B), can meet Firn's bar
+  at Firn's size; the card returns to the owner with that result, and the
+  remaining choices for the sequence are (D)'s costs and its loss of
+  real-time order, or E1. (V) could still be wanted for identifiers and
+  maxima; the card would then ask that separately.
 
 ### Q2. Does today's language already serve? (before choosing)
 
@@ -766,12 +1039,24 @@ checker is wrong and Q3 waits for it.
 
 ### Q3. Acceptance after implementation (on a Whitefoot experiment release)
 
-Arms T0, T0t, T2 and Tbad as in Q2, plus T1, the take target of (B), and its
-twin T1t. Lists as above, plus `0` (one driver).
+Arms T0, T0t, T2 and Tbad as in Q2, plus T1, the take as the implemented
+candidate writes it (with (V), an atomic-value target and `atomic_add` of 1
+in the block; with (B), the take target), and its twin T1t. With (V) also:
+
+| Arm | Statement | Role |
+|---|---|---|
+| T1off | T1's statement with the operation inside a branch never taken | the "no cost when not used" claim: the AOF-off path |
+| TP | T0 plus a one-target statement `atomic_raise` on one shared maximum after each operation, values from the local LCG below 2^20 so the maximum stops rising | a maximum through (V) |
+| TC | a one-target statement `atomic_add` of 1 on one shared count per operation | descriptive: confirms hot counts still belong in the sharded state |
+
+Lists as above, plus `0` (one driver).
 
 - **Accept** if T1 / T0 >= 0.75 at 8 P-cores (Firn's criterion), T1 / T0 >=
   0.97 at one driver, and T1 passes N1, N2 and N3 in every correctness run
-  while Tbad fails N1 and N3 in the same runs.
+  while Tbad fails N1 and N3 in the same runs. With (V), also T1off / T0
+  within `e` of 1 at every list, and TP / T0 >= 0.90 at 8 P-cores
+  (prediction); TC / W1 is reported, expected near the counter study's 0.34
+  for W5 / W1 at 8 P-cores.
 - **Reject the implementation, not the design,** if T1 / T0 < 0.75 at 8
   P-cores while Q1's S1 / S0 at T0's measured work per operation is at least
   0.75: the runtime adds cost beyond one line (handle counting on the
@@ -785,54 +1070,73 @@ twin T1t. Lists as above, plus `0` (one driver).
 
 ## 8. Recommendation
 
-**Adopt (B), the take target, after Q1 and Q2 run and do not reject it.**
-Q1 and Q2 need no language change and run in one temporary workflow on the
-14900K.
+**Adopt (V), the shared atomic value held by an atomic statement without
+exclusion, after Q1 and Q2 run and do not reject it.** Q1 and Q2 need no
+language change and run in one temporary workflow on the 14900K.
 
-Decisive reasons. (B) is the only candidate that gives the order Firn's
-prefix states need, including real-time order (section 3.4), without an
-exclusive hold: one FAA after the statement's last lock is a valid point of
-the statement inside SHARE-3's existing one order (section 3.3), so the
-number needs no new order, no new input and no new memory model. A target
-form keeps "one take per statement" a property of the statement's header,
-which a call inside the block (A) could only get from a new call property.
-(C) does not give the order at all, and (D) loses real-time order and makes
-every read write. On a one-thread target the take is a plain increment, and
-on a multicore target without hardware add it rides on the locks atomic
-statements already need, so it narrows no target beyond atomic statements
-themselves.
+Decisive reasons. The sequence needs one FAA after the statement's last lock
+(section 3.3); every candidate that gives Firn's prefix states, real-time
+order included, without an exclusive hold, does exactly that, so the choice
+among (V), (A) and (B) is of surface and reach, not of cost. (V) gives that
+FAA as an ordinary operation on an ordinary target, adds no rule to SHARE-3
+(the lock-free lowering is the existing permission to hold less, licensed by
+the one-operation rule V4), serves identifiers, maxima and low-rate counts
+as well as sequences, lets Firn keep one statement form whose AOF-off path
+performs nothing, and on multicore targets without hardware add is the
+statement's own visible hold rather than a lock behind a scalar operation.
+(B) is (V) restricted to adding one, with a selector the owner found
+inelegant and a rule that takes on every path. (A) needs a new call property.
+(C) does not give the order, (D) loses real-time order and makes every read
+write, and E1 is bounded at 2.81 million a second at 8 P-cores.
 
-Prior objections answered: *lock-free cells* — no cell, one take per
-statement inside its one step; *optimistic retry* — a take happens once, on
-the attempt that takes effect; *stamps of host completions* — the number is
-the statement's place in the one order; *whole-program inference* — the
-writer chooses the type.
+Nothing changes for code that does not use it: statements without an
+atomic-value target compile as today. Hot always-write counts stay with the
+sharded state; the earlier ruling's measurement still decides them.
+
+Prior objections answered: *lock-free cells* — one operation per statement,
+inside its one step; *optimistic retry* — the operation happens once, on the
+attempt that takes effect; *stamps of host completions* — the number is the
+statement's place in the one order; *whole-program inference* — the type
+carries the one-operation property.
 
 **Confidence 3/5.** The semantic argument is a deduction from SHARE-3, WAIT-2
 and two-phase locking (strong); the cost is an estimate between two measured
 facts, a line's 118 million adds a second at 8 P-cores saturated and Firn's
 400 ns budget. Could overturn it: Q1 below 0.75 at 400 ns (then no one-line
-design meets Firn's bar); Q2 at or above 0.75 (then no change is needed); the
-owner reading ruling 6 as forbidding the lock fallback on multicore targets
-without hardware add (then takes are refused at composition there, option
-A2).
+design meets Firn's bar for the sequence, though (V) may still serve
+identifiers and maxima); Q2 at or above 0.75 (then no change is needed for the
+sequence); a program that needs two operations in one statement (V4 refuses
+it; that program needs an exclusive hold); the owner reading ruling 6 as
+forbidding the lock form on multicore targets without hardware add (then
+atomic values are refused at composition there).
 
 ## 9. Specification and design-tree changes that would follow
 
-Not made; listed for the implementing branch after the owner's ruling.
+Not made; listed for the implementing branch after the owner's ruling, for
+the recommended (V).
 
-- Specification: S1 to S6 of section 5.2, the PRE-1 declarations, a TYPE-9
-  row, the measure table row (`Sequence`: absent, as other opaque states), and
-  conformance cases: each S4 refusal; one context taking from `first` in
-  order; exhaustion with `first = 2^63 - 1` (`Some`, then `None`, then
-  `None`); a program test with the section 2 witness checking N1 and N2.
+- Specification: V1 to V4 of section 5.6 and S6 of section 5.2 (real time);
+  the measure table row (`Atomic<u64>`: absent, as other opaque states); and
+  conformance cases: each V4 refusal (two operations on one path, across one
+  binding and across two; an operation in a loop; the binding in a guard, as
+  another call's argument and in a `swap`); `atomic_add` through a
+  `SharedRead` target refused; one context adding from a first value in
+  order; saturation with a first value of `2^63 - 1` (`Some`, then `None`,
+  then `None`, and a load of 2^63); `atomic_raise` returning the value before;
+  a program test with the section 2 witness checking N1 and N2.
 - Design tree: a language decision under
-  `design/language/waiting/shared-objects` (a take target, instead of a call
-  in the block, a per-driver number or stamps, with this record's reasons);
-  compiler decisions under `design/compiler/waiting-contexts/state-locks`
-  (the FAA after the last acquisition, the first use taking every group, the
-  clamp, the lock unit taken last on targets without RMW, no handle count on
-  take statements).
+  `design/language/waiting/shared-objects` (an atomic value held by a
+  statement for one operation, instead of a take target, standalone cells, a
+  call in the block, a per-driver number or stamps, with this record's
+  reasons); compiler decisions under
+  `design/compiler/waiting-contexts/state-locks` (the operation after the
+  last acquisition, the first operation taking every group, no lock and no
+  handle count for a statement whose only targets are atomic values, the
+  saturation protocol, the visible lock unit on targets without
+  read-modify-write).
+- Library: the one-call forms of section 5.6, written in Whitefoot.
+- With (B) instead: S1 to S6 of section 5.2, with S5 changed to take only on
+  the paths that read the binding if Firn is to keep one statement form.
 
 ## 10. Found along the way
 
@@ -858,6 +1162,17 @@ Not made; listed for the implementing branch after the owner's ruling.
   (section 5.2, effect on the ruling). Disposition: that study lives on
   another branch, which this study does not edit; its next revision should
   narrow the sentence to identifiers whose order does not matter.
+- **Firn's memory peak could become one exact statement.** Firn now keeps
+  each connection's last seen peak and takes an exclusive statement only
+  above it; with (V) a one-target `atomic_raise` after each command keeps the
+  exact peak without the cache, at the cost of a load of a shared line
+  (estimate; Q3 arm TP). Disposition: offered to Firn once (V) exists; no
+  change needed before.
+- **Two operations in one statement are refused by (V).** A statement that
+  wants both a sequence number and a byte count from two atomic values must
+  use two statements, or an exclusive `Shared<T>` for one of them. No present
+  witness needs it; reopen when a program shows a statement that must change
+  two values at one point.
 
 ## 11. What is established and what is not
 
@@ -867,7 +1182,10 @@ a valid point of each statement and extends conflict, context, spawn/join and
 real-time order; two takes in one statement or a take before a later lock
 break the order; final-table replay needs only conflict order while P1 needs
 real-time order; per-driver numbering fails the replay; stamps fail real-time
-order and make reads write; the clamp keeps the counter from wrapping.
+order and make reads write; the clamp keeps the counter from wrapping; a
+statement performing one operation on an atomic value has the outcome of
+holding it exclusively, and two operations in one statement, on one value or
+two, cannot be single hardware steps.
 
 Measured elsewhere and cited: one contended line's ceiling and private lines'
 rate in C, and the shortest exclusive statement's rate, on the 14900K (counter
@@ -875,6 +1193,7 @@ study run 38304337014).
 
 Not established: the cost of one take below saturation at Firn's size of
 work (Q1); today's form in the witness's shape (Q2); the implemented take's
-rate and correctness (Q3); the cost on AArch64 and on any embedded target;
-whether the owner accepts the lock fallback on multicore targets without
-hardware add.
+rate and correctness (Q3); the cost of a raise that does not rise (Q1 arm
+S4, Q3 arm TP); the cost on AArch64 and on any embedded target; whether the
+owner accepts the lock form on multicore targets without hardware add; the
+name `Atomic`.
