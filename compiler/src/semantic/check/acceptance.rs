@@ -484,6 +484,7 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Op2
                 | SemanticRule::Op6
                 | SemanticRule::Eff5
+                | SemanticRule::Hold1
                 | SemanticRule::Op11
                 | SemanticRule::Ref2
                 | SemanticRule::Ref4,

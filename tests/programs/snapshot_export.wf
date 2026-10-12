@@ -157,7 +157,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
         let captured = capture(reserve: move reserve, table: &table, journal: &replay_cut);
         match captured {
           Ok(value: job) => {
-            let result = collect(job: move job, factory: &factory, output: &output, publish: True());
+            let publish = True();
+            let result = collect(job: move job, factory: &factory, output: &output, publish: publish);
             return std::process::exit_status(code: result);
           }
           Err(error: problem) => {

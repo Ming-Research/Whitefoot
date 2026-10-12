@@ -1,7 +1,6 @@
 alias Reserve = std::snapshot::Reserve;
 alias Job = std::snapshot::Job;
 alias CreateError = std::snapshot::CreateError;
-
 alias HashMap = std::collections::hash_map::HashMap;
 alias OrderedMap = std::collections::ordered_map::OrderedMap;
 

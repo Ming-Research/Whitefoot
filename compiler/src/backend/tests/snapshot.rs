@@ -49,8 +49,8 @@ fn distinct_value_instances_supply_all_owned_shapes_without_callbacks() {
 }
 
 enum Choice {
-  Small(public code: u8);
-  Large(public left: u64, public right: u64);
+  Small(code: u8);
+  Large(left: u64, right: u64);
 }
 
 struct Values {
