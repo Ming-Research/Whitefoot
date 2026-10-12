@@ -267,11 +267,13 @@ run.
 Criterion 6 was judged by CI on the branch head `84bf61968` (base main at
 `f0df1d258`): every Linux gate group (static checks, compiler unit tests,
 the conformance corpus and the runtime) and the completion jobs passed, so
-every existing conformance case and compiler test kept its verdict there. The
-macOS gate, run by dispatch on the same revision, passed every group except
-one time budget: its conformance-corpus stage took 175.6 s against its 175 s
-budget, where main's runs of that stage take 170 to 173 s. That overrun is a
-time, not a verdict; no case changed its result.
+every existing conformance case and compiler test kept its verdict there, the
+Linux conformance-corpus stage taking 173.0 s of its 175 s budget. A gate run
+dispatched on the same revision to cover both platforms passed every macOS
+group (the macOS corpus stage took 156.9 s of 185 s) and every Linux group
+except the Linux corpus stage's time budget, which it overran at 175.6 s and
+176.2 s on a re-run. Those overruns are times, not verdicts; no case changed
+its result.
 
 Cases added after these runs, with no observed verdict yet:
 
