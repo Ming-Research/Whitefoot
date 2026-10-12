@@ -118,7 +118,7 @@ atomic s = &h until deadline else { reply_busy(); }
 - Today: an atomic statement waits until it takes effect (WAIT-2), a join
   until its context completes (WAIT-3), and a guard reaches no clock, so it
   cannot wait for a time (`witnesses/w2.wf`: `SHARE-2
-  AtomicGuardReadsSelfChanging` from specification v0.135, `SHARE-2
+  AtomicGuardReadsSelfChanging` from specification v0.136, `SHARE-2
   AtomicGuardWrites` before it).
   Only host I/O functions take `deadline: Option<Instant>`.
 - Need: a connection waiting behind a long script answers `BUSY` instead of
