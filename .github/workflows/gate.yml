@@ -14,16 +14,27 @@
 # Only host setup and job scheduling belong here; adding a correctness group
 # or changing its commands requires no second workflow inventory update.
 #
-# Every push runs the groups on Linux. macOS joins where its answer decides a
-# merge: a push to a branch with an open pull request marked ready, the event
-# of marking one ready, main, and a manual run (compiler/verification). The
-# last job then requires every group green on both platforms for the revision.
+# A run checks a revision that may merge: a push to main, a push to a branch
+# with an open pull request, draft or ready, the opening or reopening of a
+# pull request, the event of marking one ready, and a manual run. Any other
+# push, to a branch with no open pull request or to a tag, ends after the
+# first job with every check skipped: nothing merges from it, and a pull
+# request opened for it later starts a run on its head when it opens. The
+# first job decides with .github/gate-scope.sh, which io-hosts.yml shares.
+# Branch names decide nothing: research and code work share `claude/` names,
+# and a research branch with a pull request needs its gate to merge.
+#
+# A checked revision runs the groups on Linux. macOS joins where its answer
+# decides a merge: a push to a branch with an open pull request marked ready,
+# the opening of a ready pull request, the event of marking one ready, main,
+# and a manual run (compiler/verification). The last job then requires every
+# group green on both platforms for the revision.
 name: gate
 
 on:
   push:
   pull_request:
-    types: [ready_for_review]
+    types: [opened, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -32,19 +43,27 @@ permissions:
   pull-requests: read
 
 # Pushes to one branch share a group, so a later push cancels the run of an
-# earlier head. The event of marking a pull request ready has a group of its
-# own, marked before the ref so that no branch name can reach it: it runs
-# both platforms on the head it was raised for, and cancelling the push run of
-# that same head, or being cancelled by it, would only leave a cancelled Gate
-# on both platforms beside the successful one. If a push run
-# asks GitHub before the ready state is visible, it runs Linux only and Gate on
-# both platforms is skipped, not passed, for that run; the ready run, a later
-# push or a manual run qualifies the head.
+# earlier head. The opening or reopening of a pull request joins its branch's
+# group, so a later push cancels its run too once its head is superseded. The
+# push run of the head it was opened on has almost always decided to skip,
+# because that push came before the pull request; in the rare run that checks
+# it, as when a pull request is reopened right after a push, the cancelled
+# run's last job is skipped rather than failed, and the opening's run checks
+# the same head on the same platforms. The event of marking a pull request
+# ready has a group of its own, and so does a manual run, each marked before
+# the ref so that no branch name can reach it: the ready run checks both
+# platforms on the head it was raised for, and cancelling the push run of
+# that same head, or being cancelled by it, would only leave a cancelled run
+# beside the successful one; a manual run was asked for, and a push that skips
+# must not cancel it. If a push run asks GitHub before the
+# ready state is visible, it runs Linux only and Gate on both platforms is
+# skipped, not passed, for that run; the ready run, a later push or a manual
+# run qualifies the head.
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
 concurrency:
-  group: gate-${{ github.event_name == 'pull_request' && 'ready-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
@@ -59,6 +78,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       groups: ${{ steps.select.outputs.groups }}
+      run: ${{ steps.platforms.outputs.run }}
       platforms: ${{ steps.platforms.outputs.platforms }}
       both: ${{ steps.platforms.outputs.both }}
     steps:
@@ -71,44 +91,35 @@ jobs:
           groups=$(make --no-print-directory --silent check-groups)
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
-      # A failed query fails the run rather than quietly dropping macOS.
-      - name: Choose the platforms
+      # Whether this revision is checked, and on which platforms. A failed
+      # query fails the run rather than quietly skipping the gate or dropping
+      # macOS.
+      - name: Choose whether to check and the platforms
         id: platforms
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          case "$GITHUB_EVENT_NAME" in
-            pull_request) both=true reason='pull request marked ready' ;;
-            workflow_dispatch) both=true reason='manual run' ;;
-            push)
-              if [ "$GITHUB_REF" = refs/heads/main ]; then
-                both=true reason='push to main'
-              elif [ "${GITHUB_REF#refs/heads/}" = "$GITHUB_REF" ]; then
-                both=false reason="push to $GITHUB_REF, which is not a branch"
-              else
-                pulls=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-                  --jq '.[] | select(.draft == false) | .number')
-                ready=$(echo $pulls)
-                if [ -n "$ready" ]; then
-                  both=true reason="push to ready pull request $ready"
-                else
-                  both=false reason='push to a branch with no ready pull request'
-                fi
-              fi
-              ;;
-            *) echo "unsupported gate event: $GITHUB_EVENT_NAME" >&2; exit 1 ;;
-          esac
+          scope=$(sh .github/gate-scope.sh)
+          echo "$scope"
+          echo "$scope" >> "$GITHUB_OUTPUT"
+          run=$(echo "$scope" | sed -n 's/^run=//p')
+          both=$(echo "$scope" | sed -n 's/^both=//p')
+          reason=$(echo "$scope" | sed -n 's/^reason=//p')
           if [ "$both" = true ]; then
             platforms='["ubuntu-24.04","macos-15"]'
           else
             platforms='["ubuntu-24.04"]'
           fi
-          echo "both=$both" >> "$GITHUB_OUTPUT"
           echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
-          echo "Platforms: $platforms ($reason)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$run" = true ]; then
+            echo "Platforms: $platforms ($reason)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Gate skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   gate:
     needs: groups
+    if: needs.groups.outputs.run == 'true'
     name: ${{ matrix.stage }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # This bounds a job, never a language verdict. Corpus assertions now share
@@ -298,11 +309,14 @@ jobs:
 
   # The merge precondition, read from the revision's own check runs rather
   # than from this run's matrix: every group green on both platforms. Draft
-  # pushes skip it, so its success marks a revision that may be merged.
+  # pushes and unchecked revisions skip it, so its success marks a revision
+  # that may be merged. A cancelled run skips it too: a later run in its
+  # concurrency group checks the same head or supersedes it, and a verdict
+  # read from cancelled jobs would only stand red beside that run's answer.
   platforms:
     name: Gate on both platforms
     needs: [groups, gate]
-    if: always() && needs.groups.outputs.both == 'true'
+    if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.groups.outputs.both == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

@@ -7,16 +7,31 @@
 # `completion-linux` requires io_uring, and `completion-windows` exercises both
 # IOCP and the native compute pool through the production compiler, reporting
 # exact backend failures instead of marking them expected-to-fail. The bench
-# jobs that record performance live in `io-bench.yml` and run on demand;
-# ordinary pushes retain these platform correctness checks.
+# jobs that record performance live in `io-bench.yml` and run on demand.
+#
+# These checks run on the revisions gate.yml checks, decided the same way by
+# .github/gate-scope.sh: a push to main, a push to a branch with an open pull
+# request, the opening or reopening of a pull request, and a manual run. Any
+# other push ends after the first job with both checks skipped.
 name: io-hosts
 
 on:
   push:
+  pull_request:
+    types: [opened, reopened]
   workflow_dispatch:
 
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+# Pushes to one branch share a group, and the opening or reopening of a pull
+# request joins its branch's group, so a later push cancels the run of an
+# earlier head; a manual run has a group of its own, marked before the ref,
+# so that a push that skips never cancels it.
 concurrency:
-  group: io-hosts-${{ github.ref }}
+  group: io-hosts-${{ github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -25,12 +40,38 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  scope:
+    name: Choose whether to check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          sparse-checkout: .github
+      # A failed query fails the run rather than quietly skipping the checks.
+      - name: Choose whether to check
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scope=$(sh .github/gate-scope.sh)
+          echo "$scope"
+          echo "$scope" >> "$GITHUB_OUTPUT"
+          echo "$scope" | sed -n 's/^reason=/io-hosts: /p' >> "$GITHUB_STEP_SUMMARY"
+
   completion-linux:
     name: completion-linux (ubuntu-24.04)
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # `completion-test` writes its harness under this root, and the step below
       # runs that harness by path. Naming the root here keeps the two agreed; it
@@ -117,6 +158,8 @@ jobs:
 
   completion-windows:
     name: completion-windows (windows-latest)
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     defaults:
@@ -124,6 +167,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Record the host
         run: |
