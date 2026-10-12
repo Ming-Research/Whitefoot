@@ -577,8 +577,8 @@ impl Reasoning<'_, '_, '_> {
                 },
                 ..
             }
-        ) && closed.holds_opaque(goal, GoalSign::Negative)
-            && !closed.holds_opaque(goal, GoalSign::Positive)
+        ) && closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals)
+            && !closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals)
         {
             return ProofResult {
                 disposition: ProofDisposition::Refuted,
@@ -593,7 +593,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive);
+        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals);
         let positive_projection = self
             .vocabulary
             .goals
@@ -625,7 +625,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative);
+        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals);
         let negative_projection = self
             .vocabulary
             .goals
@@ -1018,6 +1018,7 @@ impl Reasoning<'_, '_, '_> {
                     root,
                     projections,
                     ty,
+                    ..
                 }) if context.origin_view == OriginView::Prepared => context
                     .facts
                     .goal_origins
@@ -1028,7 +1029,7 @@ impl Reasoning<'_, '_, '_> {
                         for projection in projections {
                             let result = self
                                 .input
-                                .goal_projection_type(definition.ty(), *projection)?;
+                                .goal_expression_projection_type(&definition, *projection)?;
                             definition = definition.with_projection(*projection, result)?;
                         }
                         if definition.ty() != *ty {
@@ -1171,15 +1172,19 @@ impl Reasoning<'_, '_, '_> {
             };
         }
         if let Some(canonical) = canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::FiniteGoal),
-                    derivation: closed.opaque_proof(canonical, GoalSign::Positive),
+                    derivation: closed.opaque_proof(
+                        canonical,
+                        GoalSign::Positive,
+                        &self.vocabulary.goals,
+                    ),
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
@@ -2055,9 +2060,9 @@ impl Reasoning<'_, '_, '_> {
         }
 
         if let Some(canonical) = goal.canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 let parent = closed
-                    .opaque_proof(canonical, GoalSign::Positive)
+                    .opaque_proof(canonical, GoalSign::Positive, &self.vocabulary.goals)
                     .expect("an opaque goal fact retains its proof");
                 let derivation =
                     self.vocabulary
@@ -2073,7 +2078,7 @@ impl Reasoning<'_, '_, '_> {
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),

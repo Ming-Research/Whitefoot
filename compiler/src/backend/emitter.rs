@@ -2,14 +2,15 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes aggregate values
-//! while leaving unoccupied window storage alone, and keeps a defensive abort
-//! edge for enum discriminants.
+//! check, emits only checked storage alias promises and no overflow promises,
+//! initializes aggregate values while leaving unoccupied window storage alone,
+//! and keeps an unreachable edge for enum discriminants.
 
 mod array;
 mod boxes;
 mod buffer;
 mod cleanup;
+mod constants;
 mod contexts;
 mod conversion;
 pub(super) mod dispatch;
@@ -30,6 +31,7 @@ mod runs;
 mod segments;
 mod shared;
 mod slice;
+mod storage_alias;
 mod union_enums;
 mod value_equality;
 
@@ -265,6 +267,7 @@ fn emit_module(
 ) -> Result<LlvmModule, BackendFailure> {
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let mut intrinsics = BTreeSet::new();
+    let owner_scopes = storage_alias::OwnerScopePlan::new(program);
     let mut thunks = ParallelThunks::default();
     let refusal_clones = if program.sequential_compute_refusal() {
         sequential_clone_set(program)
@@ -301,6 +304,7 @@ fn emit_module(
             function,
             ModuleState {
                 intrinsics: &mut intrinsics,
+                owner_scopes: &owner_scopes,
                 parallel: &mut thunks,
                 sequential_clones: None,
                 refusal_clones: &refusal_clones,
@@ -340,6 +344,7 @@ fn emit_module(
                 function,
                 ModuleState {
                     intrinsics: &mut intrinsics,
+                    owner_scopes: &owner_scopes,
                     parallel: &mut thunks,
                     sequential_clones: None,
                     refusal_clones: &refusal_clones,
@@ -375,6 +380,7 @@ fn emit_module(
                     function,
                     ModuleState {
                         intrinsics: &mut intrinsics,
+                        owner_scopes: &owner_scopes,
                         parallel: &mut thunks,
                         sequential_clones: Some(&clones),
                         refusal_clones: &refusal_clones,
@@ -414,9 +420,11 @@ fn emit_module(
     text.header("source_filename = \"whitefoot\"".to_owned());
     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
     text.header(format!("target triple = \"{}\"", target.triple()));
+    storage_alias::emit_definitions(&mut text);
+    owner_scopes.emit_definitions(&mut text);
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
-    emit_global_constants(&mut text, program)?;
+    constants::emit_global_constants(&mut text, program)?;
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
     // written once, before a defined abort. The bytes carry no `rule_id`, no
@@ -492,6 +500,11 @@ fn emit_module(
     text.append(drop_helpers);
     for intrinsic in intrinsics {
         let (name, result, parameters) = match intrinsic {
+            IntrinsicDeclaration::OwnerScope => (
+                "llvm.experimental.noalias.scope.decl".to_owned(),
+                "void".to_owned(),
+                vec!["metadata".to_owned()],
+            ),
             IntrinsicDeclaration::Assume => (
                 "llvm.assume".to_owned(),
                 "void".to_owned(),
@@ -907,124 +920,6 @@ fn aliasing_admitted_row(name: &str) -> bool {
     name == "swap" || name.starts_with("swap$")
 }
 
-fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(), BackendFailure> {
-    let mut none_types = BTreeSet::new();
-    for nominal in program.nominals() {
-        if let IrNominalKind::Shared {
-            shape: IrShared::Map {
-                entry: IrType::Nominal(option),
-            },
-            ..
-        } = nominal.kind()
-            && none_types.insert(option.index())
-        {
-            let option = program.nominal(*option).ok_or(BackendFailure::InvalidIr)?;
-            let mut references = References::default();
-            let ty = llvm_type_with_references(
-                program,
-                IrType::Nominal(option.id()),
-                &mut references.types,
-            )?;
-            output.global(
-                format!(".wf_table_none.{}", option.link_name()),
-                "unnamed_addr constant",
-                ty,
-                "zeroinitializer".to_owned(),
-                None,
-                references,
-            );
-        }
-    }
-    places::emit_measure_constants(output, program);
-    for constant in program.constants() {
-        output.text(format!("; const {}\n", constant.name()));
-        let mut references = References::default();
-        let ty = llvm_type_with_references(program, constant.ty(), &mut references.types)?;
-        let value =
-            global_constant_value(program, constant.value(), constant.ty(), &mut references)?;
-        output.global(
-            format!(".wf_const.{}", constant.link_name()),
-            "unnamed_addr constant",
-            ty,
-            value,
-            None,
-            references,
-        );
-    }
-    if !program.constants().is_empty() {
-        output.text("\n");
-    }
-    Ok(())
-}
-
-/// Renders one rodata constant value of one exact type: a scalar operand, a
-/// complete array, or a complete struct aggregate with each field rendered
-/// recursively [CONST-2 candidate].
-fn global_constant_value(
-    program: &IrProgram,
-    value: &IrGlobalValue,
-    ty: IrType,
-    references: &mut References,
-) -> Result<String, BackendFailure> {
-    match (value, ty) {
-        (IrGlobalValue::Scalar(value), ty) => constant_operand(*value, ty),
-        (IrGlobalValue::Array(elements), IrType::Array { element, length }) => {
-            if u64::try_from(elements.len()).map_err(|_| BackendFailure::CounterOverflow)? != length
-            {
-                return Err(BackendFailure::InvalidIr);
-            }
-            if elements.is_empty() {
-                return Ok("zeroinitializer".to_owned());
-            }
-            let mut text = String::from("[");
-            let element_type = program.element(element).ok_or(BackendFailure::InvalidIr)?;
-            let llvm_element_type =
-                llvm_type_with_references(program, element_type, &mut references.types)?;
-            for (index, value) in elements.iter().enumerate() {
-                if index != 0 {
-                    text.push_str(", ");
-                }
-                write!(
-                    text,
-                    "{llvm_element_type} {}",
-                    global_constant_value(program, value, element_type, references)?
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            text.push(']');
-            Ok(text)
-        }
-        (IrGlobalValue::Struct(fields), IrType::Nominal(id)) => {
-            let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
-            let IrNominalKind::Struct { fields: declared } = nominal.kind() else {
-                return Err(BackendFailure::InvalidIr);
-            };
-            if fields.len() != declared.len() {
-                return Err(BackendFailure::InvalidIr);
-            }
-            if fields.is_empty() {
-                return Ok("zeroinitializer".to_owned());
-            }
-            let mut text = String::from("{ ");
-            for (index, (value, field)) in fields.iter().zip(declared).enumerate() {
-                if index != 0 {
-                    text.push_str(", ");
-                }
-                write!(
-                    text,
-                    "{} {}",
-                    llvm_type_with_references(program, field.ty(), &mut references.types)?,
-                    global_constant_value(program, value, field.ty(), references)?
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            text.push_str(" }");
-            Ok(text)
-        }
-        _ => Err(BackendFailure::InvalidIr),
-    }
-}
-
 fn emit_nominal_declarations(
     module: &mut Module,
     program: &IrProgram,
@@ -1063,7 +958,7 @@ fn emit_nominal_declarations(
                 }
             }
             IrNominalKind::Enum { variants } => {
-                output.push_str("i32");
+                output.push_str(&enum_tag_type(nominal)?);
                 for variant in variants {
                     for field in variant.fields() {
                         output.push_str(", ");
@@ -1096,6 +991,7 @@ struct Incoming {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum IntrinsicDeclaration {
+    OwnerScope,
     Assume,
     MemoryCopy,
     MemoryMove,
@@ -1579,7 +1475,9 @@ struct FunctionEmitter<'program, 'state> {
     /// (compiler/backend-facts).
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
+    owner_alias: storage_alias::OwnerAliases,
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
+    owner_scopes: &'state storage_alias::OwnerScopePlan,
     incoming: Vec<Vec<Incoming>>,
     output: FunctionBody,
     /// Stack slot declarations hoisted to the top of the function's entry block.
@@ -1671,6 +1569,7 @@ struct FunctionEmitter<'program, 'state> {
 /// think about.
 struct ModuleState<'state> {
     intrinsics: &'state mut BTreeSet<IntrinsicDeclaration>,
+    owner_scopes: &'state storage_alias::OwnerScopePlan,
     parallel: &'state mut ParallelThunks,
     /// `None` emits the ordinary lowering; `Some` emits the sequential clone.
     sequential_clones: Option<&'state HashSet<u32>>,
@@ -1691,6 +1590,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<Self, BackendFailure> {
         let ModuleState {
             intrinsics,
+            owner_scopes,
             parallel,
             sequential_clones,
             refusal_clones,
@@ -1746,6 +1646,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             target,
             window_address_facts,
             intrinsics,
+            owner_scopes,
+            owner_alias: storage_alias::OwnerAliases::default(),
             incoming: Vec::new(),
             output: FunctionBody::default(),
             entry_prelude: String::new(),
@@ -2065,6 +1967,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        if !declaration && !waiting && self.dispatch.is_none() {
+            self.owner_alias = storage_alias::OwnerAliases::build(
+                self.owner_scopes,
+                self.function,
+                &self.incoming,
+            );
+            for scope in self.owner_alias.scopes() {
+                self.intrinsics.insert(IntrinsicDeclaration::OwnerScope);
+                self.output.symbol("llvm.experimental.noalias.scope.decl");
+                writeln!(
+                    self.entry_prelude,
+                    "  call void @llvm.experimental.noalias.scope.decl(metadata !{scope})"
+                )?;
+            }
+        }
         if !declaration {
             self.select_incoming_places(&public, &abi, waiting)?;
         }
@@ -3150,14 +3067,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 };
                 let tag_only = data.is_tag_only_enum();
+                let tag_ty = enum_tag_type(data)?;
                 let enum_llvm = self
                     .output
                     .type_name(self.program, IrType::Nominal(nominal))?;
-                let tag_ty = if tag_only {
-                    enum_llvm.clone()
-                } else {
-                    "i32".to_owned()
-                };
                 if !addressed {
                     if tag_only {
                         return Ok((self.value_name(scrutinee), tag_ty));
@@ -3170,7 +3083,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         let field =
                             self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
                         let temporary = self.next_temporary()?;
-                        writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                        writeln!(self.output, "  %{temporary} = load {tag_ty}, ptr {field}")
                             .map_err(|_| BackendFailure::TextEmission)?;
                         return Ok((format!("%{temporary}"), tag_ty));
                     }
@@ -3191,7 +3104,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 } else {
                     let field =
                         self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
-                    writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                    writeln!(self.output, "  %{temporary} = load {tag_ty}, ptr {field}")
                         .map_err(|_| BackendFailure::TextEmission)?;
                 }
                 Ok((format!("%{temporary}"), tag_ty))
@@ -3528,16 +3441,27 @@ pub(super) fn llvm_type_with_references(
                 return Ok("{ i128, i128 }".to_owned());
             }
             if nominal.is_tag_only_enum() {
-                let IrNominalKind::Enum { variants } = nominal.kind() else {
-                    return Err(BackendFailure::InvalidIr);
-                };
-                Ok(if variants.len() <= 2 { "i1" } else { "i32" }.to_owned())
+                enum_tag_type(nominal)
             } else {
                 references.insert(format!("wf.t.{}", nominal.link_name()));
                 Ok(nominal_symbol(nominal))
             }
         }
     }
+}
+
+/// Nominal wrapper around target layout's single physical-width selector.
+fn enum_tag_width(nominal: &IrNominal) -> Result<u8, BackendFailure> {
+    let IrNominalKind::Enum { variants } = nominal.kind() else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    let count = u64::try_from(variants.len()).map_err(|_| BackendFailure::CounterOverflow)?;
+    crate::target::enum_tag_width(count, nominal.is_tag_only_enum())
+        .map_err(BackendFailure::TargetLayout)
+}
+
+fn enum_tag_type(nominal: &IrNominal) -> Result<String, BackendFailure> {
+    Ok(format!("i{}", enum_tag_width(nominal)?))
 }
 
 fn is_tag_only_type(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {

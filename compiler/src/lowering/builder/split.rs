@@ -1846,6 +1846,8 @@ mod tests {
             name: "capture_need".into(),
             parameters: parameters(0..9),
             readonly_reference_parameters: vec![value(3), value(6)],
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
             box_keeping_reference_parameters: Vec::new(),
             source_signature: None,
             source_calls: Vec::new(),

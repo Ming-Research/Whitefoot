@@ -89,10 +89,13 @@ The five storage shapes have different invariants [TYPE-9, WIN-1]:
   built, stored as one contiguous run of elements. It has only the `Box`
   content form.
 
-`Paged<T>` is a prefix window whose elements stay in their pages when capacity
-grows; its home is `Box<Paged<T>>`. Choose `Slots<T>` when consumers need one
-contiguous `&[T]`, and `Paged<T>` when appending and growing must copy no
-earlier payload. Both use ordinary logical subscripts, length proofs and
+`Paged<T>` is a prefix window whose home is `Box<Paged<T>>`. Growth may
+replace its small first page, copying at most B - 1 initialized elements in
+total; once that page has space for B elements, later growth keeps every existing
+element
+address [OP-10, OP-13]. Choose `Slots<T>` when consumers need one contiguous
+`&[T]`, and `Paged<T>` for bounded initial copying followed by growth that
+appends pages. Both use ordinary logical subscripts, length proofs and
 element separation [OP-4, OWN-7]. A paged access reaches an element through
 the page directory; this is a representation cost, not a different index
 proof.

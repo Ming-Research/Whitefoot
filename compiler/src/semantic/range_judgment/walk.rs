@@ -18,6 +18,7 @@ use crate::NodePath;
 
 mod aggregate;
 mod ordinary;
+mod operations;
 #[cfg(test)]
 mod tests;
 mod type_invariants;
@@ -1035,9 +1036,9 @@ impl<'program> Walker<'program> {
         let mut live = Vec::new();
         match enum_type {
             CheckedEnumType::Bool => {
-                let cond = match value {
-                    Value::Bool(cond, _) => cond,
-                    _ => Cond::Unknown,
+                let (cond, tag) = match value {
+                    Value::Bool(cond, tag) => (cond, Some(tag)),
+                    _ => (Cond::Unknown, None),
                 };
                 for arm in arms {
                     let truth = arm.tag == 1;
@@ -1047,6 +1048,15 @@ impl<'program> Walker<'program> {
                     }
                     let mut forked = state.clone();
                     cond.literals(truth, &mut forked.conds);
+                    // [RANGE-2, PRE-1] an if selects the Bool's current
+                    // value image: True is declaration-order tag 0, False 1.
+                    if let Some(tag) = &tag {
+                        forked.conds.push(Literal::new(
+                            tag.clone(),
+                            Relation::Equal,
+                            Linear::constant(i128::from(!truth)),
+                        ));
+                    }
                     if let Some(after) = self.block(forked, &arm.body) {
                         live.push(after);
                     }
@@ -1962,10 +1972,18 @@ impl<'program> Walker<'program> {
             CheckedExpression::IntegerOperation {
                 carrier,
                 operation,
+                operand_type,
                 arguments,
                 result,
                 ..
-            } => self.integer_operation(state, carrier, *operation, arguments, *result),
+            } => self.integer_operation(
+                state,
+                carrier,
+                *operation,
+                *operand_type,
+                arguments,
+                *result,
+            ),
             CheckedExpression::NumericConversion {
                 carrier,
                 mode,
@@ -2030,6 +2048,22 @@ impl<'program> Walker<'program> {
                     let _ = self.eval(state, argument);
                 }
                 self.opaque_of(expression.ty())
+            }
+            CheckedExpression::Reinterpret {
+                carrier,
+                source: CheckedNumericType::Integer(source),
+                destination: CheckedNumericType::Integer(destination),
+                value,
+            } => {
+                let operand = self.int(state, value);
+                self.operation_value(
+                    state,
+                    carrier,
+                    super::super::entailment::operation_facts::Row::Reinterpret,
+                    *source,
+                    *destination,
+                    &[operand],
+                )
             }
             CheckedExpression::Reinterpret { value, .. } => {
                 let _ = self.eval(state, value);
@@ -2535,102 +2569,6 @@ impl<'program> Walker<'program> {
         }
     }
 
-    fn integer_operation(
-        &mut self,
-        state: &mut State,
-        carrier: &NodePath,
-        operation: CheckedIntegerOperation,
-        arguments: &[CheckedExpression],
-        result: CheckedType,
-    ) -> Value {
-        let mut values = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            values.push(self.int(state, argument));
-        }
-        let mut comparison = |relation| {
-            let condition = match values.as_slice() {
-                [left, right] => Cond::Literal(literal(left.clone(), relation, right.clone())),
-                _ => Cond::Unknown,
-            };
-            self.world.boolean(condition)
-        };
-        match operation {
-            CheckedIntegerOperation::Equal => comparison(Relation::Equal),
-            CheckedIntegerOperation::NotEqual => comparison(Relation::NotEqual),
-            CheckedIntegerOperation::Less => comparison(Relation::Less),
-            CheckedIntegerOperation::LessEqual => comparison(Relation::LessEqual),
-            CheckedIntegerOperation::Greater => comparison(Relation::Greater),
-            CheckedIntegerOperation::GreaterEqual => comparison(Relation::GreaterEqual),
-            CheckedIntegerOperation::AddExact
-            | CheckedIntegerOperation::SubtractExact
-            | CheckedIntegerOperation::MultiplyExact => {
-                // The outer option says the operation has a linear form;
-                // failure inside that form is arithmetic overflow.
-                let formed = match (operation, values.as_slice()) {
-                    (CheckedIntegerOperation::AddExact, [left, right]) => Some(left.plus(right)),
-                    (CheckedIntegerOperation::SubtractExact, [left, right]) => {
-                        Some(left.minus(right))
-                    }
-                    (CheckedIntegerOperation::MultiplyExact, [left, right])
-                        if left.is_constant() =>
-                    {
-                        Some(right.scaled(left.constant))
-                    }
-                    (CheckedIntegerOperation::MultiplyExact, [left, right])
-                        if right.is_constant() =>
-                    {
-                        Some(left.scaled(right.constant))
-                    }
-                    _ => None,
-                };
-                let arithmetic_limit = matches!(formed, Some(None));
-                let exact = formed.flatten();
-                let goal = exact
-                    .as_ref()
-                    .map_or(Value::Unknown, |value| Value::Int(value.clone()));
-                if arithmetic_limit {
-                    self.ordinary_arithmetic_limit(
-                        carrier,
-                        &ObligationSubject::Source {
-                            family: ObligationFamily::IntegerDomain,
-                            conjunct: 0,
-                        },
-                    );
-                } else {
-                    self.ordinary_domain(
-                        state,
-                        carrier,
-                        ObligationFamily::IntegerDomain,
-                        &goal,
-                        result,
-                    );
-                }
-                exact.map_or_else(|| self.opaque_of(result), Value::Int)
-            }
-            CheckedIntegerOperation::DivideExact
-            | CheckedIntegerOperation::RemainderExact
-            | CheckedIntegerOperation::NegateExact
-            | CheckedIntegerOperation::AbsoluteExact
-            | CheckedIntegerOperation::ShiftLeftExact
-            | CheckedIntegerOperation::ShiftRightExact => {
-                let goal = integer_type(result)
-                    .and_then(|ty| ordinary::integer_domain(operation, ty, &values));
-                self.ordinary_counterexamples(
-                    state,
-                    carrier,
-                    &ObligationSubject::Source {
-                        family: ObligationFamily::IntegerDomain,
-                        conjunct: 0,
-                    },
-                    goal,
-                    Some(&[]),
-                );
-                self.opaque_of(result)
-            }
-            _ => self.opaque_of(result),
-        }
-    }
-
     // ----- calls -----
 
     #[allow(clippy::too_many_arguments)]
@@ -2695,10 +2633,15 @@ impl<'program> Walker<'program> {
                 self.require(state, clause, &frame, call, "a call");
             }
         }
-        let placed_window = formal.is_none()
+        let window_result = (formal.is_none()
             && self.prelude.contains(&callee.declaration)
-            && matches!(callee.name.as_str(), "place_back" | "take_back")
-            && self.place_window_call(state, call, &callee.name, &values);
+            && matches!(callee.name.as_str(), "place_back" | "take_back"))
+        .then(|| self.place_window_call(state, call, &callee.name, &values, result))
+        .flatten();
+        let relocated_window = formal.is_none()
+            && self.prelude.contains(&callee.declaration)
+            && matches!(callee.name.as_str(), "grow" | "grow_paged")
+            && self.relocate_window_call(state, call, &values);
         // Reads and writes through reference arguments [EFF-5].
         let (writes, reads): (Vec<crate::DeclarationId>, Vec<crate::DeclarationId>) = match formal {
             Some(effects) => (
@@ -2719,7 +2662,9 @@ impl<'program> Walker<'program> {
             ),
         };
         for (position, parameter) in callee.parameters.iter().enumerate() {
-            if !parameter.mode.is_reference() || (placed_window && position == 0) {
+            if !parameter.mode.is_reference()
+                || ((window_result.is_some() || relocated_window) && position == 0)
+            {
                 continue;
             }
             let Some(Value::Ref(view)) = values.get(position).cloned() else {
@@ -2758,12 +2703,12 @@ impl<'program> Walker<'program> {
                 View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
             }
         }
-        let value = match result {
+        let value = window_result.unwrap_or_else(|| match result {
             CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),
             CheckedType::Bool => self.world.boolean(Cond::Unknown),
             CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
             _ => Value::Owned(Location::root(Origin::CallResult(self.world.new_origin()))),
-        };
+        });
         self.assume_postconditions(state, callee, &values, &value);
         value
     }
@@ -2989,6 +2934,7 @@ impl<'program> Walker<'program> {
         if let Some(outer) = &mut self.world.log {
             outer.containers.extend(total.containers.iter().copied());
             outer.descriptors.extend(total.descriptors.iter().copied());
+            outer.capacities.extend(total.capacities.iter().copied());
             for (container, paths) in &total.projections {
                 outer
                     .projections
@@ -3030,6 +2976,11 @@ impl<'program> Walker<'program> {
         for container in log.descriptors {
             if existed(&self.world.containers[container as usize].location) {
                 deciding |= total.descriptors.insert(container);
+            }
+        }
+        for container in log.capacities {
+            if existed(&self.world.containers[container as usize].location) {
+                deciding |= total.capacities.insert(container);
             }
         }
         for (container, paths) in log.projections {
@@ -3080,6 +3031,11 @@ impl<'program> Walker<'program> {
             header
                 .generations
                 .insert(*container, self.world.new_generation());
+        }
+        for container in &modified.capacities {
+            if !modified.containers.contains(container) && !modified.descriptors.contains(container) {
+                header.relocate_container(&mut self.world, *container);
+            }
         }
         for (container, projections) in &modified.projections {
             if modified.containers.contains(container) {

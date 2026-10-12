@@ -1,0 +1,14 @@
+struct Cell {
+  len: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit reads(cells) {
+  if cells^[0_u64].len +defined 254_u8 {
+    let value = cells^[0_u64].len + 254_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

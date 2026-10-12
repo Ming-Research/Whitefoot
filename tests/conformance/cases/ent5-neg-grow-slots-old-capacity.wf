@@ -1,0 +1,18 @@
+fn require_one(capacity: u64) -> result: unit pure contract {
+  requires capacity == 1_u64;
+} {
+  return unit;
+}
+
+fn reserve(cell: &Box<Slots<u64>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires cell^.inner.cap == 1_u64;
+  requires capacity >= cell^.inner.cap;
+} {
+  grow(cell: cell, capacity: capacity);
+  require_one(capacity: cell^.inner.cap);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

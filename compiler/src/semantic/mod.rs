@@ -946,6 +946,11 @@ pub enum SemanticIssueKind {
         /// Exact mechanical repair selected by TYPE-7.
         mechanical_fix: &'static str,
     },
+    /// [TYPE-7] a range referent was used without an admitted projection.
+    RangeReferentUse {
+        /// [DIAG-1] alias the reference, borrow an element or borrow a subrange.
+        mechanical_fix: &'static str,
+    },
     /// [OWN-11] a loop body left a binding declared outside it in a
     /// different live-or-dead status than the entering edge did, so one
     /// iteration would start in a state the previous one did not leave.
@@ -1514,6 +1519,9 @@ pub enum UnsupportedSemanticFeature {
     /// A selected ordinary goal whose site the range walk cannot represent or
     /// reach. Goals outside RANGE-2's range-term shape keep their ordinary verdict.
     RangeOrdinaryGoal,
+    /// A live operation in the range walk has no operand intervals from the
+    /// preceding ordinary judgment [RANGE-2, ENT-3.S7].
+    RangeOperationIntervals,
     /// A range judgment that left a fact unproved after a loop header forgot
     /// everything, because the loop nest was deeper, or the header's
     /// written set took more walks to settle, than the checker follows;

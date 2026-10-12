@@ -1408,7 +1408,9 @@ fn below(value: u64) -> result: u64 pure contract {
 
         assert!(matches!(
             &instantiated_call_goal_arguments(calls[0])[0],
-            GoalExpression::Datum(GoalDatum::Place { root, projections, ty })
+            GoalExpression::Datum(GoalDatum::Place {
+                root, projections, ty, ..
+            })
                 if *root == *local && projections.is_empty()
                     && *ty == CheckedType::Integer(IntegerType::U64)
         ));

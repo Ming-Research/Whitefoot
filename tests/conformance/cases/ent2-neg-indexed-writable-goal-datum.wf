@@ -1,0 +1,16 @@
+struct Cell {
+  len: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit reads(cells) {
+  let above = cells^[0_u64].len > 1_u8;
+  if bnot(above) {
+    let ref = &cells^[0_u64];
+    let len = ref^.len + 254_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
