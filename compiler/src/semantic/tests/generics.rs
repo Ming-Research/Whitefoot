@@ -637,6 +637,50 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [FN-3] an interface application in an argument list forwards, in order,
+/// the binders one in-scope introduction declares, and anything else is
+/// refused at the application with its repair. A primitive type argument
+/// writes no name, so its binder lookup stopped with an internal failure,
+/// as the literal of `fn3-neg-literal-in-interface-application` did; a
+/// const generic that no introduction declares was cited as FN-5's choice
+/// between in-scope groups, though no group was in scope.
+#[test]
+fn an_interface_application_of_other_than_declared_binders_is_refused_under_fn3() {
+    let primitive = br#"interface Wrap<T> {
+}
+
+fn inner<interface Wrap<T>>() -> r: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = inner::<Wrap<u64>>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let undeclared_binder = br#"interface Sized<const n: u8> {
+}
+
+fn inner<interface Sized<j>>() -> r: u64 pure {
+  return 0_u64;
+}
+
+fn outer<const m: u8>() -> r: u64 pure {
+  return inner::<Sized<m>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = outer::<7>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for source in [primitive.as_slice(), undeclared_binder.as_slice()] {
+        assert_rule_kind(source, SemanticRule::Fn3, |kind| {
+            matches!(kind, SemanticIssueKind::UnforwardedGroupApplication { .. })
+        });
+    }
+}
+
 /// Same-position forwarding preserves the instance key on a recursive edge.
 #[test]
 fn a_generic_call_cycle_at_the_callers_own_parameters_monomorphizes() {

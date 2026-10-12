@@ -730,6 +730,14 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// [FN-3] an interface application in an argument list whose written
+    /// arguments are not, in order, the binders one in-scope introduction of
+    /// that interface declares: a literal, a primitive or other concrete
+    /// type, or a const generic that no such introduction declares.
+    UnforwardedGroupApplication {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// A constant was selected as an assignment target.
     ImmutableSetTarget,
     /// SET-1's closed writability relation did not admit the target root.

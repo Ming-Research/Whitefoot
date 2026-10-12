@@ -846,6 +846,7 @@ impl Report for SemanticIssueKind {
             TypeMismatch { expected, found };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
+            UnforwardedGroupApplication { mechanical_fix };
             ImmutableSetTarget;
             InvalidSetTarget { root_class, required_classes };
             ImmutableWrittenArgument { binding, mechanical_fix };
