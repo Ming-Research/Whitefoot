@@ -1786,6 +1786,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     int cwd;
     uint64_t capacity;
     memset(inputs, 0, sizeof(*inputs));
+    inputs->drivers = wf__context_driver_count();
     if (wf__stop_initialize() != 0) return 0;
 #if defined(_WIN32)
     /* The build launcher has an ordinary narrow-argv main. Recover Windows'

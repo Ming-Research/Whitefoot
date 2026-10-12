@@ -28,6 +28,7 @@ public opaque nocopy struct MemoryMeter {
 
 public struct Inputs {
   public args: Args;
+  public drivers: u64;
   public cwd: Directory;
   public stdout: OutputStream;
   public stderr: OutputStream;

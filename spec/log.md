@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.134: the runtime's driver count in Inputs
+
+Rules: changed WAIT-2, PRE-2
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#365 (head commit 48abf5b2f) changing the specification and the design tree so that a program reads the runtime's actual driver count from Inputs.drivers?" (translated), whose background listed the WAIT-2 and PRE-2 changes, the three design-tree nodes with their proposed decisions, and that existing destructurings of Inputs bind the new field with their conformance verdicts unchanged. The direction was the owner's choice of A on card gran-driver-count-shape on 2026-10-11.
+
+Summary: Firn's script-engine pool (board item firn-req-driver-count) needs the number of drivers the runtime uses, and a program could not read it. PRE-2 adds `public drivers: u64` after `args` in `std::process::Inputs`: the count actually used after the runtime's rules (`WF_DRIVERS`, else the available CPU count, clamped to the runtime bound; one on a host without the kernel completion ring; one on non-Linux targets), fixed before the entry runs and for the whole execution, and at least one. WAIT-2 lists the invocation's driver count among the execution inputs. Selection ground: the field reports the count in use rather than the requested configuration, and is an ordinary invocation field rather than a new function; the runtime selects it before entry without starting a thread, and lazy driver startup must establish exactly that count, stopping with a diagnostic when a selected secondary driver cannot be set up instead of running with fewer drivers.
+
 ## 2026-10-12 v0.133: a KeySet's retained heap bytes
 
 Rules: changed GRAM-5, FN-9, WAIT-2, PRE-1, ENT-2, MSR-1, MSR-2, MSR-3, ENT-5, ENT-6, RANGE-1, SHARE-1
