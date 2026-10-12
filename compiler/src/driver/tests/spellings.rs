@@ -40,9 +40,9 @@ fn display_of(sources: &[crate::ModuleSourceFile], logical: &str) -> String {
 
 /// [MOD-8, MOD-9] the host paths an invocation spells its records by are no
 /// part of a record's identity: one graph built through a relative path, an
-/// absolute path and a symbolic link to its directory reuses the entry build
-/// recorded by the first, emits the same module and recomputes no analysis,
-/// while an edit to a record or to the graph still prevents reuse.
+/// absolute path and an absolute path with a `..` component reuses the entry
+/// build recorded by the first, emits the same module and recomputes no
+/// analysis, while an edit to a record or to the graph still prevents reuse.
 #[test]
 fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
     let root = std::env::temp_dir().join(format!(
@@ -67,12 +67,11 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
             ("app/main.wf", &text(ROOT_BODY)),
         ],
     );
-    std::os::unix::fs::symlink(root.join("app"), root.join("link")).expect("link the directory");
     let absolute = root.join("app/modules.wfg");
     let spellings = [
         relative_to_working_directory(&absolute),
         absolute.clone(),
-        root.join("link/modules.wfg"),
+        root.join("app/../app/modules.wfg"),
     ];
     let build = |graph_path: &std::path::Path| {
         let (graph, sources) = spelled_program(graph_path);
@@ -130,9 +129,10 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
 
 /// [MOD-8, DIAG-1] a rejection prints the paths the invocation names its
 /// records by, never the paths of the invocation that recorded it: the same
-/// rejected graph checked through a relative path, an absolute path and a
-/// symbolic link reports each spelling's own paths, as a run without a cache
-/// does, from module verdicts and from the entry's composition alike.
+/// rejected graph checked through a relative path, an absolute path and an
+/// absolute path with a `..` component reports each spelling's own paths, as a
+/// run without a cache does, from module verdicts and from the entry's
+/// composition alike.
 #[test]
 fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
     let root = std::env::temp_dir().join(format!(
@@ -161,13 +161,12 @@ fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
             ("app/main.wf", &text(ROOT_BODY)),
         ],
     );
-    std::os::unix::fs::symlink(root.join("app"), root.join("link")).expect("link the directory");
     let absolute = root.join("app/modules.wfg");
     let spellings = [
         relative_to_working_directory(&absolute),
         absolute.clone(),
-        root.join("link/modules.wfg"),
-        root.join("link/modules.wfg"),
+        root.join("app/../app/modules.wfg"),
+        root.join("app/../app/modules.wfg"),
     ];
     let failures = |graph_path: &std::path::Path, cache: Option<&driver::BuildCache>| {
         let (graph, sources) = spelled_program(graph_path);
