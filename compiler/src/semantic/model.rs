@@ -3277,6 +3277,34 @@ pub(crate) enum CheckedCallSeparationPositions {
     RangeWithinLength(super::places::CapturedRange),
 }
 
+impl CheckedCallSeparationPositions {
+    /// Whether the fixed [ENT-6] families can name every value this
+    /// candidate's proof reads.
+    ///
+    /// The unknown marker stands for an offset no captured value names, such
+    /// as an atomic binder's own key subscript or an index actual read from
+    /// an element: it has no term, and no index or range image is ever filed
+    /// under it, so no fact separates it from anything. A range's endpoint
+    /// images are found through both endpoints, so a range with either
+    /// endpoint the marker is unnamed. A candidate reading an unnamed value
+    /// is never proved, and a pair with no other candidate is one no named
+    /// position separates [EFF-5, OWN-7].
+    pub(crate) fn names_its_values(self) -> bool {
+        let named = |value: super::places::CapturedValue| {
+            value != super::places::CapturedValue::unknown()
+        };
+        let named_range =
+            |range: super::places::CapturedRange| named(range.start) && named(range.end);
+        match self {
+            Self::Indices(left, right) => named(left) && named(right),
+            Self::Ranges(left, right) => named_range(left) && named_range(right),
+            Self::Live(index) => named(index),
+            Self::IndexOutsideRange(index, range) => named(index) && named_range(range),
+            Self::RangeWithinLength(range) => named_range(range),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CheckedBodyDisposition {
     #[default]
