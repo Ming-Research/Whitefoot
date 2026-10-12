@@ -1,6 +1,7 @@
 mod acceptance;
 mod behavior;
 mod cleanup;
+mod contract_reads;
 mod control;
 mod effect_repairs;
 mod ensures;
@@ -141,6 +142,9 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
+    /// Proof-only reads compared with other arguments at calls [EFF-5].
+    /// Kept outside the row, reference invalidation and fact-kill inputs.
+    contract_reads: Option<Vec<contract_reads::ContractReadPath>>,
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
@@ -1247,6 +1251,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.collect_type_invariants(check_context)?;
         self.judge_constant_invariants(&items)?;
         self.admit_postcondition_selectors(check_context)?;
+        self.collect_contract_reads(check_context)?;
         // A symbolic range capability or ceiling cannot hide a definite
         // ordinary error in the concrete functions checked below.
         let generic_range_stop = self.validate_generic_templates(check_context)?;

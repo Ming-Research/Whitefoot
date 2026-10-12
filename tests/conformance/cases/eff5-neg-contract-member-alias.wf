@@ -1,0 +1,19 @@
+struct Pair {
+  marker: u64;
+  value: u64;
+}
+
+interface Touch {
+  fn touch(frame: &Pair, other: &Pair) -> result: unit writes(frame.marker), writes(other.value) contract {
+    requires frame^.value == 0_u64;
+    ensures frame^.value == 0_u64;
+  };
+}
+
+fn apply<interface Touch>(f: &Pair) -> result: unit writes(f) contract {
+  requires f^.value == 0_u64;
+} {
+  doc "EFF-5, FN-5: the member call uses the interface member's formal contract, whose reads of frame^.value overlap writes(other.value).";
+  Touch::touch(frame: f, other: f);
+  return unit;
+}
