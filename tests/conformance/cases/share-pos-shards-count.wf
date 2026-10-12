@@ -1,3 +1,7 @@
+fn no_count() -> made: u64 pure {
+  return 0_u64;
+}
+
 fn count(stats: Shared<Shards<u64>>) -> result: unit pure waits {
   let mine = any_shard();
   for @round (index in 0_u64..10_u64) {
@@ -17,7 +21,7 @@ fn count_four(stats: &Shared<Shards<u64>>) -> result: unit reads(stats) waits {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let stats = shared_shards_new::<u64>(value: 0_u64);
+  let stats = shared_shards_new::<u64, fn no_count>();
   count_four(stats: &stats);
   let total = 0_u64;
   atomic all = &stats {

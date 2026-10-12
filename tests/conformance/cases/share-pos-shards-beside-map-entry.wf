@@ -5,6 +5,10 @@ struct Stats {
   misses: u8;
 }
 
+fn stats_zero() -> made: Stats pure {
+  return Stats(hits: 0_u8, misses: 0_u8);
+}
+
 fn lookup(store: &Shared<ConcurrentHashMap<u8>>, stats: &Shared<Shards<Stats>>, key: &[u8]) -> found: u8 reads(store), reads(stats), reads(key) waits {
   let mine = any_shard();
   let got = 0_u8;
@@ -24,8 +28,7 @@ fn lookup(store: &Shared<ConcurrentHashMap<u8>>, stats: &Shared<Shards<Stats>>, 
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let store = shared_map_new::<u8>(capacity: 1_u64);
-  let zero = Stats(hits: 0_u8, misses: 0_u8);
-  let stats = shared_shards_new::<Stats>(value: zero);
+  let stats = shared_shards_new::<Stats, fn stats_zero>();
   let present = &names[0_u64..1_u64];
   let absent = &names[1_u64..2_u64];
   atomic slot = &store[present] {

@@ -1,3 +1,7 @@
+fn no_count() -> made: u64 pure {
+  return 0_u64;
+}
+
 fn total_of(parts: &Shards<u64>) -> total: u64 reads(parts) {
   let sum = 0_u64;
   for @shard (i in 0_u64..parts^.len) {
@@ -14,7 +18,7 @@ fn reset(parts: &Shards<u64>) -> result: unit writes(parts) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let stats = shared_shards_new::<u64>(value: 0_u64);
+  let stats = shared_shards_new::<u64, fn no_count>();
   let mine = any_shard();
   atomic part = &stats[mine] {
     set part^ = part^ +wrap 7_u64;

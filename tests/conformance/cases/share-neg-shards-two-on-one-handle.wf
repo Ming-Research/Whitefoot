@@ -1,5 +1,9 @@
+fn no_count() -> made: u8 pure {
+  return 0_u8;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
-  let stats = shared_shards_new::<u8>(value: 0_u8);
+  let stats = shared_shards_new::<u8, fn no_count>();
   let mine = any_shard();
   atomic a = &stats[mine], b = &stats[mine] {
     set a^ = 1_u8;

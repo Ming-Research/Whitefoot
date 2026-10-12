@@ -1,5 +1,0 @@
-fn main() -> status: std::process::ExitStatus pure waits {
-  let cell = box_new::<u8>(value: 1_u8);
-  let parts = shared_shards_new::<Box<u8>>(value: move cell);
-  return std::process::exit_status(code: 0_u8);
-}

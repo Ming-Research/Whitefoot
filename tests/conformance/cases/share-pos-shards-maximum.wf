@@ -1,3 +1,7 @@
+fn no_peak() -> made: u8 pure {
+  return 0_u8;
+}
+
 fn raise(peak: Shared<Shards<u8>>, value: u8) -> result: unit pure waits {
   let mine = any_shard();
   atomic part = &peak[mine] {
@@ -17,7 +21,7 @@ fn raise_three(peak: &Shared<Shards<u8>>) -> result: unit reads(peak) waits {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let peak = shared_shards_new::<u8>(value: 0_u8);
+  let peak = shared_shards_new::<u8, fn no_peak>();
   raise_three(peak: &peak);
   let highest = 0_u8;
   atomic all = &peak {

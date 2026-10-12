@@ -53,6 +53,16 @@ that could still reject the change after its implementation, the sharded
 state at most 1.25 times the array's rate at every CPU count (R2), waits for
 that implementation.
 
+Firn then asked that each driver's shard can own a buffer or a queue and that
+one statement can swap out every shard's content (Firn's analysis of writes
+without one exclusive hold on its metadata object, gap G1: a write command
+appends to its driver's pending AOF buffer beside the key it holds, and the
+disk writer swaps every buffer for a fresh one every 10 ms). The draft folds
+that need into the same design rather than a second kind of state: the
+shard type needs only `drop`, and the constructor calls a maker once per
+shard instead of copying one value
+([section 5.4, owned shard values](#owned-shard-values)).
+
 Every number below is either quoted from a cited run, measured in a cited
 run, or marked as an estimate. Where this study infers instead of reading, it
 says so.
@@ -504,6 +514,12 @@ fn shared_shards_new<T: copy>(value: T) -> result: Shared<Shards<T>> pure;
 fn any_shard() -> result: AnyShard pure;
 ```
 
+(This surface is the one registered before the measurements. The drafted
+specification replaces the copy bound and the copied argument with a `drop`
+bound and a maker called once per shard, for Firn's request that shards own
+buffers and queues; [owned shard values](#owned-shard-values), at the end of
+this section, gives the change and its reasons, and section 10 the rules.)
+
 Example: per-command statistics and the heap peak in firn's terms.
 
 ```whitefoot
@@ -648,7 +664,9 @@ atomic beyond the existing locks.
 **Generality.** General for any state whose updates commute or that a reader
 can combine: counts, maxima and minima, per-command tables, histograms in a
 constant-capacity array. Per-thread free lists, which hold boxes or handles,
-are outside it, since the copy bound of section 10 keeps a shard inline. It is the Whitefoot form of kernel per-CPU data
+are outside it, since the copy bound of section 10 keeps a shard inline (the
+drafted `drop` bound brings them inside; see
+[owned shard values](#owned-shard-values)). It is the Whitefoot form of kernel per-CPU data
 (Linux `DEFINE_PER_CPU`, `percpu_counter`), which Whitefoot's target projects
 use (constitution, development objectives: kernels, compilers, browsers). It
 does not serve an update that needs the global value back at once, such as
@@ -662,6 +680,158 @@ table (about 240 commands × 4 counts) would take about 240 × 4 × 32 × 64 byt
 1.9 MiB at `len` 32 and 7.5 MiB at `len` 128, against one object of `len` × `size(Stats)` for (c); the
 combine is fixed per type, and a struct of several statistics cannot be
 updated in one step.
+
+#### Owned shard values
+
+Added after the measurements, for Firn's request; section 10 states the
+rules.
+
+**The need.** Firn's analysis of writes without one exclusive hold on its
+metadata object (Firn-wf, design (b) and gap G1) moves each write's share of
+that object into one part per driver: a write command holds its key's entry
+and its driver's part in one atomic statement, appends the command's bytes to
+that part's growable buffer and may queue an expiry there; every 10 ms the
+disk writer holds every part in one statement, swaps each part's buffer for an
+empty one and merges the taken buffers outside the hold. With `T: copy` none
+of it can be written: a `Box<Slots<u8>>` buffer and a priority queue are
+`nocopy`. Firn's completion condition: its witness compiles with a released
+compiler, and on the 14900K 64 contexts writing 100 000 random keys, with a
+swap-out of every part each 10 ms, scale by at least 1.6 times per doubling
+of P-cores from 2 to 4 to 8.
+
+**Why the copy bound was there, and what is left of it.** The registered
+surface had three reasons, two stated and one implied:
+
+1. A copy type keeps handles, boxes and runtime-capacity storage out of the
+   shard, so a shard is inline storage of fixed size. Every type has a fixed
+   inline size [OP-9]: a `Box` is one pointer inline and its content lives in
+   its own cell, as a map entry's `Box` does. A shard's lines hold T's inline
+   part and what T owns lives elsewhere, so this needs no bound.
+2. A copy of the initial value is well defined. This holds only for the
+   copying constructor, which a maker replaces (below).
+3. A copy type's release is empty, so releasing the object had nothing to do
+   per shard. With owned values the state's release must release every
+   shard, which needs exactly `drop`, the bound `Shared<T>` and
+   `ConcurrentHashMap<V>` already carry; a linear T stays refused.
+
+So one rule covers counters and buffers alike: `Shards<T: drop>`, each shard
+made by a maker. A counter pays a one-line maker; there is no second kind of
+shards state and no second constructor (rejected in the node: two
+constructors state one meaning twice).
+
+**"Call this `len` times" without closures.** Whitefoot has no closures; its
+form for supplying behaviour is a function-kind generic parameter [FN-3], a
+compile-time argument checked against a formal signature at its written
+argument [FN-4] and instantiated per actual [FN-2]. The constructor takes one:
+
+```whitefoot
+opaque nocopy struct Shards<T: drop> {
+  readonly len: u64;
+}
+
+fn shared_shards_new<T: drop, fn make() -> made: T pure>() -> result: Shared<Shards<T>> pure;
+```
+
+The formal is `pure` and carries no `waits`, so a maker that waits is
+refused (FN-4 refuses a waiting actual for a plain formal, as
+`fn4-neg-waiting-actual-for-plain-formal` already shows) and
+`shared_shards_new` stays a pure call that does not wait. A pure maker with no
+parameters returns the same value at every call, up to the identity of its
+allocations, which is not observable, so how often it runs, `len`, already an
+input of the execution, shows only in heap readings, which are inputs too
+[PRE-2]. A maker cannot capture run-time data such as a configured capacity;
+the creator then fills the shards in one whole statement right after
+creation, before it shares the handle (the node rejects a seed argument for
+that reason). The no-heap closure already follows function-kind actuals
+[STOR-8], so a `no_heap` entry sees a maker that allocates. This is the first
+prelude record with a function-kind parameter, so PRE-1's preorder sentence
+names function-kind parameters to keep the diagnostic ordinals fixed.
+
+**The witness in the drafted surface** (Firn's G1 sketch adjusted to the
+prelude's window operations; a fragment, not compiled):
+
+```whitefoot
+struct Part {
+  log: Box<Slots<u8>>;
+  refused: Bool;
+}
+
+fn part_new() -> made: Part pure {
+  let log = box_slots_new::<u8>(capacity: 65536_u64);
+  return Part(log: move log, refused: False());
+}
+
+fn write(keys: &Shared<ConcurrentHashMap<u64>>, parts: &Shared<Shards<Part>>, k: &[u8]) -> r: unit reads(keys), reads(parts), reads(k) waits {
+  let mine = any_shard();
+  atomic slot = &keys^[k], p = &parts^[mine] {
+    if p^.refused {
+      return unit;
+    }
+    set slot^ = Some<u64>(value: 1_u64);
+    if p^.log.inner.len < p^.log.inner.cap {
+      place_back(window: &p^.log.inner, value: 1_u8);
+    }
+  }
+  return unit;
+}
+
+fn drain(parts: &Shared<Shards<Part>>) -> r: unit reads(parts) waits {
+  atomic all = &parts^ {
+    for @each (i in 0_u64..all^.len) {
+      let fresh = box_slots_new::<u8>(capacity: 65536_u64);
+      swap(first: &all^[i].log, second: &fresh);
+    }
+  }
+  return unit;
+}
+```
+
+A real append grows a full buffer with `grow` instead of skipping the byte,
+and a real drain keeps what it takes: since `len` is known only inside a
+whole statement, the taken buffers go into a collection grown inside the
+hold, or each part keeps a spare buffer that the drain swaps in, so the hold
+allocates nothing and the spares are refilled by later shard statements.
+That choice is Firn's.
+
+**Combination with an entry target.** SHARE-2 already admits targets on
+different handle places. A map entry target and a shard target name objects
+of two types that never unify, so their paths start at two roots, and the
+lock order takes the two type groups in type order. Nothing new.
+
+**What each guarantee rests on.**
+
+- *No data race.* Unchanged: shards are reached only through targets, and a
+  `swap` inside a whole statement is a write under exclusive access
+  [SHARE-3].
+- *No leak or double free.* A shard always holds exactly one value. `swap`
+  exchanges two owners and leaves both live [OP-11, OWN-1]; a shard is
+  reached only through a reference, a shard or whole binding or a callee's
+  `&Shards<T>` parameter, so moving its content out is always OWN-1's refusal
+  of a consume through a reference (case
+  `own1-neg-shards-move-out-of-shard`); replacing a shard's value with
+  `set` releases the old one [WIN-3]; releasing the state releases every
+  shard [SHARE-1]; a linear T is refused by the `drop` bound (case
+  `prov6-neg-shards-element-nodrop`). No implementation step copies a
+  shard's value.
+- *No index out of range.* Unchanged: a shard target has no index, and a
+  whole target's subscripts owe `i < len`. `len >= 1` is now MSR-2's
+  standing fact, so it holds in callees receiving `&Shards<T>` too.
+- *Release at the object's end.* The release of the last handle runs T's
+  compiler-derived release on each shard in index order and then frees the
+  object (state-locks); no statement can be executing then [SHARE-1].
+- *Memory statistics.* A maker's allocations and the buffers a whole
+  statement swaps in are ordinary allocations counted in the heap the
+  program holds [PRE-2], and a taken buffer released after the swap lowers
+  it. A shard's own measures, `p^.log.inner.len` through a shard binding or
+  `all^[i].log.inner.cap` through a subscript, are ordinary measure places
+  [MSR-1], killed by writes as an element's are [MSR-2]. No new rule.
+- *Progress.* Unchanged: shard and whole statements have no guard on the
+  shards. Allocation inside a whole statement lengthens its hold but is total
+  [STOR-8]; the spare-buffer form keeps it out.
+- *Type invariants.* A shard is no TYPE-11 site, as an element of a storage
+  shape and a map's entry are not: a shard target cannot assume an
+  invariant that a whole target's element writes never owe. The node records
+  the choice; section 13 records the general gap.
 
 ### 5.5 (d) Other designs
 
@@ -1087,8 +1257,9 @@ For the recommendation (c), drafted on the work branch as specification
 v0.136 over main's v0.135 (archived byte for byte as
 `spec/kernel-spec-v0.135.md`). Every change awaits the owner's approval card;
 no `spec/log.md` entry exists yet. The surface is section 5.4's with one name
-changed: the token is called the *shard selector*, and a target naming one
-shard a *shard target*.
+changed, the token being called the *shard selector* and a target naming one
+shard a *shard target*, and with the copy bound and copied argument replaced
+by a `drop` bound and a maker ([owned shard values](#owned-shard-values)).
 
 ### 10.1 Rule by rule
 
@@ -1097,18 +1268,22 @@ shard a *shard target*.
 | TYPE-2 | The functions of SHARE-1 form the shared and frozen handles, maps and key sets. | They also form shards states and the shard selector. |
 | TYPE-9 | Homes table: storage forms in a `Box`; a map in a shared object's state or a `swap`'s exchange. | Adds `Shards<T>`, whose one home is a shared object's state, not a `swap`'s exchange; the consequence sentence says a `swap` of two whole shards targets is refused. |
 | TYPE-10 | `len`, `cap`, `head` are the readonly fields of the storage shapes, the key set and the entries. | Adds the shards state's `len`. |
+| TYPE-11 | A target whose handle place is `Shared` or `SharedRead` of the struct establishes its invariants at the block's entry and owes them on leaving; no site covers an element or a map entry. | Adds a consequence sentence: a shard target's handle place is `Shared` or `SharedRead` of a `Shards`, so its block neither assumes nor owes the shard's invariants, as for an element or a map entry. Accepts and refuses the same programs as the sites list alone. |
 | REF-4 | A range reference over a `Ring` or an `Entries` is refused with its reason. | Adds the refusal of a range reference over a `Shards`, whose shards are kept apart and are no run of storage. |
 | OP-4 | Indexable bases include `Entries<V>` and `ConcurrentHashMap<V>`, reached through `^`. | Adds `Shards<T>`, reached through `^`, its elements its shards of type T. The existing sentences then give it a `u64` offset and the obligation `i < p.len`, so an `AnyShard` offset is refused. |
 | OP-9 | Layout pairs of the prelude's opaque structs; any other fieldless one `(32,16)`. | Adds `Shards<T>` `(8,8)`, its `len`, its shards living in its object and entering no sequence, and `AnyShard` `(1,1)`, carrying nothing. |
 | MSR-1 | Measures table rows. | Adds `Shards<T>`: `len` counts shards, exact; no `cap`, `head` or `bytes`. |
-| SHARE-1 | Shared and frozen objects, maps and key sets. | Adds the shards state: `len` shards of T; `shared_shards_new` copies its argument into every shard; `len` is at least one, fixed for the object's life and an input of the execution that an implementation may choose by the driver count; a shard target names one shard, which shard being an input, with no index and so no bounds obligation; `any_shard` returns the one selector value; after creation a shard changes only by the writes of the blocks of statements whose targets name it, and no implementation step combines or adjusts shards; a whole target names every shard, so a total its statement computes includes every statement on the object that took effect before its point and none after. |
-| SHARE-2, target places | A whole handle place, or a map handle place with one index step whose atom is a byte range or a key set. | Adds a `Shared<Shards<T>>` or `SharedRead<Shards<T>>` handle place with one index step whose atom is a place of type `AnyShard`: the shard target. |
-| SHARE-2, binding table | Three rows: whole, entry, key-set. | Adds the shard target's row: `&T`, whose path is the state extended by an index step whose offset no relation names [OWN-7], the shard the statement selects. A whole target over a shards state uses the first row, binding `&Shards<T>`. |
+| MSR-2 | Standing facts: `Z <= P.len` and the others, and the constants of `Array<T, N>`, `Slots<T, N>` and `Ring<T, N>`. | Adds the standing fact `1 <= P.len` for every `Shards<T>` place, with empty support, so it holds in a whole block and in a callee receiving `&Shards<T>` alike. |
+| ENT-2, exact paths | No step of an exact path is a loop header's opaque identity, a keyed entry's position or a run of every segment. | Also names a shard target's shard. The shard step was already excluded, its offset being no literal, const or read binding; the list now says so. |
+| ENT-3.S1 | At an `atomic_stmt` with a guard, the guard's goals and comparison are established at the block's entry. | At every `atomic_stmt` the entry facts SHARE-2 and TYPE-11 state for its targets are also established there, so the key-set binding's `es^.len == ks.len`, which v0.135 states in SHARE-2 with no source among ENT-3's, now has one. Accepts what an implementation of v0.135's SHARE-2 sentence accepts. |
+| SHARE-1 | Shared and frozen objects, maps and key sets. | Adds the shards state: `len` shards of T; releasing it releases every shard's value; `shared_shards_new` calls its maker once per shard and stores each result; `len` is at least one, fixed for the object's life and an input of the execution that an implementation may choose by the driver count; a shard target names one shard, which shard being an input, with no index and so no bounds obligation; `any_shard` returns the one selector value; after creation a shard changes only by the writes of the blocks of statements whose targets name it, under their operations' own rules, and no implementation step combines or adjusts shards; by SHARE-3, a total a whole block computes counts exactly the statements on the object that took effect before its point. |
+| SHARE-2, target places | A whole handle place, or a map handle place with one index step whose atom is a byte range or a key set. | Adds a `Shared<Shards<T>>` or `SharedRead<Shards<T>>` handle place with one index step, the target's own, whose atom is a place of type `AnyShard`: the shard target. |
+| SHARE-2, binding table | Three rows: whole, entry, key-set. | Adds the shard target's row: `&T`, whose path is the state extended by an index step whose offset no relation names [OWN-7], the shard the target names. A whole target over a shards state uses the first row, binding `&Shards<T>`. |
 | SHARE-2, overlap | Two targets on overlapping handle places each have an index step; a whole target is alone on its place. | Two targets on overlapping handle places are each an entry or key-set target; a whole or shard target is alone on its place. Two shard targets on two handles of one type compare as one root with an index step no relation names, so they may overlap (EFF-5 then refuses one call writing both). |
-| SHARE-2, facts | A key-set binding establishes `es^.len == ks.len` at the block's entry. | Adds: a whole binding over a shards state establishes `all^.len >= 1_u64` there. |
+| SHARE-2, facts | A key-set binding establishes `es^.len == ks.len` at the block's entry, "as a guard's comparison is established there". | The same fact, now citing ENT-3.S1 as its source. |
 | SHARE-2, guard | The guard writes no path. | The guard also reads no path that starts at a shards state. |
 | WAIT-2 | Inputs of the execution include map positions, scan extents, released and key-set bytes and the driver count. | Adds the number of shards of each shards state and the shard each shard target names. |
-| PRE-1 | Opaque structs through `Entries`; functions through `release`; the preorder. | Adds `opaque nocopy struct Shards<T: copy> { readonly len: u64; }` and `opaque struct AnyShard { }` after `Entries`, `fn shared_shards_new<T: copy>(value: T) -> result: Shared<Shards<T>> pure;` and `fn any_shard() -> result: AnyShard pure;` after `shared_map_new`, and both functions in the preorder there, which moves every later prelude ordinal. |
+| PRE-1 | Opaque structs through `Entries`; functions through `release`; the preorder lists type, const and value parameters. | Adds `opaque nocopy struct Shards<T: drop> { readonly len: u64; }` and `opaque struct AnyShard { }` after `Entries`, `fn shared_shards_new<T: drop, fn make() -> made: T pure>() -> result: Shared<Shards<T>> pure;` and `fn any_shard() -> result: AnyShard pure;` after `shared_map_new`, and both functions in the preorder there, which moves every later prelude ordinal; the preorder also lists function-kind parameters, `make` being the first a prelude record declares. |
 
 Unchanged, and why: SHARE-3, since its meaning is already exclusive access to
 the whole states the targets name and its last sentence admits holding one
@@ -1117,7 +1292,12 @@ statement reaches only its shard; WAIT-1, WAIT-3, CAP-1, PAR-1, PAR-2 and
 HOST-1, since shard and whole statements are atomic statements and so waiting
 calls without overlap permission; EFF-1 to EFF-5, since a state is a path of
 no row and a callee receiving `&Shards<T>` uses ordinary rows; OP-2, since a
-shard update is the writer's arithmetic.
+shard update is the writer's arithmetic; OP-11, OWN-1, WIN-3 and PROV-6,
+since a shard is an owned place that `swap` and `set` treat as any other and a
+shard binding is a reference, so an owned shard value is exchanged or replaced
+but never moved out, and the `drop` bound is PROV-6's ordinary filter; FN-3,
+FN-4 and STOR-8, since a prelude record's function-kind parameter is checked
+and followed as any other.
 
 ### 10.2 The guarantees, rule by rule
 
@@ -1128,6 +1308,10 @@ shard update is the writer's arithmetic.
   [SHARE-1]: each shard update and each total is a block's own arithmetic, so
   `+` needs a proof (none exists for a concurrently changing value, section
   3.2), and `+wrap`, `+checked` and `+sat` state their results [OP-2].
+- **No leak or double free.** A shard always holds one owned value: `swap`
+  exchanges [OP-11], `set` replaces and releases [WIN-3], a consume through
+  any reference to a shard is refused [OWN-1], releasing the state releases every shard
+  [SHARE-1], and a linear shard type is refused by the `drop` bound [PROV-6].
 - **A read of the whole.** A whole target holds every shard at one point
   [SHARE-3], so its total equals the value a single `Shared<u64>` updated by
   the same statements would hold at that point: no weaker read, and the same
@@ -1160,12 +1344,12 @@ shard update is the writer's arithmetic.
   subscript is OP-4's.
 - **The driver count.** `len` is an input of the execution that an
   implementation may choose by the driver count [PRE-2]; no rule relates the
-  two further, so a program that reads `len` learns nothing it relies on
-  beyond `len >= 1`.
+  two further, so a program learns nothing it relies on beyond MSR-2's
+  standing `1 <= len`.
 
 ### 10.3 Conformance cases
 
-Seventeen cases in `tests/conformance/cases/`, their manifest lines after the
+Twenty cases in `tests/conformance/cases/`, their manifest lines after the
 existing shared-object cases. Each states the verdict the specification
 requires; every one fails until the compiler implements the change, and so do
 the two compiler unit tests that compare the compiler's prelude records and
@@ -1175,10 +1359,11 @@ branch; no verdict was chosen to pass.
 | Case | Verdict | What it shows |
 |---|---|---|
 | `share-pos-shards-count` | run, exit 40 | four contexts add one ten times each through shard targets; a whole read after the joins totals 40 whichever shards were named |
-| `share-pos-shards-start-from-copies` | run, exit 11 | every shard starts as a copy, and `len >= 1` admits `all^[0_u64]` |
+| `share-pos-shards-start-from-maker` | run, exit 11 | every shard holds what the maker returned, and the standing `1 <= len` admits `all^[0_u64]` |
 | `share-pos-shards-maximum` | run, exit 9 | `imax` through shard targets, maximum over the whole run |
 | `share-pos-shards-beside-map-entry` | run, exit 31 | one statement names a map entry and a statistics shard |
 | `share-pos-shards-whole-to-callee` | run, exit 70 | callees read and reset a `&Shards<u64>` under ordinary rows |
+| `share-pos-shards-owned-buffers` | run, exit 60 | each shard owns a `Box<Slots<u8>>` the maker allocated; three contexts append through shard targets; whole targets swap every buffer for a fresh one and sum what they took, 24 then 20 then 0, with 16 writes counted |
 | `share-neg-shards-two-on-one-handle` | reject SHARE-2 | two shard targets on one handle place |
 | `share-neg-shards-shard-beside-whole` | reject SHARE-2 | a shard target beside a whole target on one place |
 | `share-neg-shards-guard-reads-shard` | reject SHARE-2 | a guard on a shard's value |
@@ -1187,10 +1372,21 @@ branch; no verdict was chosen to pass.
 | `share-neg-shards-two-handles-one-call` | reject EFF-5 | shard targets on two handles of one type may be one shard |
 | `type9-neg-shards-parameter` | reject TYPE-9 | a `Shards<u8>` value parameter |
 | `type9-neg-shards-swapped` | reject TYPE-9 | a `swap` of two whole shards targets |
-| `prov6-neg-shards-element-not-copy` | reject PROV-6 | a `Box<u8>` shard type against the copy bound |
-| `op4-neg-shards-past-the-first` | reject OP-4 | `all^[1_u64]` is unproved, since only `len >= 1` is known |
+| `prov6-neg-shards-element-nodrop` | reject PROV-6 | a `nodrop` shard type against the `drop` bound |
+| `fn4-neg-shards-maker-waits` | reject FN-4 | a maker that waits, against the formal that does not |
+| `own1-neg-shards-move-out-of-shard` | reject OWN-1 | moving a shard's buffer out through the shard binding |
+| `op4-neg-shards-past-the-first` | reject OP-4 | `all^[1_u64]` is unproved, since only `1 <= len` is known |
 | `op4-neg-shards-selector-as-subscript` | reject OP-4 | the selector as a subscript offset |
 | `ref4-neg-shards-as-a-range` | reject REF-4 | a range reference over the shards |
+
+The owned-buffer case's exit status separates the faults it guards: a swap
+that left the old buffer in place would give second and third drains of 44
+and 44 instead of 20 and 0, a lost append a first sum other than 24, and a
+lost update of a shard's count a total other than 16. Its capacity, 16 bytes per shard, holds all twelve
+first-round bytes even when every context lands on one shard, so the status
+is the same for every number of shards and every selection. It does not
+observe a leak or a double free; the runtime test under AddressSanitizer in
+section 12 does.
 
 The program test that section 5.4 names (16 contexts counting, an exact whole
 read after the joins) belongs in `tests/programs/` with the implementation,
@@ -1210,23 +1406,31 @@ Proposed on the work branch, each awaiting the owner's approval:
 - New node `design/language/waiting/shared-objects/sharded-states.md`: the
   shards state and its two target forms; that the number of shards and the
   selected shard are inputs and the program never supplies an index; the
-  guard refusal; the copy bound; and the state-only home. Rejected: single-step
-  integer cells (a), the hand-built array as the answer (d2), the hidden
-  combine (c′), a runtime peak in the memory meter (d3), whole-program
-  detection (d4) and per-context accumulation flushed (d1). The rejections of
-  (a) and (d2) cite sections 9.3 and 9.2; (d2)'s is provisional, since R2
-  reopens it if the implemented state reaches at most 1.25 times the array's
-  rate at every CPU count.
+  guard refusal; the `drop` bound with shards made by a pure maker that does
+  not wait; the state-only home; the selector as a fieldless copy equality
+  type in the existing target grammar; and that a shard is no type-invariant
+  site (provisional). Rejected: single-step integer cells for counts (a),
+  provisional and limited to counts; the hand-built array as the answer (d2),
+  provisional; the hidden combine (c′); a runtime peak in the memory meter
+  (d3); whole-program detection (d4); per-context accumulation flushed (d1);
+  a maker with a seed argument; shards of `Option<T>` starting `None`; and a
+  dedicated target syntax for the selector. The rejections of (a) and (d2)
+  cite sections 9.3, 9.6 and 9.2; (a)'s is reopened by a run under a noise
+  rule that decides contended arms with the ratio within its noise of 0.5,
+  and (d2)'s by R2, if the implemented state reaches at most 1.25 times the
+  array's rate at every CPU count.
 - `design/language/waiting/shared-objects.md`, third decision: the target
   forms gain the shard target, alone on its handle place.
 - `design/compiler/waiting-contexts/state-locks.md`: first decision, a sharded
   object is held by one shard or whole; second decision, its shards are taken
   in index order; third decision, a whole hold absorbs shard holds and shard
-  targets on one object hold one shard; a new decision for the shard layout,
-  the number of shards, the shard selection and the first-come shard lock,
-  with no watch on a shard (section 12). Its rejected alternatives, single-
-  writer per-driver counters, shards packed into shared lines and a shard per
-  context, are stated in that decision.
+  targets on one object hold one shard; and six new decisions, each with its
+  own grounds and refused alternative: the one-allocation layout with the
+  header and each shard on lines of their own; a first-come lock per shard;
+  the number of shards (provisional); the selection `user mod len`; no watch
+  on a shard; and construction by the maker in index order before the first
+  handle, with the last release running the shard type's release on each
+  shard.
 - For (b) B2, if pursued: `design/language/waiting/shared-objects/keyed-tables.md`'s
   refusal of version-checked reads narrowed to blocks that run on racing
   state, with the account in 5.3; owner decision required. Not part of this
@@ -1251,6 +1455,13 @@ work; W4r in section 8.2 separates the two if it does not.
   PRE-1 states, so the record test and the diagnostic ordinals follow the
   specification; `Shards` gets its own storage identity, as `Entries` has, and
   a measured kind with `len` exact for the measure-table test.
+  `shared_shards_new` is the first prelude record with a function-kind
+  parameter: its `make` formal is checked against each written actual by the
+  ordinary FN-4 path (a waiting or effectful maker is refused there), the
+  call graph gains the edge to the actual that FN-6 and the no-heap closure
+  [STOR-8] already follow for source generics, and the preorder places the
+  formal between the type parameter and the value parameters.
+- Bound [PROV-6]: `T: drop`, the ordinary filter at the call.
 - Placement [TYPE-9]: `Shards<T>`'s home is the type argument of `Shared` or
   `SharedRead`, checked where map placement is.
 - Subscripts [OP-4]: `Shards<T>` reached through `^` with a `u64` offset and
@@ -1265,8 +1476,13 @@ work; W4r in section 8.2 separates the two if it does not.
   what may be one shard without new code.
 - Guards: refuse a guard whose footprint reads any path rooted at a shards
   state, at the guard `expr`, citing SHARE-2.
-- Facts: a whole binding over a shards state publishes `all^.len >= 1` at the
-  block's entry, where the key-set binding publishes its length equality.
+- Facts: every `len` term over a `Shards<T>` place carries the standing fact
+  `1 <= len` with empty support [MSR-2], where the standing measure facts are
+  added, so a callee receiving `&Shards<T>` has it too; the key-set binding's
+  length equality stays where it is published now, at the block's entry,
+  which ENT-3.S1 now names as its source.
+- Type invariants [TYPE-11]: no change; a shard target's handle type is not
+  `Shared` of the struct, so the existing site check already gives it none.
 - Diagnostics: each new refusal carries its repair [DIAG-1]: a shard target
   for an integer index atom (`let mine = any_shard();` and `&h[mine]`), a
   loop over `len` for a range over the shards, and a second statement for a
@@ -1290,9 +1506,24 @@ work; W4r in section 8.2 separates the two if it does not.
   shards target keeps its guard's watches on its other objects.
 - `AnyShard` carries nothing: `any_shard()` lowers to no code, and a shard
   target's index atom enters the statement's footprint as a read [SHARE-2] and loads nothing.
-- `shared_shards_new` makes one allocation, header and shards together, and
-  copies its argument into every shard; the last handle's release frees it,
-  with no per-shard release since T is copy.
+- `shared_shards_new::<T, fn make>` is emitted per actual, as a source
+  generic instance is: it reads `len` from the runtime, makes one allocation,
+  header and shards together, and calls `make` for shard 0 up to shard
+  `len - 1`, storing each result in its shard, before it returns the first
+  handle, so no other context can observe a shard that is not yet made.
+  Allocation is total [STOR-8], so no shard is ever left unmade.
+- The object's release, when the last handle goes and no statement holds it
+  [SHARE-1], runs T's compiler-derived release [STOR-3, PROV-6] on each shard
+  in index order and then frees the allocation. The handle's drop helper,
+  which today releases a shared object's state in place when it removes the
+  last handle (`emit_shared_drop_helper` in `backend/emitter/cleanup.rs`,
+  read at this branch's head), gains a loop over the shards that runs T's
+  cleanup jobs on each; for a T that needs no cleanup, a count or a
+  statistics struct, the loop is omitted and the release stays one free.
+- A shard's owned content is ordinary storage: a `Box` a maker allocates, a
+  buffer a whole statement swaps in and one it releases after the swap are
+  counted in the heap the program holds like any allocation [PRE-2], with no
+  shard-specific accounting.
 
 **Runtime layout, per object.**
 
@@ -1327,11 +1558,21 @@ already holds wait; ones on shards it has not reached proceed.
 
 **Validation.**
 
-- The seventeen conformance cases of section 10.3, the compiler record and
+- The twenty conformance cases of section 10.3, the compiler record and
   measure tests, and the program test of section 10.3.
 - A runtime test of the shard lock and the whole hold under ThreadSanitizer,
   as the concurrent map's test runs, with a whole reader racing shard
-  writers and an exact total checked after the joins.
+  writers and an exact total checked after the joins, and the same test
+  with owned shard buffers under AddressSanitizer: writers append to their
+  shard's buffer while a whole statement swaps every buffer out and releases
+  what it took, and the object's release frees the rest, so a leak, a double
+  free or a use after a swap fails it.
+- Firn's acceptance for its pending buffers, once a released compiler carries
+  the change: its witness compiles, and on the 14900K 64 contexts writing
+  100 000 random keys, with a swap-out of every shard each 10 ms, scale by at
+  least 1.6 times per doubling of P-cores from 2 to 4 to 8. Firn's session
+  runs it; it is Firn's completion condition, not one of this study's
+  registered predictions.
 - The registered experiment's remaining arms on the 14900K (section 8.2): W4,
   W4r and their reader variants, M1 to M4, and the Firn arms F0 to F3 from
   Firn's session, deciding P1, P2, P4, P5 and R1, R2, R4, R5. If the noise rule
@@ -1380,7 +1621,43 @@ already holds wait; ones on shards it has not reached proceed.
   removes no capability and has no field, so [OP-16] makes it an equality
   type and `any_shard() == any_shard()` is admitted, always true. It gives a
   program nothing to learn and no way to choose a shard. Disposition:
-  declined; no rule changed for it.
+  declined; no rule changed for it, and the sharded-states node now records
+  the property with the selector's decision.
+- **The key-set binding's length fact had no ENT-3 source.** v0.135's SHARE-2
+  says a key-set binding establishes `es^.len == ks.len` at the block's entry
+  "as a guard's comparison is established there", while ENT-3 says nothing
+  else is a fact and its S1 names only a guarded statement's guard. The
+  draft's `len >= 1` sentence for a whole shards binding copied that shape.
+  Disposition: fixed in the draft; ENT-3.S1 now establishes every entry fact
+  SHARE-2 and TYPE-11 state for a statement's targets, and the shards fact
+  became MSR-2's standing `1 <= len`.
+- **Type invariants never reach elements, map entries or shards.** TYPE-11's
+  sites are constructions, parameters, results, `shared_new` and
+  `frozen_new` arguments and targets on `Shared` of the struct itself, so a
+  struct with an invariant held as an element of a storage shape, as a map
+  entry's `Some` value, or as a shard gives a program no fact and owes
+  nothing until it reaches one of those sites. Sound, since nothing assumes
+  the invariant there, but such a struct's invariant is useless in the
+  places shared state keeps it. A map entry target `&Option<V>` over a
+  struct V is the case on main. Disposition: not fixed here (it needs
+  element-position obligations, a TYPE-11 redesign); a board backlog item
+  for the Whitefoot project, with this paragraph as its witness: a map of a
+  struct whose invariant is `used <= cap`, read through an entry target and
+  passed to a function taking `&V`, is refused for an invariant the program
+  never broke.
+- **`swap` of two shards' contents in one call may be refused.** OP-11's
+  equality allowance names "equal-depth slots under one identical array or
+  window"; `swap(first: &all^[i].log, second: &all^[j].log)` is two
+  equal-depth places under one `Shards`, and `Entries` has the same shape, so
+  the allowance as written does not cover them and the call may be refused
+  as possibly equal and not proved disjoint. Inferred from reading, not
+  checked against the compiler. A swap through a local avoids it, and the
+  drafted cases do not need it. Disposition: deferred; check when the
+  checker change lands, and if refused, propose extending the allowance to
+  every indexable base of OP-4.
+- **A prelude record had never taken a function-kind parameter.** PRE-1's
+  preorder sentence listed type, const and value parameters only. Disposition:
+  fixed in the draft by naming function-kind parameters there.
 - **Name collision to keep in mind.** OP-12 calls `set p = f(move p, ...)` "the
   atomic in-place update" (`:1215`), an ownership property unrelated to
   concurrency. The drafted surface uses "shard" and "selector" and no
@@ -1391,7 +1668,7 @@ already holds wait; ones on shards it has not reached proceed.
 Established by reading the specification, design tree and source at
 `4ad4f5786`: the rules in section 3; that whole-object statements take write
 holds and that even read holds write the object's line; the handle-count
-traffic; the runtime's own per-thread counters and the decision that chose
+traffic; the runtime's own counters local to each driver and compute worker and the decision that chose
 them; the prior refusals in section 4; and that (c) needs no new memory model
 because its targets are ordinary atomic statements.
 
@@ -1415,4 +1692,4 @@ test; that the conformance cases compile and reach their verdicts, which
 needs the implementation, each negative case having been read against the
 rules that could refuse it first; the reader's latency for a whole target; the shard
 selection's correctness under a driver handoff to a spare thread (argued from
-per-shard locks, section 3.6, not tested).
+per-shard locks, section 3.6, not tested); that owned shard values are released exactly once at the object's end and that Firn's pending buffers scale as its acceptance needs, which the AddressSanitizer test and Firn's run of section 12 will show.
