@@ -14,6 +14,8 @@
 name: import-limit-probe
 
 on:
+  push:
+    branches: [claude/small-accessor-inline]
   workflow_dispatch:
     inputs:
       rounds:
@@ -37,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      ROUNDS: ${{ inputs.rounds }}
+      ROUNDS: ${{ inputs.rounds || '1' }}
     steps:
       - uses: actions/checkout@v4
 
