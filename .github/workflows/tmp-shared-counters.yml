@@ -14,6 +14,8 @@
 name: tmp-shared-counters
 
 on:
+  push:
+    branches: [claude/shared-counter-arms]
   workflow_dispatch:
     inputs:
       release:
@@ -44,6 +46,7 @@ permissions:
 
 jobs:
   measure:
+    if: github.event_name == 'workflow_dispatch'
     name: shared-counters (${{ inputs.mode }})
     runs-on: [self-hosted, 14900k]
     # Main: 6 blocks x 4 lists x 10 arms x ~5.3 s is about 21 minutes of cells,
