@@ -489,7 +489,9 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
 void wf__atomic_group_take(void *record, uint64_t count);
-void wf__atomic_group_release(void *record, uint64_t count);
+/* Each group has one entry layout; object-only groups consume no metadata. */
+void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
 void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);

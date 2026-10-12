@@ -289,22 +289,22 @@ entry:
 
 declare void @wf__body_host_utf8_len(ptr, ptr)
 
-; `Result<u64, Utf8Error>` is `{ i32, i64, i1 }`: the tag, the `Ok` value and
+; `Result<u64, Utf8Error>` is `{ i8, i64, i1 }`: the tag, the `Ok` value and
 ; the one-bit `Utf8Invalid` tag, which the C body stores as a byte.
-define { i32, i64, i1 } @wf_std.text.host_utf8_len(ptr %value) align 64 {
+define { i8, i64, i1 } @wf_std.text.host_utf8_len(ptr %value) align 64 {
 entry:
-  %result = alloca { i32, i64, i8 }, align 8
+  %result = alloca { i8, i64, i8 }, align 8
   call void @wf__body_host_utf8_len(ptr %result, ptr %value)
-  %tag = load i32, ptr %result, align 8
-  %ok.field = getelementptr inbounds { i32, i64, i8 }, ptr %result, i32 0, i32 1
+  %tag = load i8, ptr %result, align 8
+  %ok.field = getelementptr inbounds { i8, i64, i8 }, ptr %result, i32 0, i32 1
   %ok = load i64, ptr %ok.field, align 8
-  %error.field = getelementptr inbounds { i32, i64, i8 }, ptr %result, i32 0, i32 2
+  %error.field = getelementptr inbounds { i8, i64, i8 }, ptr %result, i32 0, i32 2
   %error.byte = load i8, ptr %error.field, align 8
   %error = trunc i8 %error.byte to i1
-  %with.tag = insertvalue { i32, i64, i1 } poison, i32 %tag, 0
-  %with.ok = insertvalue { i32, i64, i1 } %with.tag, i64 %ok, 1
-  %returned = insertvalue { i32, i64, i1 } %with.ok, i1 %error, 2
-  ret { i32, i64, i1 } %returned
+  %with.tag = insertvalue { i8, i64, i1 } poison, i8 %tag, 0
+  %with.ok = insertvalue { i8, i64, i1 } %with.tag, i64 %ok, 1
+  %returned = insertvalue { i8, i64, i1 } %with.ok, i1 %error, 2
+  ret { i8, i64, i1 } %returned
 }
 
 declare void @wf__body_relative_path(ptr, ptr)
@@ -969,12 +969,12 @@ entry:
 
 declare void @wf__body_resident_bytes(ptr, ptr)
 
-define { i32, i64 } @wf_std.process.resident_bytes(ptr %meter) align 64 {
+define { i8, i64 } @wf_std.process.resident_bytes(ptr %meter) align 64 {
 entry:
-  %result = alloca { i32, i64 }, align 8
+  %result = alloca { i8, i64 }, align 8
   call void @wf__body_resident_bytes(ptr %result, ptr %meter)
-  %bytes = load { i32, i64 }, ptr %result, align 8
-  ret { i32, i64 } %bytes
+  %bytes = load { i8, i64 }, ptr %result, align 8
+  ret { i8, i64 } %bytes
 }
 
 declare i64 @wf__body_release_map_reserve(ptr, ptr)

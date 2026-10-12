@@ -274,7 +274,9 @@ void wf__atomic_group_take(void *record, uint64_t count) {
                     wf_cmap_hold_key(primary, keys[k].key, keys[k].length);
                 primary->wants |= secondary->wants;
                 primary->read &= secondary->read;
-                wf_cmap_hold_release(secondary, 0, 4, 0);
+                /* Before take, user is NULL: release only preparatory scratch,
+                 * never acquired entries, so no tag metadata is consumed. */
+                wf_cmap_hold_release(secondary, 0, 0, 0);
                 secondary->primary = primary;
                 secondary->first = first;
             }
@@ -284,13 +286,14 @@ void wf__atomic_group_take(void *record, uint64_t count) {
     }
 }
 
-void wf__atomic_group_release(void *record, uint64_t count) {
+void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag) {
     wf_atomic_target *targets = record;
     while (count != 0) {
         uint64_t first = count - 1;
         while (first != 0 && targets[first - 1].object == targets[count - 1].object) --first;
         if (targets[first].hold != NULL)
-            wf__table_hold_release(targets[first].hold, 0, 4, 0);
+            wf__table_hold_release(targets[first].hold, tag_offset, tag_width, none_tag);
         else
             wf__shared_unlock(targets[first].object, 1);
         count = first;

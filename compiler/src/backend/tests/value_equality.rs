@@ -140,7 +140,7 @@ fn union_equality_uses_typed_variant_views_and_nested_array_loops() {
     let payload = nominal_type("EqualityPayload");
     for name in ["equal_payload", "unequal_payload", "equal_envelopes"] {
         let body = emitted_function(&llvm, name);
-        assert!(body.contains("switch i32"), "{body}");
+        assert!(body.contains("switch i8"), "{body}");
         assert!(
             body.contains(&format!("getelementptr inbounds {payload}.v1,")),
             "{body}"
