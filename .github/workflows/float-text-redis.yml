@@ -159,6 +159,7 @@ jobs:
       - name: Compile and run every witness
         run: |
           # No -e: a refusal is a result, and the next witness still runs.
+          set +e
           DIR=research/investigations/float-text/witnesses
           OUT="$RUNNER_TEMP/witnesses"
           WFC="$PWD/compiler/target/gate/whitefootc"
