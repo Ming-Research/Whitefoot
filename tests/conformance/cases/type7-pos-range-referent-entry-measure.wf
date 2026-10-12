@@ -1,0 +1,11 @@
+fn probe(r: &[u64]) -> result: unit writes(r) contract {
+  requires r^.len > 0_u64;
+  ensures r^.len == entry(r)^.len;
+} {
+  set r^[0_u64] = 0_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
