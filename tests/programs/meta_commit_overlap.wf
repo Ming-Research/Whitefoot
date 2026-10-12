@@ -111,8 +111,8 @@ fn publish_number(factory: &std::io::HandleFactory, output: &std::io::OutputStre
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  doc "Two contexts each run one atomic statement on their own key of a shared map, which computes for two hundred milliseconds and then takes a sequence number from a shared Meta and logs its record. The status is 0 when the log holds two records with sequence numbers 0 and 1 in log order, replaying the log gives the final table, and the whole run took at least one computation. Statuses 1 to 3 name the first failed state check and status 5 a run shorter than one computation, which means the computation did not run. The run's nanoseconds are printed and the caller judges them against the control that holds Meta through the computation, because how long the run took beyond the computation depends on the host's load.";
-  let std::process::Inputs(cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
+  doc "Two contexts each run one atomic statement on their own key of a shared map, which computes for two hundred milliseconds and then takes a sequence number from a shared Meta and logs its record. The status is 0 when the log holds two records with sequence numbers 0 and 1 in log order, replaying the log gives the final table, and the whole run took at least one computation. Statuses 1 to 3 name the first failed state check and status 5 a run shorter than one computation, which means the computation did not run. The run's nanoseconds are printed and then the runtime's driver count, and the caller judges the nanoseconds against the control that holds Meta through the computation, because how long the run took beyond the computation depends on the host's load, and only when the count is two, because one driver runs the two statements one after the other whatever their locks.";
+  let std::process::Inputs(drivers: driver_count, cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move write_directory);
   std::fs::close_directory(factory: &factory, directory: move read_directory);
@@ -207,6 +207,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let printed = publish_number(factory: &factory, output: &output, value: elapsed);
   if printed != 0_u8 {
     return std::process::exit_status(code: printed);
+  }
+  let counted = publish_number(factory: &factory, output: &output, value: driver_count);
+  if counted != 0_u8 {
+    return std::process::exit_status(code: counted);
   }
   return std::process::exit_status(code: verdict);
 }

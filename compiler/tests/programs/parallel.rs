@@ -405,9 +405,12 @@ fn layout_preserves_both_results_without_benchmark_repetition() {
 /// [SHARE-1, SHARE-3] sixteen contexts adding to one counter, and producers
 /// and consumers passing values through one guarded queue, reach the sums
 /// every order of their atomic statements gives, on one driver and on four.
-/// Four drivers run the contexts on four threads, so an atomic statement that
-/// did not hold its object alone would lose increments or deliver a value
-/// twice; the program names the first wrong sum in its status.
+/// On Linux four drivers run the contexts on four threads, so an atomic
+/// statement that did not hold its object alone would lose increments or
+/// deliver a value twice; a host without a kernel completion ring runs one
+/// driver whatever `WF_DRIVERS` asks [PRE-2], so there both settings check
+/// only the one-driver orders. The program names the first wrong sum in its
+/// status.
 #[test]
 fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     let program = build_program(&compile_program("shared_objects.wf"));
@@ -515,24 +518,40 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
 /// The computation of one statement in `meta_commit_overlap.wf` and
 /// `meta_commit_held.wf`, in nanoseconds: both programs run until the
 /// monotonic clock has advanced this far, whatever the host's load. It is
-/// two hundred milliseconds so that the start delay of the second context on
-/// a loaded hosted runner is a fraction of it: with ten milliseconds, the
-/// overlapping program took 23 to 31 ms on the macOS runner's three shared
-/// cores, more than the 20 ms two excluding computations need.
+/// two hundred milliseconds so that a start delay of the second context on a
+/// loaded hosted runner stays a fraction of it; the criterion below tolerates
+/// one of up to 100 ms. (The 23 to 31 ms that a ten-millisecond computation
+/// took on the macOS runner measured no such delay: that host runs one
+/// driver, see `META_COMMIT_DRIVERS`.)
 const META_COMMIT_COMPUTATION: u64 = 200_000_000;
 
 /// The rounds the overlap case may use, each running the overlapping program
 /// and then its control.
 const META_COMMIT_ROUNDS: usize = 5;
 
-/// The nanoseconds a meta-commit program printed, as the first line of its
-/// standard output.
-fn meta_commit_elapsed(output: &Output) -> u64 {
-    let text = std::str::from_utf8(&output.stdout).expect("decimal duration output");
-    let line = text
+/// The driver count [PRE-2] gives both programs under `WF_DRIVERS=2`: two on
+/// Linux, whose kernel completion ring every CI Linux host provides, and one
+/// on a host without that ring, macOS and Windows among them, where the
+/// runtime runs every context on one driver whatever `WF_DRIVERS` asks
+/// (`wf_driver_select_count` in `compiler/src/backend/completion/bridge.c`).
+/// A Linux host without io_uring fails the cases below at this count, which
+/// names the reason, instead of passing with the overlap unchecked.
+const META_COMMIT_DRIVERS: u64 = if cfg!(target_os = "linux") { 2 } else { 1 };
+
+/// The nanoseconds and the driver count a meta-commit program printed, as
+/// the two lines of its standard output.
+fn meta_commit_output(output: &Output) -> (u64, u64) {
+    let text = std::str::from_utf8(&output.stdout).expect("decimal output");
+    let body = text
         .strip_suffix('\n')
-        .expect("duration line ends in a newline");
-    line.parse().expect("a decimal duration")
+        .expect("the driver line ends in a newline");
+    let (elapsed, drivers) = body
+        .split_once('\n')
+        .expect("a duration line and then a driver line");
+    (
+        elapsed.parse().expect("a decimal duration"),
+        drivers.parse().expect("a decimal driver count"),
+    )
 }
 
 /// [SHARE-1, SHARE-2, SHARE-3] two atomic statements that name different keys
@@ -547,7 +566,7 @@ fn meta_commit_elapsed(output: &Output) -> u64 {
 ///
 /// The duration is judged against the control `meta_commit_held.wf` measured
 /// in the same test, never against a fixed bound, because a loaded hosted
-/// runner delays the start of the second context by a time that only the
+/// runner can delay the start of the second context by a time that only the
 /// load decides. With computation C, a run that overlaps takes C plus that
 /// delay and a run that excludes takes at least 2C plus it, and the delay
 /// moves both alike. Each round runs the overlapping program and then the
@@ -557,6 +576,12 @@ fn meta_commit_elapsed(output: &Output) -> u64 {
 /// more than C / 2, half of the difference C an overlap leaves. A repeat
 /// cannot hide a lock held through the computation: every run of it takes at
 /// least 2 C and fails (1).
+///
+/// The duration is judged only where the programs report two drivers. One
+/// driver runs a context until it suspends, and a statement's block never
+/// suspends, so there the two statements run one after the other whatever
+/// their locks and the duration says nothing about lock timing; the case
+/// then checks both programs' states in one round and the driver count.
 #[test]
 fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commit() {
     let overlap = build_program(&compile_program("meta_commit_overlap.wf"));
@@ -571,14 +596,25 @@ fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commi
             Some(0),
             "meta_commit_overlap.wf: {output:?}"
         );
-        let overlap_elapsed = meta_commit_elapsed(&output);
+        let (overlap_elapsed, overlap_drivers) = meta_commit_output(&output);
+        assert_eq!(
+            overlap_drivers, META_COMMIT_DRIVERS,
+            "meta_commit_overlap.wf driver count: {output:?}"
+        );
         let output = held.run_with_settings(None, &[("WF_DRIVERS", "2")]);
         assert_eq!(
             output.status.code(),
             Some(0),
             "meta_commit_held.wf: {output:?}"
         );
-        let held_elapsed = meta_commit_elapsed(&output);
+        let (held_elapsed, held_drivers) = meta_commit_output(&output);
+        assert_eq!(
+            held_drivers, META_COMMIT_DRIVERS,
+            "meta_commit_held.wf driver count: {output:?}"
+        );
+        if META_COMMIT_DRIVERS < 2 {
+            return;
+        }
         rounds.push((overlap_elapsed, held_elapsed));
         overlap_best = overlap_best.min(overlap_elapsed);
         held_best = held_best.min(held_elapsed);
@@ -597,10 +633,12 @@ fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commi
 /// The control of the case above: the same statements, but each takes its
 /// sequence number from Meta before its computation, so Meta is held through
 /// it. Two computations that exclude one another need 2 C, so every run must
-/// take at least 1.8 C (the program's own status 4 floor). The control shows
-/// that the criterion of the case above separates the two lock timings: the
-/// same statements with Meta reached first end above the floor and so above
-/// the 1.8 C bound of the overlapping case. It needs no repeat, because a
+/// take at least 1.8 C (the program's own status 4 floor). On two drivers the
+/// control shows that the criterion of the case above separates the two lock
+/// timings: the same statements with Meta reached first end above the floor
+/// and so above the 1.8 C bound of the overlapping case. On one driver
+/// (`META_COMMIT_DRIVERS`) the statements run one after the other anyway, so
+/// the floor holds there for that reason alone. It needs no repeat, because a
 /// lock held through the computation can only lengthen a run.
 #[test]
 fn statements_that_take_meta_before_computing_run_one_after_the_other() {
@@ -612,7 +650,11 @@ fn statements_that_take_meta_before_computing_run_one_after_the_other() {
             Some(0),
             "meta_commit_held.wf, round {round}: {output:?}"
         );
-        let elapsed = meta_commit_elapsed(&output);
+        let (elapsed, drivers) = meta_commit_output(&output);
+        assert_eq!(
+            drivers, META_COMMIT_DRIVERS,
+            "round {round} driver count: {output:?}"
+        );
         assert!(
             elapsed >= META_COMMIT_COMPUTATION * 9 / 5,
             "round {round}, {elapsed} ns: {output:?}"

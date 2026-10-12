@@ -21,7 +21,8 @@ timing is caught.
 ## The witness and its control
 
 - [meta_commit_overlap.wf](../../../tests/programs/meta_commit_overlap.wf):
-  two contexts run on two drivers. Each runs one atomic statement that names
+  two contexts run on two drivers where the host has a kernel completion
+  ring (one elsewhere, see the criterion). Each runs one atomic statement that names
   its own key of a shared map (`a`, then `b`) and Meta, computes for 200
   milliseconds on its own entry, and then, in the same statement, takes the
   next sequence number from Meta and appends a log record (key, sequence,
@@ -41,13 +42,20 @@ Its result becomes the value stored under the key.
 
 ## Criterion
 
-The first measurement, on the hosted macOS runner (three shared cores, the
-test running beside other compiler tests), used a ten-millisecond computation
-and a fixed bound of 15 ms for the overlap program. Its three runs took 23.4,
-25.9 and 31.5 ms, so a bound fixed in advance did not hold: the start of the
-second context was delayed by 13 to 21 ms, a delay the load decides. The
-criterion therefore compares the overlap program with the control measured in
-the same test and uses a computation C of 200 ms, long against that delay.
+The first measurement used a ten-millisecond computation and a fixed bound of
+15 ms for the overlap program. The hosted Linux runner (four cores) met it;
+the hosted macOS runner (three shared cores, the test running beside other
+compiler tests) took 23.4, 25.9 and 31.5 ms. That was first read as a start
+delay of the second context, but with 200 ms the macOS runs took 400 to 415 ms
+for both programs alike: macOS runs one driver whatever `WF_DRIVERS` asks,
+because [PRE-2] gives one driver on a host without a kernel completion ring,
+and one driver runs the two statements one after the other. The duration is
+therefore judged only where both programs report two drivers, which they print
+after their nanoseconds; on one driver the cases check the states and the
+count. The criterion still compares the overlap program with the control
+measured in the same test, and uses a computation C of 200 ms, because a
+loaded runner can delay the second context's start by a time no fixed bound
+foresees.
 
 With C and a start delay d, an overlapping run takes C + d and a run that
 excludes takes at least 2 C + d. The delay moves both runs alike, so the test
@@ -60,7 +68,7 @@ passes once the best overlapping run so far
    the difference C that an overlap leaves.
 
 Both conditions tolerate a start delay of 100 ms or more in the best run (160
-ms for the first), about five times the worst delay measured. The control must
+ms for the first). The control must
 take at least 1.8 C (360 ms) in each run, which the control program checks
 itself (status 4); the overlap program must take at least C (status 5).
 
@@ -96,6 +104,8 @@ It shows two statements on two drivers with a 200-millisecond computation, one
 shared Meta and two keys. It does not measure the cost of the Meta commit
 itself, scaling past two drivers, or statements that reach Meta in the middle
 of their block. It needs two drivers and no more, so it holds on a hosted
-runner with three cores. A host with one core runs both drivers on that core:
+runner with three cores, and it is a result only on a host with a kernel
+completion ring: on macOS and Windows the runtime has one driver and the
+cases check the states alone. A host with one core runs both drivers on that core:
 the overlap program can still pass there, because each computation is bounded
 by the clock and not by the work it does, while the control cannot.
