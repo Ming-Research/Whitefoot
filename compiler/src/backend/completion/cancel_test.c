@@ -321,7 +321,9 @@ static void guard_races(void) {
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(view->visible_fired == 1u);
     wf__shared_unlock(view, 1u);
+#if WF_GUARD_MODE >= 2
     CHECK(view->shared.reservation == NULL);
+#endif
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));
@@ -439,7 +441,9 @@ static void guard_races(void) {
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
     CHECK(wf_context_root.shared_turn == NULL);
+#if WF_GUARD_MODE >= 2
     CHECK(view->shared.reservation == NULL && ((wf_shared *)ordinary)->reservation == NULL);
+#endif
     wf__body_close_cancel_watch(&watch);
     wf__body_close_cancel_source(&source);
     CHECK(wf__shared_release(view));

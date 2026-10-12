@@ -12,7 +12,7 @@ on:
         default: true
   push:
     branches: [claude/guard-fairness]
-    paths: [.github/workflows/tmp-guard-fairness.yml]
+    paths: [.github/workflows/tmp-guard-fairness.yml, compiler/src/**, research/experiments/guard-fairness/**]
 jobs:
   build:
     runs-on: ubuntu-24.04

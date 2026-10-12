@@ -30,12 +30,12 @@ fn is_ready(gate: &Gate) -> result: Bool reads(gate) {{
 
 fn main() -> status: std::process::ExitStatus pure waits {{
   let no = False();
-  let opened = Open();
+  let opened = Phase::Open();
   let start = Gate(turn: 0_u64, stop: 0_u64, level: 0_i32, ready: no, phase: opened, open: no);
   let state = shared_new::<Gate>(value: start);
   let mine = 1_u64;
   let yes = True();
-  let shut = Shut();
+  let shut = Phase::Shut();
   atomic g = &state when {guard} {{
     set g^.stop = mine;
     set g^.ready = yes;
