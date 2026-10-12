@@ -1,11 +1,10 @@
 fn helper(source: &[u64], target: &[u64], indices: &[Array<u64, 1>], i: u64, j: u64) -> result: unit writes(target[j]) contract {
-  define next = i + 1_u64;
   requires source^.len == 3_u64;
   requires target^.len == 3_u64;
   requires indices^.len == 3_u64;
-  requires i < 2_u64;
+  requires i < 3_u64;
   requires j < 3_u64;
-  requires forall zero(k in 0_u64..1_u64): source^[indices^[next].len] == 0_u64;
+  requires forall zero(k in 0_u64..1_u64): source^[indices^[i].len] == 0_u64;
 } {
   set target^[j] = 1_u64;
   return unit;
@@ -15,6 +14,6 @@ fn caller() -> result: unit pure {
   let values = array_filled::<u64, 3>(value: 0_u64);
   let inner = array_filled::<u64, 1>(value: 0_u64);
   let indices = array_filled::<Array<u64, 1>, 3>(value: inner);
-  helper(source: &values[0_u64..3_u64], target: &values[0_u64..3_u64], indices: &indices[0_u64..3_u64], i: 0_u64, j: 1_u64);
+  helper(source: &values[0_u64..3_u64], target: &values[0_u64..3_u64], indices: &indices[0_u64..3_u64], i: 1_u64, j: 1_u64);
   return unit;
 }
