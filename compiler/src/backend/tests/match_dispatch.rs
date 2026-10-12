@@ -417,6 +417,17 @@ fn cursor_block<'body>(body: &'body str, label: &str) -> &'body str {
     &rest[..end]
 }
 
+fn assert_transported_joins(module: &str, count: usize) {
+    let entry = format!(
+        "{}wf_run: transports the matched element's address through {count} mixed joins",
+        crate::DISPATCH_LEDGER_PREFIX
+    );
+    assert!(
+        module.lines().any(|line| line == entry),
+        "the ledger reports {count} transported joins: {module}"
+    );
+}
+
 /// The scalar join's bounds test is distributed once per reached path,
 /// before either pointer is formed. The qualified predecessors then join
 /// their pointers; the original scalar guard block contains no second test.
@@ -430,9 +441,12 @@ fn assert_mixed_cursor_join(module: &str) {
     let arm = definition(module, "wf_run.arm.2");
     let phis = arm
         .lines()
-        .filter(|line| line.contains("%wf.cursor.v") && line.contains(" = phi ptr "))
+        // Ordinary pointer phis also name cursor predecessor labels on
+        // their right-hand side. Count only cursor definitions.
+        .filter(|line| line.trim_start().starts_with("%wf.cursor.v") && line.contains(" = phi ptr "))
         .collect::<Vec<_>>();
     assert_eq!(phis.len(), 1, "one mixed join transports an address: {arm}");
+    assert_transported_joins(module, 1);
     let (pointer, inputs) = phis[0]
         .trim()
         .split_once(" = phi ptr ")
@@ -503,22 +517,44 @@ fn assert_mixed_cursor_join(module: &str) {
     );
 }
 
+/// Nested branches forward the unchanged pc through distinct SSA parameters.
+/// The failure continuation reads that pc, so recognizing only literally
+/// identical incoming values would discard this mixed join.
+fn nested_mixed_interpreter() -> String {
+    scalar_interpreter()
+        .replace(
+            "          set next = tv^;",
+            "          if count < 1001_u64 {\n            set next = tv^;\n          }",
+        )
+        .replace("return 0_u64;", "return pc;")
+}
+
+#[test]
+fn nested_forwarding_joins_keep_the_failure_value_and_transport_the_cursor() {
+    let module = emit(nested_mixed_interpreter().as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 #[test]
 fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing_it() {
     // A full-width target would poison an inbounds GEP or its nonnegative
     // assumption before the guard. Keep it on the original safe failure path.
-    let source = scalar_interpreter()
-        .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
-        .replace("return 0_u64;", "return pc;")
-        .replace("r == 3000_u64", "r == 2_u64");
-    assert!(source.contains("Op::Jnz(t: 18446744073709551615_u64)") && source.contains("r == 2_u64"));
-    let module = emit(source.as_bytes());
-    assert_mixed_cursor_join(&module);
-    let output = compile_and_run(&module);
-    assert!(
-        output.status.success(),
-        "the invalid target returns its original pc through the failure aliases: {output:?}"
-    );
+    for source in [scalar_interpreter(), nested_mixed_interpreter()] {
+        let source = source
+            .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
+            .replace("return 0_u64;", "return pc;")
+            .replace("r == 3000_u64", "r == 2_u64");
+        assert!(source.contains("Op::Jnz(t: 18446744073709551615_u64)") && source.contains("r == 2_u64"));
+        let module = emit(source.as_bytes());
+        assert_mixed_cursor_join(&module);
+        let output = compile_and_run(&module);
+        assert!(
+            output.status.success(),
+            "the invalid target returns its original pc through the failure aliases: {output:?}"
+        );
+    }
 }
 
 #[test]
@@ -536,6 +572,7 @@ fn two_absolute_join_predecessors_keep_run_based_cursor_formation() {
     if split {
         let arm = definition(&module, "wf_run.arm.2");
         let run = cursor_run(&module);
+        assert_transported_joins(&module, 0);
         assert!(
             !arm.contains("%wf.cursor.v"),
             "all-absolute joins have no cursor phi: {arm}"

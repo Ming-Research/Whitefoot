@@ -2,26 +2,58 @@
 # Same-source v2h CoreMark and Halo fib/loop, compiled by the candidate,
 # main 032a0f665 and an independently built twin of main. Launches rotate
 # among the three sides; only the 14900K run can decide the adoption criterion.
+# Research inputs require the checker's explicit manual-only workflow
+# boundary; invoke on claude/mixed-join-cursor with
+# gh workflow run b1-timing.yml --ref claude/mixed-join-cursor
 name: b1-timing
 
 on:
-  push:
-    branches: [claude/mixed-join-cursor]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# [14900k] selects the owner's runner and seven rounds. Hosted runs with
-# two rounds exercise the workflow and do not settle a 2% timing difference.
+# [14900k] in the selected commit's message selects the owner's runner and
+# seven rounds. Hosted runs with two rounds exercise the workflow and do
+# not settle a 2% timing difference.
 env:
   MAIN_COMMIT: 032a0f6650dc8d9cad617d4ab2045b820a877fec
-  HALO_COMMIT: acb39ad7fc9dce692137dc9753f30c8008e4a2d3
+  # This snapshot adopts the current cancel and equality contracts. Its
+  # kernels and graph equal the earlier acb39ad7f measurement's, but its
+  # interpreter changed: historical raw times are not a direct comparison.
+  HALO_COMMIT: 641eb29f48334489ff62af3b3ed71721c2967fb6
   NANO_COMMIT: 5f248e4420102356be7edadbdb4db2ae105d3270
-  ROUNDS: ${{ contains(github.event.head_commit.message, '[14900k]') && '7' || '2' }}
 
 jobs:
+  select-runner:
+    if: github.ref == 'refs/heads/claude/mixed-join-cursor'
+    runs-on: ubuntu-24.04
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+      rounds: ${{ steps.select.outputs.rounds }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select placement from this commit's message
+        id: select
+        run: |
+          set -eo pipefail
+          message=$(git show -s --format=%B HEAD)
+          case "$message" in
+            *'[14900k]'*)
+              echo 'runner=["self-hosted","14900k"]' >> "$GITHUB_OUTPUT"
+              echo 'rounds=7' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'runner=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
+              echo 'rounds=2' >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
   b1-timing:
-    runs-on: ${{ contains(github.event.head_commit.message, '[14900k]') && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    needs: select-runner
+    runs-on: ${{ fromJSON(needs.select-runner.outputs.runner) }}
+    env:
+      ROUNDS: ${{ needs.select-runner.outputs.rounds }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -69,28 +101,35 @@ jobs:
           done
           sha256sum "$out"/whitefootc-*
 
-      - name: Build identical v2h and pinned Halo sources with each compiler
+      - name: Build identical v2h source with all three compilers
         run: |
           set -eo pipefail
           out="$RUNNER_TEMP/b1-timing"
           python3 research/experiments/match-dispatch/wasm/gen.py "$out/interp.wf"
-          git clone --quiet https://github.com/Ming-Research/Halo-wf "$out/halo-source"
-          git -C "$out/halo-source" checkout --quiet "$HALO_COMMIT"
-          git -C "$out/halo-source" log --oneline -1
-          cat "$out/halo-source/whitefoot.pin"
           for side in main candidate twin; do
             echo "== v2h $side"
             /usr/bin/time -p "$out/whitefootc-$side" --dispatch-ledger --full-lto \
               "$out/interp.wf" -o "$out/wasm-$side" > "$out/ledger-v2h-$side.txt"
             cat "$out/ledger-v2h-$side.txt"
+          done
+          sha256sum "$out/interp.wf" "$out"/wasm-*
+
+      - name: Build pinned Halo source with all three compilers
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/b1-timing"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf "$out/halo-source"
+          git -C "$out/halo-source" checkout --quiet "$HALO_COMMIT"
+          git -C "$out/halo-source" log --oneline -1
+          cat "$out/halo-source/whitefoot.pin"
+          for side in main candidate twin; do
             echo "== Halo $side"
             ( cd "$out/halo-source" && /usr/bin/time -p "$out/whitefootc-$side" \
                 --dispatch-ledger --graph research/experiments/halo-bench/modules.wfg \
                 --entry bench --full-lto -o "$out/halo-$side" > "$out/ledger-halo-$side.txt" )
             cat "$out/ledger-halo-$side.txt"
           done
-          sha256sum "$out/interp.wf" "$out"/wasm-* \
-            "$out/halo-main" "$out/halo-candidate" "$out/halo-twin"
+          sha256sum "$out/halo-main" "$out/halo-candidate" "$out/halo-twin"
           # Silverfir supplies only the pinned CoreMark module; no comparison
           # engine is built, because this experiment compares WF compilers.
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$out/nano-source"

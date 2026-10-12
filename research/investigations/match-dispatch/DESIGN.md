@@ -1227,11 +1227,20 @@ Unknown steps still rebase; this candidate does not compute `next - old`.
 `research/experiments/match-dispatch/wasm/gen.py`. Compile it with main at
 `032a0f665`, the candidate, and an independently built twin of that main.
 Use the same LLVM, optimization settings and CoreMark 2K workload. Also
-compile Halo-wf at `acb39ad7f`, the revision used in
-[the previous Halo comparison](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo),
+compile Halo-wf at `641eb29f48334489ff62af3b3ed71721c2967fb6`
 with all three compilers and full LTO; run `fib` at N = 35 and `loop`.
-The temporary CI workflow first offers a two-round hosted smoke run; the
-measurement is seven interleaved launches in rotated order on the 14900K.
+This source supplies the current cancellation arguments, watch lifetime,
+canonical float spellings and Boolean equality forms. Its benchmark graph
+and both kernel sources are byte-identical to `acb39ad7f`, used in
+[the previous Halo comparison](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo).
+The interpreter has also evolved, so the comparison qualifies B1 against
+current main on identical current source; its absolute times do not repeat
+the historical measurement. CI must confirm this pinned source's acceptance
+by all three compilers before timing.
+The temporary CI workflow is manually dispatched to keep research inputs
+outside automatic correctness workflows. It first offers a two-round hosted
+smoke run; the measurement is seven interleaved launches in rotated order on
+the 14900K.
 Record correctness, per-round results, medians, spread, paired
 candidate/main and twin/main ratios, and dispatch ledgers. Inspect affected
 address sequences and any added branches or spills before attributing a
@@ -1268,6 +1277,15 @@ where address formation may assert validity. The candidate must account for
 the run as a reader wherever a transported alternative rebases. Halo timing
 is a regression control, not evidence that helper-based frame accesses
 receive this mechanism. No measurements of this candidate exist yet.
+
+**Expected coverage.** The generated v2h source contains 33 mixed sites:
+`BrIf`, `BrUnless`, `BrIfMove`, ten ordinary `BrI32` compares, eighteen
+accumulator `BrI32` compares, and `BrIfC`/`BrUnlessC`. The last bounds guard
+at each site qualifies the selected index before transfer. `BrIfMove` also
+forwards unchanged values through nested joins; recognizing those values by
+their common SSA source preserves its failure path's original PC. The
+candidate ledger must expose the transported count, including zero; 33 is
+the expected coverage to verify in CI, not an observed compiler result.
 
 **Later candidates.** Persistent frame pointers require complete consumer
 rewriting, helper coverage and an explicit usable relation for `enter`'s

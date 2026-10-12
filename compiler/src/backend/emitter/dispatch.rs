@@ -2010,6 +2010,52 @@ impl FunctionEmitter<'_, '_> {
         Ok(None)
     }
 
+    /// Resolve equal-input parameters through arm-local forwarding joins.
+    /// Only roots defined outside these parameters seed the closure: a cycle
+    /// cannot manufacture a dominating value for an early failure edge.
+    fn cursor_join_roots(&self, blocks: &[bool]) -> HashMap<IrValueId, IrValueId> {
+        let parameters: HashSet<IrValueId> = self
+            .function
+            .blocks()
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| blocks[*at])
+            .flat_map(|(_, block)| block.parameters().iter().map(|(value, _)| *value))
+            .collect();
+        let mut roots = HashMap::new();
+        loop {
+            let before = roots.len();
+            for (at, block) in self.function.blocks().iter().enumerate() {
+                if !blocks[at] || self.incoming[at].is_empty() {
+                    continue;
+                }
+                for (position, (parameter, _)) in block.parameters().iter().enumerate() {
+                    if roots.contains_key(parameter) {
+                        continue;
+                    }
+                    let root = |value: IrValueId| {
+                        if parameters.contains(&value) {
+                            roots.get(&value).copied()
+                        } else {
+                            Some(value)
+                        }
+                    };
+                    let first = self.incoming[at][0].arguments.get(position).copied();
+                    if let Some(first) = first.and_then(root)
+                        && self.incoming[at].iter().all(|edge| {
+                            edge.arguments.get(position).copied().and_then(root) == Some(first)
+                        })
+                    {
+                        roots.insert(*parameter, first);
+                    }
+                }
+            }
+            if roots.len() == before {
+                return roots;
+            }
+        }
+    }
+
     /// Move a join's existing, pure bounds test to its incoming edges.
     /// The immediate success edge already has the header's checked target
     /// domain; moving its address formation to those successful predecessors
@@ -2020,8 +2066,8 @@ impl FunctionEmitter<'_, '_> {
     /// bound; the existing header obligation, not a guessed bound, is the
     /// authority. A failure
     /// continuation may read equal-input parameters through their dominating
-    /// source values, but a varying failure value or a shared continuation
-    /// keeps the ordinary run-based path.
+    /// source values, including nested forwarding joins, but a varying failure
+    /// value or a shared continuation keeps the ordinary run-based path.
     fn cursor_joins(&self, blocks: &[bool]) -> Result<Vec<CursorJoin>, BackendFailure> {
         let Some(dispatch) = &self.dispatch else {
             return Ok(Vec::new());
@@ -2029,6 +2075,8 @@ impl FunctionEmitter<'_, '_> {
         let Some(cursor) = &dispatch.cursor else {
             return Ok(Vec::new());
         };
+        let roots = self.cursor_join_roots(blocks);
+        let root = |value: IrValueId| roots.get(&value).copied().unwrap_or(value);
         let mut joins = Vec::new();
         for (index, block) in self.function.blocks().iter().enumerate() {
             if !blocks[index] {
@@ -2178,8 +2226,8 @@ impl FunctionEmitter<'_, '_> {
             }
             let mut aliases = HashMap::new();
             for (at, (parameter, _)) in block.parameters().iter().enumerate() {
-                let first = incoming[0].arguments[at];
-                if incoming.iter().all(|edge| edge.arguments[at] == first) {
+                let first = root(incoming[0].arguments[at]);
+                if incoming.iter().all(|edge| root(edge.arguments[at]) == first) {
                     aliases.insert(*parameter, first);
                 }
             }
