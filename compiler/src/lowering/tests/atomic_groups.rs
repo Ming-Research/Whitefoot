@@ -7,7 +7,8 @@
 use super::*;
 use crate::{IrRecord, IrRecordKind};
 
-/// Each group take in `main`: whether it may park, and its target count.
+/// The distinct group takes in `main`, each site a statement's acquisition
+/// path reaches once: whether it may park, and its target count.
 fn group_takes(program: &IrProgram) -> Vec<(bool, u32)> {
     fn count(record: IrRecord) -> u32 {
         match record.kind() {
@@ -31,7 +32,8 @@ fn group_takes(program: &IrProgram) -> Vec<(bool, u32)> {
             _ => None,
         })
         .collect::<Vec<_>>();
-    takes.sort_unstable_by_key(|take| take.1);
+    takes.sort_unstable_by_key(|take| (take.1, take.0));
+    takes.dedup();
     takes
 }
 
