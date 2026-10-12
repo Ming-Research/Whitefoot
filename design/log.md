@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A KeySet reports its retained heap bytes and a scan bounds their growth
+
+Nodes: compiler/proof-query-context, compiler/waiting-contexts/concurrent-map, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, language/waiting/shared-objects/keyed-tables
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#361 (head commit 5ea2664eb) changing the specification and the design tree so that a KeySet reports its retained heap bytes and a caller can use 'a scan grows them by at most limit' in proofs?" (translated), whose background listed the rule-by-rule table for the specification change, SHARE-1's cross-reference-only change, the one existing conformance verdict that changes (the MSR-5 case, from Reject(FN-9) to Run(42)), and the five design-tree nodes with their proposed decisions. The directions were the owner's choice of B on card gran-scan-retained-shape and of A on card gran-scan-retained-proof, both on 2026-10-11.
+
+Summary: `key_set_bytes` is a read-only operation reporting a key set's heap holding, including unused capacity and exactly what release returns, with `map_scan_within` declaring unconditional monotonicity and an entry-plus-limit bound over it, because firn must prove its reservation accounting after temporary allocations end, instead of estimating storage from key lengths or changing `ScanStep`. A normal-return relation may add one own integer parameter with coefficient one to one side, because callers then prove both subtractions of the reservation account through an ordinary contract that user functions also use, instead of an operation-specific fact or a runtime check; the runtime keeping the account and a runtime check in firn are rejected. The window-transfer contract keeps its exact-length guarantees and does not admit a second entry measure on one side, because the chosen extension adds a scalar parameter, not a measure, and a caller reads the destination's exact length after the call. The sum is an internal term in the existing relation and proof path, with operand support union, affine expansion and immutable bound images, instead of a second publication domain or a scan-specific rule. `key_set_bytes` sums the host-granted capacities of the item/index store and the byte arena and every release returns both to the runtime pool, instead of counting only occupied bytes or caching a set's allocations in a thread-local spare; the cost of removing that cache is unmeasured.
+
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 
 Nodes: language/ownership/copy-classification, language/ownership/linearity
