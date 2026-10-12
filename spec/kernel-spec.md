@@ -636,7 +636,7 @@ This keeps the const-generic forwarding path closed under the one operation: `co
 A const argument is a `const` node written for a const `gparam` [GRAM-2], the size N of a constant-capacity storage shape being the argument of its [PRE-1] `const n: u64`; P names that `gparam`'s integer type.
 A const argument is admitted exactly when each of its IDENT terms is declared with integer type P, as a const `gparam`, an interface's const binder [FN-3] or a named-const item [MSR-6, CONST-2], and its value lies in the closed range of P [FORM-7].
 An IDENT term declared with another type is a hard error citing CONST-1 at the complete `const` node.
-A value outside the closed range of P is a hard error citing CONST-1 at the complete `const` node where `const-reject` judges that value: at the argument for a closed const argument, every term of which is a decimal integer literal, and at the concrete instantiation that evaluates a symbolic one [FN-2].
+A value outside the closed range of P is a hard error citing CONST-1 at the complete `const` node where `const-reject` judges that value: at the argument for a closed const argument, one with no const `gparam` or interface const binder among its terms, and at the concrete instantiation that evaluates a symbolic one [FN-2].
 A const generic's value therefore lies in the range of its written type at every instance, and no instance wraps or truncates it.
 
 [CONST-2] A `const IDENT: type = cvalue;` item declares an immutable, program-lifetime, read-only static value, with the `cvalue` production of the fence below.
