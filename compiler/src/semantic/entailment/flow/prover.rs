@@ -134,7 +134,11 @@ impl Vocabulary {
         // Sharing the image path cannot give a signed parameter the unsigned
         // nonnegativity bound or widen a narrower parameter's range.
         let ty = match self.terms.kind(anchor) {
-            TermKind::ConstParameter(_, ty) => *ty,
+            TermKind::ConstParameter(_, ty)
+            | TermKind::Place(_, ty)
+            | TermKind::CallDatum { ty, .. }
+            | TermKind::EntryDatum { ty, .. }
+            | TermKind::MeasureDatum { ty, .. } => *ty,
             _ => IntegerType::U64,
         };
         let atom = self.new_affine_atom(ty);
@@ -162,7 +166,9 @@ impl Vocabulary {
         if state.measure_atoms.borrow().contains_key(&datum) {
             return;
         }
-        let atom = self.measure_atom(live, state);
+        let atom = self
+            .affine_term_value(live, state)
+            .unwrap_or_else(|| self.measure_atom(live, state));
         // A constant image is still the exact immutable value this datum
         // captures. Retaining it is what carries an affine exact measure
         // across the transfer that kills the live place.
@@ -191,18 +197,9 @@ impl Vocabulary {
                 self.terms.kind(id),
                 TermKind::Measure(..)
                     | TermKind::TargetMeasure { .. }
-                    | TermKind::CallDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::EntryDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::MeasureDatum {
-                        measure: Some(_),
-                        ..
-                    }
+                    | TermKind::CallDatum { .. }
+                    | TermKind::EntryDatum { .. }
+                    | TermKind::MeasureDatum { .. }
             ) {
                 self.measure_terms_seen.push(id);
             }
@@ -293,9 +290,12 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
             CheckedMeasure::Pages,
+            CheckedMeasure::Bytes,
         ] {
             let cell = cell_measure.cell(measured);
-            if cell_measure == CheckedMeasure::Pages && cell == MeasureCell::Absent {
+            if matches!(cell_measure, CheckedMeasure::Pages | CheckedMeasure::Bytes)
+                && cell == MeasureCell::Absent
+            {
                 continue;
             }
             let term = self.vocabulary.intern_measure(cell_measure, &path);
@@ -1593,6 +1593,11 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
+            CapturedTerm::Opaque if matches!(value.capture, CaptureId::ContractRead { .. }) => {
+                self.vocabulary.terms.interned(&TermKind::IndexCapture {
+                    capture: value.capture,
+                })
+            }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
@@ -2942,6 +2947,12 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             }
             candidates.push(AffineL0Candidate { term, value });
+        }
+        let sums = self.vocabulary.terms.sum_ids().collect::<Vec<_>>();
+        for term in sums {
+            if let Some(value) = self.vocabulary.affine_term_value(term, values) {
+                candidates.push(AffineL0Candidate { term, value });
+            }
         }
         let mut bindings = values.values.keys().copied().collect::<Vec<_>>();
         bindings.sort_by_key(|binding| binding.0);

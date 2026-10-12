@@ -1,0 +1,20 @@
+const byte_key: Array<u8, 1> =[97_u8];
+
+fn retained(keys: &KeySet) -> bytes: u64 reads(keys) {
+  doc "A read-only caller may forward key_set_bytes without invalidating entries borrowed from the set.";
+  return key_set_bytes(keys: keys);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  let index = key_set_insert(keys: &keys, key: &byte_key[0_u64..1_u64]);
+  atomic entries = &store[keys] {
+    let bytes = retained(keys: &keys);
+    if bytes == 0_u64 {
+      return std::process::exit_status(code: 1_u8);
+    }
+    set entries^[index] = Some<u8>(value: 42_u8);
+  }
+  return std::process::exit_status(code: 42_u8);
+}

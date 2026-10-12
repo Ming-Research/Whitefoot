@@ -489,8 +489,21 @@ fn assert_join_parents(
     }
 }
 
-fn term_integer_range(kind: &TermKind) -> Option<(i128, i128)> {
+fn term_integer_range(summary: &FunctionEntailment, kind: &TermKind) -> Option<(i128, i128)> {
     match kind {
+        TermKind::Sum(left, right) => {
+            let range = |term| match retained_term(summary, term) {
+                TermKind::Zero => Some((0, 0)),
+                TermKind::Constant(value) => Some((*value, *value)),
+                kind => term_integer_range(summary, kind),
+            };
+            let (left_minimum, left_maximum) = range(*left)?;
+            let (right_minimum, right_maximum) = range(*right)?;
+            Some((
+                left_minimum.checked_add(right_minimum)?,
+                left_maximum.checked_add(right_maximum)?,
+            ))
+        }
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => Some(type_range(*ty)),
         TermKind::Measure(..)
         | TermKind::TargetMeasure { .. }
@@ -1154,13 +1167,13 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     },
                     ImplicitBoundKind::TypeMaximum => {
                         assert_eq!(*right, ZERO);
-                        let (_, maximum) = term_integer_range(left_kind)
+                        let (_, maximum) = term_integer_range(summary, left_kind)
                             .expect("type maximum requires an integer-like term");
                         assert_eq!(*bound, maximum);
                     }
                     ImplicitBoundKind::TypeMinimum => {
                         assert_eq!(*left, ZERO);
-                        let (minimum, _) = term_integer_range(right_kind)
+                        let (minimum, _) = term_integer_range(summary, right_kind)
                             .expect("type minimum requires an integer-like term");
                         assert_eq!(*bound, -minimum);
                     }
@@ -1571,7 +1584,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let right = &detail.right;
                 let parent = detail.parent;
                 let term_for = |captured: &crate::semantic::places::CapturedValue| {
-                    use crate::semantic::places::CapturedTerm;
+                    use crate::semantic::places::{CaptureId, CapturedTerm};
                     summary
                         .inventory
                         .terms
@@ -1588,7 +1601,16 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),
-                            CapturedTerm::Opaque => false,
+                            // An erased contract position has no source datum:
+                            // its call-entry capture term is the identity the
+                            // caller's instantiated image was equated with.
+                            CapturedTerm::Opaque => {
+                                matches!(captured.capture, CaptureId::ContractRead { .. })
+                                    && matches!(
+                                        term,
+                                        TermKind::IndexCapture { capture } if *capture == captured.capture
+                                    )
+                            }
                         })
                         .map(|term| TermId(u32::try_from(term).expect("term index fits u32")))
                         .expect("an indexed-separation capture has a retained datum term")
@@ -5804,7 +5826,14 @@ fn main() -> status: std::process::ExitStatus pure {
                 DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
                 _ => return true,
             };
-            !matches!(relation, Relation::Bound { right: ZERO, bound: 255, .. })
+            !matches!(
+                relation,
+                Relation::Bound {
+                    right: ZERO,
+                    bound: 255,
+                    ..
+                }
+            )
         }),
         "the directly established type bound needs no delivery root"
     );

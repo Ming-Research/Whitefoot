@@ -249,6 +249,7 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Length,
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
+            CheckedMeasure::Bytes,
         ] {
             if let Some(sibling) = self.vocabulary.terms.sibling_measure(source, measure) {
                 let target = self.vocabulary.terms.intern(TermKind::TargetMeasure {

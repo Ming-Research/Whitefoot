@@ -8,7 +8,7 @@
 //! it forms selects an existing element, and every user of an instance proves
 //! that where it uses one [RANGE-3].
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
@@ -62,6 +62,8 @@ struct RangeNames {
     /// Set when a term's type leaves the clause stating nothing at this
     /// concrete instance.
     unformed: Cell<bool>,
+    /// Typed source reads retained before arithmetic normalization [EFF-5].
+    contract_reads: RefCell<Vec<CheckedRangeTerm>>,
 }
 
 /// What the suffixes of a range place have selected so far.
@@ -93,6 +95,8 @@ impl Checker<'_, '_> {
         clause: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<CheckedRangeClause>, CheckStop> {
+        self.types
+            .check_range_referent_places(context.check_context, clause, bindings)?;
         let declaration = self
             .types
             .declarations
@@ -172,6 +176,7 @@ impl Checker<'_, '_> {
             binders,
             guards,
             conclusions,
+            contract_reads: names.contract_reads.into_inner(),
         }))
     }
 
@@ -313,6 +318,7 @@ impl Checker<'_, '_> {
             binders: Vec::new(),
             guards: Vec::new(),
             conclusions: relation,
+            contract_reads: names.contract_reads.into_inner(),
         }))
     }
 
@@ -1059,7 +1065,14 @@ impl Checker<'_, '_> {
                 "read the value or the element instead of borrowing it",
             );
         };
-        self.range_place(context, place, bindings, names)
+        let operand = self.range_place(context, place, bindings, names)?;
+        // Preserve the already-typed place before range_sum can cancel it
+        // or multiply it by zero. Clause erasure changes no alias premise.
+        names
+            .contract_reads
+            .borrow_mut()
+            .push(operand.term().clone());
+        Ok(operand)
     }
 
     fn range_place(
@@ -1257,6 +1270,9 @@ impl Checker<'_, '_> {
                             "write `^` only after a reference binding",
                         );
                     };
+                    if mode.is_range() {
+                        self.types.declarations.check_range_referent(suffix)?;
+                    }
                     path.push(CheckedRangeStep::Referent);
                     selected = if mode.is_range() {
                         Selected::Run(ty)
@@ -1397,12 +1413,9 @@ impl Checker<'_, '_> {
                         }
                         .into());
                     }
-                    if at_end && (name == "len" || name == "cap") {
-                        let measure = if name == "len" {
-                            CheckedMeasure::Length
-                        } else {
-                            CheckedMeasure::Capacity
-                        };
+                    if at_end && matches!(name.as_str(), "len" | "cap" | "bytes") {
+                        let measure = super::types::measure_named(&name)
+                            .expect("admitted measure spelling");
                         let measured = match selected {
                             Selected::Run(_) => measure == CheckedMeasure::Length,
                             Selected::Value(ty) => ty
@@ -1654,13 +1667,10 @@ impl Checker<'_, '_> {
             }
             if position + 1 == suffixes.len()
                 && selected.measured().is_some()
-                && (name == "len" || name == "cap")
+                && matches!(name.as_str(), "len" | "cap" | "bytes")
             {
-                let measure = if name == "len" {
-                    CheckedMeasure::Length
-                } else {
-                    CheckedMeasure::Capacity
-                };
+                let measure =
+                    super::types::measure_named(&name).expect("admitted measure spelling");
                 if selected
                     .measured()
                     .is_some_and(|kind| measure.cell(kind) == MeasureCell::Absent)

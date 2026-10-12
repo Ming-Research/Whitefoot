@@ -1,0 +1,18 @@
+enum State {
+  Ready();
+  Done();
+}
+
+fn probe(r: &[State]) -> result: unit reads(r) {
+  match r^ {
+    Ready() => {
+    }
+    Done() => {
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

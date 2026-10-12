@@ -325,3 +325,24 @@ inspection, grammar-data calculation and direct rustfmt authoring were performed
 on the Mac. No builds, cargo, make, clippy, test suites or performance
 measurements ran locally. Amended-compiler results in this report are the
 owner-supplied CI observations, not local execution.
+
+## Merge with main at v0.135
+
+The branch was merged with main at `f0df1d2587533618d7ad8acaac4b0ea1ad9830e8`,
+whose active specification is v0.135. The rule changes above were reapplied to
+v0.135's text without change of meaning, v0.135 was archived byte for byte and
+the active file is v0.136. MSR-3's admission sentence is main's projected
+entry former, extended so that in a range postcondition its projection may
+select a place RANGE-1 admits, and RANGE-1 lets a range place begin with
+`entry(p)` or `entry(p projection)`, the inner steps first, because the merged
+compiler admits both spellings there; the branch's edit to MSR-3's denotation
+sentence is unchanged.
+
+Main's EFF-5 contract-read footprint already includes range conclusions and
+entry-state reads. Its collector now treats an entry-rooted range place as a
+read of that parameter and an `unchanged` whole-selection identity as a read of
+the complete selected element. The generated inventory at v0.136, read from the
+debug build's grammar tables, is 183 decisions, 8548 SELECT rows, 116
+diagnostic terminal predicates and 109 fixed terminals; the three rows beyond
+the two sides' sum are the `unchanged` suffix following the entry former's
+`psuffix*` repeat.

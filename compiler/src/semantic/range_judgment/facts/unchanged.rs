@@ -208,6 +208,7 @@ mod tests {
                 ..Frame::default()
             },
             clause: CheckedRangeClause {
+                contract_reads: Vec::new(),
                 declaration: crate::DeclarationId::from_index(0).unwrap(),
                 name: "frame".into(),
                 node: node(),

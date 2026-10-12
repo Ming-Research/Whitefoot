@@ -90,9 +90,9 @@ impl Input<'_, '_> {
         targets.is_empty()
             || writes.is_empty()
             || targets.iter().any(|target| {
-                writes.iter().any(|write| {
-                    write.may_be_prefix_of(separations, target, false)
-                })
+                writes
+                    .iter()
+                    .any(|write| write.may_be_prefix_of(separations, target, false))
             })
     }
 
@@ -141,12 +141,11 @@ impl Input<'_, '_> {
                 // of an already filled selection remain the same value.
                 !matches!(
                     suffix,
-                    []
-                    | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
-                    | [PlaceStep::Deref, PlaceStep::Index(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Range(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
-                    | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+                    [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                        | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                        | [PlaceStep::Deref, PlaceStep::Page(_), ..]
                 )
             })
         })
@@ -245,9 +244,13 @@ impl Input<'_, '_> {
         {
             descriptor.path.pop();
         }
-        descriptor
-            .path
-            .push(PlaceStep::Measure(measure.support_word()));
+        // KeySet bytes is derived from the allocations its descriptor
+        // names; it has no independent measure word [MSR-2].
+        if measure != CheckedMeasure::Bytes {
+            descriptor
+                .path
+                .push(PlaceStep::Measure(measure.support_word()));
+        }
         // The fact's own place goes first: [WIN-2]'s liveness is a question
         // about the window above its index [`Reasoning::event_live_bounds`].
         self.write_kills_support(separations, &descriptor, written, relocation)
@@ -773,6 +776,9 @@ impl Vocabulary {
     /// every holder read through, which is the spelling root here.
     pub(super) fn scope_kills_term(&self, term: TermId, exited: &HashSet<BindingId>) -> bool {
         match self.terms.kind(term) {
+            TermKind::Sum(left, right) => {
+                self.scope_kills_term(*left, exited) || self.scope_kills_term(*right, exited)
+            }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::TargetMeasure { .. }
             | TermKind::CountedCapture { .. }
@@ -824,10 +830,12 @@ impl Vocabulary {
         range_path: &[u32],
     ) {
         state.kill(|term| {
-            matches!(
-                self.terms.kind(term),
-                TermKind::CountedCapture { range_path: path, .. } if path == range_path
-            )
+            self.terms.any_leaf(term, &|leaf| {
+                matches!(
+                    self.terms.kind(leaf),
+                    TermKind::CountedCapture { range_path: path, .. } if path == range_path
+                )
+            })
         });
     }
 
@@ -860,6 +868,10 @@ impl Reasoning<'_, '_, '_> {
         event: &KillEvent,
     ) -> bool {
         match self.vocabulary.terms.kind(term) {
+            TermKind::Sum(left, right) => {
+                self.event_kills_term(separations, *left, event)
+                    || self.event_kills_term(separations, *right, event)
+            }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             // Counted captures and commit values are immutable. A counted
             // capture dies with its construct-scope exit, handled separately
@@ -913,7 +925,9 @@ impl Reasoning<'_, '_, '_> {
                     ..
                 } = event
                     && let PlaceRoot::Binding(binding) = place.root
-                    && self.input.relocation_kills_holder(separations, binding, written)
+                    && self
+                        .input
+                        .relocation_kills_holder(separations, binding, written)
                 {
                     return true;
                 }
@@ -946,7 +960,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } = event
                 && holders.iter().any(|holder| {
-                    self.input.relocation_kills_holder(separations, *holder, written)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, written)
                 })
             {
                 return true;
@@ -1318,7 +1333,9 @@ impl Reasoning<'_, '_, '_> {
             _ => self.captured_index_term(index),
         }?;
         let affine_offset = match index.capture {
-            CaptureId::Source(_) => states.affine.indices.get(&index.capture).cloned(),
+            CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
+                states.affine.indices.get(&index.capture).cloned()
+            }
             _ => None,
         }
         .or_else(|| self.vocabulary.affine_term_value(offset, &states.affine));

@@ -1,0 +1,4 @@
+fn drivers_as_u8(inputs: &std::process::Inputs) -> result: u8 reads(inputs.drivers) {
+  doc "PRE-2 fixes drivers as u64; returning it as u8 must fail FN-1 at the return. Before the field was added lookup failed earlier and could not establish the intended type mismatch.";
+  return inputs^.drivers;
+}

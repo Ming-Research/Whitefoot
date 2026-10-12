@@ -5152,6 +5152,22 @@ fn for_each_implicit_bound(
     emit(id, id, 0, ImplicitBoundKind::Reflexive);
     match terms.kind(id) {
         TermKind::Zero => {}
+        TermKind::Sum(left, right) => {
+            let (left_upper, left_lower) = implicit_zero_bounds(terms, *left);
+            let (right_upper, right_lower) = implicit_zero_bounds(terms, *right);
+            if let Some(upper) = left_upper
+                .zip(right_upper)
+                .and_then(|((a, _), (b, _))| a.checked_add(b))
+            {
+                emit(id, ZERO, upper, ImplicitBoundKind::TypeMaximum);
+            }
+            if let Some(lower) = left_lower
+                .zip(right_lower)
+                .and_then(|((a, _), (b, _))| a.checked_add(b))
+            {
+                emit(ZERO, id, lower, ImplicitBoundKind::TypeMinimum);
+            }
+        }
         TermKind::Constant(value) => {
             emit(id, ZERO, *value, ImplicitBoundKind::Constant);
             emit(ZERO, id, -value, ImplicitBoundKind::Constant);

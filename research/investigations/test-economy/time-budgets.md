@@ -334,6 +334,19 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
+**The corpus group on macOS, raised by 10 s.** On main at `032a0f665`
+(Whitefoot run 38190993768), with every test passing, the corpus job on
+macos-15 took 365.8 s of `check/corpus`'s 330 s: 177.2 s of
+`compiler/test-build-corpus`'s 165 s and 188.1 s of `compiler/test-corpus`'s
+175 s. Over the 35 most recent corpus jobs on macos-15 the group's median was
+291 s, its 90th percentile 340 s and its longest 365 s, with six above 330 s;
+the same revision varied widely, 338 s and then 244 s on a rerun of #368, so
+the overruns are mostly runner variance with some growth of main. The owner
+approved the rule's raise of 10 s on the status board on 2026-10-12 (card
+coord-devspeed-macos-corpus-budget): `check/corpus` to 340 s,
+`compiler/test-build-corpus` to 175 s and `compiler/test-corpus` to 185 s on
+macOS; ubuntu is unchanged.
+
 **`check/runtime` on macOS, raised to 30 s.** On macOS hosted runners the
 stage overran 20 s five times on changes that touched none of its code:
 23.2 s on Whitefoot#298, 20.5 s on #311, 20.7 s on #312, 27.0 s on #333

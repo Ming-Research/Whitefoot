@@ -22,6 +22,10 @@ impl From<CheckedRangeTerm> for RangeOperand {
 }
 
 impl RangeOperand {
+    pub(super) fn term(&self) -> &CheckedRangeTerm {
+        &self.term
+    }
+
     /// Identity framing is admitted for every type, without equality expansion [RANGE-1].
     pub(super) fn into_term(self) -> CheckedRangeTerm {
         self.term

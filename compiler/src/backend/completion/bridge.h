@@ -310,6 +310,11 @@ int wf__completion_pending(const void *record);
 
 /* ------------------------------------------------------ waiting contexts */
 
+/* The execution's driver count, fixed before the entry receives Inputs.
+ * Establishes root-ring availability without starting a helper or executor;
+ * later lazy context startup must start exactly this many driver roles. */
+uint64_t wf__context_driver_count(void);
+
 /* Contexts [WAIT-2], each a chain of resumable frames
  * (design/compiler/waiting-contexts.md).  The emitted code of a
  * waiting function allocates its frame with `wf__context_frame_allocate` and
@@ -416,9 +421,11 @@ void wf__shared_seen(unsigned moment);
 struct wf_key_set;
 struct wf_table_entry;
 void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
+uint64_t wf__key_set_bytes(const struct wf_key_set *set);
 uint64_t wf__key_set_insert(struct wf_key_set *set, const unsigned char *key, uint64_t length);
-/* Gives a set's memory back, taking the set's `store` alone, NULL for none,
- * as the emitted code holds a set in two registers. */
+/* Returns all a source set's grants to the heap, without retaining a spare,
+ * taking the set's `store` alone, NULL for none, as emitted code holds a set
+ * in two registers. */
 void wf__key_set_free(void *store);
 /* The length of the set's key at `index`, below its count, after copying as
  * many of its first bytes as `room` allows to `out`. */
@@ -489,7 +496,9 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
 void wf__atomic_group_take(void *record, uint64_t count);
-void wf__atomic_group_release(void *record, uint64_t count);
+/* Each group has one entry layout; object-only groups consume no metadata. */
+void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
 void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);

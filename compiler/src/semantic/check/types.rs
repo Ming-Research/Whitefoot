@@ -1249,6 +1249,7 @@ pub(super) fn measure_named(spelling: &str) -> Option<CheckedMeasure> {
         "len" => Some(CheckedMeasure::Length),
         "cap" => Some(CheckedMeasure::Capacity),
         "head" => Some(CheckedMeasure::Head),
+        "bytes" => Some(CheckedMeasure::Bytes),
         _ => None,
     }
 }
@@ -2650,7 +2651,8 @@ impl<'unit> TypeContext<'unit> {
                         (spelling == "len").then_some(CheckedMeasure::Length)
                     }
                     SelectedPlaceType::Value(ty) => measure_named(spelling).filter(|measure| {
-                        (symbolic_window && *measure != CheckedMeasure::Head)
+                        (symbolic_window
+                            && matches!(measure, CheckedMeasure::Length | CheckedMeasure::Capacity))
                             || ty.measured().is_some_and(|measured| {
                                 !matches!(
                                     measure.cell(measured),

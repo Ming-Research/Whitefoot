@@ -463,7 +463,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrNominalKind::Enum { variants } => {
                 fields.push((
                     IrType::Integer {
-                        width: 32,
+                        width: enum_tag_width(self.nominal(nominal)?)?,
                         signed: false,
                     },
                     false,
@@ -554,8 +554,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     /// Initializes a constructed value's slot and stores its tag, returning
-    /// the slot's address. Active window-bearing fields are supplied by the
-    /// caller's subsequent stores; inactive enum payload zeroing is retained.
+    /// the slot's address. A union writes its raw tag-and-common-padding
+    /// prefix with one ordinal store, zero-extending and locating the
+    /// physical tag according to target endianness. Physical tag reads and
+    /// product stores keep their count-sized width. Active window-bearing
+    /// fields are supplied by the caller's subsequent stores; inactive enum
+    /// payload zeroing is retained.
     fn begin_construction(
         &mut self,
         result: IrValueId,
@@ -565,8 +569,32 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let destination = self.value_place(result)?;
         self.initialize_construction(ty, &destination, tag)?;
         if let Some(tag) = tag {
+            let IrType::Nominal(nominal) = ty else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let (tag_ty, stored_tag) = if union_enums::is_union_enum(self.program, nominal)? {
+                let layout = crate::target::union_enum_layout(self.target, self.program, nominal)
+                    .map_err(BackendFailure::TargetLayout)?;
+                let prefix_bytes = layout.tag_prefix_bytes();
+                let physical_bytes = u64::from(enum_tag_width(self.nominal(nominal)?)?.div_ceil(8));
+                let padding_bytes = prefix_bytes
+                    .checked_sub(physical_bytes)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                // The raw prefix clears only common padding. Keep the
+                // physical discriminant at byte zero on either endianness;
+                // every currently admitted target takes the little-endian
+                // path, whose unsigned ordinal needs no shift.
+                let stored_tag = if self.target.data_layout().starts_with('E') {
+                    u64::from(tag) << (padding_bytes * 8)
+                } else {
+                    u64::from(tag)
+                };
+                (format!("i{}", prefix_bytes * 8), stored_tag)
+            } else {
+                (enum_tag_type(self.nominal(nominal)?)?, u64::from(tag))
+            };
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
-            writeln!(self.output, "  store i32 {tag}, ptr {address}")
+            writeln!(self.output, "  store {tag_ty} {stored_tag}, ptr {address}")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(destination)
@@ -827,8 +855,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let pointer = self.next_temporary()?;
                 writeln!(
                     self.output,
-                    "  %{pointer} = load ptr, ptr {}",
-                    self.value_name(address)
+                    "  %{pointer} = load ptr, ptr {}{}",
+                    self.value_name(address),
+                    storage_alias::Role::BoxOwner.attachment()
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
                 format!("%{pointer}")
@@ -1032,8 +1061,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  %{temporary} = load {}, ptr {address}",
-                emitted_type_0
+                "  %{temporary} = load {}, ptr {address}{}",
+                emitted_type_0,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)?;
@@ -1068,6 +1098,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
+        // Producer fields can have been stored separately in another function.
+        // Retain the same layout boundaries for incoming and heap values as
+        // for local values. The host's inline cost charges this expansion;
+        // the in-place-parameters research record tracks its consequences.
         if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
             .map_err(BackendFailure::TargetLayout)?
         {
@@ -1195,6 +1229,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// An exact checked source store, rather than a constructor, result
+    /// placement or whole-value transfer that may change a storage role.
+    pub(super) fn store_source_value_at(
+        &mut self,
+        value: IrValueId,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+        let alias = storage_alias::source_write(self.program, ty);
+        if alias.is_empty() {
+            return self.store_value_at(value, destination);
+        }
+        let llvm = self.output.type_name(self.program, ty)?;
+        writeln!(
+            self.output,
+            "  store {llvm} {}, ptr {destination}{alias}",
+            self.value_name(value)
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// Stores a first-class result into the slot its plan selected. The
     /// operations that produce a memory-only result write that slot
     /// themselves, and `emit_definition` admits no other producer of one.
@@ -1252,9 +1307,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {address}",
+                "  {} = load {}, ptr {address}{}",
                 value_name(result),
-                emitted_type_1
+                emitted_type_1,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)

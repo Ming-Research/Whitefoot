@@ -149,6 +149,7 @@ macro_rules! operation_operands {
                 position: value, ..
             }
             | IrOperation::KeySetNew { capacity: value }
+            | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
             IrOperation::ConcurrentHashMapSwap { first, second } => {

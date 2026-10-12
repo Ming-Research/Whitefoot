@@ -1004,6 +1004,15 @@ impl<'unit> Checker<'_, 'unit> {
                     .unsupported(UnsupportedSemanticFeature::ReferenceFormation, place_node);
             }
         };
+        if written_deref
+            && root_binding
+                .as_ref()
+                .is_some_and(|local| local.mode.is_range())
+        {
+            self.types
+                .declarations
+                .check_range_referent(written_suffixes[0])?;
+        }
         // [REF-1, TYPE-7] forming another reference still writes the step
         // through a reference holder; resolving the path grants no omission.
         if !written_deref
@@ -2624,6 +2633,7 @@ impl<'unit> TypeContext<'unit> {
                     event: event.phrase(),
                 }),
                 positions,
+                contract_indices: Vec::new(),
                 window,
                 left_spelling: self.render_resolved_place(written, bindings)?,
                 right_spelling: self.render_resolved_place(&path, bindings)?,
