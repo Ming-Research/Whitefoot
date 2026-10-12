@@ -335,6 +335,11 @@ impl Module {
         })
     }
 
+    /// Whether composition kept a conflicting declaration or attribute group.
+    pub(crate) fn has_conflict(&self) -> bool {
+        self.repeated_declaration().is_some() || self.repeated_attribute_group().is_some()
+    }
+
     pub(crate) fn repeated_attribute_group(&self) -> Option<u64> {
         let mut groups = BTreeSet::new();
         self.parts.iter().find_map(|part| match part {

@@ -107,9 +107,7 @@ impl LlvmModule {
 
     pub(crate) fn append(&mut self, module: Module) -> Result<(), BackendFailure> {
         self.model.append(module);
-        if self.model.repeated_declaration().is_some()
-            || self.model.repeated_attribute_group().is_some()
-        {
+        if self.model.has_conflict() {
             return Err(BackendFailure::InvalidIr);
         }
         self.text = self.model.render();
@@ -129,7 +127,7 @@ impl LlvmModule {
             _ => return None,
         };
         let model = Module::decode(bytes)?;
-        if model.repeated_declaration().is_some() || model.repeated_attribute_group().is_some() {
+        if model.has_conflict() {
             return None;
         }
         Some(Self {
@@ -669,7 +667,7 @@ fn emit_module(
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
-    if text.repeated_declaration().is_some() || text.repeated_attribute_group().is_some() {
+    if text.has_conflict() {
         return Err(BackendFailure::InvalidIr);
     }
     Ok(LlvmModule {
@@ -3987,37 +3985,4 @@ fn llvm_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod composition_tests {
-    use super::*;
-
-    fn emitted_model(model: Module) -> LlvmModule {
-        LlvmModule {
-            text: model.render(),
-            model,
-            threaded_layout: false,
-            ledger: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn inconsistent_attributes_stop_whole_module_composition_and_cache_rendering() {
-        let mut model = Module::default();
-        model.attribute_group(1, "noreturn".into());
-        let mut llvm = emitted_model(model);
-        let mut child = Module::default();
-        child.attribute_group(1, "nounwind".into());
-        assert_eq!(llvm.append(child), Err(BackendFailure::InvalidIr));
-        assert!(LlvmModule::decode(&llvm.encode()).is_none());
-    }
-
-    #[test]
-    fn inconsistent_declarations_stop_whole_module_composition_and_cache_rendering() {
-        let mut model = Module::default();
-        model.declare(Signature::new("callee", "void", Vec::new()));
-        let mut llvm = emitted_model(model);
-        let mut child = Module::default();
-        child.declare(Signature::new("callee", "i32", Vec::new()));
-        assert_eq!(llvm.append(child), Err(BackendFailure::InvalidIr));
-        assert!(LlvmModule::decode(&llvm.encode()).is_none());
-    }
-}
+mod composition_tests;
