@@ -9,7 +9,7 @@ fn widen<const n: u8>() -> r: u64 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A named const is an open const argument judged by its declared type, not its value: limit is u64 and the parameter is u8, although 7 fits u8.";
+  doc "A named const is judged by its declared type, not its value: limit is u64 and the parameter is u8, although 7 fits u8.";
   let v = widen::<limit>();
   return exit_status(code: 0_u8);
 }

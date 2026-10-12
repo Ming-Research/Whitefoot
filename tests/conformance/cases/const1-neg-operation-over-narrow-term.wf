@@ -7,7 +7,7 @@ fn echo<const n: u64>() -> r: u64 pure {
 }
 
 fn next<const m: u8>() -> r: u64 pure {
-  doc "Every IDENT term of an open const argument must have its parameter's type, so m + 0 does not widen the u8 parameter m to u64.";
+  doc "Every IDENT term must be declared with its parameter's type, so m + 0 does not widen the u8 parameter m to u64.";
   return echo::<m + 0>();
 }
 

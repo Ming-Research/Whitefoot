@@ -792,11 +792,11 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// [CONST-1] admits one const argument for a const parameter of integer
-    /// type `parameter`. A closed argument, whose terms are all literals, is
-    /// judged by its evaluated `value`; an open argument by the declared type
-    /// of each IDENT term, and an operation additionally by its u64
-    /// evaluation domain. The judgment reads the written terms, so a concrete
-    /// instance judges a forwarded parameter exactly as its template did.
+    /// type `parameter`: each IDENT term must declare exactly that type, and
+    /// the evaluated `value` must lie in its closed range [FORM-7]. A closed
+    /// argument's value is concrete wherever it is written; a symbolic one is
+    /// judged at each concrete instance, whose substitution evaluates it, as
+    /// the u64 domain of [`Self::parse_const_expression_with`] is.
     pub(super) fn check_const_argument(
         &self,
         check_context: &CheckContext<'_>,
@@ -805,44 +805,35 @@ impl<'unit> Checker<'_, 'unit> {
         parameter: IntegerType,
     ) -> Result<(), CheckStop> {
         let terms = self.const_term_types(check_context, node)?;
-        if terms.is_empty() {
-            let CheckedConst::Value(value) = value else {
-                return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
-            };
-            // The closed range of an integer type [FORM-7]; every closed
-            // value is a nonnegative u64, so only the upper end can fail.
-            let unused_high_bits =
-                64 - u32::from(parameter.width()) + u32::from(parameter.signed());
-            if value <= u64::MAX >> unused_high_bits {
-                return Ok(());
-            }
+        if let Some(found) = terms.into_iter().find(|term| *term != parameter) {
             return self.types.declarations.issue_node(
                 SemanticRule::Const1,
                 node,
-                SemanticIssueKind::InvalidIntegerLiteral,
+                SemanticIssueKind::type_mismatch(
+                    self.types.checked_type_name(CheckedType::Integer(parameter))?,
+                    self.types.checked_type_name(CheckedType::Integer(found))?,
+                ),
             );
         }
-        let operation = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::InfixOp)?
-            .is_some();
-        let found = if operation && parameter != IntegerType::U64 {
-            Some(IntegerType::U64)
-        } else {
-            terms.into_iter().find(|term| *term != parameter)
-        };
-        let Some(found) = found else {
+        let CheckedConst::Value(value) = value else {
             return Ok(());
         };
+        // Every const value is a nonnegative u64, so only the upper end of
+        // the closed range can fail.
+        let unused_high_bits =
+            64 - u32::from(parameter.width()) + u32::from(parameter.signed());
+        if value <= u64::MAX >> unused_high_bits {
+            return Ok(());
+        }
         self.types.declarations.issue_node(
             SemanticRule::Const1,
             node,
-            SemanticIssueKind::type_mismatch(
-                self.types.checked_type_name(CheckedType::Integer(parameter))?,
-                self.types.checked_type_name(CheckedType::Integer(found))?,
-            ),
+            SemanticIssueKind::ConstArgumentOutOfRange {
+                parameter_type: self
+                    .types
+                    .checked_type_name(CheckedType::Integer(parameter))?,
+                value,
+            },
         )
     }
 

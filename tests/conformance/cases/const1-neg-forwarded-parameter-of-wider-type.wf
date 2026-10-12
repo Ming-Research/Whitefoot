@@ -7,7 +7,7 @@ fn widen<const n: u8>() -> r: u64 pure {
 }
 
 fn forward<const m: u64>() -> r: u64 pure {
-  doc "An open const argument that is one IDENT must have exactly its parameter's type; m is u64 and the parameter is u8.";
+  doc "An IDENT term must be declared with exactly its parameter's type; m is u64 and the parameter is u8.";
   return widen::<m>();
 }
 

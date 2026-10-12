@@ -5721,27 +5721,26 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A constant capacity is a closed component of the implicit closure. Equal
-/// explicit witnesses before give must not create a redundant delivery root,
-/// and the receiving invariant still sees the closed fact. [CONST-1] admits
-/// no narrower-typed const generic as a u64 capacity, so the closed capacity
-/// is written as the constant itself.
+/// A length reaches its upper bound only through its capacity: the implicit
+/// component joins the length to the closed capacity 255. Equal explicit
+/// witnesses before give must not create a redundant delivery root, and the
+/// receiving invariant still sees the closed fact through that component.
 #[test]
 fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
-    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.len) {
   let picked = if a {
-    let capacity = values^.cap;
+    let length = values^.len;
     let d = x;
     if b {
-      invariant one: values^.cap <= d + 255_u64;
+      invariant one: values^.len <= d + 255_u64;
     } else {
-      invariant two: values^.cap <= d + 255_u64;
+      invariant two: values^.len <= d + 255_u64;
     }
     give d;
   } else {
     return x;
   }
-  invariant received: values^.cap <= picked + 255_u64;
+  invariant received: values^.len <= picked + 255_u64;
   return picked;
 }
 
@@ -5770,10 +5769,10 @@ fn main() -> status: std::process::ExitStatus pure {
             !matches!(
                 relation,
                 Relation::Bound { left, bound: 255, .. }
-                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Capacity, _))
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Length, _))
             )
         }),
-        "the capacity's implicit upper bound needs no delivery root"
+        "the length's implicit upper bound through its capacity needs no delivery root"
     );
 }
 

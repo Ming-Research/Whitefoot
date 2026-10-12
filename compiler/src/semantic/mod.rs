@@ -691,6 +691,15 @@ pub enum SemanticIssueKind {
         /// Bare spelling of the rejected const operation.
         operation: &'static str,
     },
+    /// A const argument's value lies outside the closed range of its const
+    /// parameter's integer type [CONST-1]: at the argument when it is closed,
+    /// and at the concrete instance that evaluates it otherwise.
+    ConstArgumentOutOfRange {
+        /// The const parameter's written integer type.
+        parameter_type: String,
+        /// The argument's evaluated value.
+        value: u64,
+    },
     /// A const-expression names a runtime arithmetic mode; const evaluation
     /// has exactly the five bare spellings under the const-eval overflow
     /// policy [CONST-1].

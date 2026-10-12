@@ -841,6 +841,7 @@ impl Report for SemanticIssueKind {
             InaccessibleVariant { variant, reason };
             ConstantCycle { cycle };
             ConstEvalOverflow { operation };
+            ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
             TypeMismatch { expected, found };
             UnadmittedOperandShape { expected, mechanical_fix };
