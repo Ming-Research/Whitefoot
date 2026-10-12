@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A range reference's referent is a run, not a value
+
+Nodes: language/ownership/range-reference
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-referent-approve, "approve the TYPE-7 amendment and the added design tree decision in Ming-Research/Whitefoot#369 (head 3cd31ceb8)?" (translated), whose background summarized the added decision and its refused alternatives.
+
+Summary: The referent `r^` of a range reference names the run and is admitted only as the base of an element subscript, a range step and its `len` measure, so `&r^` and every other use are refused with a repair, because the complete-run borrow was typed as one element while it named the run and let two places of different types share one proof term. Forming a second range reference from `&r^` and giving the borrow the first element were refused: the first duplicates `let q = r;` and nothing in the spelling selects the second.
+
 ## 2026-10-11 Payload enum tags sized by variant count
 
 Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-only-lowering

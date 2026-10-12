@@ -946,6 +946,11 @@ pub enum SemanticIssueKind {
         /// Exact mechanical repair selected by TYPE-7.
         mechanical_fix: &'static str,
     },
+    /// [TYPE-7] a range referent was used without an admitted projection.
+    RangeReferentUse {
+        /// [DIAG-1] alias the reference, borrow an element or borrow a subrange.
+        mechanical_fix: &'static str,
+    },
     /// [OWN-11] a loop body left a binding declared outside it in a
     /// different live-or-dead status than the entering edge did, so one
     /// iteration would start in a state the previous one did not leave.

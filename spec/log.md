@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.129: a range reference's referent is a run, admitted only as a subscript, range or length base
+
+Rules: changed TYPE-7
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-referent-approve, "approve the TYPE-7 amendment and the added design tree decision in Ming-Research/Whitefoot#369 (head 3cd31ceb8)?" (translated), whose background summarized the changed rule; the direction was the owner's choice of A, "reject `&r^` when r is a range reference" (translated), on the card proof-bl-range-reborrow-form on 2026-10-11.
+
+Summary: TYPE-7 gave `place^` of a range reference the referent type T while also saying it denotes the run, so `&r^` formed a single reference typed as one element that named the whole run; it shared r's proof term, and a run of length four discharged a requirement of seven. TYPE-7 now separates the kinds: `p^` of `&T` is unchanged, and `r^` of `&[T]` or `&Run<T>` denotes the run and is admitted only as the base of an element subscript, a range step and its `len` measure. Every other use, `&r^`, a value read, a by-value argument, `match`, `set` and the same forms in contracts, range clauses and invariants included, is a hard error citing TYPE-7 at the complete place with a repair naming `let q = r;`, `&r^[i]` and `&r^[a..b]`; uses that cited TYPE-5 before now cite TYPE-7. Selection ground: a run is a place, never a value, and aliasing, one element and a subrange each already have a spelling, while forming a second range reference duplicates `let q = r;` and giving the borrow the first element is selected by nothing in the spelling.
+
 ## 2026-10-11 v0.128: growth relocates storage and keeps length and filled-element facts
 
 Rules: changed OP-10, FN-9, EFF-2, EFF-5, MSR-2, CALL-3, CALL-5, ENT-5, RANGE-2

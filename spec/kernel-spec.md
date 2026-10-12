@@ -1,4 +1,4 @@
-# Kernel Specification v0.128
+# Kernel Specification v0.129
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -581,7 +581,8 @@ The places a value can take are a binding, a value parameter, a result, a field,
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
 [TYPE-7] Reading through a reference is explicit.
-`place^` where `place` has kind `&T`, `&[T]` or `&Run<T>` denotes a place of referent type T [GRAM-5] — for either range kind the run of T elements that reference names [REF-4] — and a use of that place copies it when T is copy and requires `move` when T is affine [OWN-1].
+`place^` where `place` has kind `&T` denotes a place of referent type T [GRAM-5], and a use of that place copies it when T is copy and requires `move` when T is affine [OWN-1].
+`place^` where `place` has kind `&[T]` or `&Run<T>` denotes the run of T elements that reference names [REF-4]; it is admitted as the base of an element subscript `[i]` [OP-4], of a range step `[a..b]` [REF-4] and of its `len` measure [MSR-1], and every other use of it, a `borrow_expr` of the complete run included, is a hard error citing TYPE-7 at the complete `place`, with a repair naming `let q = r;` to alias the reference, `&r^[i]` to borrow one element and `&r^[a..b]` to borrow a subrange [DIAG-1].
 A reference binding used where a value of its referent type is expected is a hard error citing TYPE-7, with a repair [DIAG-1].
 There is no implicit read through a reference [TYPE-4, META-2].
 `place^` where `place` is not a reference, a `Box` included, is a hard error citing TYPE-7 at the complete `place`, with a repair [DIAG-1].
