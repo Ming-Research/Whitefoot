@@ -992,15 +992,20 @@ impl<'program> Walker<'program> {
                 Some(Value::Ref(view)) => view.clone(),
                 _ => View::Unknown,
             },
-            CheckedExpression::RangeIndex { place, .. } => match self.range_element(state, place) {
-                Some((container, indices, projection)) => View::Element {
-                    container,
-                    indices,
-                    projection,
-                },
-                None => View::Unknown,
-            },
-            CheckedExpression::ReadStorage { root, .. } => {
+            // A borrowed scrutinee `&p` matches the storage p names [OWN-13].
+            CheckedExpression::RangeIndex { place, .. }
+            | CheckedExpression::BorrowRangeIndex { place, .. } => {
+                match self.range_element(state, place) {
+                    Some((container, indices, projection)) => View::Element {
+                        container,
+                        indices,
+                        projection,
+                    },
+                    None => View::Unknown,
+                }
+            }
+            CheckedExpression::ReadStorage { root, .. }
+            | CheckedExpression::BorrowAddressed { root, .. } => {
                 self.view_of(state, root.root, &root.path)
             }
             CheckedExpression::Binding { .. } | CheckedExpression::Project { .. } => {

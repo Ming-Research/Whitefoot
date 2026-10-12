@@ -453,12 +453,15 @@ fn aliased(root: PlaceRoot, aliases: &Aliases) -> bool {
 /// scrutinee forms whose selected storage the walk names as an element: a
 /// subscripted place is checked as storage or as a run element, whatever
 /// collection it indexes, and the remaining `ArrayIndex` form is a named
-/// const's element, which a match copies rather than borrows [OWN-13].
+/// const's element, which a match copies rather than borrows [OWN-13]. A
+/// borrowed scrutinee `&p` matches the storage p names, so it is judged as p.
 fn scrutinee_element(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     match expression {
         CheckedExpression::ReadStorage { .. }
         | CheckedExpression::RangeIndex { .. }
         | CheckedExpression::DerefAddressed { .. } => element(expression, aliases),
+        CheckedExpression::BorrowAddressed { root, .. } => stored_element(root, aliases),
+        CheckedExpression::BorrowRangeIndex { place, .. } => run_element(place, aliases),
         CheckedExpression::ProjectValue { value, .. }
         | CheckedExpression::BoxDeref { value, .. } => scrutinee_element(value, aliases),
         _ => false,
@@ -474,23 +477,27 @@ fn element(expression: &CheckedExpression, aliases: &Aliases) -> bool {
             let below = aliased(PlaceRoot::Binding(root.binding), aliases);
             term(offset, aliases) && range_path(&root.path, below, aliases)
         }
-        CheckedExpression::RangeIndex { place, .. } => {
-            term(&place.offset, aliases) && range_path(&place.path, true, aliases)
-        }
-        CheckedExpression::ReadStorage { root, .. } => {
-            matches!(root.root, PlaceRoot::Binding(_))
-                && (aliased(root.root, aliases)
-                    || root
-                        .path
-                        .iter()
-                        .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))))
-                && range_path(&root.path, aliased(root.root, aliases), aliases)
-        }
+        CheckedExpression::RangeIndex { place, .. } => run_element(place, aliases),
+        CheckedExpression::ReadStorage { root, .. } => stored_element(root, aliases),
         CheckedExpression::DerefAddressed { binding, .. } => aliases.contains(binding),
         CheckedExpression::ProjectValue { value, .. }
         | CheckedExpression::BoxDeref { value, .. } => element(value, aliases),
         _ => false,
     }
+}
+
+fn run_element(place: &CheckedRangeElementPlace, aliases: &Aliases) -> bool {
+    term(&place.offset, aliases) && range_path(&place.path, true, aliases)
+}
+
+fn stored_element(root: &CheckedContainerRoot, aliases: &Aliases) -> bool {
+    matches!(root.root, PlaceRoot::Binding(_))
+        && (aliased(root.root, aliases)
+            || root
+                .path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))))
+        && range_path(&root.path, aliased(root.root, aliases), aliases)
 }
 
 /// The written RANGE-1 terms. Binding initializers are deliberately irrelevant:
