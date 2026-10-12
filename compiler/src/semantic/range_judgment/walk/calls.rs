@@ -364,7 +364,8 @@ mod tests {
         let source = br#"fn preserve(xs: &Box<Slots<u64>>) -> result: unit writes(xs) contract {
   ensures forall kept(k in 0_u64..entry(xs)^.inner.len): xs^.inner[k] unchanged;
 } {
-  grow(cell: xs, capacity: xs^.inner.cap);
+  let capacity = xs^.inner.cap;
+  grow(cell: xs, capacity: capacity);
   return unit;
 }
 

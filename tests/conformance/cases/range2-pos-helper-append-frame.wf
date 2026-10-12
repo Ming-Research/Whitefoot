@@ -33,7 +33,7 @@ fn push_item<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> pushed: B
 }
 
 fn append_target(targets: &Box<Slots<Block>>, value: Block) -> result: Bool writes(targets) {
-  let pushed = push_item::<Block>(cell: targets, value: move value, ceiling: 1073741824_u64);
+  let pushed = push_item::<Block>(cell: targets, value: value, ceiling: 1073741824_u64);
   return pushed;
 }
 

@@ -3087,76 +3087,102 @@ fn generic_float_struct_equality_exports_no_integer_field_fact() {
     );
 }
 
-/// [RANGE-1] symbolic and concrete generic frames retain whole-selection
-/// identity rather than becoming value equality or an omitted aggregate clause.
+/// [RANGE-1] symbolic and concrete generic frames for copy and affine
+/// elements retain whole-selection identity rather than becoming value equality
+/// or an omitted aggregate clause.
 #[test]
 fn generic_unchanged_forms_entry_identity_without_projection_expansion() {
-    use super::super::model::CheckedType;
+    use super::super::model::{CheckedType, type_has_copy_capability};
     use super::super::range_facts::{
         CheckedRangeProjection as Projection, CheckedRangeRoot as Root, CheckedRangeTerm as Term,
         RangeComparison,
     };
-    let source =
-        include_bytes!("../../../../tests/conformance/cases/range2-pos-helper-append-frame.wf");
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(program) = outcome else {
-            panic!("generic and Block frames must check: {outcome:?}");
-        };
-        let mut symbolic = false;
-        let mut concrete = false;
-        for function in program
-            .data
-            .functions
-            .iter()
-            .filter(|f| f.name == "push_item")
-        {
-            match function.parameters[1].ty {
-                CheckedType::Generic(_) => symbolic = true,
-                CheckedType::Nominal(_) => concrete = true,
-                other => panic!("unexpected instance element: {other:?}"),
-            }
-            let clause = &function
-                .range_facts
-                .postconditions
+    for (source, copy) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/range2-pos-helper-append-frame.wf")
+                .as_slice(),
+            true,
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/range2-pos-helper-append-affine-frame.wf"
+            )
+            .as_slice(),
+            false,
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("generic and Block frames must check: {outcome:?}");
+            };
+            let mut symbolic = false;
+            let mut concrete = false;
+            for function in program
+                .data
+                .functions
                 .iter()
-                .find(|post| post.clause.name == "preserved")
-                .unwrap()
-                .clause;
-            let [relation] = clause.conclusions.as_slice() else {
-                panic!("one written unchanged remains one identity: {clause:?}");
-            };
-            assert!(!relation.projected);
-            assert_eq!(relation.comparison, RangeComparison::Equal);
-            let Term::Read {
-                place: exit,
-                indices,
-                projection,
-                ..
-            } = &relation.left
-            else {
-                panic!("{relation:?}");
-            };
-            let Term::Read {
-                place: entry,
-                indices: entry_indices,
-                projection: entry_projection,
-                ..
-            } = &relation.right
-            else {
-                panic!("{relation:?}");
-            };
-            assert_eq!(projection, &[Projection::WholeElement]);
-            assert_eq!(entry_projection, projection);
-            assert_eq!(
-                entry_indices, indices,
-                "indices retain their written denotation"
-            );
-            assert_eq!(exit.root, Root::Binding(function.parameters[0].binding));
-            assert_eq!(entry.root, Root::Entry(function.parameters[0].binding));
-            assert_eq!(exit.path, entry.path);
-        }
-        assert!(symbolic && concrete, "both instance scopes were inspected");
-    });
+                .filter(|f| f.name == "push_item")
+            {
+                match function.parameters[1].ty {
+                    CheckedType::Generic(_) => symbolic = true,
+                    ty @ CheckedType::Nominal(_) => {
+                        concrete = true;
+                        assert_eq!(
+                            type_has_copy_capability(
+                                ty,
+                                &program.data.nominals,
+                                &program.data.elements,
+                                &|_| None,
+                            ),
+                            Some(copy),
+                            "the concrete fixture retains its intended ownership class"
+                        );
+                    }
+                    other => panic!("unexpected instance element: {other:?}"),
+                }
+                let clause = &function
+                    .range_facts
+                    .postconditions
+                    .iter()
+                    .find(|post| post.clause.name == "preserved")
+                    .unwrap()
+                    .clause;
+                let [relation] = clause.conclusions.as_slice() else {
+                    panic!("one written unchanged remains one identity: {clause:?}");
+                };
+                assert!(!relation.projected);
+                assert_eq!(relation.comparison, RangeComparison::Equal);
+                let Term::Read {
+                    place: exit,
+                    indices,
+                    projection,
+                    ..
+                } = &relation.left
+                else {
+                    panic!("{relation:?}");
+                };
+                let Term::Read {
+                    place: entry,
+                    indices: entry_indices,
+                    projection: entry_projection,
+                    ..
+                } = &relation.right
+                else {
+                    panic!("{relation:?}");
+                };
+                assert_eq!(projection, &[Projection::WholeElement]);
+                assert_eq!(entry_projection, projection);
+                assert_eq!(
+                    entry_indices, indices,
+                    "indices retain their written denotation"
+                );
+                assert_eq!(exit.root, Root::Binding(function.parameters[0].binding));
+                assert_eq!(entry.root, Root::Entry(function.parameters[0].binding));
+                assert_eq!(exit.path, entry.path);
+            }
+            assert!(symbolic && concrete, "both instance scopes were inspected");
+        });
+    }
 }
 
 /// [RANGE-1, DIAG-1] syntactically factored affine operands must still be

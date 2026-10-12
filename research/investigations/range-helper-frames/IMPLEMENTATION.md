@@ -2,11 +2,12 @@
 
 ## Delivery and selection ground
 
-The uncommitted worktree on `claude/range-helper-frames`, based on
+The amendment on `claude/range-helper-frames`, initially based on
 `cef63d637d3f07377163c9e4c70cb70c3e229cea`, implements the owner-selected
-[entry-version and one-sided unchanged frames](DESIGN.md). The amended compiler
-has not been built or executed; acceptance statements below are specified
-expectations, with implementation and source review evidence, not CI results.
+[entry-version and one-sided unchanged frames](DESIGN.md). Owner-supplied CI
+results for `ee730e186835f7870109d55433438b341f4b0df7` exposed the fixture
+failures recorded below. The current fixture corrections are uncommitted and
+await CI; specified expectations are distinguished from observed results.
 
 On 2026-10-11 the owner selected decision B: the implicit entry read follows
 RANGE-1's existing defined-read premise. An exit tuple absent at entry has a
@@ -76,7 +77,9 @@ retain their prior verdicts.
 Baseline command: the supplied released compiler
 `../rel4173/whitefootc --check FILE`, from main
 `4173ec89e9fe187108fc40679427cd39bb533293`.
-No amended-compiler result is available yet.
+The released before-behavior below is from the initial handoff. The owner
+subsequently supplied amended-compiler CI results at ee730e186; see the
+fixture-correction section for that evidence and its remaining failure.
 
 | Case | Expected v0.129 verdict | Released before behavior |
 | --- | --- | --- |
@@ -163,13 +166,14 @@ this base; the scan included docs and the active app sources.
 
 ## Unit tests added and what each guards
 
-Every added test is unrun. The unavailable old/amended local builds mean no
-observed red/green unit result is claimed. The paired expected outcomes below
-are the faults each case distinguishes.
+The added tests were unrun at the initial handoff. Owner CI later exposed two
+fixture failures at ee730e186; their corrections remain unrun. The paired
+expected outcomes below describe the faults each test distinguishes; no local
+red/green result is claimed.
 
 | Test | Observation guarded |
 | --- | --- |
-| `generic_unchanged_forms_entry_identity_without_projection_expansion` (`semantic/tests/range_facts.rs`) | Symbolic and Block instances retain one equality, distinct entry/exit roots and identical written indices; detects erased noninteger frames or equality-field expansion. |
+| `generic_unchanged_forms_entry_identity_without_projection_expansion` (`semantic/tests/range_facts.rs`) | Symbolic and concrete Block instances in both copy and affine fixtures retain one equality, distinct entry/exit roots and identical written indices; also asserts the concrete copy capability is true or false respectively, detecting erased noninteger frames, equality-field expansion or loss of either ownership class. |
 | `unchanged_refusals_name_the_written_relation` (same file) | RANGE-1 points to the affine operand, ordinary relation or guard before unrelated operand checking. |
 | `unchanged_suffixes_parse_for_semantic_admission` (`syntax/parser/tests.rs`) | Admitted and diagnostic-only suffix forms reach semantics instead of an earlier grammar error. |
 | `whole_identity_is_untyped_and_descendant_writes_cannot_restore_it` (`facts/unchanged.rs`) | An overlapping/restored write leaves identity open; sibling fields and other tuples still prove identity; tokens carry no source integer type. |
@@ -266,17 +270,58 @@ No outstanding concrete finding remains within that scope.
 | T4, T5, T6 | Source ownership, shared construction and research boundary pass by inspection; execution unverified. |
 | DC4 | Implementation paths present by inspection; execution unverified. |
 
+## CI fixture corrections after ee730e186
+
+The owner ran CI on `ee730e186835f7870109d55433438b341f4b0df7`, containing the
+initial amendment plus the owner's clippy fix in facts/unchanged.rs. The
+reported conformance adapter result was Pass=2411, Fail=1. The failed case and
+one failed unit share the same source fixture; a second unit has a separate
+call-effect error. These are source-fixture mistakes, not failures of the
+selected range-frame semantics.
+
+| Reported failure | Why it happened | Correction |
+| --- | --- | --- |
+| `imported_entry_places_precede_call_effects` in `walk/calls.rs`, EFF-5 | PRE-1 grow declares `writes(cell)`. Supplying xs as cell substitutes `writes(xs^)`; supplying `xs^.inner.cap` by value contributes a read under xs^.inner, compared with that write by EFF-5 clause 2. The statement's arguments overlap. The fixture's existing `writes(xs)` already covers the earlier measure read and the grow call under EFF-1/EFF-2; no additional effect entry is missing. | Read capacity into a local binding before grow, then pass the local value. All entry/exit version and descriptor-generation assertions remain. |
+| `generic_unchanged_forms_entry_identity_without_projection_expansion`, OWN-1 | Its include_bytes source is the copy-element append fixture. Block has only a u32 field, so OWN-1 requires bare use; the concrete wrapper wrote `move value`. | Correct that shared source and inspect both the copy and affine fixtures. Retain every prior identity/root/index assertion, require both symbolic and concrete scopes in each fixture, and assert concrete copy capability true for the copy Block and false for the owning Block. |
+| `range2-pos-helper-append-frame`, expected accept but rejected OWN-1 | The same concrete wrapper passed a copy Block with `move`. | Pass bare `value` in append_target. The generic T:drop body's move remains valid under OWN-1's generic spelling rule; the affine fixture's Box-owning Block retains its explicit move. |
+
+Files changed in this follow-up: compiler/src/semantic/range_judgment/walk/calls.rs,
+compiler/src/semantic/tests/range_facts.rs and
+tests/conformance/cases/range2-pos-helper-append-frame.wf. No verdict, contract,
+frame assertion, grammar pin, language decision or compiler proof logic was
+weakened. Existing formal cases still cover both copy and affine elements, and
+the representation unit now explicitly checks both ownership classes. No new
+unit or case was added.
+
+The spec-archives static failure is expected for this stacked branch, as the
+owner reported. The v0.128 archive is left for the owner's correction after
+[Whitefoot#366 — spec v0.128 base](https://github.com/Ming-Research/Whitefoot/pull/366)
+merges. The owner's clippy fix is retained. No builds, cargo,
+make, clippy or tests ran locally for this follow-up; direct rustfmt was the
+only authoring command. The corrected fixtures await the owner's next CI run.
+
+A fresh read-only completion review, requested as gpt-6.1-sol at high effort,
+inspected ee730e186 through the complete four-file fixture/report diff, using
+the reported CI failures as validation evidence. It found no concrete findings
+within scope. A4/D2/C4/T1/T4/T5/T6/V3 and applicable G/DC checks pass by source
+inspection; D1/G1/DC3 and new stage/budget checks are not applicable. Corrected
+execution and new-revision gate success remain unverified. The reviewer ran no
+tests, lint, builds or check suites.
+
 ## Remaining uncertainty and CI handoff
 
-There is no known unresolved contract gap in the selected note. CI still must
-establish Rust compilation and lint, native grammar generation/inventory pins,
-all added unit and conformance outcomes, the two supplied regression witnesses,
-and the project's ordinary gate. The review did not rerun a suite or establish
-proof-system soundness beyond the inspected paths. Design-lint metrics were
+There is no known unresolved contract gap in the selected note. Owner CI
+compiled the amended compiler and ran the conformance adapter, reporting
+2,411 passes and one failure at ee730e186. Two unit fixtures also failed.
+The corrections above need a new CI run, including the affected units and
+conformance case. Full gate success, the supplied regression witnesses and
+merge readiness are not established by the provided results. The review did not
+rerun a suite or establish proof-system soundness beyond the inspected paths. Design-lint metrics were
 not generated because checks are reserved for CI. Approval records and merge
 readiness remain the owner's work, as requested.
 
 Only authorized released-compiler before checks, read-only source/data/git
 inspection, grammar-data calculation and direct rustfmt authoring were performed
 on the Mac. No builds, cargo, make, clippy, test suites or performance
-measurements ran. No amended-compiler acceptance or runtime result is claimed.
+measurements ran locally. Amended-compiler results in this report are the
+owner-supplied CI observations, not local execution.
