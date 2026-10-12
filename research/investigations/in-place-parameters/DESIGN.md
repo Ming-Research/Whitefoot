@@ -896,9 +896,11 @@ some captures independently; this experiment addresses copies that remain.
 Target layout owns transfer planning alongside variant and aggregate layout.
 Structs recursively transfer scalar leaves with their original LLVM types and
 widths at target offsets; padding is omitted. Product enums recurse through
-the tag and their physical fields. A union enum partitions its complete size
-at every variant leaf's start **and end**, including nested aggregate boundaries
-and each handler word. Plain-byte intervals use an integer of exactly that
+the tag and their physical fields. A union enum first replaces each variant's
+tag leaf with the common 1-, 2- or 4-byte tag-and-padding prefix bounded before
+every occupied payload and handler word. It then partitions its complete size
+at every resulting leaf's start **and end**, including nested aggregate
+boundaries and each handler word. Plain-byte intervals use an integer of exactly that
 width (not a first-class union carrier); a full pointer word present in every
 view uses `ptr`. Any interval touching an overlaid/split pointer, a one-bit leaf,
 or a nested byte-only interval instead uses byte memmove through planned scratch
@@ -924,7 +926,15 @@ because these copy entry points do not retain a stronger place-alignment fact.
 The backend gate's `layout_transfers` module checks raw IR for the mixed-width
 56-byte Frame fixture: eight loads and stores at offsets 0/8/16/24/32/36/40/48,
 with widths 8/8/4/8/4/1/8/8, all loads before stores and no whole-size intrinsic.
-A Halo-like Value requires 4+4+8, rejecting a tag-only or wide 16-byte transfer.
+A Halo-like Value requires 4+4+8 intervals: its one-byte physical tag and
+three bytes of padding common to all variants travel in one four-byte prefix,
+followed by a four-byte interval and an eight-byte interval. Construction uses
+the same raw prefix while variant views retain their byte tag. The former
+1+3+4+8 rule introduced an odd-width padding interval; the prefix rule rejects
+that fragmentation, a tag-only copy and a wide 16-byte transfer. Prefixes stop
+before every occupied payload or handler word, so byte-aligned enums retain
+their compact layouts. This emission proposal still needs CI and the Halo
+panel to establish correctness and its timing effect.
 A scalar-only 136-byte record, a 17-byte/17-leaf record, and even small
 array-containing records must retain memmove; a 128-byte/16-leaf record still
 expands. Under current at-most-eight-byte leaves, the large scalar record
@@ -962,9 +972,9 @@ requirements and native expected results.
 | `read_through::read_through_distinguishes_previous_and_fresh_loop_snapshots` | Old-snapshot capture presence and fresh-snapshot absence apply to either transfer form. |
 | `read_through::snapshot_materialization_is_local_to_the_use_unless_the_source_changed` | Capture counts, cold-block placement and immediately-before-call/return checks use the bounded transfer's end; result materialization still targets the result pointer. |
 | `read_through::destination_parameters_capture_before_invalidation_only_on_paths_that_need_it` | Incoming capture checks recognize bounded transfers while preserving write/read/path order. |
-| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The 20-byte Cell copies bounded intervals with a pointer-typed handler word at offset 12, rather than whole memmove. Exact load/store offsets, types, ordering and SSA correspondence cover every interval; layout, stored-word alignment and native results stay unchanged. |
-| `match_dispatch::each_dispatch_family_gets_a_word_only_when_all_families_fit` | The same exact copy checks require both family words, at offsets 12 and 20, once each. Family selection and layout expectations stay unchanged. |
-| `match_dispatch::assert_handler_load` (handler-word, family-count and cursor callers) | Trace the actual indirect tail-call target through its aligned pointer load and word GEP to the received element. Earlier copy GEPs may share the offset, and copies may load the tag as i32; tag-switch/table dispatch remains forbidden. |
+| `match_dispatch::handler_words_preserve_copies_replacements_tags_and_four_byte_alignment` | The current three-u8-plus-u32 Cell fixture copies a 16-byte value in bounded intervals with a pointer-typed handler word at offset 8, rather than whole memmove. Exact load/store offsets, types, ordering and SSA correspondence cover every interval. The earlier u32/u8 fixture with a four-byte tag occupied 20 bytes with its word at offset 12. |
+| `match_dispatch::each_dispatch_family_gets_a_word_only_when_all_families_fit` | The same exact copy checks require both family words, now at offsets 8 and 16, once each. The retained ceiling still admits two families and rejects three. |
+| `match_dispatch::assert_handler_load` (handler-word, family-count and cursor callers) | Trace the actual indirect tail-call target through its aligned pointer load and word GEP to the received element. Earlier copy GEPs may share the offset, and copies may load the count-sized tag; tag-switch/table dispatch remains forbidden. |
 | `windows::a_projected_window_target_is_formed_once_before_rhs` | Count loads from the captured target field address, excluding the two Box-pointer loads that copy Columns. The complete target chain, unique projections and RHS/store order remain required. |
 
 Unchanged intrinsic expectations were inspected in `arrays` (array-backed Record
