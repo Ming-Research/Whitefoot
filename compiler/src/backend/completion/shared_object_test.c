@@ -50,17 +50,17 @@
  * age retained over retries, and age reset for the next statement. No wall
  * clock selects any of these interleavings.
  *
- * Last, under wake tests (WF_GUARD_MODE 3), three watchers register tests
- * over a two-word state: the oldest that the first word is 2, the other two
- * equal copies of a test that it is 1, the youngest's guard also needing
- * the second word to be 5. A release that wrote nothing evaluates no test;
- * a write of 1 evaluates the two distinct tests once each and wakes only
- * the middle watcher, never the older one whose test is false; its
- * read-only success passes the notification to the youngest, whose false
- * retry passes it to none; a later write of the second word wakes the
- * youngest, whose write of 2 wakes the oldest. Below the threshold the
- * writer's next statement is admitted at once; past it, the writer waits
- * until the notification has passed through every watch whose test held.
+ * Last, three watchers register wake tests over a two-word state: the
+ * oldest that the first word is 2, the other two equal copies of a test that
+ * it is 1, the youngest's guard also needing the second word to be 5. A
+ * release that wrote nothing evaluates no test; a write of 1 evaluates the
+ * two distinct tests once each and wakes only the middle watcher, never the
+ * older one whose test is false; its read-only success passes the
+ * notification to the youngest, whose false retry passes it to none; a later
+ * write of the second word wakes the youngest, whose write of 2 wakes the
+ * oldest. Below the threshold the writer's next statement is admitted at
+ * once; past it, the writer waits until the notification has passed through
+ * every watch whose test held.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -1213,14 +1213,16 @@ static void wake_phase_end(void) {
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
     if (root_phase == 0) {
-        /* CI's negative controls may isolate one observation: handoff
-         * catches baseline/bulk wakes, a youngest-first selector, and a
+        /* SHARED_OBJECT_TEST_CASE runs one observation alone: handoff
+         * catches a false retry that passes its notification to no one, a
+         * waking of every watch, a youngest-first selector, and a
          * reservation dropped at acquire; age catches an unconditional
          * reservation or any age reset on false retry; cancel catches a
          * successful retry that leaves its reservation after release/exit;
-         * newcomer catches baseline barging with just one selected watch;
-         * wake and wake-aged catch a write that ignores wake tests, below
-         * and past the threshold. */
+         * newcomer catches a newcomer barging past the one selected watch;
+         * wake and wake-aged catch a write that ignores wake tests, skips
+         * the oldest watch whose test holds, evaluates equal tests apart or
+         * reserves for a young watch, below and past the threshold. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1301,9 +1303,7 @@ static void root_step(test_frame *f) {
     if (root_phase == 8) {
         if (wf__shared_release(cross_a)) wf__shared_free(cross_a);
         if (wf__shared_release(cross_b)) wf__shared_free(cross_b);
-        /* The wake cases need the wake tests of mode 3; CI selects them in
-         * the other modes as negative controls. */
-        if (selected_case != NULL || WF_GUARD_MODE != 3) {
+        if (selected_case != NULL) {
             f->done = 1;
             return;
         }

@@ -589,22 +589,8 @@ typedef struct wf_wake_test {
     wf_wake_atom atoms[WF_WAKE_ATOMS];
 } wf_wake_test;
 
-/* Research arms share the same runtime sources: baseline (0), rejected
- * age-bounded bulk turns (1), rejected oldest-only handoff (2), and
- * proposed wake tests (3), whose variant WF_GUARD_WAKE_ELIGIBLE wakes every
- * watch whose test holds below the age threshold instead of the oldest. */
-#ifndef WF_GUARD_MODE
-#define WF_GUARD_MODE 3
-#endif
-#if WF_GUARD_MODE < 0 || WF_GUARD_MODE > 3
-#error "WF_GUARD_MODE must be 0, 1, 2 or 3"
-#endif
-#ifndef WF_GUARD_WAKE_ELIGIBLE
-#define WF_GUARD_WAKE_ELIGIBLE 0
-#endif
-#if WF_GUARD_WAKE_ELIGIBLE && WF_GUARD_MODE != 3
-#error "WF_GUARD_WAKE_ELIGIBLE is a variant of WF_GUARD_MODE 3"
-#endif
+/* Diagnostic guard counters, off unless a build defines WF_GUARD_COUNTERS
+ * to 1; a build without them compiles no counter code. */
 #ifndef WF_GUARD_COUNTERS
 #define WF_GUARD_COUNTERS 0
 #endif

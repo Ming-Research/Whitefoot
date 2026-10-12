@@ -1,5 +1,9 @@
 # Guard fairness probe
 
+When design A merged, its runtime lost the other arms and the repository
+lost the temporary workflow `tmp-guard-fairness.yml`; the experiment below
+reproduces at revision `faccdca4e883d4f18c2b4fab52be50e8e6b8e703`.
+
 `probe.wf` is firn's guard-fairness probe, copied unchanged from Firn-wf
 branch `exp/engine-probe`, `research/experiments/guard-fairness/probe.wf`
 (Firn-wf's README there describes the instrument): N spawned contexts each
