@@ -89,7 +89,7 @@ decides 'push to main' push refs/heads/main '{}' '[]' refuse
 expect 'push to main' true true 'push to main'
 decides 'push of a tag' push refs/tags/v1 '{}' '[]' refuse
 expect 'push of a tag' false false 'not a branch'
-decides 'manual run' workflow_dispatch refs/heads/research/x "$dispatch" '[]' refuse
+decides 'manual run' workflow_dispatch refs/heads/feature/x "$dispatch" '[]' refuse
 expect 'manual run' true true 'manual run'
 decides 'draft opened' pull_request refs/pull/5/merge "$opened_draft" '[]' refuse
 expect 'draft opened' true false 'opened as a draft'
@@ -105,10 +105,10 @@ refuses 'unhandled event' schedule refs/heads/main '{}' '[]' refuse
 grep -q 'unsupported event: schedule' "$work/err" || fail 'unhandled event: wrong refusal'
 
 # A push to any other branch asks GitHub for the branch's open pull requests.
-decides 'no pull request' push refs/heads/research/topic '{}' '[]'
+decides 'no pull request' push refs/heads/feature/topic '{}' '[]'
 expect 'no pull request' false false 'has no open pull request'
 grep -q 'repos/org/repo/actions/runs/7' "$FAKE_GH_LOG" || fail 'no pull request: the run was not queried'
-grep -q 'pulls?state=open&per_page=100&head=org:research/topic' "$FAKE_GH_LOG" || fail 'no pull request: the branch was not queried'
+grep -q 'pulls?state=open&per_page=100&head=org:feature/topic' "$FAKE_GH_LOG" || fail 'no pull request: the branch was not queried'
 decides 'earlier draft' push refs/heads/claude/topic '{}' "[$early_draft]"
 expect 'earlier draft' true false 'draft pull request 11'
 decides 'earlier ready' push refs/heads/claude/topic '{}' "[$early_ready]"

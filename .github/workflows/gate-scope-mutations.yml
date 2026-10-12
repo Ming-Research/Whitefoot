@@ -1,0 +1,65 @@
+# Temporary, removed before this branch is ready: shows that
+# .github/test-gate-scope.sh fails when .github/gate-scope.sh decides wrongly.
+# Each mutation changes one decision in a copy of the script; the test must
+# then fail, and the unmutated copy must pass.
+name: gate-scope-mutations
+
+on:
+  push:
+    branches: [claude/gate-pr-branches-only]
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the test against each wrong decision
+        shell: bash
+        run: |
+          set -u
+          check() {
+            name=$1 from=$2 to=$3
+            dir=$(mktemp -d)
+            cp .github/gate-scope.sh .github/test-gate-scope.sh "$dir/"
+            if [ -n "$from" ]; then
+              python3 -I - "$dir/gate-scope.sh" "$from" "$to" <<'EOF'
+          import sys
+          path, old, new = sys.argv[1:4]
+          text = open(path).read()
+          assert text.count(old) == 1, f"mutation anchor not found once: {old!r}"
+          open(path, 'w').write(text.replace(old, new))
+          EOF
+            fi
+            sh "$dir/test-gate-scope.sh" > "$dir/log" 2>&1
+            status=$?
+            echo "== $name: exit $status"
+            head -n 3 "$dir/log"
+            echo "$name	$status" >> results.tsv
+          }
+          check unmutated '' ''
+          check 'pull requests opened after the run count' \
+            ".created_at <= \$created and .draft == false" ".draft == false"
+          check 'a branch with no pull request runs' \
+            'decide false false "push to $GITHUB_REF_NAME, which has no open pull request"' \
+            'decide true false "push to $GITHUB_REF_NAME, which has no open pull request"'
+          check 'a pull request opened ready skips macOS' \
+            'decide true true "pull request $number $action, ready"' \
+            'decide true false "pull request $number $action, ready"'
+          check 'main skips macOS' \
+            "decide true true 'push to main'" "decide true false 'push to main'"
+          check 'a null creation time is accepted' \
+            '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T' \
+            'null|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T'
+          cat results.tsv
+          wrong=0
+          while IFS=$'\t' read -r name status; do
+            if [ "$name" = unmutated ]; then
+              [ "$status" -eq 0 ] || { echo "unmutated script failed its test"; wrong=1; }
+            else
+              [ "$status" -ne 0 ] || { echo "mutation not detected: $name"; wrong=1; }
+            fi
+          done < results.tsv
+          exit "$wrong"
