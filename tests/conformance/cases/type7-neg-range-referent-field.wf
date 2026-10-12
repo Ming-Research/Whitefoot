@@ -1,0 +1,12 @@
+struct Row {
+  field: u64;
+}
+
+fn probe(r: &[Row]) -> result: unit reads(r) {
+  let x = r^.field;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

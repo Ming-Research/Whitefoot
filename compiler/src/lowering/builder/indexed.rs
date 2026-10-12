@@ -72,8 +72,9 @@ impl IrBuilder<'_> {
     }
 
     /// Below a root-shaped block, stored families and inline ancestors use
-    /// only field steps. Their resolved suffix survives reference aliases
-    /// whose written path starts at a different depth.
+    /// field steps; an alias to a readonly descriptor field can additionally
+    /// end in a measure step [REF-1, MSR-2]. Their resolved suffix survives
+    /// reference aliases whose written path starts at a different depth.
     pub(super) fn indexed_block_fields(
         &self,
         owner: &BlockOwner,
@@ -86,6 +87,7 @@ impl IrBuilder<'_> {
             .iter()
             .map(|step| match step {
                 CheckedResolvedStep::Field(field) => Ok(CheckedPlaceStep::Field(*field)),
+                CheckedResolvedStep::Measure(measure) => Ok(CheckedPlaceStep::Measure(*measure)),
                 _ => Err(LoweringFailure::InvalidCheckedProgram),
             })
             .collect()

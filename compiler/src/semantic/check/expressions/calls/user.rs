@@ -10,11 +10,13 @@ use crate::{
 };
 
 use super::super::super::super::goal::{
-    EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
+    EvaluatedValueOccurrence, GoalAdmission, GoalDatum, GoalExpression, GoalOperation,
+    GoalProjection,
 };
 use super::super::super::super::model::{
     BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
     CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
+    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSetTarget,
     CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
@@ -26,7 +28,8 @@ use super::super::super::generics::{
 };
 use super::super::super::references::InvalidationEvent;
 use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
+    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature,
+    TypedExpression,
 };
 
 /// One entry of a call's substituted effect row [EFF-5].
@@ -474,10 +477,8 @@ impl<'unit> Checker<'_, 'unit> {
             .substitution
             .clone();
         for (key, argument) in actual_substitution.entries() {
-            if let (
-                GenericParameterKey::Source(parameter),
-                GenericArgument::Type(ty),
-            ) = (key, argument)
+            if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                (key, argument)
             {
                 self.check_type_parameter_placement(node, *parameter, *ty, &function.substitution)?;
             }
@@ -534,7 +535,27 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
-        self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        self.project_call_effects(
+            node,
+            function,
+            &substituted,
+            bindings,
+            &mut effects,
+            formal.is_none().then_some(signature.parameters.as_slice()),
+        )?;
+        if formal.is_none() && self.body.repair_calls.is_some() {
+            let call = self.effect_repair_call(
+                node,
+                function,
+                signature,
+                &actual_paths,
+                &actual_captures,
+                bindings,
+            )?;
+            if let Some(calls) = &mut self.body.repair_calls {
+                calls.push(call);
+            }
+        }
         if self
             .types
             .declarations
@@ -966,6 +987,7 @@ impl<'unit> Checker<'_, 'unit> {
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
+        retained_reference_parameters: Option<&[ParameterSignature]>,
     ) -> Result<(), CheckStop> {
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
@@ -977,7 +999,17 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if entry.write {
+                if retained_reference_parameters
+                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                {
+                    if !self.types.effect_repairs.is_capture() {
+                        if entry.write {
+                            effects.add_projected_write(path);
+                        } else {
+                            EffectSet::add_path(&mut effects.reads, path);
+                        }
+                    }
+                } else if entry.write {
                     effects.add_write(path);
                 } else {
                     effects.add_read(path);
@@ -1224,10 +1256,16 @@ impl<'unit> TypeContext<'unit> {
                         root: *binding,
                         projections: Vec::new(),
                         ty: expected_type,
+                        admission: GoalAdmission::plain_range(expected_type),
                     })
                 }
                 _ => match passed_place {
-                    Some(place) => self.goal_referent_image(place, expected_type, atom)?,
+                    Some(place) => self.goal_referent_image(
+                        place,
+                        expected_type,
+                        atom,
+                        self.call_goal_admission(&argument.expression),
+                    )?,
                     None => GoalExpression::Datum(GoalDatum::EvaluatedValue {
                         function: caller,
                         occurrence: EvaluatedValueOccurrence::CallArgument {
@@ -1243,7 +1281,12 @@ impl<'unit> TypeContext<'unit> {
         }
         if expected_mode != CheckedMode::Own {
             if let Some(place) = passed_place {
-                return self.goal_referent_image(place, expected_type, atom);
+                return self.goal_referent_image(
+                    place,
+                    expected_type,
+                    atom,
+                    self.call_goal_admission(&argument.expression),
+                );
             }
             // FN-1's candidate protects every mutable origin a returned
             // borrow may reach, including when the delivered value is a
@@ -1324,7 +1367,12 @@ impl<'unit> TypeContext<'unit> {
                     element: root.element(),
                     constant: root.type_constant(),
                 },
-                self.goal_referent_image(&root.proof_place(), root.ty, atom)?,
+                self.goal_referent_image(
+                    &root.proof_place(),
+                    root.ty,
+                    atom,
+                    GoalAdmission::written(CheckedSetTarget::Storage(root.clone())),
+                )?,
             )),
             CheckedExpression::RangeMeasure { measure, root } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1333,7 +1381,12 @@ impl<'unit> TypeContext<'unit> {
                     element: Some(root.element),
                     constant: None,
                 },
-                self.goal_referent_image(&root.proof_place(), root.element_type, atom)?,
+                self.goal_referent_image(
+                    &root.proof_place(),
+                    root.element_type,
+                    atom,
+                    GoalAdmission::plain_range(root.element_type),
+                )?,
             )),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1344,7 +1397,12 @@ impl<'unit> TypeContext<'unit> {
                     element: place.element(),
                     constant: place.type_constant(),
                 },
-                self.goal_referent_image(&place.proof_place(), place.ty, atom)?,
+                self.goal_referent_image(
+                    &place.proof_place(),
+                    place.ty,
+                    atom,
+                    GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone())),
+                )?,
             )),
             _ => None,
         };
@@ -1364,6 +1422,64 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(image)
     }
+    /// [ENT-2] admission follows the actual's written place, before an exact
+    /// reference description replaces its proof path.
+    fn call_goal_admission(&self, expression: &CheckedExpression) -> GoalAdmission {
+        match expression {
+            CheckedExpression::Binding { ty, .. }
+            | CheckedExpression::DerefAddressed { ty, .. }
+            | CheckedExpression::Project { ty, .. } => GoalAdmission::plain(*ty),
+            CheckedExpression::BoxTake { referent, .. } => GoalAdmission::plain(*referent),
+            CheckedExpression::BorrowAddressed { root, .. }
+            | CheckedExpression::ReadStorage { root, .. }
+            | CheckedExpression::ContainerMeasure { root, .. } => {
+                GoalAdmission::written(CheckedSetTarget::Storage(root.clone()))
+            }
+            CheckedExpression::BorrowRangeIndex { place, .. }
+            | CheckedExpression::RangeIndex { place, .. }
+            | CheckedExpression::RangeElementMeasure { place, .. } => {
+                GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone()))
+            }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                let mut admission = GoalAdmission::written(match root {
+                    CheckedSegmentSource::Storage(root) => CheckedSetTarget::Storage(root.clone()),
+                    CheckedSegmentSource::Element(place) => {
+                        CheckedSetTarget::RangeIndex(place.clone())
+                    }
+                });
+                admission.projections.push(match segment {
+                    CheckedSegmentSelect::One(index) => {
+                        GoalProjection::Subscript(index.captured.goal_identity())
+                    }
+                    CheckedSegmentSelect::Page(index) => GoalProjection::Page(index.captured),
+                    CheckedSegmentSelect::All(range) => GoalProjection::Range(*range),
+                });
+                admission
+            }
+            CheckedExpression::RangeOf {
+                source, captured, ..
+            } => {
+                let mut admission = match source {
+                    CheckedRangeSource::Storage(root) => {
+                        GoalAdmission::written(CheckedSetTarget::Storage(root.clone()))
+                    }
+                    CheckedRangeSource::Element(place) => {
+                        GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone()))
+                    }
+                    CheckedRangeSource::Range(root) => root
+                        .formation
+                        .as_deref()
+                        .map(|formation| self.call_goal_admission(formation))
+                        .unwrap_or_else(|| GoalAdmission::plain_range(root.element_type)),
+                };
+                admission.projections.push(GoalProjection::Range(*captured));
+                admission
+            }
+            // These forms write no subscript, including a holder whose
+            // exact referent identity resolves into indexed storage.
+            _ => GoalAdmission::default(),
+        }
+    }
     /// Forms a caller-visible referent datum. A root that is itself one of the
     /// caller's borrow parameters remains opaque and therefore retains one
     /// `Deref`; a local borrow/reborrow has already resolved through its holder
@@ -1376,6 +1492,7 @@ impl<'unit> TypeContext<'unit> {
         place: &ResolvedPlace,
         ty: CheckedType,
         node: NodeId,
+        admission: GoalAdmission,
     ) -> Result<GoalExpression, CheckStop> {
         let mut projections = Vec::new();
         for step in place.proof_steps() {
@@ -1385,6 +1502,7 @@ impl<'unit> TypeContext<'unit> {
                     projections.push(GoalProjection::Payload { variant, field });
                 }
                 PlaceStep::Deref => projections.push(GoalProjection::Deref),
+                PlaceStep::Measure(measure) => projections.push(GoalProjection::Measure(measure)),
                 PlaceStep::Index(index) => {
                     projections.push(GoalProjection::Subscript(index.goal_identity()));
                 }
@@ -1404,7 +1522,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
-                PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
+                PlaceStep::Part(_) | PlaceStep::Descendant(_) => {
                     return self.declarations.unsupported(
                         super::super::super::super::UnsupportedSemanticFeature::CompositeValues,
                         node,
@@ -1421,11 +1539,13 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?,
                 projections,
                 ty,
+                admission,
             },
             PlaceRoot::Binding(binding) => GoalDatum::Place {
                 root: binding,
                 projections,
                 ty,
+                admission,
             },
         };
         Ok(GoalExpression::Datum(datum))
@@ -1458,10 +1578,20 @@ impl<'unit> TypeContext<'unit> {
                     let local = bindings
                         .get(&declaration)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let admission = if local.mode.is_range() {
+                        GoalAdmission::plain_range(local.ty)
+                    } else {
+                        GoalAdmission::plain(local.ty)
+                    };
                     if local.reference.is_some() {
                         (
                             match exactness.exact_path(local) {
-                                Some(path) => self.goal_referent_image(path, local.ty, place)?,
+                                Some(path) => self.goal_referent_image(
+                                    path,
+                                    local.ty,
+                                    place,
+                                    admission.clone(),
+                                )?,
                                 // [REF-1, ENT-2] a joined reference still
                                 // denotes one selected referent, but no member
                                 // of its possible-target set is its
@@ -1473,6 +1603,7 @@ impl<'unit> TypeContext<'unit> {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,
+                                    admission,
                                 }),
                             },
                             true,
@@ -1483,6 +1614,7 @@ impl<'unit> TypeContext<'unit> {
                                 root: local.binding,
                                 projections: Vec::new(),
                                 ty: local.ty,
+                                admission,
                             }),
                             false,
                         )
@@ -1499,6 +1631,7 @@ impl<'unit> TypeContext<'unit> {
                             declaration,
                             projections: Vec::new(),
                             ty: self.constant(constant)?.ty,
+                            admission: GoalAdmission::plain(self.constant(constant)?.ty),
                         }),
                         false,
                     )
@@ -1581,6 +1714,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `remove_at` do, and no `ensures` is read here to show that it does
     /// not, so its call ends the bound as well. Every reference into such a
     /// window dies [REF-2, REF-4].
+    /// Only written entries identify an operated window: a by-value
+    /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
         signature: &FunctionSignature,
@@ -1600,6 +1735,9 @@ impl<'unit> DeclarationInventory<'unit> {
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
+            if !entry.write {
+                continue;
+            }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
             // whose bound the call ends is the place below that step.
@@ -1610,7 +1748,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
             let takes_back = !prelude
-                && entry.write
                 && matches!(
                     entry.place.path.get(cut),
                     Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
@@ -1623,7 +1760,9 @@ impl<'unit> DeclarationInventory<'unit> {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
-            Checker::invalidate_window_references(bindings, &window);
+            let shifts_origin =
+                prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
+            Checker::invalidate_window_references(bindings, &window, shifts_origin);
         }
         Ok(())
     }

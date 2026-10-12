@@ -999,6 +999,53 @@ would reopen it. A barrier that needs no registration, the global `membarrier`,
 waits for a grace period and would make every hold of the whole map take
 milliseconds.
 
+### Freeing moved tables once their statements end
+
+**The problem.** A reserve release freed only the spare cells. A moved
+table was freed or kept as the spare only by `reclaim`, which ran when a
+user switched to a new table, and it kept every moved table a user still
+published. Executors keep their users across statements, so one that read
+an old table and never switched again pinned it, and firn's
+`release_map_reserve` answered 0 on every command while over its memory
+limit (Firn-wf#47).
+
+**Two designs.** Clearing the publication at each statement's exit costs,
+on x86-64, two more `xchg` per single-entry statement (the clear, then the
+next statement's republication), taking a write from two locked operations
+to four; one such barrier alone was worth 1.7% of `RPOP` throughput
+[above](#a-keyed-statements-mark-without-a-fence-tried-and-withdrawn). The
+design adopted keeps the publication and lets the reclamation scan ignore
+an entry-map user that is not inside a keyed statement: the statement's
+existing sequentially consistent active mark, a sequentially consistent
+read of the current table (a plain `mov` on x86-64) and the scan's
+sequentially consistent reads order every access to a retired table before
+its free. The scan frees nothing while the whole-map gate is closed, and
+word maps keep publication-only protection. The argument is beside
+`detach_retired_locked` in `compiler/src/backend/concurrent_map.c`.
+
+**Question and falsifier, stated before measuring.** Does the adopted
+design slow short single-entry statements? `entry-reads 0 0` (one hot key,
+no reply, no work between reads) built against base `7062f3ac4`, an
+independently built twin of the base, and head `aa405435a`, with the same
+head driver, run in three rotated rounds on four P-cores of the 14900K
+(CPUs 0, 2, 4, 6; clang 22.1.8; run 38148379931). A head slowdown
+consistently beyond the base/twin spread rejects the claim of no cost.
+
+**Result.** Millions of reads a second, range over the three rounds:
+
+| Build | 1 thread, exclusive | 1 thread, shared |
+|---|---:|---:|
+| base | 55.47-55.51 | 36.27-36.28 |
+| twin | 55.50-55.52 | 36.20-36.27 |
+| head | 55.50-55.51 | 36.23-36.25 |
+
+On one thread head is within 0.1% of base, inside the base/twin spread:
+no slowdown. At two and four threads every build fell into one of two
+modes, about 28 and about 50 million exclusive reads a second, changing
+between rounds of the same build, so this run cannot compare them; the
+added scan runs only on a reserve release or a table switch, not on a
+statement.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

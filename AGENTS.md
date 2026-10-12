@@ -201,9 +201,12 @@ build time apart from test and program execution.
   `design/skill` submodule (`git submodule update --init`).
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
-  lists the groups. `gate.yml` runs those groups on Linux and macOS on every
-  push, and its green run on the exact revision to be merged, a head current
-  with `main`, is that revision's `make check`. It needs `python3`, LLD on
+  lists the groups. `gate.yml` runs those groups on Linux on every push, and
+  on macOS as well for a push to a pull request marked ready, the event of
+  marking one ready, `main` and a manual run; its job `Gate on both platforms`
+  passes only when every group is green on both for the revision. That job's
+  success on the exact revision to be merged, a head current with `main`, is
+  that revision's `make check`. It needs `python3`, LLD on
   Linux (`ld.lld`) and the `time` utility.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),

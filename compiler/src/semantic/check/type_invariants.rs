@@ -1011,6 +1011,7 @@ fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalEx
             root: binding,
             projections: projections.clone(),
             ty: *ty,
+            admission: Default::default(),
         })),
         GoalExpression::Datum(GoalDatum::Parameter { .. }) => None,
         GoalExpression::Datum(datum) => Some(GoalExpression::Datum(datum.clone())),

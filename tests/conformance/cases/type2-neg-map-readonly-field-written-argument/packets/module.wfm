@@ -1,0 +1,3 @@
+public struct Packet {
+  public readonly id: u64;
+}

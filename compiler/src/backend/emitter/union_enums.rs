@@ -2,12 +2,16 @@
 //!
 //! An enum with at least two payload-carrying variants whose product
 //! representation would not return in registers is laid out as a union of
-//! per-variant views: variant `k` is `%wf.t.<link>.v<k> = type { i32,
-//! <fields of k> }`, and the value is `%wf.t.<link> = type { i32, [S - 4 x
-//! i8], [0 x %wf.t.<link>.v<m>] }`, where `S` is the size target layout
-//! computes and `v<m>` a view of the value's alignment. The zero-length array
-//! at offset `S` gives the value that alignment without adding a byte, and
-//! the tag stays field 0, where the product layout has it too.
+//! per-variant views: variant `k` is `%wf.t.<link>.v<k> = type { iN,
+//! <fields of k> }`, where `N` is the count-sized physical tag width. The
+//! value's raw carrier is `%wf.t.<link> = type { i(8P), [S - P x i8],
+//! [0 x %wf.t.<link>.v<m>] }`, where `P` is the target's tag-prefix byte
+//! count, covering only the physical tag and padding common to every view,
+//! `S` is the size target layout computes and `v<m>` a view of the value's
+//! alignment. The zero-length array at offset `S` gives the value that
+//! alignment without adding a byte. The raw prefix stays field 0; physical
+//! tag reads at that same address retain `iN`. Handler words add byte fields
+//! at their target-planned offsets.
 //!
 //! LLVM has no union type, so such a value, and any aggregate holding one
 //! inline, is memory-only: it always lives in a slot, its payload fields are
@@ -52,12 +56,17 @@ pub(super) fn emit_union_declarations(
     };
     let layout = crate::target::union_enum_layout(target, program, nominal.id())
         .map_err(BackendFailure::TargetLayout)?;
+    let tag_ty = enum_tag_type(nominal)?;
+    // The carrier transports the tag and common padding together. Variant
+    // views keep the physical tag width and their unchanged payload offsets.
+    let prefix_bytes = layout.tag_prefix_bytes();
+    let prefix_ty = format!("i{}", prefix_bytes * 8);
     for variant in variants
         .iter()
         .filter(|variant| !variant.fields().is_empty())
     {
         let mut references = References::default();
-        let mut body = String::from("{ i32");
+        let mut body = format!("{{ {tag_ty}");
         for field in variant.fields() {
             body.push_str(", ");
             body.push_str(&llvm_type_with_references(
@@ -72,7 +81,7 @@ pub(super) fn emit_union_declarations(
     let payload = layout
         .handler_offset()
         .unwrap_or(layout.size())
-        .checked_sub(4)
+        .checked_sub(prefix_bytes)
         .ok_or(BackendFailure::InvalidIr)?;
     let aligning = view_name(nominal, layout.aligning_variant());
     let body = if let Some(offset) = layout.handler_offset() {
@@ -83,9 +92,9 @@ pub(super) fn emit_union_declarations(
             .size()
             .checked_sub(offset + bytes)
             .ok_or(BackendFailure::InvalidIr)?;
-        format!("{{ i32, [{payload} x i8], [{bytes} x i8], [{tail} x i8], [0 x %{aligning}] }}")
+        format!("{{ {prefix_ty}, [{payload} x i8], [{bytes} x i8], [{tail} x i8], [0 x %{aligning}] }}")
     } else {
-        format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}")
+        format!("{{ {prefix_ty}, [{payload} x i8], [0 x %{aligning}] }}")
     };
     let mut references = References::default();
     references.types.insert(aligning);

@@ -1,0 +1,22 @@
+struct Cell {
+  value: u8;
+}
+
+fn probe(entries: &Entries<Cell>) -> result: unit writes(entries) contract {
+  requires entries^.len > 0_u64;
+} {
+  let source = Cell(value: 1_u8);
+  set entries^[0_u64] = Some<Cell>(value: source);
+  match &entries^[0_u64] {
+    None() => {
+    }
+    Some(value: cell) => {
+      let value = cell^.value + 254_u8;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
