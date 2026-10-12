@@ -1793,9 +1793,36 @@ Control flow (branches, jump tables, calls and returns) accounts for about
 tail of rare handlers is dearer. In the IR, every v2h branch arm checks its
 target index against the code length before forming the next cursor, and
 the fall-through path checks the next index too; the taken path of a jump
-(`Jump`, arm 1) is a compare, a trap branch and the dispatch. Whether these
-checks are what the branch arms pay over wasmi's is the next question,
-answered by their machine code beside wasmi's.
+(`Jump`, arm 1) is a compare, a trap branch and the dispatch. The machine code
+(Whitefoot run 38233487080, hosted x86-64, the same main revision) shows
+what the branch arms pay over wasmi's:
+
+- wasmi's `branch_i32_not_eq_si` is a compare and, on either path,
+  `ip += offset; jmp *(ip)`: five instructions on the taken path, no
+  bounds check. Its `branch` is four.
+- v2h's `BrI32Ne` (arm 185) keeps both the index and the cursor. Taken, it
+  loads the target index, compares it with the code length, rebuilds the
+  cursor from the index (two `lea` and an `add`, since an `Op` with its
+  handler word is 24 bytes), loads the handler and copies the index:
+  nine instructions after the compare. Not taken, it checks index + 1
+  against the code length before advancing the cursor.
+- `Jump` (arm 1) is ten instructions to wasmi's four, the difference being
+  the target check and the cursor rebuild.
+- Every straight-line arm ends with the same fall-through check
+  (`lea 1(%r15); cmp; jae`), so its cost is spread over all handlers
+  rather than visible in the branch rows; `I32AddSD` (arm 278) shows it.
+- `BrTableN` (arm 7) also loads the table from the frame and checks the
+  entry index against the table length, the check
+  [the jump-table change](https://github.com/Ming-Research/Whitefoot/pull/360)
+  removes with loader validation and per-element contract facts.
+- `Return` (arm 8) checks the saved return pc against the code length and
+  the caller's frame base against the stack length less 65536.
+
+The branch-target checks are of the kind the jump-table change already
+removes: a loader can validate every target once, and a per-element fact
+on the interpreter's code carries it to each arm. Whether the fall-through
+check can be stated the same way, as a fact that a non-terminating
+instruction always has a successor, is the open question.
 
 ### Constructor and runtime-boundary audit
 
