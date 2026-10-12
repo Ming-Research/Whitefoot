@@ -1,0 +1,636 @@
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.element_position      # -- Begin function wf_layout.element_position
+	.p2align	6
+	.type	wf_layout.element_position,@function
+wf_layout.element_position:             # @wf_layout.element_position
+# %bb.0:                                # %entry
+	cmpl	$-3, %esi
+	jne	.LBB0_2
+# %bb.1:
+	xorl	%eax, %eax
+.LBB0_4:                                # %common.ret
+	retq
+.LBB0_2:                                # %bb3
+	movq	(%rdi), %rax
+	movq	(%rax), %rax
+	movl	%esi, %ecx
+	movq	216(%rdi), %rdx
+	cmpq	%rcx, (%rdx)
+	jbe	.LBB0_4
+# %bb.3:                                # %bb5
+	movl	16(%rdx,%rcx,4), %ecx
+	cmpq	%rcx, %rax
+	cmovbq	%rax, %rcx
+	movq	%rcx, %rax
+	retq
+.Lfunc_end0:
+	.size	wf_layout.element_position, .Lfunc_end0-wf_layout.element_position
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.text_of               # -- Begin function wf_layout.text_of
+	.p2align	6
+	.type	wf_layout.text_of,@function
+wf_layout.text_of:                      # @wf_layout.text_of
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%rbp
+	.cfi_def_cfa_offset 16
+	pushq	%r15
+	.cfi_def_cfa_offset 24
+	pushq	%r14
+	.cfi_def_cfa_offset 32
+	pushq	%rbx
+	.cfi_def_cfa_offset 40
+	subq	$56, %rsp
+	.cfi_def_cfa_offset 96
+	.cfi_offset %rbx, -40
+	.cfi_offset %r14, -32
+	.cfi_offset %r15, -24
+	.cfi_offset %rbp, -16
+	movq	%rdx, %r14
+	movq	%rsi, %r15
+	movq	%rdi, %rbx
+	leaq	8(%rsp), %rdi
+	callq	wf_layout.computed_of@PLT
+	movl	28(%rsp), %ecx
+	movq	48(%r15), %rax
+	cmpq	%rcx, (%rax)
+	jbe	.LBB0_1
+# %bb.2:                                # %bb2
+	imulq	$104, %rcx, %rcx
+	vmovups	16(%rax,%rcx), %ymm0
+	vmovups	48(%rax,%rcx), %ymm1
+	vmovups	80(%rax,%rcx), %ymm2
+	movq	112(%rax,%rcx), %rax
+	cmpb	$0, 8(%r14)
+	movq	%rax, 96(%rbx)
+	vmovups	%ymm2, 64(%rbx)
+	vmovups	%ymm1, 32(%rbx)
+	vmovups	%ymm0, (%rbx)
+	jne	.LBB0_3
+	jmp	.LBB0_4
+.LBB0_1:                                # %bb1
+	movzbl	8(%r14), %ebp
+	movq	%rbx, %rdi
+	callq	wf_layout.initial_text@PLT
+	testb	%bpl, %bpl
+	je	.LBB0_4
+.LBB0_3:                                # %bb5
+	vzeroupper
+	callq	wf_layout.zero_lp@PLT
+	movzbl	(%rbx), %esi
+	movzbl	20(%rbx), %edi
+	movzbl	24(%rbx), %r8d
+	movzbl	36(%rbx), %r9d
+	movzwl	40(%rbx), %r10d
+	movzwl	44(%rbx), %r11d
+	movzbl	56(%rbx), %ebp
+	movzwl	60(%rbx), %r14d
+	movzbl	72(%rbx), %r15d
+	movzwl	100(%rbx), %ecx
+	movl	96(%rbx), %edx
+	vmovups	4(%rbx), %xmm2
+	vmovsd	28(%rbx), %xmm3                 # xmm3 = mem[0],zero
+	vmovsd	48(%rbx), %xmm4                 # xmm4 = mem[0],zero
+	vmovsd	64(%rbx), %xmm5                 # xmm5 = mem[0],zero
+	vxorps	%xmm6, %xmm6, %xmm6
+	vmovups	%ymm6, (%rbx)
+	vmovups	%ymm6, 32(%rbx)
+	vmovups	%ymm6, 64(%rbx)
+	movq	$0, 96(%rbx)
+	movb	%sil, (%rbx)
+	vmovups	%xmm2, 4(%rbx)
+	movb	%dil, 20(%rbx)
+	movb	%r8b, 24(%rbx)
+	vmovsd	%xmm3, 28(%rbx)
+	movb	%r9b, 36(%rbx)
+	movw	%r10w, 40(%rbx)
+	movw	%r11w, 44(%rbx)
+	vmovsd	%xmm4, 48(%rbx)
+	movb	%bpl, 56(%rbx)
+	movw	%r14w, 60(%rbx)
+	vmovsd	%xmm5, 64(%rbx)
+	movb	%r15b, 72(%rbx)
+	movb	$4, 76(%rbx)
+	vmovss	%xmm0, 80(%rbx)
+	vmovss	%xmm1, 84(%rbx)
+	andb	$1, %al
+	movb	%al, 88(%rbx)
+	movl	%edx, 96(%rbx)
+	movw	%cx, 100(%rbx)
+.LBB0_4:                                # %common.ret
+	addq	$56, %rsp
+	.cfi_def_cfa_offset 40
+	popq	%rbx
+	.cfi_def_cfa_offset 32
+	popq	%r14
+	.cfi_def_cfa_offset 24
+	popq	%r15
+	.cfi_def_cfa_offset 16
+	popq	%rbp
+	.cfi_def_cfa_offset 8
+	vzeroupper
+	retq
+.Lfunc_end0:
+	.size	wf_layout.text_of, .Lfunc_end0-wf_layout.text_of
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.valign_edge           # -- Begin function wf_layout.valign_edge
+	.p2align	6
+	.type	wf_layout.valign_edge,@function
+wf_layout.valign_edge:                  # @wf_layout.valign_edge
+	.cfi_startproc
+# %bb.0:                                # %entry
+	subq	$104, %rsp
+	.cfi_def_cfa_offset 112
+	movq	%rsi, %rdx
+	movq	%rdi, %rsi
+	movq	%rsp, %rdi
+	callq	wf_layout.text_of@PLT
+	cmpb	$0, 76(%rsp)
+	je	.LBB0_3
+# %bb.1:                                # %bb3
+	movzbl	77(%rsp), %ecx
+	movb	$1, %al
+	cmpb	$6, %cl
+	je	.LBB0_4
+# %bb.2:                                # %bb6
+	cmpb	$7, %cl
+	sete	%al
+	addb	%al, %al
+.LBB0_4:                                # %common.ret
+                                        # kill: def $al killed $al killed $eax
+	addq	$104, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.LBB0_3:
+	.cfi_def_cfa_offset 112
+	xorl	%eax, %eax
+                                        # kill: def $al killed $al killed $eax
+	addq	$104, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.valign_edge, .Lfunc_end0-wf_layout.valign_edge
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.computed_of           # -- Begin function wf_layout.computed_of
+	.p2align	6
+	.type	wf_layout.computed_of,@function
+wf_layout.computed_of:                  # @wf_layout.computed_of
+# %bb.0:                                # %entry
+	movl	4(%rdx), %eax
+	movl	$4294967295, %ecx               # imm = 0xFFFFFFFF
+	cmpq	%rcx, %rax
+	je	.LBB0_1
+# %bb.7:                                # %bb2
+	movq	208(%rsi), %rcx
+	cmpq	%rax, (%rcx)
+	jbe	.LBB0_1
+# %bb.8:                                # %bb5
+	imulq	$56, %rax, %rax
+	vmovups	24(%rcx,%rax), %ymm0
+	vmovups	56(%rcx,%rax), %xmm1
+	jmp	.LBB0_9
+.LBB0_1:                                # %bb1
+	movl	(%rdx), %edx
+	movl	$4294967293, %r8d               # imm = 0xFFFFFFFD
+	movq	(%rsi), %rax
+	movq	(%rax), %rcx
+	cmpq	%r8, %rdx
+	jne	.LBB0_3
+# %bb.2:
+	xorl	%edx, %edx
+	cmpq	%rcx, %rdx
+	jb	.LBB0_6
+	jmp	.LBB0_10
+.LBB0_3:                                # %bb3.i
+	movq	216(%rsi), %rsi
+	cmpq	%rdx, (%rsi)
+	jbe	.LBB0_10
+# %bb.4:                                # %bb5.i
+	movl	16(%rsi,%rdx,4), %edx
+	cmpq	%rdx, %rcx
+	cmovbq	%rcx, %rdx
+	cmpq	%rcx, %rdx
+	jae	.LBB0_10
+.LBB0_6:                                # %bb8
+	leaq	(%rdx,%rdx,2), %rcx
+	shlq	$4, %rcx
+	vmovups	16(%rax,%rcx), %ymm0
+	vmovups	48(%rax,%rcx), %xmm1
+.LBB0_9:                                # %common.ret
+	vmovups	%ymm0, (%rdi)
+	vmovups	%xmm1, 32(%rdi)
+	vzeroupper
+	retq
+.LBB0_10:                               # %bb9
+	vxorps	%xmm0, %xmm0, %xmm0
+	vmovups	%ymm0, 16(%rdi)
+	vmovups	%ymm0, (%rdi)
+	vzeroupper
+	retq
+.Lfunc_end0:
+	.size	wf_layout.computed_of, .Lfunc_end0-wf_layout.computed_of
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.font_index            # -- Begin function wf_layout.font_index
+	.p2align	6
+	.type	wf_layout.font_index,@function
+wf_layout.font_index:                   # @wf_layout.font_index
+	.cfi_startproc
+# %bb.0:                                # %entry
+	subq	$56, %rsp
+	.cfi_def_cfa_offset 64
+	movq	%rsi, %rdx
+	movq	%rdi, %rsi
+	leaq	8(%rsp), %rdi
+	callq	wf_layout.computed_of@PLT
+	movl	24(%rsp), %eax
+	addq	$56, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.font_index, .Lfunc_end0-wf_layout.font_index
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.section	.rodata.cst16,"aM",@progbits,16
+	.p2align	4, 0x0                          # -- Begin function wf_layout.font_of
+.LCPI0_0:
+	.long	0x41800000                      # float 16
+	.long	0x43c80000                      # float 400
+	.zero	4
+	.zero	4
+	.text
+	.globl	wf_layout.font_of
+	.p2align	6
+	.type	wf_layout.font_of,@function
+wf_layout.font_of:                      # @wf_layout.font_of
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%r14
+	.cfi_def_cfa_offset 16
+	pushq	%rbx
+	.cfi_def_cfa_offset 24
+	subq	$56, %rsp
+	.cfi_def_cfa_offset 80
+	.cfi_offset %rbx, -24
+	.cfi_offset %r14, -16
+	movq	%rsi, %r14
+	movq	%rdi, %rbx
+	leaq	8(%rsp), %rdi
+	callq	wf_layout.computed_of@PLT
+	movl	24(%rsp), %ecx
+	movq	40(%r14), %rax
+	movq	(%rax), %rdx
+	cmpq	%rcx, %rdx
+	jbe	.LBB0_2
+# %bb.1:                                # %bb2
+	leaq	(%rcx,%rcx,8), %rcx
+	movzbl	32(%rax,%rcx,4), %edx
+	movzwl	36(%rax,%rcx,4), %esi
+	movzbl	48(%rax,%rcx,4), %edi
+	vmovsd	40(%rax,%rcx,4), %xmm0          # xmm0 = mem[0],zero
+	vmovups	16(%rax,%rcx,4), %xmm1
+	vmovups	%xmm1, (%rbx)
+	movb	%dl, 16(%rbx)
+	movw	%si, 20(%rbx)
+	vmovsd	%xmm0, 24(%rbx)
+	movb	%dil, 32(%rbx)
+	jmp	.LBB0_4
+.LBB0_2:                                # %bb3
+	testq	%rdx, %rdx
+	je	.LBB0_5
+# %bb.3:                                # %bb5
+	movzbl	32(%rax), %ecx
+	movzwl	36(%rax), %edx
+	movzbl	48(%rax), %esi
+	vmovsd	40(%rax), %xmm0                 # xmm0 = mem[0],zero
+	vmovups	16(%rax), %xmm1
+	vmovups	%xmm1, (%rbx)
+	movb	%cl, 16(%rbx)
+	movw	%dx, 20(%rbx)
+	vmovsd	%xmm0, 24(%rbx)
+	movb	%sil, 32(%rbx)
+	jmp	.LBB0_4
+.LBB0_5:                                # %bb6
+	vxorps	%xmm0, %xmm0, %xmm0
+	vmovups	%ymm0, (%rbx)
+	movl	$0, 32(%rbx)
+	vmovsd	.LCPI0_0(%rip), %xmm0           # xmm0 = [1.6E+1,4.0E+2,0.0E+0,0.0E+0]
+	vmovsd	%xmm0, 8(%rbx)
+	movb	$3, 20(%rbx)
+	movq	$0, 24(%rbx)
+	movb	$0, 32(%rbx)
+.LBB0_4:                                # %common.ret
+	addq	$56, %rsp
+	.cfi_def_cfa_offset 24
+	popq	%rbx
+	.cfi_def_cfa_offset 16
+	popq	%r14
+	.cfi_def_cfa_offset 8
+	vzeroupper
+	retq
+.Lfunc_end0:
+	.size	wf_layout.font_of, .Lfunc_end0-wf_layout.font_of
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.same_shaping          # -- Begin function wf_layout.same_shaping
+	.p2align	6
+	.type	wf_layout.same_shaping,@function
+wf_layout.same_shaping:                 # @wf_layout.same_shaping
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%rbp
+	.cfi_def_cfa_offset 16
+	pushq	%r15
+	.cfi_def_cfa_offset 24
+	pushq	%r14
+	.cfi_def_cfa_offset 32
+	pushq	%r13
+	.cfi_def_cfa_offset 40
+	pushq	%r12
+	.cfi_def_cfa_offset 48
+	pushq	%rbx
+	.cfi_def_cfa_offset 56
+	subq	$312, %rsp                      # imm = 0x138
+	.cfi_def_cfa_offset 368
+	.cfi_offset %rbx, -56
+	.cfi_offset %r12, -48
+	.cfi_offset %r13, -40
+	.cfi_offset %r14, -32
+	.cfi_offset %r15, -24
+	.cfi_offset %rbp, -16
+	movq	%r8, %rbx
+	movq	%r8, 16(%rsp)                   # 8-byte Spill
+	movq	%rcx, %r12
+	movq	%rdx, %r15
+	movq	%rsi, %r13
+	movq	%rdi, %r14
+	leaq	64(%rsp), %rdi
+	movq	%r14, %rsi
+	callq	wf_layout.font_of@PLT
+	leaq	24(%rsp), %rdi
+	movq	%r14, %rsi
+	movq	%rbx, %rdx
+	callq	wf_layout.font_of@PLT
+	movq	24(%rsp), %rax
+	cmpq	%rax, 64(%rsp)
+	sete	%al
+	vmovss	32(%rsp), %xmm0                 # xmm0 = mem[0],zero,zero,zero
+	vmovss	36(%rsp), %xmm1                 # xmm1 = mem[0],zero,zero,zero
+	movzbl	80(%rsp), %ecx
+	cmpb	40(%rsp), %cl
+	sete	%bpl
+	vcmpeqss	76(%rsp), %xmm1, %xmm1
+	vcmpeqss	72(%rsp), %xmm0, %xmm0
+	vandps	%xmm1, %xmm0, %xmm0
+	vmovss	%xmm0, 12(%rsp)                 # 4-byte Spill
+	andb	%al, %bpl
+	vmovss	12(%r12), %xmm0                 # xmm0 = mem[0],zero,zero,zero
+	vmovss	16(%r12), %xmm1                 # xmm1 = mem[0],zero,zero,zero
+	vcmpeqss	16(%r13), %xmm1, %xmm1
+	vcmpeqss	12(%r13), %xmm0, %xmm0
+	vandps	%xmm1, %xmm0, %xmm0
+	movzbl	20(%r13), %eax
+	movzbl	21(%r13), %ecx
+	xorb	20(%r12), %al
+	vmovd	%xmm0, %ebx
+	notb	%al
+	xorb	21(%r12), %cl
+	movzbl	22(%r13), %edx
+	xorb	22(%r12), %dl
+	orb	%cl, %dl
+	sete	%r12b
+	andb	%al, %r12b
+	leaq	208(%rsp), %rdi
+	movq	%r14, %rsi
+	movq	%r15, %rdx
+	callq	wf_layout.text_of@PLT
+	leaq	104(%rsp), %rdi
+	movq	%r14, %rsi
+	movq	16(%rsp), %rdx                  # 8-byte Reload
+	callq	wf_layout.text_of@PLT
+	movzbl	249(%rsp), %eax
+	cmpb	145(%rsp), %al
+	sete	%al
+	andb	%bl, %r12b
+	andb	%bpl, %al
+	andb	12(%rsp), %al                   # 1-byte Folded Reload
+	andb	%r12b, %al
+	addq	$312, %rsp                      # imm = 0x138
+	.cfi_def_cfa_offset 56
+	popq	%rbx
+	.cfi_def_cfa_offset 48
+	popq	%r12
+	.cfi_def_cfa_offset 40
+	popq	%r13
+	.cfi_def_cfa_offset 32
+	popq	%r14
+	.cfi_def_cfa_offset 24
+	popq	%r15
+	.cfi_def_cfa_offset 16
+	popq	%rbp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.same_shaping, .Lfunc_end0-wf_layout.same_shaping
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.column_gap_of         # -- Begin function wf_layout.column_gap_of
+	.p2align	6
+	.type	wf_layout.column_gap_of,@function
+wf_layout.column_gap_of:                # @wf_layout.column_gap_of
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%r15
+	.cfi_def_cfa_offset 16
+	pushq	%r14
+	.cfi_def_cfa_offset 24
+	pushq	%rbx
+	.cfi_def_cfa_offset 32
+	subq	$144, %rsp
+	.cfi_def_cfa_offset 176
+	.cfi_offset %rbx, -32
+	.cfi_offset %r14, -24
+	.cfi_offset %r15, -16
+	movl	%edx, %ebx
+	movq	%rsi, %r14
+	movq	%rdi, %r15
+	leaq	56(%rsp), %rdi
+	movq	%r15, %rsi
+	movq	%r14, %rdx
+	callq	wf_layout.container_of@PLT
+	cmpb	$0, 80(%rsp)
+	je	.LBB0_1
+# %bb.2:                                # %bb3
+	leaq	20(%rsp), %rdi
+	movq	%r15, %rsi
+	movq	%r14, %rdx
+	callq	wf_layout.font_of@PLT
+	vmovss	28(%rsp), %xmm0                 # xmm0 = mem[0],zero,zero,zero
+	callq	wf_layout.units@PLT
+	jmp	.LBB0_3
+.LBB0_1:                                # %bb2
+	movzbl	92(%rsp), %eax
+	vmovsd	84(%rsp), %xmm0                 # xmm0 = mem[0],zero
+	vmovsd	%xmm0, 8(%rsp)
+	movb	%al, 16(%rsp)
+	leaq	8(%rsp), %rdi
+	movl	%ebx, %esi
+	callq	wf_layout.resolve_lp@PLT
+	movl	%eax, %ecx
+	sarl	$31, %ecx
+	andnl	%eax, %ecx, %eax
+.LBB0_3:                                # %common.ret
+	addq	$144, %rsp
+	.cfi_def_cfa_offset 32
+	popq	%rbx
+	.cfi_def_cfa_offset 24
+	popq	%r14
+	.cfi_def_cfa_offset 16
+	popq	%r15
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.column_gap_of, .Lfunc_end0-wf_layout.column_gap_of
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.box_of                # -- Begin function wf_layout.box_of
+	.p2align	6
+	.type	wf_layout.box_of,@function
+wf_layout.box_of:                       # @wf_layout.box_of
+	.cfi_startproc
+# %bb.0:                                # %entry
+	pushq	%r15
+	.cfi_def_cfa_offset 16
+	pushq	%r14
+	.cfi_def_cfa_offset 24
+	pushq	%rbx
+	.cfi_def_cfa_offset 32
+	subq	$48, %rsp
+	.cfi_def_cfa_offset 80
+	.cfi_offset %rbx, -32
+	.cfi_offset %r14, -24
+	.cfi_offset %r15, -16
+	movq	%rdx, %r14
+	movq	%rsi, %r15
+	movq	%rdi, %rbx
+	movq	%rsp, %rdi
+	callq	wf_layout.computed_of@PLT
+	movl	(%rsp), %ecx
+	movq	8(%r15), %rax
+	cmpq	%rcx, (%rax)
+	jbe	.LBB0_1
+# %bb.2:                                # %bb2
+	leaq	(%rcx,%rcx,4), %rcx
+	movzbl	24(%rax,%rcx,4), %edx
+	movzbl	32(%rax,%rcx,4), %esi
+	movl	28(%rax,%rcx,4), %edi
+	movq	16(%rax,%rcx,4), %rax
+	cmpb	$0, 8(%r14)
+	movq	%rax, (%rbx)
+	movb	%dl, 8(%rbx)
+	movl	%edi, 12(%rbx)
+	movb	%sil, 16(%rbx)
+	jne	.LBB0_3
+	jmp	.LBB0_4
+.LBB0_1:                                # %bb1
+	cmpb	$0, 8(%r14)
+	movq	$0, 8(%rbx)
+	movl	$0, 16(%rbx)
+	movb	$1, (%rbx)
+	movl	$0, 1(%rbx)
+	movl	$0, 4(%rbx)
+	movb	$1, 8(%rbx)
+	je	.LBB0_4
+.LBB0_3:                                # %bb5
+	movq	$0, 8(%rbx)
+	movl	$0, 16(%rbx)
+	movb	$1, (%rbx)
+	movl	$0, 1(%rbx)
+	movw	$0, 5(%rbx)
+	movb	$1, 8(%rbx)
+	movb	$0, 16(%rbx)
+.LBB0_4:                                # %common.ret
+	addq	$48, %rsp
+	.cfi_def_cfa_offset 32
+	popq	%rbx
+	.cfi_def_cfa_offset 24
+	popq	%r14
+	.cfi_def_cfa_offset 16
+	popq	%r15
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.box_of, .Lfunc_end0-wf_layout.box_of
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.initial_box           # -- Begin function wf_layout.initial_box
+	.p2align	6
+	.type	wf_layout.initial_box,@function
+wf_layout.initial_box:                  # @wf_layout.initial_box
+# %bb.0:                                # %entry
+	movq	$0, 8(%rdi)
+	movl	$0, 16(%rdi)
+	movb	$1, (%rdi)
+	movl	$0, 1(%rdi)
+	movl	$0, 4(%rdi)
+	movb	$1, 8(%rdi)
+	retq
+.Lfunc_end0:
+	.size	wf_layout.initial_box, .Lfunc_end0-wf_layout.initial_box
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits
+	.file	"whitefoot"
+	.text
+	.globl	wf_layout.positioned            # -- Begin function wf_layout.positioned
+	.p2align	6
+	.type	wf_layout.positioned,@function
+wf_layout.positioned:                   # @wf_layout.positioned
+	.cfi_startproc
+# %bb.0:                                # %entry
+	subq	$24, %rsp
+	.cfi_def_cfa_offset 32
+	movq	%rdi, %rax
+	leaq	4(%rsi), %rdx
+	leaq	4(%rsp), %rdi
+	movq	%rax, %rsi
+	callq	wf_layout.box_of@PLT
+	movzbl	5(%rsp), %eax
+	andb	$-2, %al
+	cmpb	$2, %al
+	sete	%al
+	addq	$24, %rsp
+	.cfi_def_cfa_offset 8
+	retq
+.Lfunc_end0:
+	.size	wf_layout.positioned, .Lfunc_end0-wf_layout.positioned
+	.cfi_endproc
+                                        # -- End function
+	.section	".note.GNU-stack","",@progbits

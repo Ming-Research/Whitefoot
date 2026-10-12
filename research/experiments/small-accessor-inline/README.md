@@ -3,8 +3,10 @@
 This compile-only experiment belongs to board item `lm-small-accessor-inline`.
 The question is whether a 48-byte by-value accessor result can keep narrow
 field accesses while remaining profitable at an LLVM 22 statically cold call
-site. These witnesses are synthetic LLVM IR, not emitted Whitefoot programs
-and not a downstream performance comparison.
+site. The top-level witnesses are synthetic LLVM IR, not emitted Whitefoot
+programs; `snowghost/` adds IR extracted from Snowghost's emitted program
+([below](#snowghost-extracted-witnesses)). None of them is a downstream
+performance comparison.
 
 ## Protocol recorded before measurements
 
@@ -59,10 +61,13 @@ python3 research/experiments/small-accessor-inline/run.py --llvm-bin /opt/homebr
 ```
 
 CI can supply its LLVM 22 bin directory and a scratch output directory.
-The driver executes only `opt` and `llc`; it records their exact command
-arrays, versions, inline remarks, optimized IR, assembly, and per-function
-static instruction counts. It never compiles or runs Whitefoot or a native
-executable. LLVM-mca is optional follow-up rather than a timing source.
+The driver executes only LLVM 22 tools from `--llvm-bin`: `opt` and `llc`
+for every witness, and `llvm-extract`, `llvm-dis`, `llvm-nm` and `llvm-lto2`
+for the [Snowghost witnesses](#snowghost-extracted-witnesses). It records
+their exact command arrays, versions, inline remarks, optimized IR, assembly,
+and per-function static instruction counts. It never compiles or runs
+Whitefoot or a native executable. LLVM-mca is optional follow-up rather than
+a timing source.
 
 ## Witnesses and first control observation
 
@@ -192,3 +197,68 @@ The actual Snowghost accessor layouts, pre-inline IR, result placement,
 lookup behavior, inliner stage and execution counts remain unverified.
 In particular, the favorable direct-copy control prevents attributing
 every 48-byte record return's failure to granules alone.
+
+## Snowghost extracted witnesses
+
+`snowghost/` holds Snowghost's real accessor bodies with real callers, for
+the [result-origin follow-up](../../investigations/in-place-parameters/DESIGN.md#snowghosts-accessors-real-shapes-and-the-result-origin-contract).
+Provenance: Snowghost-wf run 38198957372, compiler release
+`wf-26355924f942`, Snowghost source `c8f5e17` (`15e8d4a` plus a workflow
+and pin), command `whitefootc --emit-llvm --graph modules.wfg --entry
+layout_oracle -o layout_oracle.ll`. Each `*-emitted.ll` copies the listed
+definitions verbatim from that whole-program IR, with the named types,
+storage-role TBAA and alias-scope metadata and attribute group they use;
+every other callee becomes a declaration with its emitted signature. The
+`*-origin.ll` files are hand-written edits of those copies that apply the
+proposed result-origin contract and nothing else:
+
+- `styles-emitted.ll`: `element_position`, `computed_of`, `font_index`,
+  `font_of`, `same_shaping`, `column_gap_of`, `box_of`, `initial_box`,
+  `positioned`, `text_of`, `valign_edge` from `renderer/layout`.
+- `styles-origin.ll`: `computed_of`, `font_of`, `box_of` and `text_of`
+  return `ptr`, the source element's address or the destination where they
+  build a value; their callers read through the returned address.
+- `shape-buffer-emitted.ll`: `blank_item`, `read_item`, `write_item`,
+  `fail`, `put_item`, `put_out`, `next_glyphs`, `next_glyph`, `item_at`,
+  `current`, `out_at`, `make_room`, `shift_forward`, `apply_forward`, `sync`
+  from `renderer/font`.
+- `shape-buffer-origin.ll`: `read_item` returns the element's address, the
+  `item_at`/`current`/`out_at` wrappers forward it, `apply_forward` and
+  `make_room` read and pass it through, and `next_glyphs` and
+  `shift_forward` capture it into their slot before the writing call.
+
+For each witness the driver runs the whole module through `opt -O2` (a
+non-fragment build) and emulates `whitefootc --cache --fragments function`:
+`llvm-extract --func` per defined function, `opt
+-passes=thinlto-pre-link<O2> --thinlto-bc`, then `llvm-lto2 run -O2
+--thinlto-threads=1 --save-temps` with every defined symbol prevailing.
+It records each fragment's summary instruction count, which ThinLTO
+compares with its import limit of 100. It also records what each
+post-import module imports, both pipelines' inline remarks, and
+`llc -O2 -mcpu=alderlake` static counts. The control
+`styles-emitted-import-200` repeats the fragment link of
+`styles-emitted.ll` with `--import-instr-limit=200`. Callees outside a
+witness are declarations, so each remark is the outcome at that real call
+edge, not a replay of the whole program.
+
+`results/snowghost/` retains `summary.tsv` and `summary.json` (remarks,
+imports, summary and static counts) and the fragment-build assembly of the
+two styles witnesses, which the path counts in the investigation use.
+
+| Function | Summary instructions, emitted → origin | Fragment build, emitted | Fragment build, origin | Import limit 200, emitted |
+| --- | --- | --- | --- | --- |
+| `computed_of` | 119 → 28 | not imported | inlined, 70/225 | inlined, 190/225 |
+| `font_of` | 104 → 29 | not imported | inlined, 125/225 | inlined, 220/225 |
+| `box_of` | 107 → 68 | not imported | inlined, 145/225 | inlined, 195/225 |
+| `text_of` | 109 → 134 | not imported | not imported | imported, not inlined, 465/225 |
+| `read_item` | 62 → 13 | inlined, 50–115/225 | inlined, −15/225 | not run |
+| `write_item` | 79 → 79 | not inlined, 290/225 | not inlined, 290/225 | not run |
+| `next_glyphs` | 29 → 80 | not inlined, 330/225 | not inlined, 330/225 | not run |
+
+The whole-module pipeline inlines `computed_of`, `font_of` and `box_of` with
+the emitted bodies too, at 190, 220 and 195. These witnesses therefore show
+no cold-site threshold at the real edges: the fragment build's import limit
+excludes the three styles accessors, and the ordinary threshold 225
+excludes `write_item`, `next_glyphs` and `text_of`. The origin variants
+compile and optimize; they are not executed, so their equivalence to the
+emitted functions rests on inspection of the edits.

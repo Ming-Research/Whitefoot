@@ -2879,7 +2879,10 @@ they admit stable source-backed observations or scalar-result
 specialization; the LLVM witness shows the benefit once that contract
 exists, not that Whitefoot can already prove it. This is a moderate-confidence
 direction: real accessor cleanup, effect/lifetime barriers or mixed origins
-could rule it out for the attributed sites.
+could rule it out for the attributed sites. The
+[Snowghost follow-up](#snowghosts-accessors-real-shapes-and-the-result-origin-contract)
+finds that the attributed accessors miss ThinLTO import or ordinary-threshold
+inlining rather than cold-site inlining, and bounds what (b) covers.
 
 Keep (e) as the alternative cost-model experiment if ordinary result
 placement cannot cover those sites. Its advantages are preserving the
@@ -2916,3 +2919,323 @@ checked the cited LLVM source; patch feasibility, actual Snowghost
 applicability and performance remain unverified. No Whitefoot suite or
 repository gate ran locally. The experiment's README gives the command that
 reproduces every witness result.
+
+### Snowghost's accessors: real shapes and the result-origin contract
+
+The owner selected direction (b) on card `lm-accessor-direction`: a call's
+record result is read through the address of the storage it came from,
+under a compiler-private result-origin contract, falling back to today's
+copy where the contract cannot be proved. This subsection checks that
+direction against Snowghost's emitted accessors before any implementation.
+
+**Inputs and method.** Snowghost-wf run 38198957372 emitted
+`whitefootc --emit-llvm --graph modules.wfg --entry layout_oracle` with
+release `wf-26355924f942` from source `c8f5e17` (`15e8d4a` plus a workflow
+and pin). The timed builds instead use `--cache --fragments function`,
+which cannot emit IR: every externally visible function becomes its own
+ThinLTO fragment, compiled with `clang -O2 -flto=thin` and joined by a
+ThinLTO link, so a call can be inlined only after the link imports the
+callee into the caller's module. Four extracted witnesses under
+[small-accessor-inline/snowghost](../../experiments/small-accessor-inline/README.md#snowghost-extracted-witnesses)
+carry the seven accessors verbatim, real callers, and hand-written
+result-origin variants. The driver compiles each witness two ways with
+LLVM 22.1.8: whole (`opt -O2`, as a non-fragment build) and as emulated
+fragments (`llvm-extract` per function, `opt -passes=thinlto-pre-link<O2>
+--thinlto-bc`, then `llvm-lto2 run -O2`), recording each fragment's summary
+instruction count, the link's imports and inline remarks, and `llc
+-mcpu=alderlake` static counts. Callees outside a witness are declarations,
+so a remark is the outcome at that real call edge, not a whole-program
+replay; no code was executed, timed or built with Whitefoot.
+
+**The mechanism differs from the earlier premise.** The earlier study
+reproduced a miss at a statically cold call site, threshold 45. At every
+real call edge these witnesses contain the threshold is the ordinary 225,
+and two size gates decide instead. ThinLTO imports a callee only when its pre-link summary
+counts at most 100 instructions (`-import-instr-limit`, decaying by 0.7 per
+transitive level), and every granule is one load or one store in that
+count. `computed_of` (119), `font_of` (104), `box_of` (107) and `text_of`
+(109) are therefore never imported: no caller in the fragment emulation
+inlines them, matching the attributed rise of their direct call sites from
+4 to 160. Whole, the same bodies inline at cost 190, 220 (`font_of` into
+`same_shaping` and `column_gap_of`) and 195 (`box_of` into `positioned`),
+all under 225. The per-function threshold attribute tried earlier could not
+have helped either, since import precedes any inline decision. The
+remaining three miss the ordinary threshold where they are imported:
+`write_item` 290, `next_glyphs` 330 and, whole, `text_of` 465.
+
+| Accessor | What it returns, and where the result comes from | Result transfer in the emitted body | Fragment build (summary instructions; outcome) | Whole build | Earlier shape | Origin contract |
+| --- | --- | --- | --- | --- | --- | --- |
+| `computed_of` | `ComputedStyle`, 12 `u32`, 48 B, through `%wf.result`: `styles^.pseudos[at].style` (offset 8 of a 56-byte entry), or `styles^.elements[element_position(...)]`, or a constructed all-zero value | two 12-granule copies (24 loads, 24 stores, 44 byte-offset GEPs) and a zero construction | 119; never imported | inlined, 190/225 | (b) source pointer, with two sources and a constant | covers |
+| `font_of` | `FontGroup`, 10 leaves, 36 B: `styles^.fonts[computed.font]`, else `fonts[0]`, else a constructed constant; reads one field of its own `computed_of` call | two 10-granule copies; constant built through two slots | 104; never imported | inlined, 220/225 | (b), mixed granules | covers |
+| `box_of` | `BoxGroup`, 11 leaves, 20 B: `styles^.boxes[computed.box]` or `initial_box()`; an anonymous box rebuilds it with `found.visibility` | one 11-granule copy; the 3-granule `StyleRef` input captured on both paths because result writes may alias it | 107; never imported | inlined, 195/225 | (b), mixed granules | covers |
+| `text_of` | `TextGroup`, 31 leaves, 104 B: `styles^.texts[computed.text]` (memmove, above the 16-granule limit) or `initial_text()`; an anonymous box rebuilds all 31 leaves | one memmove; the rebuild copies five nested fields twice, source to slot to result, because `found` occupies the result | 109; never imported | not inlined, 465/225 | none: the cost is the rebuild | does not cover |
+| `read_item` | `Item`, 13 leaves, 44 B: `list^.inner[index]` or `blank_item()` | one 13-granule copy | 62; imported and inlined at all 7 included sites, 50–115/225 | same | (b) | partial, by caller |
+| `write_item` | `Bool`; stores its by-value `Item` parameter into `list^.inner[index]` or appends, growing the window | 13-granule store of the parameter; `grow` and `place_back` calls | 79; imported, not inlined, 290/225 | same | none: no record result | does not apply |
+| `next_glyphs` | `unit`; copies `count` items with `read_item` then `put_out(buffer, ...)` | after inlining, the 13-granule copy of `read_item`'s result, which `put_out` consumes | 29; imported, not inlined, 330/225 | same | none: no record result | does not cover |
+
+The callgrind attribution lists self instructions, which move between
+functions when inlining changes. `computed_of`'s +622,811 is its entire
+executed body, all inlined before; it is not the added cost. The net cell
+regression is 13,518,149 − 12,257,362 = +1,260,787 instructions.
+`next_glyphs` and `write_item` return no record; their growth is the
+ordinary-threshold miss above. Most of it is the granule charge, 13 loads
+and 13 stores at five units each, on a transfer that must stay: `write_item`
+stores an `Item`, and `next_glyphs`' copy outlives a `put_out` that writes
+the buffer. The earlier list is right that their transfers grew, but they
+are not result copies.
+`read_item` is imported and inlined at every included site, so its
+out-of-line instructions come from sites this witness does not reproduce:
+cold sites at threshold 45, or a third import level, whose decayed limit
+100 × 0.7 × 0.7 = 49 is below its 62 instructions. Which applies is unverified.
+
+**Hot callers and the stability of the source.** A caller is covered when
+every place the result may come from stays unchanged and valid from the call
+to the last use of the result.
+
+| Callee | Callers (source, whole-program IR) | Use of the result | Can the source change before the last use? | Covered |
+| --- | --- | --- | --- | --- |
+| `computed_of` | 12: `border_widths_of`, `box_of`, `container_of`, `content_of`, `culled_box`, `font_index`, `font_of`, `item_of`, `size_of`, `spacing_of`, `table_of`, `text_of` | one `u32` field each | No: each row is `reads(styles)`, so by OWN-9 and EFF-2 no write, move or release reaches `styles^` during the caller's activation | all 12 |
+| `font_of` | 5: `box_metrics`, `fallback_extents`, `column_gap_of`, `same_shaping` (twice) | 1–5 scalars: `size`, `line_height.kind/value`, `families_start/end`, `weight`, `style` | No: every row only reads `styles`, and the other roots they read are separate parameters | all 5 |
+| `box_of` | 35 sites in 32 functions | a few scalar fields (`positioned` reads `position`); not checked at every site | No: of the 52 source functions calling `box_of`, `text_of` or `font_of`, 24 write other roots (`context`, `walk`, `paragraph`, `table`, ...), which EFF-5 keeps disjoint from `styles`; none writes `styles` | all |
+| `text_of` | 16 sites in 15 functions | one field or a nested field | No, as for `box_of` | stable, yet not helped: its size comes from the rebuild |
+| `read_item` | `apply_forward` (through `item_at`), `make_room`, `next_glyphs`, `shift_forward`; 128 `item_at`/`current`/`out_at` sites | `apply_forward`: reads `mask` and `code`, passes the item to `glyph_allowed(face, item)`; `make_room`: passes it to `write_item(&buffer^.spare, ...)`; `next_glyphs`, `shift_forward`: pass it to `put_out`/`put_item`, which write `buffer` | `apply_forward`: no buffer write before the last use; `make_room`: `write_item`'s substituted row writes `buffer.spare`, disjoint from `buffer.items`; `next_glyphs`, `shift_forward`: yes, the callee may grow and reallocate `items` before it reads its argument | first two covered, last two not; the wrappers' sites need per-site checks |
+
+The covered styles callers meet the contract in its strongest form: the
+source lies under a reference parameter that the caller's row only reads,
+so no per-use barrier analysis is needed.
+
+**Witness results.** The variants change only what the contract changes.
+Each origin body returns the source address and builds a constructed result
+in the destination. Each covered caller reads through the returned
+address. In `next_glyphs` and `shift_forward` the caller captures before the
+writing call.
+
+| Witness, function | Summary instructions, emitted → origin | Fragment build, origin | Whole build, origin |
+| --- | --- | --- | --- |
+| `computed_of` | 119 → 28 | imported and inlined into `font_of`, `font_index`, `box_of`, `text_of`, cost 70 | inlined, 70 |
+| `font_of` | 104 → 29 | imported and inlined into `same_shaping` and `column_gap_of`, 125 | inlined, 125 |
+| `box_of` | 107 → 68 | imported and inlined into `positioned`, 145 | inlined, 145 |
+| `text_of` | 109 → 134 | not imported | not inlined |
+| `read_item` | 62 → 13 | inlined at all sites, −15 | inlined, −15 |
+| `next_glyphs` / `shift_forward` (caller captures) | 29 → 80 / 49 → 100 | `next_glyphs` still not inlined, 330 | same |
+| `write_item` | 79 → 79 | not inlined, 290 | same |
+
+`text_of`'s variant grows because its rebuild now reads through a joined
+address, so the host can no longer fold the copies whose source and
+destination are both the result. In the fragment assembly, `font_index`'s
+element path falls from 34 to 24 instructions. That is the 8-instruction
+call wrapper plus `computed_of`'s 26, which stores 48 bytes that the caller
+reloads, against an inline load. `column_gap_of`'s path to the font size
+falls from 60 to 33. A control links the unchanged emission with
+`--import-instr-limit=200`: `computed_of`, `font_of` and `box_of` are then
+imported and inlined at 190, 220 and 195. This confirms that the import
+gate is what excludes them.
+
+**The contract.**
+
+*Callee side.* A WF-defined, non-waiting function whose result uses a
+destination gets an internal entry `<symbol>.origin`. It takes the same
+parameters and returns the address that holds the result. A path returns a
+source address exactly when it returns a by-value Load snapshot of a place
+under one of the function's reference parameters, a place its row names
+by EFF-2. The snapshot analysis's checked effects and IR place facts must
+also prove that place unchanged and valid from the read to the function's
+exit, cleanup included; this is the existing read-through stability
+judgment with the return as the use. Every other path builds the value in
+the destination and returns the destination. Paths join as an address
+`phi`. A return of another origin call returns that call's address when
+its origin set lies within the caller's own reference rows and the address
+is stable to exit, as for `item_at` → `read_item`. Origins are never
+callee-owned storage: locals, own by-value parameters and anything released
+at return stay excluded.
+
+*Caller side.* A direct call to an origin entry is a Load-snapshot producer
+for `select_read_through`. Its source address is the returned pointer and
+its containing storage is the origin set: every place the callee's
+substituted row names, read or written, plus the call's destination. That
+set derives from the callee's signature alone, so a caller acquires no
+dependency on the callee's body and its fragment stays valid across body
+edits. A use reads through the address where every place in the set is
+proved unchanged and valid up to it, using the same EFF-5 path overlap,
+REF-2 invalidation, STOR-3 release and OP-10 window events as Load
+snapshots. Before the first potentially invalidating event that precedes a
+use, the caller captures into private backing with an all-source-before-store
+granule transfer. When the caller's row only reads every root of the set,
+OWN-9 makes the whole activation stable.
+
+*ABI and fallback.* The public symbol keeps today's destination ABI. Its
+body calls `<symbol>.origin` and transfers from the returned address into
+its destination unless the two are equal; the existing permitted
+result/input overlap keeps that transfer capture-first. Direct calls with
+at least one read-through use call the origin entry. Every other direct
+call, every indirect, linked or parallel-lane call, and every waiting or
+split-part function keeps the public symbol, so uncovered callers execute
+today's code. Both symbols belong to the function's fragment.
+
+*Backend facts.* An origin entry's reference parameter keeps
+`captures(none)` when every origin reachable from it lies behind an owner
+pointer loaded from its referent, such as a Box payload or a window
+element; all seven accessors are of this kind. The returned pointer's
+provenance is then the loaded pointer, not the parameter. A parameter whose
+own referent may be returned gets `captures(ret: address, provenance)`, and
+the attribute is omitted where the probed host spelling has no return-only
+form. The returned address is `nonnull`, `dereferenceable` to the result's
+size and aligned to it, and never `noalias`. The witnesses use the weaker
+`captures(ret: ...)` on every origin parameter.
+
+Alternatives, with the evidence that decides them:
+
+- Raising the ThinLTO import limit. The control above shows it restores the
+  three styles accessors at today's emission. It is not recommended as the
+  repair: it is a global knob over every import decision with unmeasured
+  compile time and text growth, `font_of` clears 225 by 5 units, and an
+  out-of-line call still copies. It stays a comparison arm.
+- One symbol whose every caller reads through and captures its own copy.
+  The shape-buffer variant measures the cost: `next_glyphs` grows from 29 to
+  80 summary instructions and `shift_forward` from 49 to 100, at the import
+  limit, because the copy moves into each uncovered caller.
+- Demand specialization that returns only the scalar a caller needs. It
+  needs demanded-result summaries and a body-dependent symbol per demand,
+  and inlining after the contract gives the same field reads at the covered
+  sites.
+- The cost-only LLVM patch (e). As specified it changes `InlineCost` and not
+  the summary instruction count, so it cannot reach the import gate that
+  excludes the three styles accessors.
+
+Design-tree changes, proposed only; `design/` is not edited:
+
+- **compiler/storage-placement**, new decision: "Return a destination-form
+  result through the address of its origin when the callee returns a
+  by-value Load snapshot of a place under one of its reference parameters
+  that stays unchanged and valid to the callee's exit, building every other
+  result in the destination, and treat such a call as a Load-snapshot
+  producer whose containing storage is every place the callee's substituted
+  row names plus the destination, reading uses through the returned address
+  where that storage is proved unchanged and valid and capturing before the
+  first invalidation otherwise, because Snowghost's `computed_of`, `font_of`
+  and `box_of` miss ThinLTO import solely through their result copies while
+  every caller reads a few fields of storage its row only reads, instead of
+  a toolchain-wide import limit, a cost-only LLVM change that leaves the
+  copies, or borrows in the language." The Load-snapshot decision's
+  exclusions (waiting, overlap, split parts, exposed storage) apply
+  unchanged.
+- **compiler/result-registers**, qualifying the destination rule: "A
+  WF-defined, non-waiting definition whose result uses a destination also
+  has an internal `<symbol>.origin` entry with the same parameters returning
+  the result's address under compiler/storage-placement; its public symbol
+  keeps the destination ABI by calling that entry and transferring from the
+  returned address unless it is the destination, so linked, indirect and
+  parallel boundaries keep one callable ABI, instead of changing every
+  destination-form signature or moving every capture into callers."
+- **compiler/backend-facts**: "Keep `captures(none)` on an origin entry's
+  reference parameter whose origins all lie behind owner pointers loaded
+  from its referent, give `captures(ret: address, provenance)` to one whose
+  own referent may be returned, omitting it where the host spelling lacks a
+  return-only form, and mark the returned address `nonnull`, dereferenceable
+  and aligned to the result but never `noalias`, because the address
+  outlives the call while its provenance is the source's, instead of copying
+  the ordinary noncapture claim or a fresh-allocation promise."
+- **compiler/incremental-compilation** needs no change. The origin set comes
+  from the signature, and the import loss above is the kind of
+  modularity-induced runtime loss its ThinLTO decision already requires
+  correcting by measurement.
+
+**How much of the regression this covers.** Self instructions per call on
+the fragment path are about 26 for `computed_of`, 29 for `font_of` and 29
+for `box_of`. Read from the attributed self instructions, that is roughly
+24,000 `computed_of` calls, 9,300 `font_of` calls and 1,900 `box_of` calls.
+The saved instructions per call are about 27 for `font_of`, which includes
+its `computed_of` call, 34 for `box_of` (`positioned`'s element path falls
+from 68 to 34), and 10 for each of the remaining 12,700 `computed_of` calls.
+That totals about 440,000 instructions, 35% of the +1,260,787 cell
+regression. The estimate rests on static
+path lengths and an assumed element-path mix (the pseudo path is shorter),
+so the range is about 25–45%. The upper end would also need `read_item`'s
+unreproduced out-of-line sites to be covered field-reading sites; its
+origin cost of −15 would inline it anywhere.
+
+Direction (b) therefore covers the three styles accessors fully and well
+under half of the cost. The rest sits in `write_item`, `next_glyphs`,
+`text_of` and the uncovered `read_item` sites, where a copy must stay or the
+size lies elsewhere. A better direction for that remainder, which goes back
+to the owner, is a revised LLVM-side candidate (e′). It would count a
+recognized transfer group as one unit in both `InlineCost` and the ThinLTO
+summary's instruction count. The evidence: every remaining miss is a gate
+charging each granule as an instruction, at 290, 330 and 465 against 225,
+and 109 against 100. On the Whitefoot side, `text_of`'s doubled rebuild transfers
+are a placement gap: `found` is coalesced into the result that the rebuild
+overwrites. Direction (b) remains sound and worth implementing for its
+share, and it also removes copies at out-of-line calls, which (e′) would
+not.
+
+**Comparison fixed before measurement.** Workloads: Snowghost's apollo11
+single-thread word edit (the callgrind cell of run 38183553516, first four
+edits, collection on `wf_layout.text_changed` and `wf_layout.update`), the
+html5 and apollo11 sentence edits, apollo11 font-size and root-font, and
+full layout. These are the slower cells. The improved block insert/delete
+and four-thread full layout guard against regression. All arms build the
+same Snowghost source with `--cache --fragments function`:
+
+1. base: the current main compiler;
+2. twin: a second release of base with identical emission, the noise control;
+3. candidate: base plus the result-origin contract;
+4. mechanism control: base linked with `-Wl,-mllvm,-import-instr-limit=200`
+   (experiment branch only, never proposed);
+5. reference: `wf-78223721f77d`, the level being restored.
+
+Instruction counts come first, on hosted CI: callgrind total Ir of the cell,
+self Ir of the seven accessors, and direct call sites of `computed_of`,
+`font_of`, `box_of` and `text_of` counted with `objdump` in each executable.
+Timing on the 14900K follows (`time-14900k.yml`, interleaved pairs with the
+twin), only if the counts pass.
+
+Predictions, stated before the run: the candidate leaves at most 5% of
+today's direct call sites of `computed_of`, `font_of` and `box_of`; their
+combined self Ir falls by at least 80%; and the cell's total Ir falls by
+at least 250,000, which is 20% of the regression. The twin differs from
+base by less than 0.5% of Ir.
+
+Rejection:
+
+- If those call sites remain, the import-gate mechanism is wrong and the
+  contract's premise fails.
+- If they disappear but total Ir falls by less than 125,000 (10% of the
+  regression), direction (b) is too small to pursue as the next step. That
+  goes back to the owner with (e′). A fall between 125,000 and 250,000
+  fails the prediction without rejecting (b); the coverage estimate is
+  then revised from the measured per-function counts before any decision.
+- The mechanism control isolates the import gate. A candidate that recovers
+  about what the control recovers acts through restored inlining; one that
+  recovers less misses covered sites, found by a site-by-site comparison;
+  one that recovers more also saves copies at out-of-line calls.
+- If at least two thirds of the regression remains after the candidate, as
+  predicted, then (b) alone cannot meet the Snowghost acceptance. Whether
+  to add (e′) is the owner's decision; (b) is not grown to cover copies
+  that must stay.
+- Timing that does not move beyond the twin range while Ir falls is
+  reported as no timing effect.
+
+Found along the way, each with its disposition:
+
+- The earlier cold-site premise does not describe these edges, and (e) as
+  specified cannot reach the import gate. Both are recorded here and await
+  the owner's choice between (b) alone and (b) with (e′).
+- `text_of`'s rebuild copies five nested fields twice because `found` is
+  placed in the result. This is a candidate placement repair, deferred to a
+  backlog item.
+- `box_of` and `text_of` capture their 3-granule `StyleRef` input on both
+  paths, because result writes may alias indirect inputs. The contract
+  removes the result write from the source path, so its implementation
+  captures on the constructed path only.
+- Callers copy nested fields of call results into slots before use
+  (`valign_edge`'s `vertical_align`, `column_gap_of`'s `column_gap`). These
+  disappear only when the callee inlines; under the contract they become
+  reads through the origin once the callee has an origin entry. This is
+  recorded here and needs no separate item.
+
+Validation: `run.py` ran over every witness, old and new, with all `opt`,
+`llc`, `llvm-extract`, `llvm-dis`, `llvm-nm` and `llvm-lto2` invocations
+succeeding, and the earlier eleven witnesses' summary unchanged. No
+Whitefoot build, test suite, timing or CI run was involved. The callgrind
+build mode of run 38183553516 was not re-read. The match between its
+4 → 160 direct call sites and the import gate is inferred, not confirmed.
