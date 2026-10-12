@@ -1447,7 +1447,15 @@ impl<'unit> TypeContext<'unit> {
         self.readonly_path_member(check_context, path, bindings, true)
     }
 
-    /// [SHARE-2] the `Option` entry type a table's subscript selects.
+    /// [SHARE-2] whether a table subscript selects `Entries<V>`, a run of
+    /// entries, given the step that follows it: a `KeySet` offset selects the
+    /// run and the next step subscripts it, while a key offset selects the
+    /// one `Option` entry and the next step is its payload. The step after
+    /// the subscript is the only place a resolved path records which.
+    fn table_selects_entries(next: Option<&PlaceStep>) -> bool {
+        matches!(next, Some(PlaceStep::Index(_)))
+    }
+    /// [SHARE-2] the `Option` entry type of a table's subscript.
     fn table_entry_of(&self, ty: Option<CheckedType>) -> Result<Option<CheckedType>, CheckStop> {
         let Some(CheckedType::Nominal(nominal)) = ty else {
             return Ok(None);
@@ -1549,8 +1557,13 @@ impl<'unit> TypeContext<'unit> {
         for step in &path.path[prefix..] {
             if let PathType::MapSelection(entry) = ty {
                 ty = match step {
-                    PlaceStep::Payload { .. } => PathType::Value(entry),
-                    PlaceStep::Index(_) => PathType::Range(entry),
+                    PlaceStep::Payload { .. } | PlaceStep::Index(_) => {
+                        if Self::table_selects_entries(Some(step)) {
+                            PathType::Range(entry)
+                        } else {
+                            PathType::Value(entry)
+                        }
+                    }
                     // Entries.len is readonly; a checked Option entry cannot
                     // have a measure selection [SHARE-2, OP-15].
                     PlaceStep::Measure(_) | PlaceStep::Descendant(_) => ty,
@@ -1813,21 +1826,27 @@ impl<'unit> TypeContext<'unit> {
                     range = true;
                 }
                 PlaceStep::Index(offset) => {
+                    // [SHARE-2] an indexed atomic binder's own subscript is
+                    // not in the writer's spelling of the binder.
+                    if position < prefix {
+                        continue;
+                    }
                     rendered.push_str(&format!(
                         "[{}]",
                         self.declarations.render_captured_offset(offset, bindings)?
                     ));
-                    if position < prefix {
-                        continue;
-                    }
                     // [TYPE-9] a segment is a run of T.
                     let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
-                    // [SHARE-2] a table's subscript selects its `Option` entry.
-                    ty = match self.table_entry_of(ty)? {
-                        Some(entry) if !range => Some(entry),
-                        _ => self.selected_element(ty, range)?,
-                    };
-                    range = segment;
+                    match self.table_entry_of(ty)? {
+                        Some(entry) if !range => {
+                            ty = Some(entry);
+                            range = Self::table_selects_entries(place.path.get(position + 1));
+                        }
+                        _ => {
+                            ty = self.selected_element(ty, range)?;
+                            range = segment;
+                        }
+                    }
                 }
                 PlaceStep::Range(_)
                     if !range && matches!(ty, Some(CheckedType::Segments { .. })) =>

@@ -1229,24 +1229,6 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"struct Pair {
-  a: u64;
-  b: u64;
-}
-
-interface Stage {
-  fn touch(a: &Slots<Pair, 4>) -> result: u64 writes(a.last.a);
-}
-
-fn outer<interface Stage>(items: &Slots<Pair, 4>) -> result: u64 writes(items.last.a) {
-  let y = Stage::touch(a: items);
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
         ],
     },
     RepairPair {
@@ -1294,21 +1276,297 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"enum Shape {
-  Dot(x: u64);
-  Box2(w: u64, h: u64);
+        ],
+    },
+    RepairPair {
+        // [EFF-5, SHARE-2] the entries run of a key set holds `Option` entries, so the place below its subscript names the variant and its payload field; the captured key-set subscript has no source spelling and prints as `?`.
+        name: "call-separation-entries-run-payload.wf",
+        rejected: br#"const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+struct Pair {
+  a: u8;
+  b: u8;
 }
 
-interface Stage {
-  fn touch(a: &Slots<Shape, 4>) -> result: u64 writes(a.last.Box2.h);
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
 }
 
-fn outer<interface Stage>(items: &Slots<Shape, 4>) -> result: u64 writes(items.last.Box2.h) {
-  let y = Stage::touch(a: items);
-  return y;
+fn work(t: &ConcurrentHashMap<Pair>, keys: &KeySet, i: u64, j: u64) -> result: unit reads(keys), writes(t) {
+  let entries = &t^[keys^];
+  if i < entries^.len {
+    if j < entries^.len {
+      match &entries^[i] {
+        Some(value: x) => {
+          match &entries^[j] {
+            Some(value: y) => {
+              copy_across(source: &x^.a, destination: &y^.a);
+            }
+            None() => {
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let keys = key_set_new(capacity: 3_u64);
+  for @each (i in 0_u64..3_u64) {
+    let end = i + 1_u64;
+    let at = key_set_insert(keys: &keys, key: &names[i..end]);
+  }
+  atomic t = &store {
+    work(t: t, keys: &keys, i: 0_u64, j: 1_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  residual: t^[?][i].Some.value.a and t^[?][j].Some.value.a require their captured indices to be distinct\n",
+            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
+        ],
+        repaired: &[
+            br#"const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+struct Pair {
+  a: u8;
+  b: u8;
+}
+
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
+}
+
+fn work(t: &ConcurrentHashMap<Pair>, keys: &KeySet, i: u64, j: u64) -> result: unit reads(keys), writes(t) {
+  let entries = &t^[keys^];
+  if i == j {
+    return unit;
+  }
+  if i < entries^.len {
+    if j < entries^.len {
+      match &entries^[i] {
+        Some(value: x) => {
+          match &entries^[j] {
+            Some(value: y) => {
+              copy_across(source: &x^.a, destination: &y^.a);
+            }
+            None() => {
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let keys = key_set_new(capacity: 3_u64);
+  for @each (i in 0_u64..3_u64) {
+    let end = i + 1_u64;
+    let at = key_set_insert(keys: &keys, key: &names[i..end]);
+  }
+  atomic t = &store {
+    work(t: t, keys: &keys, i: 0_u64, j: 1_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // [EFF-5, SHARE-2] an atomic binder over a key set's entries is written `es`, so its own subscript is not part of the spelling a writer reads back.
+        name: "call-separation-atomic-entries-binder.wf",
+        rejected: br#"const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+struct Pair {
+  a: u8;
+  b: u8;
+}
+
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
+}
+
+fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -> result: unit reads(store), reads(keys) waits {
+  if i == 7_u64 {
+    return unit;
+  }
+  atomic es = &store^[keys^] {
+    if i < es^.len {
+      if j < es^.len {
+        match &es^[i] {
+          Some(value: x) => {
+            match &es^[j] {
+              Some(value: y) => {
+                copy_across(source: &x^.a, destination: &y^.a);
+              }
+              None() => {
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let keys = key_set_new(capacity: 3_u64);
+  for @each (i in 0_u64..3_u64) {
+    let end = i + 1_u64;
+    let at = key_set_insert(keys: &keys, key: &names[i..end]);
+  }
+  run(store: &store, keys: &keys, i: 0_u64, j: 1_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  residual: es^[i].Some.value.a and es^[j].Some.value.a require their captured indices to be distinct\n",
+            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
+        ],
+        repaired: &[
+            br#"const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+struct Pair {
+  a: u8;
+  b: u8;
+}
+
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
+}
+
+fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -> result: unit reads(store), reads(keys) waits {
+  if i == j {
+    return unit;
+  }
+  atomic es = &store^[keys^] {
+    if i < es^.len {
+      if j < es^.len {
+        match &es^[i] {
+          Some(value: x) => {
+            match &es^[j] {
+              Some(value: y) => {
+                copy_across(source: &x^.a, destination: &y^.a);
+              }
+              None() => {
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let keys = key_set_new(capacity: 3_u64);
+  for @each (i in 0_u64..3_u64) {
+    let end = i + 1_u64;
+    let at = key_set_insert(keys: &keys, key: &names[i..end]);
+  }
+  run(store: &store, keys: &keys, i: 0_u64, j: 1_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // [EFF-5, SHARE-2] an atomic binder over one map entry is the entry itself, so its own subscript is not part of the spelling a writer reads back.
+        name: "call-separation-atomic-entry-binders.wf",
+        rejected: br#"const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Pair {
+  a: u64;
+  b: u64;
+}
+
+fn copy_across(source: &u64, destination: &u64) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 2_u64);
+  let k = &names[0_u64..1_u64];
+  atomic e = &store[k], f = &store[k] {
+    match &e^ {
+      Some(value: x) => {
+        match &f^ {
+          Some(value: y) => {
+            copy_across(source: &x^.a, destination: &y^.a);
+          }
+          None() => {
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  residual: e^.Some.value.a and f^.Some.value.a require their captured indices to be distinct\n",
+            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
+        ],
+        repaired: &[
+            br#"const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Pair {
+  a: u64;
+  b: u64;
+}
+
+fn copy_across(source: &u64, destination: &u64) -> result: unit reads(source), writes(destination) {
+  let v = source^;
+  set destination^ = v;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<Pair>(capacity: 2_u64);
+  let k = &names[0_u64..1_u64];
+  atomic e = &store[k] {
+    match &e^ {
+      Some(value: x) => {
+        copy_across(source: &x^.a, destination: &x^.b);
+      }
+      None() => {
+      }
+    }
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#,

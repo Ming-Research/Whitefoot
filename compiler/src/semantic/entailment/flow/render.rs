@@ -316,6 +316,11 @@ impl Input<'_, '_> {
     }
 
     /// Render body and entry paths through the same typed storage selectors.
+    ///
+    /// The selected type is kept through every step, so a field or payload
+    /// below a window part, a page, a table entry or a shared object is named
+    /// by its declaration. A step whose type was lost is an inconsistent
+    /// checked place and never a source spelling with an ordinal in it.
     fn render_place_projections(
         &self,
         mut rendered: String,
@@ -330,8 +335,24 @@ impl Input<'_, '_> {
                     ty = Some(target.ty);
                 }
                 PlaceStep::Payload { variant, field } => {
+                    let selected = ty.and_then(|current| {
+                        let CheckedType::Nominal(nominal) = current else {
+                            return None;
+                        };
+                        let CheckedNominalKind::Enum { variants } =
+                            &self.context.nominals.get(nominal.0 as usize)?.kind
+                        else {
+                            return None;
+                        };
+                        let variant = variants.get(*variant as usize)?;
+                        let field = variant.fields.get(*field as usize)?;
+                        Some((&variant.name, &field.name, field.ty))
+                    });
+                    let Some((variant, field, field_type)) = selected else {
+                        unreachable!("a checked payload step selects a declared variant field");
+                    };
                     rendered.push_str(&format!(".{variant}.{field}"));
-                    ty = None;
+                    ty = Some(field_type);
                 }
                 PlaceStep::Range(range) => {
                     rendered.push_str(&format!(
@@ -343,7 +364,7 @@ impl Input<'_, '_> {
                 PlaceStep::Part(part) => {
                     rendered.push('.');
                     rendered.push_str(part.spelling());
-                    ty = None;
+                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
                 }
                 PlaceStep::Measure(measure) => {
                     rendered.push('.');
@@ -351,27 +372,22 @@ impl Input<'_, '_> {
                     ty = Some(CheckedType::Integer(IntegerType::U64));
                 }
                 PlaceStep::Field(field) => {
-                    let name = ty
+                    let Some((field_name, field_ty)) = ty
                         .and_then(|current| self.field_name(current, *field))
-                        .unwrap_or(None);
-                    match name {
-                        Some((field_name, field_ty)) => {
-                            rendered.push('.');
-                            rendered.push_str(&field_name);
-                            ty = Some(field_ty);
-                        }
-                        None => {
-                            rendered.push_str(".?");
-                            ty = None;
-                        }
-                    }
+                        .flatten()
+                    else {
+                        unreachable!("a checked field step selects a declared struct field");
+                    };
+                    rendered.push('.');
+                    rendered.push_str(&field_name);
+                    ty = Some(field_ty);
                 }
                 PlaceStep::Page(offset) => {
                     rendered.push_str(".pages");
                     rendered.push('[');
                     rendered.push_str(&self.render_offset(*offset));
                     rendered.push(']');
-                    ty = None;
+                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
                 }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!(
@@ -380,8 +396,14 @@ impl Input<'_, '_> {
                     ));
                     // A range reference's root type is already its element
                     // type [REF-4], so a subscript of a type that selects no
-                    // element keeps it.
-                    ty = ty.map(|ty| element_type(ty, self.context.elements).unwrap_or(ty));
+                    // element keeps it. A table's subscript selects its
+                    // `Option` entry, and the entries run of a key set holds
+                    // the same type [SHARE-2].
+                    ty = ty.map(|ty| {
+                        self.table_entry_type(ty)
+                            .or_else(|| self.storage_element_type(ty))
+                            .unwrap_or(ty)
+                    });
                 }
                 PlaceStep::Deref => {
                     self.render_content_step(&mut rendered, &mut ty);
@@ -389,6 +411,27 @@ impl Input<'_, '_> {
             }
         }
         rendered
+    }
+
+    /// The type one stored element of a window, array, buffer, segment run or
+    /// entries run holds.
+    fn storage_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        let element = ty.storage_element()?;
+        self.context.elements.get(element.index()).copied()
+    }
+
+    /// [SHARE-2] the `Option` entry a table's subscript selects.
+    fn table_entry_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return None;
+        };
+        match self.context.nominals.get(nominal.0 as usize)?.kind {
+            CheckedNominalKind::Shared {
+                shape: crate::CheckedShared::Map { entry },
+                ..
+            } => Some(entry),
+            _ => None,
+        }
     }
 
     /// References cannot be stored in aggregates. After the root reference
@@ -415,6 +458,11 @@ impl Input<'_, '_> {
         let nominal = self.context.nominals.get(id.0 as usize)?;
         match nominal.kind {
             CheckedNominalKind::Box { referent, .. } => Some(referent),
+            // [SHARE-1] a shared object's `^` reaches its state.
+            CheckedNominalKind::Shared {
+                state,
+                shape: crate::CheckedShared::Object,
+            } => Some(state),
             _ => Some(ty),
         }
     }
