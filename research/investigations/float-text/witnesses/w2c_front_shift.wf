@@ -75,13 +75,18 @@ fn shift_front(decimal: &Decimal, delta: u64) -> result: unit writes(decimal) co
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Moves digits toward the end and compares the digest and the count with the expected string.";
+  doc "Checks that each decimal has the room the move needs, moves its digits toward the end and compares the digest and the count with the expected string.";
   let decimal_1 = new_decimal();
   append_digit(decimal: &decimal_1, digit: 1_u8);
   append_digit(decimal: &decimal_1, digit: 2_u8);
   append_digit(decimal: &decimal_1, digit: 3_u8);
   append_digit(decimal: &decimal_1, digit: 4_u8);
   append_digit(decimal: &decimal_1, digit: 5_u8);
+  let held_1 = decimal_1.count;
+  if held_1 <= 797_u64 {
+  } else {
+    return exit_status(code: 14_u8);
+  }
   let done_1 = shift_front(decimal: &decimal_1, delta: 3_u64);
   let digest_1 = digest(decimal: &decimal_1);
   if digest_1 == 8515674637737317990_u64 {
@@ -95,6 +100,11 @@ fn main() -> status: ExitStatus pure {
   }
   let decimal_2 = new_decimal();
   append_digit(decimal: &decimal_2, digit: 1_u8);
+  let held_2 = decimal_2.count;
+  if held_2 <= 800_u64 {
+  } else {
+    return exit_status(code: 24_u8);
+  }
   let done_2 = shift_front(decimal: &decimal_2, delta: 0_u64);
   let digest_2 = digest(decimal: &decimal_2);
   if digest_2 == 12638152016183539244_u64 {
@@ -147,6 +157,11 @@ fn main() -> status: ExitStatus pure {
   append_digit(decimal: &decimal_3, digit: 1_u8);
   append_digit(decimal: &decimal_3, digit: 9_u8);
   append_digit(decimal: &decimal_3, digit: 7_u8);
+  let held_3 = decimal_3.count;
+  if held_3 <= 793_u64 {
+  } else {
+    return exit_status(code: 34_u8);
+  }
   let done_3 = shift_front(decimal: &decimal_3, delta: 7_u64);
   let digest_3 = digest(decimal: &decimal_3);
   if digest_3 == 1504125598068926233_u64 {
@@ -161,6 +176,11 @@ fn main() -> status: ExitStatus pure {
   let decimal_4 = new_decimal();
   append_digit(decimal: &decimal_4, digit: 9_u8);
   append_digit(decimal: &decimal_4, digit: 0_u8);
+  let held_4 = decimal_4.count;
+  if held_4 <= 2_u64 {
+  } else {
+    return exit_status(code: 44_u8);
+  }
   let done_4 = shift_front(decimal: &decimal_4, delta: 798_u64);
   let digest_4 = digest(decimal: &decimal_4);
   if digest_4 == 1492704591846552884_u64 {

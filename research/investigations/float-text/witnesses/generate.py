@@ -1,9 +1,10 @@
 """Generator and independent oracle for the float-text witness programs.
 
 Experiment E2 of ../DESIGN.md compiles four small Whitefoot programs (W1 to
-W4, here split into seven files so that one refusal does not hide the next)
-to learn whether the checker accepts the arithmetic that exact decimal
-conversion needs. Every expected value in a witness is computed here with
+W4, here split into eight files so that one refusal does not hide the next,
+plus w2d, a restated form of w2c, and w2e and w2f, the minimal witnesses of
+the gaps E2 found) to learn whether the checker accepts the arithmetic that
+exact decimal conversion needs. Every expected value in a witness is computed here with
 Python's exact integer arithmetic, from the definition of the operation and
 never from the output of any witness.
 
@@ -45,6 +46,15 @@ def fnv(data):
 def check_block(actual, wanted, code):
     return (
         f"  if {actual} == {wanted} {{\n"
+        f"  }} else {{\n"
+        f"    return exit_status(code: {u8(code)});\n"
+        f"  }}\n"
+    )
+
+
+def bound_block(actual, limit, code):
+    return (
+        f"  if {actual} <= {limit} {{\n"
         f"  }} else {{\n"
         f"    return exit_status(code: {u8(code)});\n"
         f"  }}\n"
@@ -126,8 +136,8 @@ TABLE_ENTRY = f"""fn table_entry(bits: u64) -> result: u64 pure {{
   let floor_log = ishr(scaled, {LOG_SHIFT}_u32);
   let offset = floor_log + {TABLE_OFFSET}_i64;
   let index = cvt::<i64, u64>(offset);
-  let entry = power_table[index];
-  return entry;
+  let row = power_table[index];
+  return row;
 }}
 """
 
@@ -157,8 +167,8 @@ SCALED = """fn scaled(bits: u64) -> result: u64 pure {
   doc "The 53-bit significand times the table row, rounded to the high word: the high word of a product with a 53-bit factor is at most that factor, so adding the rounding bit cannot overflow.";
   let fraction = iand(bits, 4503599627370495_u64);
   let mantissa = fraction + 4503599627370496_u64;
-  let entry = table_entry(bits: bits);
-  let (high, low) = product(left: mantissa, right: entry);
+  let row = table_entry(bits: bits);
+  let (high, low) = product(left: mantissa, right: row);
   let half = ishr(low, 63_u32);
   let rounded = high + half;
   return rounded;
@@ -323,6 +333,14 @@ SHIFT_FRONT = f"""fn shift_front(decimal: &Decimal, delta: u64) -> result: unit 
 }}
 """
 
+# W2c's function with the bound its requirement implies restated as an
+# invariant, which the stored field needs (DESIGN.md, E2 results).
+SHIFT_FRONT_RESTATED = SHIFT_FRONT.replace(
+    "  let total = count + delta;\n",
+    "  let total = count + delta;\n  invariant fits: total <= 800_u64;\n",
+)
+assert SHIFT_FRONT_RESTATED != SHIFT_FRONT
+
 LONG_DIGITS = "3141592653589793238462643383279502884197"
 
 W2_MULTIPLY_CASES = [
@@ -369,6 +387,10 @@ def w2_main(doc, cases, call, outcome):
         name = f"decimal_{number}"
         text += load_digits(name, digits)
         if call == "unit":
+            # append_digit publishes nothing about the count, so the caller
+            # tests the room shift_front requires before calling it.
+            text += f"  let held_{number} = {name}.count;\n"
+            text += bound_block(f"held_{number}", u64(800 - arg), number * 10 + 4)
             text += f"  let done_{number} = shift_front(decimal: &{name}, delta: {u64(arg)});\n"
         else:
             text += f"  let result_{number} = {call}(decimal: &{name}, shift: {arg}_u32);\n"
@@ -410,10 +432,95 @@ def w2b():
                       W2_DIVIDE_CASES, "shift_right", divide_outcome))
 
 
+FRONT_DOC = "Checks that each decimal has the room the move needs, moves its digits toward the end and compares the digest and the count with the expected string."
+
+
 def w2c():
     return (HEADER + "\n" + DECIMAL + "\n" + SHIFT_FRONT + "\n"
-            + w2_main("Moves digits toward the end and compares the digest and the count with the expected string.",
-                      W2_FRONT_CASES, "unit", front_outcome))
+            + w2_main(FRONT_DOC, W2_FRONT_CASES, "unit", front_outcome))
+
+
+def w2d():
+    return (HEADER + "\n" + DECIMAL + "\n" + SHIFT_FRONT_RESTATED + "\n"
+            + w2_main(FRONT_DOC, W2_FRONT_CASES, "unit", front_outcome))
+
+
+# W2e: the w2b gap apart from the decimal buffer. The quotient of a total
+# below ten divisors is below ten, which needs cancelling the divisor.
+
+QUOTIENT_BOUND = """fn leading_digit(total: u64, divisor: u64) -> result: u64 pure contract {
+  requires 1_u64 <= divisor;
+  requires divisor <= 1152921504606846976_u64;
+  requires total < 10_u64 * divisor;
+  ensures result <= 9_u64;
+} {
+  doc "The quotient of a total below ten divisors by the divisor, which is below ten.";
+  let quotient = total / divisor;
+  return quotient;
+}
+"""
+
+W2E_CASES = [
+    (0, 1),
+    (9, 1),
+    (99, 10),
+    (37, 4),
+    (10 * (1 << 60) - 1, 1 << 60),
+]
+
+
+def w2e():
+    text = HEADER + "\n" + QUOTIENT_BOUND + "\n"
+    text += "fn main() -> status: ExitStatus pure {\n"
+    text += '  doc "Divides five totals and compares each quotient with the one computed outside the compiler.";\n'
+    for number, (total, divisor) in enumerate(W2E_CASES, start=1):
+        assert 1 <= divisor <= 1 << 60 and total < 10 * divisor
+        text += f"  let digit_{number} = leading_digit(total: {u64(total)}, divisor: {u64(divisor)});\n"
+        text += check_block(f"digit_{number}", u64(total // divisor), number)
+    return text + finish()
+
+
+# W2f: the w2c gap apart from the decimal buffer. The requirement bounds the
+# sum, and the postcondition states that bound over the field it is stored in.
+
+COUNTER = """struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+  ensures counter^.count <= 800_u64;
+} {
+  doc "Adds delta to the count; the requirement bounds the sum that is stored.";
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+"""
+
+W2F_CASES = [
+    (5, 7),
+    (0, 800),
+    (800, 0),
+    (399, 401),
+]
+
+
+def w2f():
+    text = HEADER + "\n" + COUNTER + "\n"
+    text += "fn main() -> status: ExitStatus pure {\n"
+    text += '  doc "Advances four counters after checking their room and compares each count with the sum computed outside the compiler.";\n'
+    for number, (start, delta) in enumerate(W2F_CASES, start=1):
+        assert start + delta <= 800
+        text += f"  let counter_{number} = Counter(count: {u64(start)});\n"
+        text += f"  let held_{number} = counter_{number}.count;\n"
+        text += bound_block(f"held_{number}", u64(800 - delta), number * 10 + 1)
+        text += f"  advance(counter: &counter_{number}, delta: {u64(delta)});\n"
+        text += f"  let count_{number} = counter_{number}.count;\n"
+        text += check_block(f"count_{number}", u64(start + delta), number * 10 + 2)
+    return text + finish()
 
 
 # ---------------------------------------------------------------------------
@@ -687,8 +794,20 @@ WITNESSES = [
     ("w1a_table_lookup", w1a, "accept"),
     ("w1b_product_and_scale", w1b, "accept"),
     ("w2a_left_shift", w2a, "open"),
+    # Language gap: no rule bounds ishr(total, shift) by total's bound in units
+    # of 2^shift, so the quotient digit's bound below ten is unprovable
+    # (DESIGN.md, E2 results).
     ("w2b_right_shift", w2b, "reject"),
-    ("w2c_front_shift", w2c, "open"),
+    # Candidate language gap: a field reached through a reference has no
+    # affine image, so the sum bound the requirement gives does not reach the
+    # count invariant over the stored field (DESIGN.md, E2 results).
+    ("w2c_front_shift", w2c, "reject"),
+    # W2c with that bound restated as an invariant.
+    ("w2d_front_shift_restated", w2d, "accept"),
+    # W2b's gap apart from the decimal buffer.
+    ("w2e_quotient_bound", w2e, "reject"),
+    # W2c's candidate gap apart from the decimal buffer.
+    ("w2f_field_bound", w2f, "reject"),
     ("w3a_window_write", w3a, "open"),
     ("w3b_index_write", w3b, "open"),
     ("w4_scan", w4, "open"),

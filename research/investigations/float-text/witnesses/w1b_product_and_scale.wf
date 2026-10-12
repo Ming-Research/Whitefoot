@@ -13,8 +13,8 @@ fn table_entry(bits: u64) -> result: u64 pure {
   let floor_log = ishr(scaled, 22_u32);
   let offset = floor_log + 324_i64;
   let index = cvt::<i64, u64>(offset);
-  let entry = power_table[index];
-  return entry;
+  let row = power_table[index];
+  return row;
 }
 
 fn product(left: u64, right: u64) -> (high: u64, low: u64) pure contract {
@@ -31,8 +31,8 @@ fn scaled(bits: u64) -> result: u64 pure {
   doc "The 53-bit significand times the table row, rounded to the high word: the high word of a product with a 53-bit factor is at most that factor, so adding the rounding bit cannot overflow.";
   let fraction = iand(bits, 4503599627370495_u64);
   let mantissa = fraction + 4503599627370496_u64;
-  let entry = table_entry(bits: bits);
-  let (high, low) = product(left: mantissa, right: entry);
+  let row = table_entry(bits: bits);
+  let (high, low) = product(left: mantissa, right: row);
   let half = ishr(low, 63_u32);
   let rounded = high + half;
   return rounded;
