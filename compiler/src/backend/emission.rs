@@ -335,6 +335,32 @@ impl Module {
         })
     }
 
+    pub(crate) fn repeated_attribute_group(&self) -> Option<u64> {
+        let mut groups = BTreeSet::new();
+        self.parts.iter().find_map(|part| match part {
+            ModulePart::Attributes(id) if !groups.insert(*id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    fn declarations_match(&self, other: &Self, name: &str) -> bool {
+        let Some(declaration) = self.declarations.get(name) else {
+            return false;
+        };
+        if other.declarations.get(name) != Some(declaration) {
+            return false;
+        }
+        declaration.references.attributes.iter().all(|id| {
+            match (self.attributes.get(id), other.attributes.get(id)) {
+                (Some(left), Some(right)) => left == right,
+                // Groups may be defined after declarations. Composition gives
+                // an as-yet undefined use the one recorded body; a later
+                // inconsistent definition is retained as a group conflict.
+                _ => true,
+            }
+        })
+    }
+
     pub(crate) fn text(&mut self, text: impl Into<String>) {
         self.parts.push(ModulePart::Text(text.into()));
     }
@@ -448,9 +474,14 @@ impl Module {
         );
     }
     pub(crate) fn attribute_group(&mut self, id: u64, body: String) {
+        let text = format!("attributes #{id} = {{ {body} }}");
+        if self.attributes.get(&id) == Some(&text) {
+            return;
+        }
         self.parts.push(ModulePart::Attributes(id));
-        self.attributes
-            .insert(id, format!("attributes #{id} = {{ {body} }}"));
+        // Preserve the first meaning: a conflicting definition remains a
+        // repeated part for the integrity boundary, never an overwritten body.
+        self.attributes.entry(id).or_insert(text);
     }
     pub(crate) fn append(&mut self, mut other: Self) {
         let offset = self.entities.len();
@@ -470,20 +501,46 @@ impl Module {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
+        let mut seen_groups = BTreeSet::new();
+        let group_conflicts = other
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                ModulePart::Attributes(id) if !seen_groups.insert(*id) => Some(*id),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        // Resolve declaration compatibility before merging either module's
+        // attribute definitions, so equal IDs cannot hide different meanings.
+        let compatible = other
+            .declarations
+            .keys()
+            .filter(|name| self.declarations_match(&other, name))
+            .cloned()
+            .collect::<BTreeSet<_>>();
         for part in other.parts {
-            if let ModulePart::Declaration(name) = &part {
-                let declaration = &other.declarations[name];
-                if !conflicts.contains(name) && self.declarations.get(name) == Some(declaration) {
-                    continue;
+            match &part {
+                ModulePart::Declaration(name) => {
+                    if !conflicts.contains(name) && compatible.contains(name) {
+                        continue;
+                    }
+                    self.declarations
+                        .insert(name.clone(), other.declarations[name].clone());
                 }
-                self.declarations.insert(name.clone(), declaration.clone());
+                ModulePart::Attributes(id) => {
+                    let body = &other.attributes[id];
+                    if !group_conflicts.contains(id) && self.attributes.get(id) == Some(body) {
+                        continue;
+                    }
+                    self.attributes.entry(*id).or_insert_with(|| body.clone());
+                }
+                _ => {}
             }
             self.parts.push(part);
         }
         self.header.extend(other.header);
         self.types.extend(other.types);
         self.entities.extend(other.entities);
-        self.attributes.extend(other.attributes);
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.parts.is_empty()
@@ -768,6 +825,77 @@ mod declaration_tests {
             1
         );
         assert!(module.repeated_declaration().is_none());
+    }
+
+    fn grouped_declaration(body: &str) -> Module {
+        let mut module = Module::default();
+        let mut signature = Signature::new("callee", "void", Vec::new());
+        signature.suffix = " #1".into();
+        signature.references.attributes.insert(1);
+        module.declare(signature);
+        module.attribute_group(1, body.into());
+        module
+    }
+
+    #[test]
+    fn identical_grouped_attributes_and_declarations_merge_once() {
+        let mut module = grouped_declaration("noreturn");
+        module.attribute_group(1, "noreturn".into());
+        module.append(grouped_declaration("noreturn"));
+        assert!(module.repeated_declaration().is_none());
+        assert!(module.repeated_attribute_group().is_none());
+        assert_eq!(
+            module.render().matches("declare void @callee() #1").count(),
+            1
+        );
+        assert_eq!(
+            module.render().matches("attributes #1 = { noreturn }").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn grouped_attribute_meanings_select_declaration_compatibility() {
+        let mut module = grouped_declaration("noreturn");
+        module.append(grouped_declaration("nounwind"));
+        assert_eq!(module.repeated_declaration(), Some("callee"));
+        assert_eq!(module.repeated_attribute_group(), Some(1));
+        assert_eq!(module.attributes[&1], "attributes #1 = { noreturn }");
+    }
+
+    #[test]
+    fn group_conflicts_survive_nested_composition_and_cache_round_trips() {
+        let mut child = Module::default();
+        child.attribute_group(1, "noreturn".into());
+        child.attribute_group(1, "nounwind".into());
+        assert_eq!(child.repeated_attribute_group(), Some(1));
+        let child = Module::decode(&child.encode()).expect("the conflict is recorded in the model");
+        assert_eq!(child.repeated_attribute_group(), Some(1));
+        let mut parent = Module::default();
+        parent.attribute_group(1, "noreturn".into());
+        parent.append(child);
+        let mut ancestor = Module::default();
+        ancestor.attribute_group(1, "noreturn".into());
+        ancestor.append(parent);
+        assert_eq!(ancestor.repeated_attribute_group(), Some(1));
+        let decoded = Module::decode(&ancestor.encode()).expect("composed conflict round-trips");
+        assert_eq!(decoded, ancestor);
+        assert_eq!(decoded.repeated_attribute_group(), Some(1));
+    }
+
+    #[test]
+    fn late_group_definitions_merge_but_conflicting_redefinitions_remain_invalid() {
+        let child = grouped_declaration("noreturn");
+        let mut module = Module::default();
+        let mut signature = Signature::new("callee", "void", Vec::new());
+        signature.suffix = " #1".into();
+        signature.references.attributes.insert(1);
+        module.declare(signature);
+        module.append(child);
+        assert!(module.repeated_declaration().is_none());
+        assert!(module.repeated_attribute_group().is_none());
+        module.attribute_group(1, "nounwind".into());
+        assert_eq!(module.repeated_attribute_group(), Some(1));
     }
 
     #[test]

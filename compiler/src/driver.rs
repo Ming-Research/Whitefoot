@@ -2915,14 +2915,14 @@ fn lower_selected(
             let mut ledger = ledger;
             ledger.extend(module.take_actualization_ledger());
             if launcher_contract_ready {
-                module.append(launcher::render(ir, selected)?);
+                module.append(launcher::render(ir, selected)?)?;
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
                 comment.text(format!(
                     "\n; Executable caller was not admitted: {failure}\n"
                 ));
-                module.append(comment);
+                module.append(comment)?;
             }
             Ok(Reported { module, ledger })
         })
