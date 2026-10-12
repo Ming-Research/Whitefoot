@@ -243,6 +243,29 @@ cores at least 20% faster than the base release built from the same main
 commit, interleaved with a twin of each. The thresholds are provisional,
 set by the request before measurement.
 
+Result, 2026-10-12, both on the 14900K through Firn-wf's CI, with
+experiment release `wf-exp-45c544b24638` (this change at `45c544b24`, before
+the padding of the total, which changes no access) against release
+`wf-51c5f4263f51` (its base, main `51c5f4263`):
+
+- The loop of readings ([Firn-wf run 38233704502](https://github.com/Ming-Research/Firn-wf/actions/runs/38233704502),
+  64 contexts, 3 passes of 5 s, spread at most 1.02) completed 1,980, 3,963,
+  7,927 and 15,724 million readings per second in total on 2, 4 and 8
+  performance cores and 16 hyperthreads: 4.0 times the 2-core rate on 8
+  cores, where the criterion asked for 3. The per-context control was
+  unchanged (89.5 to 441.2 million). The 2-core rate is about the loop's own
+  speed, so the compiler may have hoisted or folded the relaxed load; the
+  witness shows that readings no longer serialize, not a reading's cost.
+- Firn GET at depth 16 on 8 performance cores, 4 interleaved passes of 10 s
+  ([Firn-wf run 38234681969](https://github.com/Ming-Research/Firn-wf/actions/runs/38234681969)),
+  identical Firn source on both lines: base 18.27 million per second and its
+  twin 17.38 (0.95 of the base), this change 25.65 and its twin 25.74. The
+  change is 40% faster than the base, beyond the 5% twin spread and the 20%
+  criterion; Firn without any peak recording had measured 27.0 million.
+
+The lock was therefore the cause of the readings' collapse and of most of
+firn's remaining loss to its per-command peak recording.
+
 ## Concurrent-map accounting correction
 
 Source inspection at base `f887e82c46119dedf20e364c73461cb14fb2dfb3`
