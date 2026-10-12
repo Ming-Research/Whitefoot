@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::super::entailment::TermRead;
+use super::super::entailment::{SelectedReturnBound, TermRead};
 use super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
@@ -1162,17 +1162,65 @@ pub(super) fn postcondition_bounds(
     case: &GoalCase<'_>,
     constant_offset: bool,
     return_line: u64,
+    bound: &SelectedReturnBound,
 ) -> String {
-    match case.disposition {
-        Disposition::Refuted => format!(
+    // [FN-9, MSR-3] a place reads its formal offsets, and the bases it
+    // denotes at entry, at function entry. Once the body rebinds an offset,
+    // the clause is unavailable at the return whatever bounds it, so the
+    // value the body computes needs its own name. A base length the body
+    // changes is established only by facts about its entry value.
+    if let Some((rebound, values, them)) = entry_values(&bound.rebound) {
+        let alternative = match case.disposition {
+            Disposition::Refuted => refuted_index(constant_offset, false).to_owned(),
+            Disposition::Unproved => format!(
+                "add `requires {};` to the `contract` of `{}`, which each caller then establishes",
+                bound.requirement, case.function
+            ),
+        };
+        return format!(
+            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}, and {alternative}",
+            case.text
+        );
+    }
+    match (case.disposition, entry_values(&bound.entry_lengths)) {
+        (Disposition::Refuted, None) => format!(
             "`{}` is false at the `return` on line {return_line}, which selects this postcondition: {}",
             case.text,
             refuted_index(constant_offset, false)
         ),
-        Disposition::Unproved => format!(
-            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
-            case.text, case.function
+        (Disposition::Refuted, Some((lengths, values, _))) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition, with {lengths} at {values}: {}",
+            case.text,
+            refuted_index(constant_offset, false)
         ),
+        (Disposition::Unproved, None) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
+            bound.requirement, case.function
+        ),
+        (Disposition::Unproved, Some((lengths, values, them))) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it with {lengths} at {values} before the `return` on line {return_line} and every other `return` that selects this postcondition, which a test made after the body changes {them} does not",
+            bound.requirement, case.function
+        ),
+    }
+}
+
+/// A list of code spans read at function entry, joined for a sentence, with
+/// the noun and pronoun that agree with it.
+fn entry_values(spans: &[String]) -> Option<(String, &'static str, &'static str)> {
+    match spans {
+        [] => None,
+        [one] => Some((one.clone(), "its function-entry value", "it")),
+        [rest @ .., last] => Some((
+            format!(
+                "{} and {last}",
+                rest.iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "their function-entry values",
+            "them",
+        )),
     }
 }
 

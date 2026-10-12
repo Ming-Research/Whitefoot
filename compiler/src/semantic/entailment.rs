@@ -411,9 +411,27 @@ pub(crate) struct ObligationOutcome {
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
     /// [FN-9] for a subscript of a place a postcondition forms, the selected
-    /// return it was judged at; its repair names that return [DIAG-1].
+    /// return it was judged at and how its repair reads the bound [DIAG-1].
     /// Every other occurrence retains none.
-    pub(crate) selected_return: Option<NodePath>,
+    pub(crate) selected_return: Option<SelectedReturnBound>,
+}
+
+/// [FN-9, DIAG-1] the selected return one subscript of a postcondition place
+/// was judged at, with the bound spelled for its repair.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectedReturnBound {
+    /// The `return_stmt` or propagating `let_stmt` that selects the clause.
+    pub(crate) statement: NodePath,
+    /// The bound spelled as a requirement, where every parameter denotes its
+    /// function-entry state [FN-8].
+    pub(crate) requirement: String,
+    /// The formal offsets, at this subscript or above it, that the body has
+    /// rebound by the return, each spelled as a code span: the place reads
+    /// them at function entry, a value no term names there [FN-9].
+    pub(crate) rebound: Vec<String>,
+    /// The length of a base the place reads at function entry though the
+    /// body may have changed it, spelled as the body spells it [MSR-3].
+    pub(crate) entry_lengths: Vec<String>,
 }
 
 /// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds

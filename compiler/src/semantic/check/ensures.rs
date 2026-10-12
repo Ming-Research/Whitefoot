@@ -21,9 +21,9 @@ use super::super::model::{
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
-    PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
-    PostconditionFormedPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    PlaceDenotation, PostconditionConstantOrigin, PostconditionFieldIdentity,
+    PostconditionFormedPlace, PostconditionPlace, PostconditionPlaceRoot, PostconditionReturnDatum,
+    PostconditionReturnPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
     RelationTerm, SelectedPostconditionReturn,
 };
 use super::generics::GenericArgument;
@@ -75,37 +75,44 @@ pub(super) fn parameter_has_exit_state(
             .any(|path| path.root == parameter.declaration)
 }
 
-/// [MSR-3, FN-9] whether one place a postcondition forms denotes
-/// function-entry state: every place of a parameter that has no exit state,
-/// and a place of one that has, written through `entry(parameter)`, whose
-/// subscripts' psuffix nodes `entry_suffixes` holds. A place rooted at a
-/// named const, and a range place, are read where the return reads them.
-fn place_denotes_entry(
+/// [MSR-3, FN-9] the state the bases of one place a postcondition forms
+/// denote: every place of a parameter that has no exit state denotes its one
+/// state at entry, and a place of one that has denotes its entry image when
+/// it is written through `entry(parameter)`, whose subscripts' psuffix nodes
+/// `entry_suffixes` holds. A place rooted at a named const, a range place
+/// and every other place of a written reference parameter are read where the
+/// return reads them.
+fn place_denotation(
     function: &FunctionSignature,
     bindings: &HashMap<DeclarationId, LocalBinding>,
     place: &CheckedExpression,
     entry_suffixes: &HashSet<crate::NodePath>,
-) -> bool {
+) -> PlaceDenotation {
     let (CheckedExpression::ContainerMeasure { root, .. }
     | CheckedExpression::ReadStorage { root, .. }) = place
     else {
-        return false;
+        return PlaceDenotation::Return;
     };
     let Some(binding) = root.binding() else {
-        return false;
+        return PlaceDenotation::Return;
     };
     let Some(parameter) = function.parameters.iter().find(|parameter| {
         bindings
             .get(&parameter.declaration)
             .is_some_and(|local| local.binding == binding)
     }) else {
-        return false;
+        return PlaceDenotation::Return;
     };
-    !parameter_has_exit_state(function, parameter)
-        || root.path.iter().any(|step| {
-            matches!(step, CheckedPlaceStep::Subscript(subscript)
+    if !parameter_has_exit_state(function, parameter) {
+        PlaceDenotation::Entry
+    } else if root.path.iter().any(|step| {
+        matches!(step, CheckedPlaceStep::Subscript(subscript)
                 if entry_suffixes.contains(&subscript.obligation))
-        })
+    }) {
+        PlaceDenotation::EntryImage
+    } else {
+        PlaceDenotation::Return
+    }
 }
 
 /// [FN-9] a comparison's direction-normalized relation; no other
@@ -853,7 +860,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .clause(&condition.expression, &mut HashSet::new())
                 .into_iter()
                 .map(|expression| PostconditionFormedPlace {
-                    entry: place_denotes_entry(function, bindings, &expression, &entry_suffixes),
+                    denotation: place_denotation(function, bindings, &expression, &entry_suffixes),
                     expression,
                 })
                 .collect();

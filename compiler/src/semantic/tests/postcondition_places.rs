@@ -168,6 +168,52 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("fixture is text")
         .replace("  requires i < 4_u64;\n", "");
     assert_rule_at(unbounded.as_bytes(), SemanticRule::Op4, "[i]");
+    // A range element place is judged the same way, where before its
+    // subscript was judged on the rebound value and refused under [OP-4].
+    assert_fn9_unproved(
+        br#"fn span(rows: &[Slots<u8, 8>], i: u64) -> r: u64 pure contract {
+  requires i < rows^.len;
+  ensures r <= rows^[i].len;
+} {
+  set i = 99_u64;
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+}
+
+/// [FN-9, ENT-2] below a formal offset the body has rebound, a base of the
+/// return's state is the element at the offset's entry value, which no term
+/// names: the bound element zero's requirement gives does not reach it, so
+/// the inner subscript is refused. Before, the inner base was read through
+/// the rebound `i`, which made it element zero.
+#[test]
+fn a_subscript_below_a_rebound_offset_reads_no_rebound_element() {
+    assert_rule_at(
+        br#"fn claim(rows: &Slots<Slots<Slots<u8, 8>, 4>, 4>, i: u64, j: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires 0_u64 < rows^.len;
+  requires rows^.len < rows^.cap;
+  requires j < rows^[0_u64].len;
+  ensures r <= rows^[i][j].len;
+} {
+  let fresh = slots_new::<Slots<u8, 8>, 4>();
+  place_back(window: rows, value: move fresh);
+  set i = 0_u64;
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Op4,
+        "[j]",
+    );
 }
 
 /// [FN-9, ENT-2, MSR-3] a place over an entry image is judged against that

@@ -2,7 +2,8 @@
 //! the entry images it reads, and the [ENT-3] S12 publication of a
 //! verified relation at a call.
 
-use super::super::super::postcondition::SelectedPostconditionReturn;
+use super::super::super::entailment::SelectedReturnBound;
+use super::super::super::postcondition::{PlaceDenotation, SelectedPostconditionReturn};
 use super::*;
 
 /// A call datum's operand: the parameter ordinal, the projections below it,
@@ -2768,12 +2769,15 @@ impl Analyzer<'_, '_> {
             context.facts =
                 selected_return_facts(selected, states, forwarded, &self.vocabulary.derivations);
             for place in &postcondition.places {
-                match &place.expression {
-                    CheckedExpression::ContainerMeasure { root, .. }
-                    | CheckedExpression::ReadStorage { root, .. } => {
-                        self.walk_postcondition_place(statement, root, place.entry, &mut context);
-                    }
-                    other => self.judge_clause_places(std::slice::from_ref(other), &mut context),
+                match FormedPlace::of(&place.expression) {
+                    Some(formed) => self.walk_postcondition_place(
+                        statement,
+                        formed,
+                        place.denotation,
+                        &mut context,
+                    ),
+                    None => self
+                        .judge_clause_places(std::slice::from_ref(&place.expression), &mut context),
                 }
             }
         }
@@ -2787,10 +2791,8 @@ impl Analyzer<'_, '_> {
         let function = self.input.function;
         for postcondition in &function.postconditions {
             for place in &postcondition.places {
-                if let CheckedExpression::ContainerMeasure { root, .. }
-                | CheckedExpression::ReadStorage { root, .. } = &place.expression
-                {
-                    self.mint_postcondition_place_datums(root, place.entry, state);
+                if let Some(formed) = FormedPlace::of(&place.expression) {
+                    self.mint_postcondition_place_datums(formed, place.denotation, state);
                 }
             }
         }
@@ -2802,23 +2804,42 @@ impl Analyzer<'_, '_> {
     /// term it equals at body entry.
     fn postcondition_place_datums(
         &mut self,
-        root: &CheckedContainerRoot,
-        entry: bool,
+        formed: FormedPlace<'_>,
+        denotation: PlaceDenotation,
     ) -> Vec<SubscriptDatums> {
-        let mut datums = Vec::new();
         let parameters = &self.input.function.parameters;
-        let root_parameter = root.binding().and_then(|binding| {
-            parameters
-                .iter()
-                .position(|parameter| parameter.binding == binding)
-                .map(|ordinal| (ordinal, parameters[ordinal].mode.is_reference()))
-        });
-        let mut base = root.proof_prefix();
+        let (mut base, root_parameter, steps, mut datums) = match formed {
+            FormedPlace::Container(root) => {
+                let root_parameter = root.binding().and_then(|binding| {
+                    parameters
+                        .iter()
+                        .position(|parameter| parameter.binding == binding)
+                });
+                (root.proof_prefix(), root_parameter, &root.path, Vec::new())
+            }
+            // [REF-4] a range's length is the value its formation captured,
+            // so only its offset can read another state than the return's.
+            FormedPlace::RangeElement(place) => {
+                let offset = self.offset_entry_datum(&place.offset);
+                let mut base = place.root.proof_place();
+                base.path.push(PlaceStep::Index(place.captured));
+                (
+                    base,
+                    None,
+                    &place.path,
+                    vec![SubscriptDatums {
+                        offset,
+                        length: None,
+                    }],
+                )
+            }
+        };
+        let entry = denotation != PlaceDenotation::Return;
         let mut identity = match root_parameter {
-            Some((_, true)) => vec![PlaceStep::Deref],
+            Some(ordinal) if parameters[ordinal].mode.is_reference() => vec![PlaceStep::Deref],
             _ => Vec::new(),
         };
-        for step in &root.path {
+        for step in steps {
             let (step, subscript) = match step {
                 CheckedPlaceStep::Field(field) => (PlaceStep::Field(*field), None),
                 CheckedPlaceStep::BoxReferent(_) => (PlaceStep::Deref, None),
@@ -2830,18 +2851,9 @@ impl Analyzer<'_, '_> {
             if let Some(subscript) = subscript
                 && let Some(measured) = measured_kind(subscript.base_type)
             {
-                let offset = match (
-                    offset_parameter(self.input.function, &subscript.offset),
-                    fragment_type(subscript.offset.ty()),
-                ) {
-                    (Some(ordinal), Some(fragment)) => self
-                        .reasoning()
-                        .read_operand(&subscript.offset)
-                        .map(|live| (entry_datum_kind(ordinal, &[], None, fragment), live)),
-                    _ => None,
-                };
+                let offset = self.offset_entry_datum(&subscript.offset);
                 let length = match root_parameter {
-                    Some((ordinal, _)) if entry => {
+                    Some(ordinal) if entry => {
                         let live = self.reasoning().place_measure_term(
                             CheckedMeasure::Length,
                             base.clone(),
@@ -2872,16 +2884,35 @@ impl Analyzer<'_, '_> {
         datums
     }
 
+    /// [MSR-3] the value datum of a formal offset, with the term it equals
+    /// at body entry and the formal's ordinal.
+    fn offset_entry_datum(&mut self, offset: &CheckedExpression) -> Option<OffsetDatum> {
+        let ordinal = offset_parameter(self.input.function, offset)?;
+        let fragment = fragment_type(offset.ty())?;
+        let live = self.reasoning().read_operand(offset)?;
+        Some(OffsetDatum {
+            ordinal,
+            kind: entry_datum_kind(ordinal, &[], None, fragment),
+            live,
+        })
+    }
+
     fn mint_postcondition_place_datums(
         &mut self,
-        root: &CheckedContainerRoot,
-        entry: bool,
+        formed: FormedPlace<'_>,
+        denotation: PlaceDenotation,
         state: &mut ProofFlowState,
     ) {
         let datums = self
-            .postcondition_place_datums(root, entry)
+            .postcondition_place_datums(formed, denotation)
             .into_iter()
-            .flat_map(|datums| datums.offset.into_iter().chain(datums.length))
+            .flat_map(|datums| {
+                datums
+                    .offset
+                    .map(|offset| (offset.kind, offset.live))
+                    .into_iter()
+                    .chain(datums.length)
+            })
             .collect::<Vec<_>>();
         if datums.is_empty() {
             return;
@@ -2906,74 +2937,260 @@ impl Analyzer<'_, '_> {
         }
     }
 
+    /// [FN-9, ENT-2] whether the parameter `ordinal` may hold another value
+    /// at this return than at function entry: a write since entry has
+    /// invalidated the entry image its spelling reads [MSR-3]. A formal
+    /// offset with no tracked image is taken as rebound.
+    fn offset_rebound(&self, ordinal: u32, states: &ProofFlowState) -> bool {
+        self.input
+            .entry_images
+            .iter()
+            .position(|image| {
+                image.datum.parameter == ordinal
+                    && image.datum.projections.is_empty()
+                    && image.datum.measure.is_none()
+                    && !image.datum.immutable
+            })
+            .is_none_or(|index| states.entry_images[index].is_some())
+    }
+
     /// [OP-4, FN-9] judges each subscript of one postcondition place over
     /// what the place denotes: a formal offset is the formal's entry value,
     /// and the base a place denoting entry state indexes is that base at
-    /// function entry [MSR-3].
+    /// function entry [MSR-3]. Below a formal offset the body has rebound,
+    /// a base of the return's state is an element no term names, so a
+    /// subscript of it is judged with nothing known of its length.
     fn walk_postcondition_place(
         &mut self,
         statement: &crate::NodePath,
-        root: &CheckedContainerRoot,
-        entry: bool,
+        formed: FormedPlace<'_>,
+        denotation: PlaceDenotation,
         states: &mut ProofFlowState,
     ) {
-        let mut datums = self.postcondition_place_datums(root, entry).into_iter();
-        let mut base = root.proof_prefix();
-        for step in &root.path {
-            match step {
-                CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
-                CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
-                CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
+        let mut datums = self
+            .postcondition_place_datums(formed, denotation)
+            .into_iter();
+        let mut rebound_above = Vec::new();
+        let (mut base, steps) = match formed {
+            FormedPlace::Container(root) => (root.proof_prefix(), &root.path),
+            FormedPlace::RangeElement(place) => {
+                if let Some(formation) = place.root.formation.as_deref()
+                    && !self.judge_children_reach_parent(std::iter::once(formation), states)
+                {
+                    return;
+                }
+                let base = place.root.proof_place();
+                let read = datums.next().unwrap_or_default();
+                let rebound = self.judge_postcondition_subscript(
+                    statement,
+                    PostconditionSubscript {
+                        base: &base,
+                        display: &base,
+                        measured: MeasuredKind::Range,
+                        array_length: None,
+                        offset: &place.offset,
+                        captured: place.captured,
+                        obligation: &place.obligation,
+                    },
+                    read,
+                    denotation,
+                    &mut rebound_above,
+                    states,
+                );
+                let mut base = base;
+                base.path.push(PlaceStep::Index(if rebound {
+                    CapturedValue::unknown()
+                } else {
+                    place.captured
+                }));
+                (base, &place.path)
+            }
+        };
+        let mut display = match formed {
+            FormedPlace::Container(root) => root.proof_prefix(),
+            FormedPlace::RangeElement(place) => {
+                let mut display = place.root.proof_place();
+                display.path.push(PlaceStep::Index(place.captured));
+                display
+            }
+        };
+        for step in steps {
+            let (step, subscript) = match step {
+                CheckedPlaceStep::Field(field) => (PlaceStep::Field(*field), None),
+                CheckedPlaceStep::BoxReferent(_) => (PlaceStep::Deref, None),
+                CheckedPlaceStep::Measure(measure) => (PlaceStep::Measure(*measure), None),
                 CheckedPlaceStep::Subscript(subscript) => {
-                    let Some(measured) = measured_kind(subscript.base_type) else {
+                    (PlaceStep::Index(subscript.captured), Some(subscript))
+                }
+            };
+            let mut rebound = false;
+            if let Some(subscript) = subscript {
+                match measured_kind(subscript.base_type) {
+                    Some(measured) => {
+                        let read = datums.next().unwrap_or_default();
+                        rebound = self.judge_postcondition_subscript(
+                            statement,
+                            PostconditionSubscript {
+                                base: &base,
+                                display: &display,
+                                measured,
+                                array_length: type_constant(subscript.base_type),
+                                offset: &subscript.offset,
+                                captured: subscript.captured,
+                                obligation: &subscript.obligation,
+                            },
+                            read,
+                            denotation,
+                            &mut rebound_above,
+                            states,
+                        );
+                    }
+                    None => {
                         self.judge_children_reach_parent(
                             std::iter::once(&subscript.offset),
                             states,
                         );
-                        base.path.push(PlaceStep::Index(subscript.captured));
-                        continue;
-                    };
-                    let read = datums.next().unwrap_or_default();
-                    let offset = read
-                        .offset
-                        .and_then(|(kind, _)| self.vocabulary.terms.interned(&kind));
-                    let length = read
-                        .length
-                        .and_then(|(kind, _)| self.vocabulary.terms.interned(&kind));
-                    if self.judge_children_reach_parent(std::iter::once(&subscript.offset), states)
-                    {
-                        self.reasoning().establish_index_capture(
-                            subscript.captured,
-                            &subscript.offset,
-                            states,
-                        );
-                        self.judge_index_measure_over(
-                            base.clone(),
-                            measured,
-                            type_constant(subscript.base_type),
-                            CheckedMeasure::Length,
-                            &subscript.offset,
-                            super::judge::IndexTerms { offset, length },
-                            subscript.obligation.clone(),
-                            states,
-                        );
-                        if let Some(outcome) = self.output.obligations.last_mut() {
-                            outcome.selected_return = Some(statement.clone());
-                        }
                     }
-                    base.path.push(PlaceStep::Index(subscript.captured));
                 }
             }
+            display.path.push(step);
+            base.path.push(match step {
+                PlaceStep::Index(_) if rebound => PlaceStep::Index(CapturedValue::unknown()),
+                other => other,
+            });
         }
     }
+
+    /// [OP-4, FN-9] one measured subscript of a postcondition place, judged
+    /// at a selected return over its entry datums, with the residual and the
+    /// requirement its repair reads [DIAG-1]. Returns whether its offset is a
+    /// formal the body has rebound, which it adds to `rebound_above`, the
+    /// spellings of the rebound offsets of the subscripts above it.
+    #[allow(clippy::too_many_arguments)]
+    fn judge_postcondition_subscript(
+        &mut self,
+        statement: &crate::NodePath,
+        subscript: PostconditionSubscript<'_>,
+        read: SubscriptDatums,
+        denotation: PlaceDenotation,
+        rebound_above: &mut Vec<String>,
+        states: &mut ProofFlowState,
+    ) -> bool {
+        let rebound = read
+            .offset
+            .as_ref()
+            .is_some_and(|offset| self.offset_rebound(offset.ordinal, states));
+        let offset_text = self.input.render_expression(subscript.offset);
+        if rebound {
+            rebound_above.push(format!("`{offset_text}`"));
+        }
+        let rebound_reads = rebound_above.clone();
+        if !self.judge_children_reach_parent(std::iter::once(subscript.offset), states) {
+            return rebound;
+        }
+        let offset = read
+            .offset
+            .and_then(|offset| self.vocabulary.terms.interned(&offset.kind));
+        let length = read
+            .length
+            .and_then(|(kind, _)| self.vocabulary.terms.interned(&kind));
+        if !rebound {
+            self.reasoning()
+                .establish_index_capture(subscript.captured, subscript.offset, states);
+        }
+        let plain_length = format!(
+            "{}.{}",
+            self.input.render_place(subscript.display),
+            CheckedMeasure::Length.spelling()
+        );
+        // [MSR-3] an entry image renders as `entry(parameter)`, the spelling
+        // that names it in `ensures`; the place's one state renders as the
+        // place itself, which names that state there.
+        let length_text = match (denotation, length) {
+            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
+            _ => plain_length.clone(),
+        };
+        let owned_root = matches!(subscript.display.root,
+            PlaceRoot::Binding(binding) if !self.input.places.is_reference(binding));
+        let entry_lengths = if length.is_some()
+            && (denotation == PlaceDenotation::EntryImage
+                || (denotation == PlaceDenotation::Entry && owned_root))
+        {
+            vec![format!("`{plain_length}`")]
+        } else {
+            Vec::new()
+        };
+        self.judge_index_measure_over(
+            subscript.base.clone(),
+            subscript.measured,
+            subscript.array_length,
+            CheckedMeasure::Length,
+            subscript.offset,
+            super::judge::IndexTerms {
+                offset,
+                length,
+                residual: Some(format!("{offset_text} < {length_text}")),
+            },
+            subscript.obligation.clone(),
+            states,
+        );
+        if let Some(outcome) = self.output.obligations.last_mut() {
+            outcome.selected_return = Some(SelectedReturnBound {
+                statement: statement.clone(),
+                requirement: format!("{offset_text} < {plain_length}"),
+                rebound: rebound_reads,
+                entry_lengths,
+            });
+        }
+        rebound
+    }
+}
+
+/// One postcondition place whose subscripts the walk at a selected return
+/// judges: a container place, or an element of a range [ENT-2].
+#[derive(Clone, Copy)]
+enum FormedPlace<'p> {
+    Container(&'p CheckedContainerRoot),
+    RangeElement(&'p super::super::super::model::CheckedRangeElementPlace),
+}
+
+impl<'p> FormedPlace<'p> {
+    fn of(expression: &'p CheckedExpression) -> Option<Self> {
+        match expression {
+            CheckedExpression::ContainerMeasure { root, .. }
+            | CheckedExpression::ReadStorage { root, .. } => Some(Self::Container(root)),
+            CheckedExpression::RangeElementMeasure { place, .. }
+            | CheckedExpression::RangeIndex { place, .. } => Some(Self::RangeElement(place)),
+            _ => None,
+        }
+    }
+}
+
+/// One measured subscript of a postcondition place: the base it indexes as
+/// the judgment reads it, and as the clause spells it.
+struct PostconditionSubscript<'s> {
+    base: &'s ResolvedPlace,
+    display: &'s ResolvedPlace,
+    measured: MeasuredKind,
+    array_length: Option<CheckedConst>,
+    offset: &'s CheckedExpression,
+    captured: CapturedValue,
+    obligation: &'s crate::NodePath,
 }
 
 /// The entry datums one measured subscript of a postcondition place reads,
 /// each with the term it equals at body entry [MSR-3].
 #[derive(Default)]
 struct SubscriptDatums {
-    offset: Option<(TermKind, TermId)>,
+    offset: Option<OffsetDatum>,
     length: Option<(TermKind, TermId)>,
+}
+
+/// The value datum of one formal offset [MSR-3].
+struct OffsetDatum {
+    ordinal: u32,
+    kind: TermKind,
+    live: TermId,
 }
 
 /// The ordinal of the parameter one clause offset reads, when it reads one.

@@ -1493,12 +1493,14 @@ impl Analyzer<'_, '_> {
             let mut check = AffineCheckState::new();
             AffineInequality::from_bounded_forms(offset, &length, -1, &mut check).ok()
         });
-        let rendered_residual = format!(
-            "{} < {}.{}",
-            self.input.render_expression(offset),
-            self.input.render_place(&base),
-            measure.spelling()
-        );
+        let rendered_residual = terms.residual.unwrap_or_else(|| {
+            format!(
+                "{} < {}.{}",
+                self.input.render_expression(offset),
+                self.input.render_place(&base),
+                measure.spelling()
+            )
+        });
         let request = BoundsRequest {
             left: offset_term,
             right: length_term,
@@ -1934,9 +1936,12 @@ fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
 /// [FN-9, MSR-3] the terms a postcondition place's subscript is judged over
 /// in place of the current offset and base length: the function-entry value
 /// of a formal offset, and the entry length of a base the place reads at
-/// function entry. `None` keeps the ordinary current term.
-#[derive(Clone, Copy, Default)]
+/// function entry. `None` keeps the ordinary current term. `residual`
+/// replaces the bound as the subscript's own spelling renders it, for a place
+/// whose operands denote another state than the body's spelling of them does.
+#[derive(Clone, Default)]
 pub(super) struct IndexTerms {
     pub(super) offset: Option<TermId>,
     pub(super) length: Option<TermId>,
+    pub(super) residual: Option<String>,
 }

@@ -609,8 +609,8 @@ impl<'unit> TypeContext<'unit> {
                     if super::obligations::requirement_forms_site(function, &outcome.node_path) {
                         repairs::clause_bounds(&case, constant_offset)
                     } else if let Some(exit) = &outcome.selected_return {
-                        let (_, line) = self.declarations.tree.source_line(exit)?;
-                        repairs::postcondition_bounds(&case, constant_offset, line)
+                        let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
+                        repairs::postcondition_bounds(&case, constant_offset, line, exit)
                     } else if let (Some(note), false) =
                         (outcome.killed_by.first(), calls.is_empty())
                     {

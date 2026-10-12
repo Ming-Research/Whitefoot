@@ -322,9 +322,20 @@ pub(crate) struct CheckedPostcondition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PostconditionFormedPlace {
     pub(crate) expression: super::model::CheckedExpression,
-    /// Whether the place denotes function-entry state [MSR-3], so that each
-    /// base it indexes is that base at function entry. A place that denotes
-    /// a written reference parameter's exit state, and a place rooted at a
-    /// named const, index their bases as the return reads them.
-    pub(crate) entry: bool,
+    /// Which state each base the place indexes is read in [MSR-3].
+    pub(crate) denotation: PlaceDenotation,
+}
+
+/// [MSR-3, FN-9] the state the bases of one postcondition place denote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlaceDenotation {
+    /// The state the return reads: the exit state of a reference parameter
+    /// the row writes, a named const, or a range.
+    Return,
+    /// The one state of a parameter that has no exit state: a by-value
+    /// parameter, or a reference the row only reads.
+    Entry,
+    /// The entry state `entry(parameter)` names, of a reference parameter
+    /// the row writes.
+    EntryImage,
 }

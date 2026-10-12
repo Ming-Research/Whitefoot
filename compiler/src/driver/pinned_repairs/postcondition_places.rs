@@ -105,4 +105,151 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        // The place `entry(rows)^[i]` reads the base at function entry, so its
+        // subscript is refuted against the entry length although the append
+        // makes the element exist at the return; the residual spells the entry
+        // image and the repair names which value is meant.
+        name: "bounds-of-an-entry-image-place-refuted.wf",
+        rejected: br#"fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i == rows^.len;
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  let fresh = slots_new::<u8, 8>();
+  place_back(window: rows, value: move fresh);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < entry(rows)^.len\n  disposition: Refuted\n",
+            "\n  mechanical_fix: `i < entry(rows)^.len` is false at the `return` on line 8, which selects this postcondition, with `rows^.len` at its function-entry value: index within the storage, or change the statements or requirements that fix the index\n",
+        ],
+        repaired: &[br#"fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  let fresh = slots_new::<u8, 8>();
+  place_back(window: rows, value: move fresh);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // A test of the length after the append is no evidence for the entry
+        // image's length: the repair asks for the bound at entry, which a
+        // requirement gives, or a test made before the body changes it.
+        name: "bounds-of-an-entry-image-place-unproved.wf",
+        rejected: br#"fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  let fresh = slots_new::<u8, 8>();
+  place_back(window: rows, value: move fresh);
+  if i < rows^.len {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < entry(rows)^.len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: add `requires i < rows^.len;` to the `contract` of `grow_claim`, which each caller then establishes, or establish it with `rows^.len` at its function-entry value before the `return` on line 8 and every other `return` that selects this postcondition, which a test made after the body changes it does not\n",
+        ],
+        repaired: &[
+            br#"fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i < rows^.len;
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  let fresh = slots_new::<u8, 8>();
+  place_back(window: rows, value: move fresh);
+  if i < rows^.len {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  if i < rows^.len {
+    let fresh = slots_new::<u8, 8>();
+    place_back(window: rows, value: move fresh);
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // The place reads `i` at function entry; once the body rebinds `i` the
+        // clause is unavailable at the return whatever bounds it, so the repair
+        // gives the new value its own name besides bounding the entry value.
+        name: "bounds-of-a-place-below-a-rebound-offset.wf",
+        rejected: br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64, j: u64) -> r: u64 pure contract {
+  ensures r <= rows^[i].len;
+} {
+  set i = j;
+  if i < 4_u64 {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `i < rows^.len` reads `i` at its function-entry value, and a clause reading it is unavailable at the `return` on line 6, where the body has rebound it: give the new value its own name instead of rebinding `i`, and add `requires i < rows^.len;` to the `contract` of `width`, which each caller then establishes\n",
+        ],
+        repaired: &[br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64, j: u64) -> r: u64 pure contract {
+  requires i < rows^.len;
+  ensures r <= rows^[i].len;
+} {
+  let k = j;
+  if k < 4_u64 {
+    return 0_u64;
+  }
+  loop {
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
