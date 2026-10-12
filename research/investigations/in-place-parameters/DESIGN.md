@@ -3330,3 +3330,28 @@ uses 150, the smallest round value above all four styles accessors'
 summary counts (104 to 119), under the same criterion; it is chosen after
 seeing the 200 result, so its outcome is exploratory evidence for the
 owner, not a confirmed prediction.
+
+#### Step 1 at 150: Halo's link still fails the bound
+
+Whitefoot run 38204171002 (head aacf403d5, the candidate's limit set to 150,
+otherwise as above; this hosted runner was faster than the previous one, so
+compare within the run):
+
+| Program, compiler | Build, s | Link, s | Text bytes (vs base) | Direct call sites, same order |
+| --- | --- | --- | --- | --- |
+| Snowghost, base | 243.8 | 22.5 | 2,077,203 | 88, 7, 41, 24, 5, 54, 13 |
+| Snowghost, twin | 242.6 | 22.4 | 2,077,203 (1.0000) | 88, 7, 41, 24, 5, 54, 13 |
+| Snowghost, limit 150 | 246.0 | 25.6 | 2,104,787 (1.0133) | 135, 0, 5, 4, 0, 51, 14 |
+| Halo, base | 40.0 | 7.47 | 555,603 | - |
+| Halo, twin | 40.1 | 7.48 | 555,603 (1.0000) | - |
+| Halo, limit 150 | 43.9 | 11.02 | 555,795 (1.0003) | - |
+
+At 150, `font_of` and `read_item` lose every direct call site and `box_of`
+and `text_of` nearly all, while `computed_of` gains them (88 to 135): its
+callers are now imported and inlined into more fragments, and it is no
+longer imported into them itself. Snowghost's link grows 14%, inside the
+bound, but Halo's grows 48% (7.5 s to 11.0 s), outside it. Halo's link cost
+is not Snowghost's accessors: it is every other function between 100 and the
+new limit that the link now imports, which is the global knob's cost the
+comparison arm above anticipated. By the criterion, neither limit is
+adopted, and no timing has been run; the direction returns to the owner.
