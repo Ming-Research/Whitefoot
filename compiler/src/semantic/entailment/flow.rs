@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::super::goal::{
-    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalDatum, GoalExpression,
-    GoalOperation, GoalProjection,
+    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalAdmission, GoalDatum,
+    GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::model::expression_children;
 use super::super::model::{
@@ -132,6 +132,8 @@ enum KillEvent {
     Write {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         /// For a callee's declared write, the places the same call would
         /// write if the row declared only what the body writes [EFF-2];
@@ -158,6 +160,8 @@ enum KillEvent {
     EntryImageHolderWrite {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         narrowed: Narrowed,
     },
@@ -2060,6 +2064,7 @@ mod indexed_goal_kill_tests {
                 root: BindingId(0),
                 projections: projections.clone(),
                 ty: CheckedType::Bool,
+                admission: Default::default(),
             }),
             None,
             None,
@@ -2080,6 +2085,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        relocation: false,
                         narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
@@ -2093,6 +2099,7 @@ mod indexed_goal_kill_tests {
                     facts.establish_goal(
                         goal,
                         sign,
+                        &analyzer.vocabulary.goals,
                         &mut analyzer.vocabulary.derivations,
                         established,
                     );
@@ -2119,6 +2126,7 @@ mod indexed_goal_kill_tests {
                 facts.establish_goal(
                     goal,
                     sign,
+                    &analyzer.vocabulary.goals,
                     &mut analyzer.vocabulary.derivations,
                     established,
                 );
@@ -2278,6 +2286,47 @@ mod range_argument_kill_tests {
         let mut analyzer = Analyzer::new(&context, &function);
         analyzer.input.places = PlaceMap::for_function(&function);
         check(&mut analyzer)
+    }
+
+    /// [ENT-2, MSR-2] a scalar read through a measure reference uses the
+    /// direct measure's word support: another word or an element preserves
+    /// it, and its word or its containing owner kills it.
+    #[test]
+    fn a_measure_reference_term_has_descriptor_word_kills() {
+        with_analyzer(Vec::new(), |analyzer| {
+            let selected = place(vec![PlaceStep::Measure(CheckedMeasure::Length)]);
+            let term = analyzer
+                .vocabulary
+                .terms
+                .intern(TermKind::Place(selected, IntegerType::U64));
+            let direct = analyzer
+                .vocabulary
+                .terms
+                .intern(TermKind::Measure(CheckedMeasure::Length, place(Vec::new())));
+            assert_eq!(term, direct);
+            let separations = SeparationLedger::default();
+            for (path, killed) in [
+                (vec![PlaceStep::Measure(CheckedMeasure::Length)], true),
+                (vec![PlaceStep::Measure(CheckedMeasure::Capacity)], false),
+                (vec![PlaceStep::Measure(CheckedMeasure::Head)], false),
+                (vec![PlaceStep::Index(literal(30, 0))], false),
+                (vec![], true),
+            ] {
+                let event = KillEvent::Write {
+                    element: matches!(path.last(), Some(PlaceStep::Index(_))),
+                    place: place(path),
+                    relocation: false,
+                    source: crate::NodePath { components: vec![] },
+                    narrowed: None,
+                };
+                assert_eq!(
+                    analyzer
+                        .reasoning()
+                        .event_kills_term(&separations, term, &event),
+                    killed
+                );
+            }
+        });
     }
 
     /// [OWN-7, REF-4] a range formation's endpoint images are filed only

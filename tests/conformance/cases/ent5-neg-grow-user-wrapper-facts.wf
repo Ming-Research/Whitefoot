@@ -1,0 +1,21 @@
+fn reserve(cell: &Box<Slots<Slots<u64, 4>>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires capacity >= cell^.inner.cap;
+  ensures cell^.inner.len == entry(cell)^.inner.len;
+} {
+  grow(cell: cell, capacity: capacity);
+  return unit;
+}
+
+fn inspect(cell: &Box<Slots<Slots<u64, 4>>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires 0_u64 < cell^.inner.len;
+  requires cell^.inner[0_u64].len == 1_u64;
+  requires capacity >= cell^.inner.cap;
+} {
+  reserve(cell: cell, capacity: capacity);
+  invariant old_element: cell^.inner[0_u64].len == 1_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -112,6 +112,7 @@ impl Input<'_, '_> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let value = &self.context.constant(*declaration)?.value;
                 (value.ty() == *ty).then_some(value)

@@ -317,6 +317,7 @@ impl Reasoning<'_, '_, '_> {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
+                CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
                     // Nominal subscripts are ordinary checked operations;
                     // affine measure terms admit only their tracked offsets.

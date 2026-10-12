@@ -152,11 +152,11 @@ void wf_paged_unexpected_release(void *p, uint64_t bytes) {
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
-/// Whitefoot#352 supplies the missing general relocation classification.
-/// Keep this acceptance/runtime witness explicit until that change lands;
-/// then move its normative fact-preservation coverage into conformance.
+/// Capacity 1 to 2 replaces page zero. The checker keeps the filled-element
+/// range fact across that relocation write [ENT-5], whose normative coverage is
+/// the `ent5-pos-grow-*` conformance cases; this case checks that the copied
+/// page still holds the value the fact states.
 #[test]
-#[ignore = "depends on Whitefoot#352: grow_paged relocation preserves filled-element range facts"]
 fn paged_page_zero_move_preserves_filled_element_range_fact() {
     let source = br#"fn filled(values: &Paged<u64>) -> result: unit pure contract {
   requires forall held(k in 0_u64..values^.len): values^[k] == 73_u64;
