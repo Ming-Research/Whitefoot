@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn high_word(left: u64, right: u64) -> result: u64 pure contract {
+  ensures result <= left;
+} {
+  doc "The high word of the 128-bit product of two words, which is at most either word.";
+  let high = imulhi(left, right);
+  return high;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Takes four high words and compares each with the one computed outside the compiler.";
+  let high_1 = high_word(left: 18446744073709551615_u64, right: 18446744073709551615_u64);
+  if high_1 == 18446744073709551614_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let high_2 = high_word(left: 9007199254740992_u64, right: 18446744073709551615_u64);
+  if high_2 == 9007199254740991_u64 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  let high_3 = high_word(left: 3_u64, right: 5_u64);
+  if high_3 == 0_u64 {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  let high_4 = high_word(left: 9223372036854775808_u64, right: 4_u64);
+  if high_4 == 2_u64 {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

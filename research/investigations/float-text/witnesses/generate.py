@@ -2,9 +2,10 @@
 
 Experiment E2 of ../DESIGN.md compiles four small Whitefoot programs (W1 to
 W4, here split into eight files so that one refusal does not hide the next,
-plus w2d, a restated form of w2c, and w2e and w2f, the minimal witnesses of
-the gaps E2 found) to learn whether the checker accepts the arithmetic that
-exact decimal conversion needs. Every expected value in a witness is computed here with
+plus w2d, a restated form of w2c, the minimal witnesses w1c, w2e and w2f of
+the gaps E2 found, and w2g and w2h, which vary w2f one change at a time)
+to learn whether the checker accepts the arithmetic that exact decimal
+conversion needs. Every expected value in a witness is computed here with
 Python's exact integer arithmetic, from the definition of the operation and
 never from the output of any witness.
 
@@ -183,6 +184,36 @@ def w1b():
     for number, bits in enumerate(W1_BITS, start=1):
         text += f"  let result_{number} = scaled(bits: {u64(bits)});\n"
         text += check_block(f"result_{number}", u64(scaled_value(bits)), number)
+    return text + finish()
+
+
+# W1c: the w1b gap apart from the table. The high word of a 64-by-64-bit
+# product is at most either factor.
+
+HIGH_WORD = """fn high_word(left: u64, right: u64) -> result: u64 pure contract {
+  ensures result <= left;
+} {
+  doc "The high word of the 128-bit product of two words, which is at most either word.";
+  let high = imulhi(left, right);
+  return high;
+}
+"""
+
+W1C_CASES = [
+    (MASK64, MASK64),
+    (1 << 53, MASK64),
+    (3, 5),
+    (1 << 63, 4),
+]
+
+
+def w1c():
+    text = HEADER + "\n" + HIGH_WORD + "\n"
+    text += "fn main() -> status: ExitStatus pure {\n"
+    text += '  doc "Takes four high words and compares each with the one computed outside the compiler.";\n'
+    for number, (left, right) in enumerate(W1C_CASES, start=1):
+        text += f"  let high_{number} = high_word(left: {u64(left)}, right: {u64(right)});\n"
+        text += check_block(f"high_{number}", u64((left * right) >> 64), number)
     return text + finish()
 
 
@@ -508,8 +539,20 @@ W2F_CASES = [
 ]
 
 
-def w2f():
-    text = HEADER + "\n" + COUNTER + "\n"
+# W2g adds w2c's count type invariant to the counter, and w2h drops the
+# postcondition: each changes one thing, to find why the requirement bounds
+# the copied count in w2c but not in w2f (DESIGN.md, E2 results).
+COUNTER_BOUNDED = COUNTER.replace(
+    "  count: u64;\n}",
+    "  count: u64;\n  invariant count_ceiling(counter): counter.count <= 800_u64;\n}",
+)
+assert COUNTER_BOUNDED != COUNTER
+COUNTER_UNSTATED = COUNTER.replace("  ensures counter^.count <= 800_u64;\n", "")
+assert COUNTER_UNSTATED != COUNTER
+
+
+def counter_witness(program):
+    text = HEADER + "\n" + program + "\n"
     text += "fn main() -> status: ExitStatus pure {\n"
     text += '  doc "Advances four counters after checking their room and compares each count with the sum computed outside the compiler.";\n'
     for number, (start, delta) in enumerate(W2F_CASES, start=1):
@@ -521,6 +564,18 @@ def w2f():
         text += f"  let count_{number} = counter_{number}.count;\n"
         text += check_block(f"count_{number}", u64(start + delta), number * 10 + 2)
     return text + finish()
+
+
+def w2f():
+    return counter_witness(COUNTER)
+
+
+def w2g():
+    return counter_witness(COUNTER_BOUNDED)
+
+
+def w2h():
+    return counter_witness(COUNTER_UNSTATED)
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +847,12 @@ def w4():
 
 WITNESSES = [
     ("w1a_table_lookup", w1a, "accept"),
-    ("w1b_product_and_scale", w1b, "accept"),
+    # Language gap: the imulhi fact row computes its bounds in checked i128,
+    # so for two full-width u64 words it overflows and establishes neither
+    # bound nor the high <= factor relations (DESIGN.md, E2 results).
+    ("w1b_product_and_scale", w1b, "reject"),
+    # W1b's gap apart from the table.
+    ("w1c_high_word_bound", w1c, "reject"),
     ("w2a_left_shift", w2a, "open"),
     # Language gap: no rule bounds ishr(total, shift) by total's bound in units
     # of 2^shift, so the quotient digit's bound below ten is unprovable
@@ -806,8 +866,14 @@ WITNESSES = [
     ("w2d_front_shift_restated", w2d, "accept"),
     # W2b's gap apart from the decimal buffer.
     ("w2e_quotient_bound", w2e, "reject"),
-    # W2c's candidate gap apart from the decimal buffer.
+    # W2c's candidate gap apart from the decimal buffer; refused earlier, at
+    # the overflow check of the copied count (DESIGN.md, E2 results).
     ("w2f_field_bound", w2f, "reject"),
+    # Predicted: the type invariant bounds the copied count, so the refusal
+    # moves to FN-9 at the return, as in w2c.
+    ("w2g_field_bound_invariant", w2g, "reject"),
+    # Predicted: the postcondition is not the difference, so OP-2 stays.
+    ("w2h_field_sum", w2h, "reject"),
     ("w3a_window_write", w3a, "open"),
     ("w3b_index_write", w3b, "open"),
     ("w4_scan", w4, "open"),
