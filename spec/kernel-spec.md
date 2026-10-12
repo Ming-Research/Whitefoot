@@ -1,4 +1,4 @@
-# Kernel Specification v0.134
+# Kernel Specification v0.135
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -632,7 +632,11 @@ An IDENT resolving to a non-integer or `Array`-typed const is a compile-time rej
 Const evaluation is exact in the unsigned 64-bit domain under the const-eval overflow policy named `const-reject`: an operation whose mathematical result lies outside that domain, or whose divisor is zero, is a compile-time rejection citing CONST-1 at the complete `const` node.
 `const-reject` is disjoint from runtime proof-required exact arithmetic: it never creates an [ENT-6] operation obligation or admits a `.defined` spelling, an accepted const-expression executes no runtime check, and a const-expression contributes no runtime effect.
 Inside a generic template an unevaluated const-expression is symbolic; two symbolic const-expressions are identical exactly when their operation and ordered terms are identical, with no commutation, constant folding, or reassociation, exactly as [FN-8] fixes goal identity.
-This keeps the const-generic forwarding path closed under the one operation: `const N` is usable as an `Array<T, N>` size, and a derived expression such as `N * 2` is usable there and forwardable as a `const` targ, with each concrete instantiation evaluating it to one u64 value.
+This keeps the const-generic forwarding path closed under the one operation: a u64 `const N` is usable as an `Array<T, N>` size, and a derived expression such as `N * 2` is usable there and forwardable as a `const` targ, with each concrete instantiation evaluating it to one u64 value.
+A const argument is a `const` node written for a const `gparam` [GRAM-2], the size N of a constant-capacity storage shape being the argument of its [PRE-1] `const n: u64`; P names that `gparam`'s integer type.
+A closed const argument, every term of which is a decimal integer literal, is admitted exactly when its evaluated value lies in the closed range of P [FORM-7].
+An open const argument, with at least one IDENT term, is admitted exactly when the integer type each IDENT term's const `gparam` or named-const item declares [MSR-6, CONST-2] is P, and, when the argument is an operation, P is u64, the domain its evaluation is exact in.
+A closed const argument outside the range of P and an open const argument not so admitted are each a hard error citing CONST-1 at the complete `const` node, so a const generic's value lies in the range of its written type at every instance and no instance wraps or truncates it.
 
 [CONST-2] A `const IDENT: type = cvalue;` item declares an immutable, program-lifetime, read-only static value, with the `cvalue` production of the fence below.
 

@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn widen<const n: u8>() -> r: u64 pure {
+  doc "Reads the const generic at its written type u8.";
+  return cvt::<u8, u64>(n);
+}
+
+fn forward<const m: u8>() -> r: u64 pure {
+  doc "An open const argument that is one IDENT of exactly its parameter's type, u8, is admitted.";
+  return widen::<m>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The forwarded value reaches the inner instance unchanged.";
+  let v = forward::<200>();
+  if v == 200_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

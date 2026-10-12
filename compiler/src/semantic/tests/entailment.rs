@@ -5721,12 +5721,14 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A capacity's implicit component keeps its const parameter's narrower
-/// type. Equal explicit witnesses before give must not create a redundant
-/// delivery root, and the receiving invariant still sees the closed fact.
+/// A constant capacity is a closed component of the implicit closure. Equal
+/// explicit witnesses before give must not create a redundant delivery root,
+/// and the receiving invariant still sees the closed fact. [CONST-1] admits
+/// no narrower-typed const generic as a u64 capacity, so the closed capacity
+/// is written as the constant itself.
 #[test]
 fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
-    let source = br#"fn probe<const n: u8>(values: &Slots<u8, n>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
   let picked = if a {
     let capacity = values^.cap;
     let d = x;

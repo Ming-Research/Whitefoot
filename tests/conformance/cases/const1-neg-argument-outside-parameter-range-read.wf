@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pick<const n: u8>(canary: u8) -> r: u8 pure contract {
+  requires n > 200_u8;
+} {
+  doc "Within u8's range n is at least 201, so 1000 - n is at most 799 and the subscript is in bounds.";
+  let block = array_filled::<u8, 800>(value: 7_u8);
+  let wide = cvt::<u8, u64>(n);
+  let at = 1000_u64 - wide;
+  return block[at];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "300 lies outside u8's closed range, so the argument is rejected at its const node; admitted, a truncated n of 44 would read block[956], past the end of the block.";
+  let other = array_filled::<u8, 800>(value: 99_u8);
+  let v = pick::<300>(canary: other[0_u64]);
+  return exit_status(code: v);
+}

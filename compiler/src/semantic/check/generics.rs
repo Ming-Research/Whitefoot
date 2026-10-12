@@ -1781,8 +1781,8 @@ impl<'unit> Checker<'_, 'unit> {
                         };
                         GenericArgument::Type(self.parse_type_with(check_context, ty, caller)?)
                     }
-                    GenericParameter::Const { .. } => {
-                        let Some(value) = self
+                    GenericParameter::Const { ty, .. } => {
+                        let Some(written) = self
                             .types
                             .declarations
                             .tree
@@ -1794,11 +1794,10 @@ impl<'unit> Checker<'_, 'unit> {
                                 "a const argument occupies this parameter position",
                             );
                         };
-                        GenericArgument::Const(self.parse_const_expression_with(
-                            check_context,
-                            value,
-                            caller,
-                        )?)
+                        let value =
+                            self.parse_const_expression_with(check_context, written, caller)?;
+                        self.check_const_argument(check_context, written, value, ty)?;
+                        GenericArgument::Const(value)
                     }
                     GenericParameter::Function { .. } => GenericArgument::Function(
                         self.parse_function_argument(check_context, source, caller)?,

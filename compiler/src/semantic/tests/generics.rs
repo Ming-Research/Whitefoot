@@ -1243,14 +1243,15 @@ fn main() -> status: std::process::ExitStatus pure {{
     }
 }
 
-/// A u8 parameter used as a u64 storage extent is still the same symbolic
-/// constant; neither the measure nor a forwarded formal may widen its bound.
+/// A u64 parameter used as a u64 storage extent is still the same symbolic
+/// constant, and forwards unchanged to a u64 formal. [CONST-1] admits a
+/// const generic only at a parameter of its own declared type, so a u8
+/// parameter is neither a storage extent nor a u64 formal's argument.
 #[test]
 fn const_generic_extent_and_forwarding_keep_one_declared_type_identity() {
-    let source = br#"fn extent<const n: u8>() -> result: unit pure {
+    let source = br#"fn extent<const n: u64>() -> result: unit pure {
   let values = slots_new::<u8, n>();
   invariant same: values.cap == n;
-  invariant bounded: values.cap <= 255_u64;
   return unit;
 }
 
@@ -1261,7 +1262,7 @@ fn increment<const limit: u64>(value: u64) -> result: u64 pure {
   return value;
 }
 
-fn forward<const n: u8>(value: u64) -> result: u64 pure {
+fn forward<const n: u64>(value: u64) -> result: u64 pure {
   extent::<n>();
   return increment::<n>(value: value);
 }
@@ -1277,6 +1278,17 @@ fn main() -> status: std::process::ExitStatus pure {
             "{outcome:?}"
         );
     });
+    let main = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    for narrow in [
+        "fn extent<const n: u8>() -> result: unit pure {\n  let values = slots_new::<u8, n>();\n  return unit;\n}\n\n",
+        "fn increment<const limit: u64>() -> result: u64 pure {\n  return limit;\n}\n\nfn forward<const n: u8>() -> result: u64 pure {\n  return increment::<n>();\n}\n\n",
+    ] {
+        assert_rule(
+            format!("{narrow}{main}").as_bytes(),
+            SemanticRule::Const1,
+            SemanticIssueKind::type_mismatch("u64", "u8"),
+        );
+    }
 }
 
 #[test]
