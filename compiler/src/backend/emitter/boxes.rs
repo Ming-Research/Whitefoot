@@ -85,10 +85,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(value)
+                self.value_name(value),
+                storage_alias::source_read(self.program, ty)
             )
             .map_err(|_| BackendFailure::TextEmission)?;
         }
@@ -127,10 +128,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(value)
+                self.value_name(value),
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)

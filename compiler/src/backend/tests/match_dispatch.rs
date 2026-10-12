@@ -170,7 +170,10 @@ fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_sl
     if word {
         assert!(dispatch.contains("load ptr, ptr "), "{dispatch}");
         assert!(!dispatch.contains("x ptr], ptr "), "{dispatch}");
-        assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+        assert!(
+            !module.contains(&format!("@{base}.dispatch.table")),
+            "{module}"
+        );
     } else {
         // Keep the original table checks for every unthreaded split.
         let through_parameter = dispatch.contains("x ptr], ptr %wf.dispatch.base");
@@ -179,7 +182,8 @@ fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_sl
             "the header transfers through the handler table: {dispatch}"
         );
         assert!(!through_parameter || module.contains(&format!("ptr @{base}.dispatch.table")));
-        let table = module.lines()
+        let table = module
+            .lines()
             .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
             .expect("the handler table is emitted");
         let entries = table
@@ -200,7 +204,10 @@ fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_sl
         assert!(targets.iter().all(|arm| *arm < arms)
             && (0..arms).all(|arm| targets.contains(&arm)), "{table}");
     }
-    assert!(dispatch.contains(&format!("musttail call {convention}")), "{dispatch}");
+    assert!(
+        dispatch.contains(&format!("musttail call {convention}")),
+        "{dispatch}"
+    );
     assert!(!dispatch.contains("switch "), "{dispatch}");
     for arm in 0..arms {
         let arm = definition(module, &format!("{base}.arm.{arm}"));
@@ -1415,9 +1422,16 @@ fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
                 .split_once(" = load ptr, ptr %wf.slot.")
                 .map(|(name, _)| name)
         });
-        parameters
-            .chain(spilled)
-            .any(|name| part.contains(&format!("load ptr, ptr {name}\n")))
+        parameters.chain(spilled).any(|name| {
+            let load = format!("load ptr, ptr {name}");
+            part.lines().any(|line| {
+                line.trim()
+                    .split_once(" = ")
+                    .is_some_and(|(_, instruction)| {
+                        instruction.split(", !tbaa !").next() == Some(load.as_str())
+                    })
+            })
+        })
     })
 }
 
@@ -1909,6 +1923,28 @@ fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
   return cell^;
 }
 
+fn copy_cell_into(cell: &Cell, target: &Cell) -> result: unit reads(cell), writes(target) {
+  set target^ = cell^;
+  return unit;
+}
+
+fn make_cell_into(target: &Cell) -> result: u32 writes(target) {
+  let value = Cell::Add(first: 131_u8, second: 197_u8, extra: 2_u8, value: 7_u32);
+  set target^ = value;
+  match value {
+    Add(extra: e, value: v, ..) => {
+      let extra = cvt::<u8, u32>(e);
+      return v +wrap extra;
+    }
+    Halt(..) => {
+      return 0_u32;
+    }
+    Sub(..) => {
+      return 0_u32;
+    }
+  }
+}
+
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
     Add(extra: e, value: v, ..) => {
@@ -1934,7 +1970,29 @@ fn main() -> status: ExitStatus pure {
   let code = box_slots_new::<Cell>(capacity: 3_u64);
   let first = make_add();
   let copied = copy_cell(cell: &first);
-  push(code: &code, cell: copied);
+  let internal_copy = Cell::Halt(first: 0_u8, second: 0_u8, extra: 0_u8, value: 0_u32);
+  let made = make_cell_into(target: &internal_copy);
+  if made != 9_u32 {
+    return exit_status(code: 3_u8);
+  }
+  match internal_copy {
+    Add(extra: e, value: v, ..) => {
+      if v != 7_u32 {
+        return exit_status(code: 4_u8);
+      }
+      if e != 2_u8 {
+        return exit_status(code: 4_u8);
+      }
+    }
+    Halt(..) => {
+      return exit_status(code: 4_u8);
+    }
+    Sub(..) => {
+      return exit_status(code: 4_u8);
+    }
+  }
+  copy_cell_into(cell: &copied, target: &internal_copy);
+  push(code: &code, cell: internal_copy);
   push(code: &code, cell: first);
   let third = Cell::Halt(first: 131_u8, second: 197_u8, extra: 3_u8, value: 10_u32);
   push(code: &code, cell: third);
@@ -2020,7 +2078,11 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         let prepared = crate::backend::emitter::prepare_dispatch_layout(program, target, false)
             .expect("composition plan");
         let selected = &prepared.program;
-        let cell = selected.nominals().iter().find(|n| n.name() == "Cell").unwrap();
+        let cell = selected
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap();
         let layout = crate::target::union_enum_layout(target, selected, cell.id()).unwrap();
         assert_eq!((layout.size(), layout.handler_offset(), layout.handler_alignment()),
             (16, Some(8), Some(4)));
@@ -2044,16 +2106,68 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
     let module = emit(HANDLER_CELLS);
     assert_handler_load(&module, "wf_run", 8, 4);
     let made = emitted_body(&module, "make_add");
-    assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
+    assert!(
+        made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"),
+        "{made}"
+    );
+    let fields = [(0, "i8"), (1, "i8"), (2, "i8"), (3, "i8"), (4, "i32"), (8, "ptr")];
+    // Incoming and local copies preserve every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("; layout-bounded transfer "), "{copied}");
-    assert!(!copied.contains("@llvm.memmove."), "{copied}");
+    super::layout_transfers::assert_typed_transfer(copied, &fields);
+    assert_eq!(
+        super::layout_transfers::transfer_region(copied).2,
+        "%wf.result",
+        "{copied}"
+    );
+    assert_eq!(
+        copied.matches("  ; layout-bounded transfer from ").count(),
+        1,
+        "{copied}"
+    );
+    assert!(
+        !copied.contains("@llvm.memmove.") && !copied.contains("@llvm.memcpy."),
+        "{copied}"
+    );
+    let copied_into = emitted_body(&module, "copy_cell_into");
+    // Store is an ineligible read-through observation of this Load snapshot,
+    // so retain the complete private capture followed by its complete write.
+    let copies: Vec<_> = copied_into
+        .match_indices("  ; layout-bounded transfer from ")
+        .map(|(start, _)| &copied_into[start..])
+        .collect();
+    assert_eq!(copies.len(), 2, "{copied_into}");
+    let (_, source, captured) = super::layout_transfers::transfer_region(copies[0]);
+    assert_eq!(source, "%v0", "capture the received Cell: {copied_into}");
+    assert!(
+        captured.starts_with("%wf.slot.")
+            && copied_into.lines().any(|line| {
+                line.trim()
+                    .starts_with(&format!("{captured} = alloca %{ty}, align "))
+            }),
+        "the captured Cell has private complete storage: {copied_into}"
+    );
+    let (_, stored_source, destination) = super::layout_transfers::transfer_region(copies[1]);
+    assert_eq!(
+        (stored_source, destination),
+        (captured, "%v1"),
+        "write the same snapshot: {copied_into}"
+    );
+    for copy in copies {
+        super::layout_transfers::assert_typed_transfer(copy, &fields);
+    }
+    assert!(
+        !copied_into.contains("@llvm.memmove.") && !copied_into.contains("@llvm.memcpy."),
+        "{copied_into}"
+    );
     super::layout_transfers::assert_typed_transfer(
-        copied,
-        &[(0, "i8"), (1, "i8"), (2, "i8"), (3, "i8"), (4, "i32"), (8, "ptr")],
+        emitted_body(&module, "make_cell_into"),
+        &fields,
     );
     let main = emitted_body(&module, "main");
-    assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
+    assert!(
+        main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"),
+        "{main}"
+    );
     let tag = emitted_body(&module, "tag");
     assert!(tag.contains("load i8") && tag.contains("switch i8"), "{tag}");
     assert!(!tag.contains("load ptr"), "an ordinary match reads only the tag: {tag}");
@@ -2073,42 +2187,62 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
 fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
     super::system::with_ir(HANDLER_CELLS, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
-        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let owner = program
+            .functions()
+            .iter()
+            .position(|f| f.name() == "run")
+            .unwrap();
+        let cell = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap()
+            .id();
         let mut two = program.clone();
         let mut other = two.functions[owner].clone();
         other.name = "other_run".to_owned();
         two.functions.push(other.clone());
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
         let layout = crate::target::union_enum_layout(target, &prepared.program, cell).unwrap();
         assert_eq!((layout.size(), layout.handler_offset()), (24, Some(8)));
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         assert_handler_load(&module, "wf_run", 8, 4);
         assert_handler_load(&module, "wf_other_run", 16, 4);
-        super::layout_transfers::assert_typed_transfer(
-            emitted_body(&module, "copy_cell"),
-            &[
-                (0, "i8"),
-                (1, "i8"),
-                (2, "i8"),
-                (3, "i8"),
-                (4, "i32"),
-                (8, "ptr"),
-                (16, "ptr"),
-            ],
-        );
+        // The public result and the private target both carry both handler words.
+        for name in ["copy_cell", "copy_cell_into"] {
+            super::layout_transfers::assert_typed_transfer(
+                emitted_body(&module, name),
+                &[
+                    (0, "i8"),
+                    (1, "i8"),
+                    (2, "i8"),
+                    (3, "i8"),
+                    (4, "i32"),
+                    (8, "ptr"),
+                    (16, "ptr"),
+                ],
+            );
+        }
         let made = emitted_body(&module, "make_add");
-        assert!(made.contains("store ptr @wf_run.arm.0,")
-            && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");
+        assert!(
+            made.contains("store ptr @wf_run.arm.0,")
+                && made.contains("store ptr @wf_other_run.arm.0,"),
+            "{made}"
+        );
         let mut three = two;
         other.name = "third_run".to_owned();
         three.functions.push(other);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         for base in ["wf_run", "wf_other_run", "wf_third_run"] {
             assert_split(&module, base, 3);
-            assert!(module.contains(&format!("@{base}.dispatch.table = ")), "{module}");
+            assert!(
+                module.contains(&format!("@{base}.dispatch.table = ")),
+                "{module}"
+            );
         }
         assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
     });
@@ -2118,21 +2252,35 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
 fn unsplit_and_native_owners_leave_enums_unthreaded() {
     super::system::with_ir(HANDLER_CELLS, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
-        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let owner = program
+            .functions()
+            .iter()
+            .position(|f| f.name() == "run")
+            .unwrap();
+        let cell = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap()
+            .id();
         let mut unsplit = program.clone();
         unsplit.functions[owner].synthesis = Some(crate::IrSynthesis::Chunk);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&unsplit, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&unsplit, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
-        assert!(verdict(&module, "wf_run").contains("compiler-synthesized"), "{module}");
+        assert!(
+            verdict(&module, "wf_run").contains("compiler-synthesized"),
+            "{module}"
+        );
         assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
         let mut foreign = program.clone();
         let mut native = foreign.functions[owner].clone();
         native.name = "native_run".to_owned();
         native.blocks.clear();
         foreign.functions.push(native);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
     });
 }
@@ -2140,9 +2288,21 @@ fn unsplit_and_native_owners_leave_enums_unthreaded() {
 #[test]
 fn handler_words_use_body_symbols_and_fragment_mode_keeps_tables() {
     let source = enum_interpreter();
-    let inputs = [crate::SourceInput::new("handler-bodies.wf", source.as_bytes())];
-    let compile = |fragments| crate::compile_for_emission(&inputs,
-        crate::CompilerLimits::default(), crate::OverlapLowering::Off, None, fragments).unwrap().0;
+    let inputs = [crate::SourceInput::new(
+        "handler-bodies.wf",
+        source.as_bytes(),
+    )];
+    let compile = |fragments| {
+        crate::compile_for_emission(
+            &inputs,
+            crate::CompilerLimits::default(),
+            crate::OverlapLowering::Off,
+            None,
+            fragments,
+        )
+        .unwrap()
+        .0
+    };
     let whole = compile(false);
     let fragments = compile(true);
     // The destination wrapper is for Outcome; Op's selected representation
@@ -2161,7 +2321,10 @@ fn handler_words_use_body_symbols_and_fragment_mode_keeps_tables() {
     if verdict(&fragments, "wf_run.body").starts_with("split") {
         assert_split(&fragments, "wf_run.body", 4);
     }
-    for granularity in [crate::FragmentGranularity::Function, crate::FragmentGranularity::Module] {
+    for granularity in [
+        crate::FragmentGranularity::Function,
+        crate::FragmentGranularity::Module,
+    ] {
         crate::split_module(&fragments, granularity).expect("ordinary layouts remain splittable");
     }
 }
@@ -2203,27 +2366,45 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     super::system::with_ir(source, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let outer = program.nominals().iter().find(|n| n.name() == "Outer").unwrap().id();
-        let owner = program.functions().iter().find(|f| f.name() == "walk").unwrap();
+        let outer = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Outer")
+            .unwrap()
+            .id();
+        let owner = program
+            .functions()
+            .iter()
+            .find(|f| f.name() == "walk")
+            .unwrap();
         let mut three = program.clone();
         for name in ["second_walk", "third_walk"] {
             let mut other = owner.clone();
             other.name = name.to_owned();
             three.functions.push(other);
         }
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
         // Inner: selected 16, ceiling 32. Outer: selected union 24,
         // selected-child product 40, language ceiling 72. Three words give
         // 48: legal under OP-9, refused by the prototype's 40-byte bound.
         let layout = crate::target::union_enum_layout(target, &prepared.program, outer).unwrap();
         assert_eq!((layout.size(), layout.handler_offset()), (48, Some(24)));
         assert_eq!(prepared.program.nominal(outer).unwrap().handler_words, 3);
-        assert_eq!(prepared.program.nominal_ceilings[outer.index()].size,
-            crate::IrLayoutMagnitude::Finite(72));
+        assert_eq!(
+            prepared.program.nominal_ceilings[outer.index()].size,
+            crate::IrLayoutMagnitude::Finite(72)
+        );
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         for base in ["wf_walk", "wf_second_walk", "wf_third_walk"] {
-            assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
-            assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+            assert!(
+                module.contains(&format!("{base}: dispatches through the handler word")),
+                "{module}"
+            );
+            assert!(
+                !module.contains(&format!("@{base}.dispatch.table")),
+                "{module}"
+            );
         }
     });
 }
