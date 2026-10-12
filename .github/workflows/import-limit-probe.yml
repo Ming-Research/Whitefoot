@@ -1,0 +1,261 @@
+# Temporary: step 1 of the fragment-link import limit experiment; delete
+# before the branch is ready. It builds three compilers from this checkout:
+# base (this branch with the ThinLTO import limit argument removed), twin (the
+# same source built separately, the noise control) and candidate (this
+# branch). Each builds Snowghost's layout_oracle and Halo's bench program in
+# fragment mode with an empty cache, `rounds` times, in rotated order, and
+# records per build the wall time, the build report's phase times, the
+# executable's .text size and, for Snowghost, the direct call and tail-jump
+# sites of seven small accessors. The job fails on a build error and never on
+# a measured number. Hosted times show cost, not the 14900K timing step.
+# The Halo graph lies under that repository's research directory, so this
+# workflow stays manual-only (.github/check-research-inputs.py); invoke with
+# gh workflow run import-limit-probe.yml --ref claude/small-accessor-inline -f rounds=1
+name: import-limit-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Builds per compiler and program, each with an empty cache
+        type: string
+        default: "3"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  # research/accessor-ir: 15e8d4a plus the IR workflow and its pin.
+  SNOWGHOST_COMMIT: c8f5e1776bc2a3f46f7ed07502f61002b3a52f4b
+  HALO_COMMIT: 641eb29f48334489ff62af3b3ed71721c2967fb6
+
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/claude/small-accessor-inline'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      ROUNDS: ${{ inputs.rounds }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and record the gate's host toolchain
+        run: |
+          set -eo pipefail
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          out="$RUNNER_TEMP/import-limit"
+          mkdir -p "$out"
+          {
+            echo "candidate $(git rev-parse HEAD)"
+            echo "Snowghost $SNOWGHOST_COMMIT, Halo $HALO_COMMIT, rounds $ROUNDS"
+            /usr/bin/clang --version | head -1
+            ld.lld --version
+            rustc --version
+            size --version | head -1
+            objdump --version | head -1
+            lscpu | grep -E 'Model name|^CPU\(s\)'
+          } | tee "$out/machine.txt"
+
+      - name: Build base, twin and candidate compilers
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/import-limit"
+          source_file=compiler/src/bin/whitefootc.rs
+          for side in base twin candidate; do
+            if [ "$side" = candidate ]; then
+              tree="$PWD"
+            else
+              tree="$out/source-$side"
+              mkdir -p "$tree"
+              git archive HEAD | tar -x -C "$tree"
+              # Base and twin drop the limit argument from the fragment link;
+              # the unused constant that remains only warns.
+              perl -0pi -e 's/\n[ \t]*\.arg\(THIN_LINK_IMPORT_LIMIT\);/;/ or die "no limit argument to remove\n"' \
+                "$tree/$source_file"
+              diff -u "$source_file" "$tree/$source_file" > "$out/patch-$side.diff" || true
+              cat "$out/patch-$side.diff"
+            fi
+            # Separate targets force an actual second base build.
+            export CARGO_TARGET_DIR="$out/target-$side"
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            make -C "$tree/compiler" build
+            cp "$CARGO_TARGET_DIR/gate/whitefootc" "$out/whitefootc-$side"
+          done
+          cmp "$out/source-base/$source_file" "$out/source-twin/$source_file"
+          (cd "$out" && sha256sum whitefootc-*) | tee "$out/compilers.sha256"
+          # The candidate carries the argument and the base and twin do not.
+          for side in base twin candidate; do
+            found=$(strings -a "$out/whitefootc-$side" | grep -c 'import-instr-limit=200' || true)
+            echo "$side: import limit argument present in $found strings"
+            if [ "$side" = candidate ] && [ "$found" -eq 0 ]; then exit 1; fi
+            if [ "$side" != candidate ] && [ "$found" -ne 0 ]; then exit 1; fi
+          done
+          rm -rf "$out"/target-*
+
+      - name: Check out the pinned Snowghost and Halo sources
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/import-limit"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf "$out/snowghost"
+          git -C "$out/snowghost" checkout --quiet "$SNOWGHOST_COMMIT"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf "$out/halo"
+          git -C "$out/halo" checkout --quiet "$HALO_COMMIT"
+          git -C "$out/snowghost" log --oneline -1
+          git -C "$out/halo" log --oneline -1
+
+      - name: Write the build probe
+        run: |
+          set -eo pipefail
+          cat > "$RUNNER_TEMP/import-limit/probe.py" <<'PY'
+          """One program's fragment builds by every compiler, rotated per round."""
+          import json, pathlib, re, shutil, subprocess, sys, time
+
+          out, program, directory, entry, rounds = sys.argv[1:6]
+          out, directory, rounds = pathlib.Path(out), pathlib.Path(directory), int(rounds)
+          accessors = sys.argv[6:]
+          sides = ("base", "twin", "candidate")
+          header = re.compile(r"^[0-9a-f]+ <(.+)>:$")
+          branch = re.compile(r"\s(call\w*|j\w+)\s+[0-9a-f]+ <([^>+]+)>$")
+          wanted = {name: re.compile(re.escape(name) + r"(\..+)?$") for name in accessors}
+
+          def sites(executable, keep):
+              """Direct calls and jumps to each accessor's entry from other functions."""
+              listing = subprocess.run(["objdump", "-d", "--no-show-raw-insn", str(executable)],
+                                       check=True, capture_output=True, text=True).stdout
+              counts, lines, function = {name: 0 for name in accessors}, [], None
+              for line in listing.splitlines():
+                  found = header.match(line)
+                  if found:
+                      function = found[1]
+                      continue
+                  found = branch.search(line)
+                  if not found or found[2] == function:
+                      continue
+                  for name, pattern in wanted.items():
+                      if pattern.match(found[2]):
+                          counts[name] += 1
+                          lines.append(f"{function}\t{found[1]}\t{found[2]}")
+              if keep:
+                  keep.write_text("caller\tinstruction\tcallee\n" + "\n".join(sorted(lines)) + "\n")
+              return counts
+
+          def text_size(executable):
+              listing = subprocess.run(["size", "-A", str(executable)], check=True,
+                                       capture_output=True, text=True).stdout
+              return next(int(line.split()[1]) for line in listing.splitlines()
+                          if line.split()[:1] == [".text"])
+
+          phases = ("front_end_ms", "split_ms", "compile_ms", "link_ms")
+          columns = ["program", "round", "position", "compiler", "wall_s", *phases,
+                     "fragments", "objects_compiled", "text_bytes",
+                     *[name.rsplit(".", 1)[-1] + "_sites" for name in accessors]]
+          rows = []
+          for round in range(rounds):
+              order = sides[round % 3:] + sides[:round % 3]
+              for position, side in enumerate(order):
+                  label = f"{program}-{side}-{round + 1}"
+                  cache = out / "caches" / label
+                  executable = out / "programs" / label
+                  shutil.rmtree(cache, ignore_errors=True)
+                  executable.parent.mkdir(parents=True, exist_ok=True)
+                  command = [str(out / f"whitefootc-{side}"), "--cache", str(cache),
+                             "--fragments", "function", "--report", "--graph", "modules.wfg",
+                             "--entry", entry, "-o", str(executable)]
+                  start = time.perf_counter()
+                  build = subprocess.run(command, cwd=directory, capture_output=True, text=True)
+                  wall = time.perf_counter() - start
+                  log = out / "logs" / f"{label}.log"
+                  log.parent.mkdir(exist_ok=True)
+                  log.write_text(f"$ {' '.join(command)}\nexit {build.returncode}\n"
+                                 f"--- stdout\n{build.stdout}--- stderr\n{build.stderr}")
+                  if build.returncode:
+                      print(log.read_text()[-6000:], file=sys.stderr)
+                      sys.exit(f"{label}: whitefootc exited with {build.returncode}")
+                  report = next(json.loads(line)["build"] for line in reversed(build.stdout.splitlines())
+                                if line.startswith('{"build"'))
+                  keep = out / f"sites-{program}-{side}.tsv" if round == 0 and accessors else None
+                  counts = sites(executable, keep) if accessors else {}
+                  row = {"program": program, "round": round + 1, "position": position + 1,
+                         "compiler": side, "wall_s": f"{wall:.3f}",
+                         **{phase: report[phase] for phase in phases},
+                         "fragments": report["fragments"],
+                         "objects_compiled": report["objects_compiled"],
+                         "text_bytes": text_size(executable),
+                         **{name.rsplit(".", 1)[-1] + "_sites": count for name, count in counts.items()}}
+                  rows.append(row)
+                  print("\t".join(str(row[column]) for column in columns), flush=True)
+                  shutil.rmtree(cache, ignore_errors=True)
+                  executable.unlink()
+          with (out / f"builds-{program}.tsv").open("w") as target:
+              target.write("\t".join(columns) + "\n")
+              for row in rows:
+                  target.write("\t".join(str(row[column]) for column in columns) + "\n")
+          PY
+
+      - name: Build Snowghost layout_oracle with each compiler
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/import-limit"
+          python3 -I "$out/probe.py" "$out" snowghost "$out/snowghost/renderer" layout_oracle "$ROUNDS" \
+            wf_layout.computed_of wf_layout.font_of wf_layout.box_of wf_layout.text_of \
+            wf_font.read_item wf_font.write_item wf_font.next_glyphs
+
+      - name: Build Halo bench with each compiler
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/import-limit"
+          python3 -I "$out/probe.py" "$out" halo "$out/halo/research/experiments/halo-bench" bench "$ROUNDS"
+
+      - name: Summarize per program and compiler
+        if: ${{ !cancelled() }}
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/import-limit"
+          python3 -I - "$out" <<'PY' | tee "$out/summary.tsv"
+          import csv, pathlib, statistics, sys
+          out = pathlib.Path(sys.argv[1])
+          print("program\tcompiler\tbuilds\tmedian_wall_s\twall_range_s\tmedian_link_ms\tlink_range_ms\ttext_bytes\ttext_vs_base\tsites (every round)")
+          for path in sorted(out.glob("builds-*.tsv")):
+              with path.open() as source:
+                  rows = list(csv.DictReader(source, delimiter="\t"))
+              program = path.stem.removeprefix("builds-")
+              base_text = None
+              for side in ("base", "twin", "candidate"):
+                  mine = [row for row in rows if row["compiler"] == side]
+                  if not mine:
+                      continue
+                  wall = [float(row["wall_s"]) for row in mine]
+                  link = [float(row["link_ms"]) for row in mine]
+                  texts = sorted({int(row["text_bytes"]) for row in mine})
+                  base_text = texts[0] if side == "base" else base_text
+                  ratio = f"{texts[0] / base_text:.4f}" if base_text else "-"
+                  sites = ",".join(f"{key.removesuffix('_sites')}={'/'.join(sorted({row[key] for row in mine}))}"
+                                   for key in mine[0] if key.endswith("_sites")) or "-"
+                  print(f"{program}\t{side}\t{len(mine)}\t{statistics.median(wall):.3f}\t"
+                        f"{min(wall):.3f}-{max(wall):.3f}\t{statistics.median(link):.1f}\t"
+                        f"{min(link):.1f}-{max(link):.1f}\t{'/'.join(map(str, texts))}\t{ratio}\t{sites}")
+          PY
+          {
+            echo '```'
+            cat "$out/summary.tsv"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: import-limit-probe-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/import-limit/*.tsv
+            ${{ runner.temp }}/import-limit/*.txt
+            ${{ runner.temp }}/import-limit/*.diff
+            ${{ runner.temp }}/import-limit/compilers.sha256
+            ${{ runner.temp }}/import-limit/logs/
