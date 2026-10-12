@@ -49,7 +49,7 @@ impl TypeContext<'_> {
                 } => true,
                 CheckedNominalKind::Opaque => types
                     .host_opaque_template(id)?
-                    .is_some_and(|(_, _, fieldless)| fieldless),
+                    .is_some_and(|host| host.fieldless),
                 _ => false,
             })
         })
@@ -74,8 +74,8 @@ impl TypeContext<'_> {
             }
             Ok(types
                 .host_opaque_template(id)?
-                .is_some_and(|(module, name, _)| {
-                    crate::library::is_self_changing_host_handle(module, name)
+                .is_some_and(|host| {
+                    crate::library::is_self_changing_host_handle(host.module, host.name)
                 }))
         })
     }
@@ -85,7 +85,7 @@ impl TypeContext<'_> {
     fn host_opaque_template(
         &self,
         id: super::super::model::NominalId,
-    ) -> Result<Option<(&[String], &str, bool)>, CheckStop> {
+    ) -> Result<Option<HostOpaque<'_>>, CheckStop> {
         let Some((template, _)) = &self.source_nominal_instances[id.0 as usize] else {
             return Ok(None);
         };
@@ -102,7 +102,11 @@ impl TypeContext<'_> {
             .tree
             .children_with(template.node, Production::Field)?
             .is_empty();
-        Ok(Some((module, template.name.as_str(), fieldless)))
+        Ok(Some(HostOpaque {
+            module,
+            name: template.name.as_str(),
+            fieldless,
+        }))
     }
 
     /// The first part of `ty` in depth-first declaration order, `ty` itself
@@ -266,4 +270,12 @@ impl Checker<'_, '_> {
             mechanical_fix: "read copy-typed parts without move, borrow `&f.inner` or its descendants, or retain a nested frozen handle with frozen_share",
         })
     }
+}
+
+/// An opaque nominal a host module declares [PRE-2]: its module, its name and
+/// whether its declaration has no fields.
+struct HostOpaque<'a> {
+    module: &'a [String],
+    name: &'a str,
+    fieldless: bool,
 }
