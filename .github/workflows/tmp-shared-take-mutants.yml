@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Controls and mutants
         run: |
-          set -u
+          set +e -u
           export WHITEFOOT_SCRATCH_ROOT="$RUNNER_TEMP/shared-take"
           bin="$WHITEFOOT_SCRATCH_ROOT/whitefoot-completion-test/shared-take-witness"
           bridge=compiler/src/backend/completion/bridge.c
