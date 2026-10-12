@@ -77,6 +77,12 @@ struct OperationShape<'a> {
     carrier: &'a crate::NodePath,
 }
 
+struct OperationOperands {
+    intervals: Vec<Interval>,
+    related: Vec<Option<TermId>>,
+    parents: Vec<DerivationId>,
+}
+
 /// The three preheader relations after their complete S11 snapshot has been
 /// materialized, but before continuing kills are applied.
 pub(super) struct CountedPreheader {
@@ -319,6 +325,81 @@ impl Judging<'_, '_, '_> {
 }
 
 impl Analyzer<'_, '_> {
+    /// [RANGE-2] retains only the [ENT-3.S7] intervals the later range walk
+    /// needs, read after evaluating the operands and before a target kill.
+    pub(super) fn capture_operation_intervals(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &FactState,
+    ) {
+        if !self.input.range_participant {
+            return;
+        }
+        let Some(shape) = operation_shape(expression) else {
+            return;
+        };
+        let intervals = self
+            .operation_operands(&shape, state)
+            .map(|operands| operands.intervals);
+        self.output
+            .operation_intervals
+            .insert(shape.carrier.clone(), intervals);
+    }
+
+    /// The shared closed-state operand reader [ENT-3.S7]. Both judgments
+    /// consume these intervals; ordinary facts also retain their term and
+    /// derivation parents [DIAG-2].
+    fn operation_operands(
+        &mut self,
+        shape: &OperationShape<'_>,
+        state: &FactState,
+    ) -> Option<OperationOperands> {
+        let terms = shape
+            .operands
+            .iter()
+            .map(|operand| self.reasoning().copy_operand(operand))
+            .collect::<Vec<_>>();
+        let view = close(
+            state,
+            &self.vocabulary.terms,
+            &self.vocabulary.goals,
+            &mut self.vocabulary.derivations,
+        );
+        if view.contradictory() {
+            return None;
+        }
+        let mut intervals = Vec::with_capacity(terms.len());
+        let mut related = Vec::with_capacity(terms.len());
+        let mut parents = Vec::new();
+        for (operand, term) in shape.operands.iter().zip(terms) {
+            let span = Span::of(fragment_type(operand.ty())?).interval();
+            let Some(term) = term else {
+                intervals.push(span);
+                related.push(None);
+                continue;
+            };
+            if let Some(value) = self.vocabulary.constant_term_value(term) {
+                intervals.push(Interval::value(value));
+                related.push(None);
+                continue;
+            }
+            let high = view.tight_bound(term, ZERO).unwrap_or(span.high);
+            let low = view
+                .tight_bound(ZERO, term)
+                .and_then(i128::checked_neg)
+                .unwrap_or(span.low);
+            parents.extend(view.bound_proof(term, ZERO, high, &mut self.vocabulary.derivations));
+            parents.extend(view.bound_proof(ZERO, term, -low, &mut self.vocabulary.derivations));
+            intervals.push(Interval::new(low, high));
+            related.push(Some(term));
+        }
+        Some(OperationOperands {
+            intervals,
+            related,
+            parents,
+        })
+    }
+
     // ------------------------------------------------------------------
     // Establishment of one evaluated value's image: S5, S6, S7, S9
     // ------------------------------------------------------------------
@@ -1334,55 +1415,11 @@ impl Analyzer<'_, '_> {
         state: &mut FactState,
         shared_event: &mut Option<(FlowEventKind, FlowEventId)>,
     ) -> Option<EstablishedUnsignedDivision> {
-        let terms = shape
-            .operands
-            .iter()
-            .map(|operand| self.reasoning().copy_operand(operand))
-            .collect::<Vec<_>>();
-        let mut closed = None;
-        let mut intervals = Vec::with_capacity(terms.len());
-        let mut related = Vec::with_capacity(terms.len());
-        let mut parents = Vec::new();
-        for (operand, term) in shape.operands.iter().zip(&terms) {
-            let ty = fragment_type(operand.ty())?;
-            let span = Span::of(ty).interval();
-            let Some(term) = *term else {
-                intervals.push(span);
-                related.push(None);
-                continue;
-            };
-            if let Some(value) = self.vocabulary.constant_term_value(term) {
-                intervals.push(Interval::value(value));
-                related.push(None);
-                continue;
-            }
-            let view = match &closed {
-                Some(view) => Rc::clone(view),
-                None => {
-                    let view = close(
-                        state,
-                        &self.vocabulary.terms,
-                        &self.vocabulary.goals,
-                        &mut self.vocabulary.derivations,
-                    );
-                    closed = Some(Rc::clone(&view));
-                    view
-                }
-            };
-            // At a contradictory point every relation is already derivable.
-            if view.contradictory() {
-                return None;
-            }
-            let high = view.tight_bound(term, ZERO).unwrap_or(span.high);
-            let low = view
-                .tight_bound(ZERO, term)
-                .and_then(i128::checked_neg)
-                .unwrap_or(span.low);
-            parents.extend(view.bound_proof(term, ZERO, high, &mut self.vocabulary.derivations));
-            parents.extend(view.bound_proof(ZERO, term, -low, &mut self.vocabulary.derivations));
-            intervals.push(Interval::new(low, high));
-            related.push(Some(term));
-        }
+        let OperationOperands {
+            intervals,
+            related,
+            mut parents,
+        } = self.operation_operands(shape, state)?;
         let single = intervals
             .iter()
             .all(|interval| interval.low == interval.high);
@@ -1447,7 +1484,10 @@ impl Analyzer<'_, '_> {
         if shape.row != Row::Divide
             || shape.operand.signed()
             || matches!(destination, ValueImage::ResultPayload(_))
-            || terms.iter().any(Option::is_none)
+            || shape
+                .operands
+                .iter()
+                .any(|operand| self.reasoning().copy_operand(operand).is_none())
         {
             return None;
         }
