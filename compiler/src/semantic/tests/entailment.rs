@@ -2404,10 +2404,12 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 // ranged EFF-5 pairs now share CallSeparation at a call.
                 match outcome.family {
                     ObligationFamily::Bounds => assert_eq!(outcome.conjunct, 0),
-                    // Separation for a call, exchange or reference preservation
-                    // is one occurrence, without a conjunct of its own.
+                    // Separation for a call, exchange, atomic target pair or
+                    // reference preservation is one occurrence, without a
+                    // conjunct of its own.
                     ObligationFamily::CallSeparation(_)
                     | ObligationFamily::ExchangeSeparation(_)
+                    | ObligationFamily::AtomicTargetSeparation(_)
                     | ObligationFamily::ReferencePreservation(_) => {
                         assert_eq!(outcome.conjunct, 0)
                     }

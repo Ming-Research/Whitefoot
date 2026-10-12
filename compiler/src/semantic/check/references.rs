@@ -2626,7 +2626,7 @@ impl<'unit> TypeContext<'unit> {
         for (declaration, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
-                exchange: false,
+                occasion: super::super::model::CheckedSeparationOccasion::Call,
                 reference_use: Some(super::super::model::CheckedReferencePreservationUse {
                     site: site.clone(),
                     binder: String::new(),

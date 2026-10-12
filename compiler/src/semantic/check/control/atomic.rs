@@ -1,13 +1,16 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedArrayRoot, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedRangeSource, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
-    CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
+    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedExpression, CheckedMode,
+    CheckedNominalKind, CheckedRangeSource, CheckedSeparationOccasion, CheckedSetTarget,
+    CheckedShared, CheckedStatePath, CheckedStatement, CheckedTarget, CheckedTargetKind,
+    CheckedType, IntegerType, expression_children,
 };
-use super::super::super::places::{CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace};
+use super::super::super::places::{
+    CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations, places_overlap,
+};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
-use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
+use super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::{ControlCounters, ControlScope, StatementResult};
 use crate::semantic::check::FunctionContext;
 use crate::syntax::NodeId;
@@ -23,6 +26,8 @@ pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "re
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one";
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
+pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str = "hold a handle whole once, or name its entries with entry and key-set targets";
+pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str = "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
 struct IndexHeader {
     atom: Option<NodeId>,
@@ -88,26 +93,52 @@ impl Checker<'_, '_> {
                 .declarations
                 .tree
                 .children_with(*place, Production::Psuffix)?;
-            let atom = suffixes
+            let last_offset = suffixes
                 .last()
                 .map(|last| self.types.declarations.tree.subscript_offset(*last))
                 .transpose()?
                 .flatten();
-            let header = IndexHeader { atom };
-            let borrow = if atom.is_some() {
-                Self::check_place_borrow_prefix
-            } else {
-                Self::check_place_borrow
+            // A written last subscript is the target's own index step only
+            // when it applies to a handle place; on any other base it is an
+            // ordinary subscript [OP-4] within the handle place, such as
+            // `&shards^[slot]` over an `Array<Shared<T>, n>`.
+            let (target, atom) = match last_offset {
+                Some(offset) => {
+                    let prefix = self.check_place_borrow_prefix(
+                        context,
+                        *place,
+                        *place,
+                        *place,
+                        &block_bindings,
+                        scope.loops.len(),
+                    )?;
+                    if self.shared_handle_state(&prefix)?.is_some() {
+                        (prefix, Some(offset))
+                    } else {
+                        let whole = self.check_place_borrow(
+                            context,
+                            *place,
+                            *place,
+                            *place,
+                            &block_bindings,
+                            scope.loops.len(),
+                        )?;
+                        (whole, None)
+                    }
+                }
+                None => (
+                    self.check_place_borrow(
+                        context,
+                        *place,
+                        *place,
+                        *place,
+                        &block_bindings,
+                        scope.loops.len(),
+                    )?,
+                    None,
+                ),
             };
-            let target = borrow(
-                self,
-                context,
-                *place,
-                *place,
-                *place,
-                &block_bindings,
-                scope.loops.len(),
-            )?;
+            let header = IndexHeader { atom };
             let paths = target
                 .reference
                 .as_ref()
@@ -116,26 +147,7 @@ impl Checker<'_, '_> {
             if paths.iter().any(|p| matches!(p.root, PlaceRoot::Binding(root) if targets.iter().any(|t| t.binding == root))) || target.effects.reads.iter().any(|p| statement_roots.contains(&p.root)) {
                 return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicKeyReadsTheState { mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT });
             }
-            let state = match (target.mode, target.expression.ty()) {
-                (CheckedMode::Reference, CheckedType::Nominal(nominal)) => {
-                    match self.types.nominal(nominal)?.kind {
-                        CheckedNominalKind::Shared {
-                            state,
-                            shape: CheckedShared::Object,
-                        } => Some((
-                            state,
-                            self.types.source_nominal_instances[nominal.0 as usize]
-                                .as_ref()
-                                .is_some_and(|(template, _)| {
-                                    self.types.nominal_templates[*template].name == "SharedRead"
-                                }),
-                        )),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            let Some((state, read_only)) = state else {
+            let Some((state, read_only)) = self.shared_handle_state(&target)? else {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -147,23 +159,48 @@ impl Checker<'_, '_> {
                     },
                 );
             };
+            // [SHARE-2, OWN-7] two overlapping handle places each have an
+            // index step. A pair that overlaps only unless its positions
+            // differ, such as `&shards^[i]` beside `&shards^[j]`, is the fixed
+            // families' question where the statement begins.
             for (prior, prior_target) in handles.iter().zip(&targets) {
-                if (atom.is_none()
-                    || matches!(
+                if atom.is_some()
+                    && !matches!(
                         prior_target.kind,
                         CheckedTargetKind::Object | CheckedTargetKind::MapWhole
-                    ))
-                    && prior.iter().any(|a| {
-                        paths.iter().any(|b| {
-                            super::super::super::places::places_overlap(
-                                &super::super::super::places::UnprovedSeparations,
-                                a,
-                                b,
-                            )
-                        })
-                    })
+                    )
                 {
-                    return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "a whole target beside another target on an overlapping handle place".to_owned(), mechanical_fix: "hold a handle whole once, or name its entries with entry and key-set targets" });
+                    continue;
+                }
+                for a in prior {
+                    for b in &paths {
+                        if !places_overlap(&UnprovedSeparations, a, b) {
+                            continue;
+                        }
+                        let Some((positions, window)) = Checker::separable_by_position(a, b)
+                        else {
+                            return self.types.declarations.issue_node(
+                                SemanticRule::Share2,
+                                *place,
+                                SemanticIssueKind::AtomicTargetNotShared {
+                                    found: "a whole target beside another target on an overlapping handle place".to_owned(),
+                                    mechanical_fix: SHARE2_HOLD_A_HANDLE_ONCE,
+                                },
+                            );
+                        };
+                        self.body.call_separations.push(CheckedCallSeparation {
+                            site: node_path.clone(),
+                            occasion: CheckedSeparationOccasion::AtomicTargets(
+                                self.types.declarations.tree.path(*place)?.clone(),
+                            ),
+                            reference_use: None,
+                            positions,
+                            window,
+                            left_spelling: self.types.render_resolved_place(a, &block_bindings)?,
+                            right_spelling: self.types.render_resolved_place(b, &block_bindings)?,
+                            one_argument: false,
+                        });
+                    }
                 }
             }
             let borrowed = match paths.as_slice() {
@@ -381,6 +418,32 @@ impl Checker<'_, '_> {
             give_states: checked.give_states,
             loop_transfers: checked.loop_transfers,
         })
+    }
+    /// The state type of the handle place a borrow names, and whether the
+    /// handle is a `SharedRead`, when the place has type `Shared<T>` or
+    /// `SharedRead<T>` [SHARE-1].
+    fn shared_handle_state(
+        &self,
+        borrow: &TypedExpression,
+    ) -> Result<Option<(CheckedType, bool)>, CheckStop> {
+        let (CheckedMode::Reference, CheckedType::Nominal(nominal)) =
+            (borrow.mode, borrow.expression.ty())
+        else {
+            return Ok(None);
+        };
+        let CheckedNominalKind::Shared {
+            state,
+            shape: CheckedShared::Object,
+        } = self.types.nominal(nominal)?.kind
+        else {
+            return Ok(None);
+        };
+        let read_only = self.types.source_nominal_instances[nominal.0 as usize]
+            .as_ref()
+            .is_some_and(|(template, _)| {
+                self.types.nominal_templates[*template].name == "SharedRead"
+            });
+        Ok(Some((state, read_only)))
     }
     fn bind_atomic_reference(
         &mut self,

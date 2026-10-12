@@ -67,6 +67,56 @@ fn main() -> status: std::process::ExitStatus pure waits {
         ],
     },
     RepairPair {
+        name: "indexed-handle-places-possibly-equal.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-possibly-equal.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: UndischargedCallSeparation\n",
+            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+        ],
+        repaired: &[
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-pos-indexed-handle-places-proved-apart.wf"
+            ),
+            br#"fn pour(shards: &Array<Shared<u64>, 4>, from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < 4_u64;
+  requires into < 4_u64;
+} {
+  if from != into {
+    atomic source = &shards^[from], target = &shards^[into] {
+      set target^ = target^ +wrap source^;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn pour(shards: &Array<Shared<u64>, 4>, from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < 4_u64;
+  requires into < 4_u64;
+} {
+  let poured = 0_u64;
+  atomic source = &shards^[from] {
+    set poured = source^;
+  }
+  atomic target = &shards^[into] {
+    set target^ = target^ +wrap poured;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
         name: "map-whole-target-unused.wf",
         rejected: include_bytes!("../../../../tests/conformance/cases/share-neg-target-unused.wf"),
         rule: "SHARE-2",
