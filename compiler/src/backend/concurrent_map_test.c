@@ -173,6 +173,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     (void)object; (void)write; (void)frame; abort();
 }
 void wf__shared_unlock(void *object, uint32_t write) { (void)object; (void)write; abort(); }
+void wf__shared_unlock_unwritten(void *object, uint32_t write) { (void)object; (void)write; abort(); }
 
 unsigned wf__driver_index(void) { return test_driver; }
 
@@ -3204,7 +3205,7 @@ static void shared_map_groups(void) {
     void *object = wf__shared_map_new(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     wf_cmap_holding first, second;
-    wf_atomic_target group[2] = {{object, &first}, {object, &second}};
+    wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 0}};
     for (unsigned present = 0; present < 2; ++present) {
         if (present) {
             wf_table_entry entry;

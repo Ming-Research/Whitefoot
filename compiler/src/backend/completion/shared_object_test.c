@@ -67,9 +67,12 @@
  * cursor, or of a watch registered after the notifying write's cutoff: the
  * owner's release must sweep again and wake it, with no later write.
  *
- * Last, a statement's first type group asks for an object an aged watch's
+ * Then a statement's first type group asks for an object an aged watch's
  * notification reserves: it parks holding none of its members until that
- * watch's attempt has completed.
+ * watch's attempt has completed. A group's release gives up a member no
+ * target may write without entering the wake. Last, the rescan above, when
+ * the notification's owner holds the object as a borrower of a hold an
+ * unlock handed a parked context.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -1409,7 +1412,9 @@ static void rescan_phase_end(void) {
  * back; once W's attempt has completed, R's resumed acquire takes both. A
  * group take that ignores the reservation, as one that took every member as
  * an earlier object's holder did, takes X at once. */
-typedef struct group_target { void *object; void *hold; } group_target;
+/* A group record's target (bridge.h): its object, its table hold, and
+ * whether the statement may write the object. */
+typedef struct group_target { void *object; void *hold; uint32_t wrote; } group_target;
 static void *group_x, *group_y;
 static wf_wake_test group_test;
 static group_target group_record[2];
@@ -1426,9 +1431,10 @@ static void group_w_step(test_frame *f) {
     }
     if (group_r_parks != 1u)
         fail("the reserved watch ran before the group asked for its object (parks, expected)", group_r_parks, 1);
-    /* A group that parked with Y held would keep this take spinning; the
-     * test's alarm then ends the run. */
-    wf__shared_take(group_y, 1u);
+    /* Y is free while R's group is parked: an acquire of a held Y would
+     * spin a bounded time and park, which answers nonzero. */
+    if (wf__shared_acquire(group_y, 1u, f))
+        fail("a parked first group held a later member (parks, done)", group_r_parks, group_w_done);
     wf__shared_unlock_unwritten(group_y, 1u);
     group_w_done = 1u;
     wf__shared_unlock_unwritten(group_x, 1u);
@@ -1447,8 +1453,8 @@ static void group_r_step(test_frame *f) {
         wf__shared_unlock(group_x, 1u);
         f->begun = 1;
     }
-    group_record[0] = (group_target){group_y, NULL};
-    group_record[1] = (group_target){group_x, NULL};
+    group_record[0] = (group_target){group_y, NULL, 1u};
+    group_record[1] = (group_target){group_x, NULL, 0u};
     if (wf__atomic_group_acquire(group_record, 2u, f)) {
         group_r_parks += 1u;
         if (group_w_done)
@@ -1492,6 +1498,324 @@ static void group_phase_end(void) {
         wf__shared_free(group_y);
 }
 
+/* A group's release gives up each object as its record says: watcher W
+ * registers on X, testing word0 == 1, which already holds, while its guard
+ * also needs word1 == 5. R takes the group {X, Y} marked written for
+ * neither and releases it, which must enter no wake; then marked written
+ * for X only, writing word1 = 5, whose release must notify W. A release
+ * that gave up every member as written notifies W the first time. */
+static void *release_x, *release_y;
+static wf_wake_test release_test;
+static unsigned release_w_evaluations, release_w_done;
+
+static void release_w_step(test_frame *f) {
+    if (wf__shared_acquire(release_x, 1u, f))
+        return;
+    release_w_evaluations += 1u;
+    if (state_of(release_x)[1] != 5u) {
+        if (!wf__shared_watch(release_x, 1u, f, &release_test))
+            fail("the release case's watch parked at once (evaluations, expected)", release_w_evaluations, 1);
+        return;
+    }
+    release_w_done = 1u;
+    wf__shared_unlock_unwritten(release_x, 1u);
+    f->done = 1;
+}
+
+static void release_r_step(test_frame *f) {
+    group_target record[2];
+    if (f->begun == 0) {
+        if (release_w_evaluations != 1u)
+            fail("the release case's watch had not parked before R ran (evaluations, expected)",
+                 release_w_evaluations, 1);
+        record[0] = (group_target){release_y, NULL, 0u};
+        record[1] = (group_target){release_x, NULL, 0u};
+        if (wf__atomic_group_acquire(record, 2u, f))
+            fail("an uncontended group parked (written, evaluations)", 0, release_w_evaluations);
+        uint64_t written = atomic_load(&watch_written), ready = atomic_load(&watch_ready);
+        wf__atomic_group_release(record, 2u, 0u, 0u, 0u);
+        if (atomic_load(&watch_written) != written || atomic_load(&watch_ready) != ready)
+            fail("a group release marked unwritten entered the wake (woken, writes seen)",
+                 atomic_load(&watch_ready) - ready, atomic_load(&watch_written) - written);
+        record[0] = (group_target){release_y, NULL, 0u};
+        record[1] = (group_target){release_x, NULL, 1u};
+        if (wf__atomic_group_acquire(record, 2u, f))
+            fail("an uncontended group parked (written, evaluations)", 1, release_w_evaluations);
+        state_of(release_x)[1] = 5u;
+        ready = atomic_load(&watch_ready);
+        wf__atomic_group_release(record, 2u, 0u, 0u, 0u);
+        if (atomic_load(&watch_ready) - ready != 1u)
+            fail("a group release marked written for its watched member woke other than its watch (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 1);
+        f->begun = 1;
+    }
+    while (!release_w_done) {
+        if (++f->statements > RESCAN_PASSES)
+            fail("the release case's watch never completed (evaluations, done)", release_w_evaluations,
+                 release_w_done);
+        if (wf__context_pass(f))
+            return;
+    }
+    f->done = 1;
+}
+
+static void release_phase_begin(test_frame *root) {
+    atomic_store(&guard_now, 1u);
+    release_w_evaluations = release_w_done = 0u;
+    wake_equal(&release_test, 1u);
+    release_x = wf__shared_new(2u * sizeof(uint64_t));
+    release_y = wf__shared_new(sizeof(uint64_t));
+    state_of(release_x)[0] = 1u;
+    state_of(release_x)[1] = 0u;
+    state_of(release_y)[0] = 0u;
+    launch_guard(root, release_w_step);
+    launch(root, release_r_step);
+}
+
+static void release_phase_end(void) {
+    if (!release_w_done || release_w_evaluations != 2u)
+        fail("the release case did not finish as expected (done, evaluations)", release_w_done,
+             release_w_evaluations);
+    if (wf__shared_release(release_x))
+        wf__shared_free(release_x);
+    if (wf__shared_release(release_y))
+        wf__shared_free(release_y);
+}
+
+/* The rescan of a borrowed hold's release (bridge.c's give-back path):
+ * watchers A (time 1, guard word0 == 1 and word1 == 5) and O (time 2, a
+ * statement holding an earlier object E, guard word0 == 1) both test
+ * word0 == 1. R writes word0 = 1, which notifies A; A's false retry passes
+ * the notification to O. Before O retries, thread H holds X while P parks
+ * behind it and wakes P in vain twice, P's driver held by a context while H
+ * unlocks and takes X again; P parks a third time. O's retry takes E and,
+ * while it keeps the driver, H writes word1 = 5 and unlocks, which hands X
+ * to P and, O owning the notification, marks O's rescan for A, an older
+ * watch whose test holds. O then borrows the hold handed to P, as a
+ * statement holding earlier locks does, reads its guard true and gives the
+ * hold back without writing: the give-back's rescan alone wakes A. */
+static void *borrowed_x, *borrowed_e;
+static wf_wake_test borrowed_a_test, borrowed_o_test;
+static pthread_t borrowed_holder;
+static _Atomic int borrowed_gate, borrowed_gate_seen, borrowed_h_holds, borrowed_handoff_ready, borrowed_go,
+    borrowed_h_done;
+static _Atomic uint64_t borrowed_p_suspends;
+static unsigned borrowed_ids, borrowed_a_parks, borrowed_a_done, borrowed_o_done, borrowed_p_done;
+static struct timespec borrowed_started;
+
+static void borrowed_bound(const char *what, unsigned long long a, unsigned long long b) {
+    if (seconds_since(&borrowed_started) >= STALL_SECONDS)
+        fail(what, a, b);
+}
+
+/* One look at the gate from the driver: while H holds it open, the running
+ * context keeps the driver so that P cannot run; otherwise it passes. */
+static int borrowed_pass(test_frame *f) {
+    unsigned spins = 0u;
+    if (atomic_load(&borrowed_gate)) {
+        atomic_store(&borrowed_gate_seen, 1);
+        while (atomic_load(&borrowed_gate))
+            relax(&spins);
+        atomic_store(&borrowed_gate_seen, 0);
+        return 0;
+    }
+    return wf__context_pass(f);
+}
+
+static void *borrowed_h_thread(void *arg) {
+    (void)arg;
+    unsigned spins = 0u;
+    wf__shared_take(borrowed_x, 1u);
+    atomic_store(&borrowed_h_holds, 1);
+    for (uint64_t wake = 1u; wake <= VAIN_WAKES; ++wake) {
+        while (atomic_load(&borrowed_p_suspends) != wake) {
+            borrowed_bound("P did not park behind H (suspends, wake)", atomic_load(&borrowed_p_suspends), wake);
+            relax(&spins);
+        }
+        atomic_store(&borrowed_gate, 1);
+        while (!atomic_load(&borrowed_gate_seen))
+            relax(&spins);
+        wf__shared_unlock_unwritten(borrowed_x, 1u);
+        wf__shared_take(borrowed_x, 1u);
+        atomic_store(&borrowed_gate, 0);
+    }
+    while (atomic_load(&borrowed_p_suspends) != VAIN_WAKES + 1u) {
+        borrowed_bound("P did not park a third time (suspends, expected)", atomic_load(&borrowed_p_suspends),
+                       VAIN_WAKES + 1u);
+        relax(&spins);
+    }
+    atomic_store(&borrowed_handoff_ready, 1);
+    while (!atomic_load(&borrowed_go)) {
+        borrowed_bound("O's retry never asked for the hand-off (ready, go)", 1, 0);
+        relax(&spins);
+    }
+    state_of(borrowed_x)[1] = 5u;
+    wf__shared_unlock(borrowed_x, 1u);
+    atomic_store(&borrowed_h_done, 1);
+    return NULL;
+}
+
+static void borrowed_a_step(test_frame *f) {
+    if (!f->begun) {
+        f->begun = (int)++borrowed_ids;
+        atomic_store(&guard_now, 1u);
+    }
+    if (wf__shared_acquire(borrowed_x, 1u, f))
+        return;
+    uint64_t *state = state_of(borrowed_x);
+    if (state[0] == 1u && state[1] == 5u) {
+        borrowed_a_done = 1u;
+        wf__shared_unlock_unwritten(borrowed_x, 1u);
+        f->done = 1;
+        return;
+    }
+    borrowed_a_parks += 1u;
+    if (!wf__shared_watch(borrowed_x, 1u, f, &borrowed_a_test))
+        fail("A's park answered at once (parks, expected)", borrowed_a_parks, 0);
+}
+
+static void borrowed_o_step(test_frame *f) {
+    guard_frame *g = (guard_frame *)f;
+    if (!f->begun) {
+        f->begun = (int)++borrowed_ids;
+        atomic_store(&guard_now, 2u);
+    }
+    if (f->statements != 0u) {
+        /* The notified retry waits, holding nothing, until P waits with
+         * two vain wakes behind H. */
+        while (!atomic_load(&borrowed_handoff_ready)) {
+            borrowed_bound("the hand-off to P was never set up (P's suspends, A's parks)",
+                           atomic_load(&borrowed_p_suspends), borrowed_a_parks);
+            if (borrowed_pass(f))
+                return;
+        }
+    }
+    if (wf__shared_acquire(borrowed_e, 1u, f))
+        return;
+    if (f->statements != 0u) {
+        unsigned spins = 0u;
+        atomic_store(&borrowed_go, 1);
+        while (!atomic_load(&borrowed_h_done))
+            relax(&spins);
+        uint64_t lent_before = atomic_load(&lent);
+        wf__shared_take(borrowed_x, 1u);
+        if (atomic_load(&lent) - lent_before != 1u)
+            fail("O's retry did not borrow the hold handed to P (lent, expected)", atomic_load(&lent) - lent_before, 1);
+        if (state_of(borrowed_x)[0] != 1u)
+            fail("O's guard read false on its notified retry (word0, expected)", state_of(borrowed_x)[0], 1);
+        uint64_t ready = atomic_load(&watch_ready);
+        wf__shared_unlock_unwritten(borrowed_x, 1u);
+        if (atomic_load(&watch_ready) - ready != 1u || borrowed_a_done)
+            fail("a borrowed hold's release did not sweep again for an older watch a write during its notification made true (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 1);
+        wf__shared_unlock_unwritten(borrowed_e, 1u);
+        borrowed_o_done = 1u;
+        f->done = 1;
+        return;
+    }
+    wf__shared_take(borrowed_x, 1u);
+    if (state_of(borrowed_x)[0] == 1u)
+        fail("O's first guard read true (word0, expected)", state_of(borrowed_x)[0], 0);
+    f->statements = 1u;
+    wf__watch_begin(g->watch);
+    wf__watch_object(g->watch, borrowed_x, &borrowed_o_test);
+    wf__shared_unlock_unwritten(borrowed_x, 1u);
+    wf__shared_unlock_unwritten(borrowed_e, 1u);
+    if (!wf__watch_park(g->watch, f))
+        fail("O's first park answered at once (A's parks, expected)", borrowed_a_parks, 1);
+}
+
+/* P asks for X once H holds it; each park it reports is a real one, made
+ * on a fresh resumption, before its pass count can hand the driver on. */
+static void borrowed_p_step(test_frame *f) {
+    unsigned looks = 0u;
+    if (!f->begun) {
+        while (!atomic_load(&borrowed_h_holds) || looks >= 32u) {
+            borrowed_bound("H never held X for P (A's parks, looks)", borrowed_a_parks, looks);
+            looks += 1u;
+            if (borrowed_pass(f))
+                return;
+        }
+        f->begun = 1;
+    }
+    if (wf__shared_acquire(borrowed_x, 1u, f)) {
+        atomic_fetch_add(&borrowed_p_suspends, 1);
+        return;
+    }
+    if (!borrowed_o_done)
+        fail("P took X before O's borrowed retry ended (suspends, O done)", atomic_load(&borrowed_p_suspends),
+             borrowed_o_done);
+    borrowed_p_done = 1u;
+    wf__shared_unlock_unwritten(borrowed_x, 1u);
+    f->done = 1;
+}
+
+static void borrowed_r_step(test_frame *f) {
+    if (f->begun == 0) {
+        if (borrowed_a_parks != 1u)
+            fail("A had not parked before R ran (parks, expected)", borrowed_a_parks, 1);
+        atomic_store(&guard_now, 10u);
+        if (wf__shared_acquire(borrowed_x, 1u, f))
+            fail("an uncontended statement suspended (borrowed, parks)", 0, borrowed_a_parks);
+        state_of(borrowed_x)[0] = 1u;
+        wf__shared_unlock(borrowed_x, 1u);
+        f->begun = 1;
+    }
+    if (f->begun == 1) {
+        /* A's false retry passes the notification to O. */
+        while (borrowed_a_parks != 2u) {
+            borrowed_bound("A's false retry did not re-register (parks, expected)", borrowed_a_parks, 2);
+            if (borrowed_pass(f))
+                return;
+        }
+        pthread_create(&borrowed_holder, NULL, borrowed_h_thread, NULL);
+        f->begun = 2;
+    }
+    while (!borrowed_a_done || !borrowed_o_done || !borrowed_p_done) {
+        borrowed_bound("the borrowed rescan case did not finish (A done, O done)", borrowed_a_done,
+                       borrowed_o_done);
+        if (borrowed_pass(f))
+            return;
+    }
+    f->done = 1;
+}
+
+static void borrowed_phase_begin(test_frame *root) {
+    clock_gettime(CLOCK_MONOTONIC, &borrowed_started);
+    atomic_store(&guard_now, 1u);
+    atomic_store(&woken, 0);
+    atomic_store(&borrowed_gate, 0);
+    atomic_store(&borrowed_gate_seen, 0);
+    atomic_store(&borrowed_h_holds, 0);
+    atomic_store(&borrowed_handoff_ready, 0);
+    atomic_store(&borrowed_go, 0);
+    atomic_store(&borrowed_h_done, 0);
+    atomic_store(&borrowed_p_suspends, 0);
+    borrowed_ids = borrowed_a_parks = borrowed_a_done = borrowed_o_done = borrowed_p_done = 0u;
+    wake_equal(&borrowed_a_test, 1u);
+    wake_equal(&borrowed_o_test, 1u);
+    borrowed_e = wf__shared_new(sizeof(uint64_t));
+    borrowed_x = wf__shared_new(2u * sizeof(uint64_t));
+    state_of(borrowed_e)[0] = 0u;
+    state_of(borrowed_x)[0] = state_of(borrowed_x)[1] = 0u;
+    launch_guard(root, borrowed_a_step);
+    launch_guard(root, borrowed_o_step);
+    launch(root, borrowed_p_step);
+    launch(root, borrowed_r_step);
+}
+
+static void borrowed_phase_end(void) {
+    pthread_join(borrowed_holder, NULL);
+    if (!borrowed_a_done || !borrowed_o_done || !borrowed_p_done || borrowed_a_parks != 2u
+        || atomic_load(&borrowed_p_suspends) != VAIN_WAKES + 1u)
+        fail("the borrowed rescan case did not finish as expected (A's parks, P's suspends)", borrowed_a_parks,
+             atomic_load(&borrowed_p_suspends));
+    if (wf__shared_release(borrowed_x))
+        wf__shared_free(borrowed_x);
+    if (wf__shared_release(borrowed_e))
+        wf__shared_free(borrowed_e);
+}
+
 /* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
@@ -1510,7 +1834,11 @@ static void root_step(test_frame *f) {
          * notification that loses the wake of an older watch behind the
          * sweep's cursor or of one registered past its cutoff; group-turn
          * catches a statement's first type group taking an object a live
-         * reservation keeps, or parking with a member held. */
+         * reservation keeps, or parking with a later member held;
+         * group-release catches a group release that gives up a member no
+         * target may write as written; rescan-borrowed catches a borrowed
+         * hold's release that drops the rescan a write during its
+         * notification marked. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1534,6 +1862,12 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "group-turn")) {
                 root_phase = 13;
                 group_phase_begin(f);
+            } else if (!strcmp(selected_case, "group-release")) {
+                root_phase = 14;
+                release_phase_begin(f);
+            } else if (!strcmp(selected_case, "rescan-borrowed")) {
+                root_phase = 15;
+                borrowed_phase_begin(f);
             } else {
                 fail("unknown SHARED_OBJECT_TEST_CASE", 0, 0);
             }
@@ -1647,6 +1981,26 @@ static void root_step(test_frame *f) {
     }
     if (root_phase == 13) {
         group_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 14;
+        release_phase_begin(f);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 14) {
+        release_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 15;
+        borrowed_phase_begin(f);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 15) {
+        borrowed_phase_end();
         f->done = 1;
         return;
     }

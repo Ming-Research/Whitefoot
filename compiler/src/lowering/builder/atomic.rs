@@ -444,6 +444,7 @@ impl IrBuilder<'_> {
                                 .map_err(|_| LoweringFailure::CounterOverflow)?,
                             object: target.object,
                             hold,
+                            wrote: target.wrote,
                         },
                     )?;
                 }

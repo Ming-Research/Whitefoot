@@ -241,8 +241,14 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
 void wf__watch_table(void *watch, void *table) { wf__watch_unit(watch, &((wf_cmap *)table)->watch); }
 
 /* One type group, sorted by object identity before any of its objects is
- * held. Equal map handles combine their keys before taking the map once. */
-typedef struct wf_atomic_target { void *object; wf_cmap_holding *hold; } wf_atomic_target;
+ * held. Equal map handles combine their keys before taking the map once.
+ * `wrote` says whether the statement may write an ordinary object; it
+ * travels with its target through the sort. */
+typedef struct wf_atomic_target {
+    void *object;
+    wf_cmap_holding *hold;
+    uint32_t wrote;
+} wf_atomic_target;
 
 /* Sorts the group by identity; a sorted group stays as it is, so a
  * statement that resumes and asks again sees the same order. */
@@ -324,10 +330,18 @@ void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
     while (count != 0) {
         uint64_t first = count - 1;
         while (first != 0 && targets[first - 1].object == targets[count - 1].object) --first;
-        if (targets[first].hold != NULL)
+        if (targets[first].hold != NULL) {
             wf__table_hold_release(targets[first].hold, tag_offset, tag_width, none_tag);
-        else
-            wf__shared_unlock(targets[first].object, 1);
+        } else {
+            /* An object several targets name is written if any may write
+             * it; one none may write starts no sweep of its watches. */
+            uint32_t wrote = 0;
+            for (uint64_t i = first; i < count; ++i) wrote |= targets[i].wrote;
+            if (wrote)
+                wf__shared_unlock(targets[first].object, 1);
+            else
+                wf__shared_unlock_unwritten(targets[first].object, 1);
+        }
         count = first;
     }
 }

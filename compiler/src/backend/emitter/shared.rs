@@ -24,7 +24,7 @@ use crate::{IrRecord, IrRecordKind, IrShared, IrWakeTest};
 /// The frame storage of one record, by its kind.
 fn record_storage(kind: IrRecordKind) -> String {
     match kind {
-        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr }}]"),
+        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr, i32 }}]"),
         IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
         IrRecordKind::Entries => "{ ptr, i64, i64 }".to_owned(),
@@ -156,6 +156,7 @@ impl FunctionEmitter<'_, '_> {
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     ) -> Result<(), BackendFailure> {
         let IrRecordKind::AtomicGroup { count } = record.kind() else {
             return Err(BackendFailure::InvalidIr);
@@ -166,6 +167,14 @@ impl FunctionEmitter<'_, '_> {
         let bare = self.bare(result);
         let storage = record_storage(record.kind());
         writeln!(self.output,"  %{bare}.object = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 0\n  store ptr {}, ptr %{bare}.object, align 8\n  %{bare}.hold = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 1\n  store ptr {}, ptr %{bare}.hold, align 8",record_name(record),self.value_name(object),record_name(record),hold.map(record_name).unwrap_or_else(||"null".to_owned())).map_err(|_|BackendFailure::TextEmission)?;
+        // Whether the group's release gives the object up as written.
+        writeln!(
+            self.output,
+            "  %{bare}.wrote = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 2\n  store i32 {}, ptr %{bare}.wrote, align 8",
+            record_name(record),
+            u32::from(wrote)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
     pub(super) fn emit_atomic_group_call(

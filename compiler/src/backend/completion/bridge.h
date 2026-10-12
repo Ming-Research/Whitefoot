@@ -507,7 +507,11 @@ void wf__atomic_group_take(void *record, uint64_t count);
  * nonzero, with nothing held, when the frame must suspend and call again,
  * and zero once it holds every target. */
 int wf__atomic_group_acquire(void *record, uint64_t count, void *frame);
-/* Each group has one entry layout; object-only groups consume no metadata. */
+/* Each group has one entry layout; object-only groups consume no metadata.
+ * A record's target is its object, its table hold or null, and a 32-bit
+ * flag saying whether the statement may write that ordinary object; the
+ * release gives up an object no target may write as
+ * `wf__shared_unlock_unwritten` does. */
 void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
                               uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);

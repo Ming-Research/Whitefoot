@@ -1348,11 +1348,16 @@ pub enum IrOperation {
         nominal: IrNominalId,
         capacity: IrValueId,
     },
+    /// Fills target `index` of a type group's record: its object, its
+    /// table hold when it is a map, and, for an ordinary object, whether the
+    /// statement's block or guard may write it, so that the group's release
+    /// gives it up as written only then [SHARE-3]. Defines `Unit`.
     AtomicGroupTarget {
         record: IrRecord,
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     },
     /// [SHARE-2, SHARE-3] takes every target of a type group, as
     /// `SharedTake` does, for a statement already holding an earlier group.

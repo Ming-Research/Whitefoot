@@ -1213,9 +1213,10 @@ This section describes revision `faccdca4e`, the measured one; before merge
 the runtime kept only design A, and the other arms and the temporary
 workflow were removed.
 
-Built on top of `8c2ed0ff2` after the owner selected design A. Nothing below
-has been compiled or run yet: every build, test and measurement belongs to
-CI, and the workflow below is the registered experiment's construction.
+Built on top of `8c2ed0ff2` after the owner selected design A. This section
+was written before the run that section 8 reports, when nothing below had
+been compiled or run; the workflow below was the registered experiment's
+construction.
 
 **Compiler.**
 

@@ -2743,7 +2743,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 index,
                 object,
                 hold,
-            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+                wrote,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold, *wrote),
             IrOperation::AtomicGroupTake { record } => {
                 self.emit_atomic_group_call(result, *record, None, true)
             }
