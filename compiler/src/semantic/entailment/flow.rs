@@ -132,6 +132,8 @@ enum KillEvent {
     Write {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         /// For a callee's declared write, the places the same call would
         /// write if the row declared only what the body writes [EFF-2];
@@ -158,6 +160,8 @@ enum KillEvent {
     EntryImageHolderWrite {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         narrowed: Narrowed,
     },
@@ -2086,6 +2090,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        relocation: false,
                         narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
@@ -2315,6 +2320,7 @@ mod range_argument_kill_tests {
                 let event = KillEvent::Write {
                     element: matches!(path.last(), Some(PlaceStep::Index(_))),
                     place: place(path),
+                    relocation: false,
                     source: crate::NodePath { components: vec![] },
                     narrowed: None,
                 };

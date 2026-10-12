@@ -1,0 +1,16 @@
+fn reserve(cell: &Box<Slots<Slots<u64, 4>>>, capacity: u64, n: u64) -> result: unit reads(cell) contract {
+  requires 0_u64 < cell^.inner.len;
+  requires capacity >= cell^.inner.cap;
+} {
+  let selected = &cell^.inner[0_u64];
+  set selected = &cell^.inner[0_u64];
+  let fits = selected^.len < n;
+  if fits {
+    let predecessor = n - 1_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

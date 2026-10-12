@@ -576,6 +576,47 @@ variance and not that change's cost. The owner approved a raise of 10 s, to
 45 s, on the status board (card gran-map-tsan-budget-raise, option A); macOS
 stays at 45 s.
 
+### macOS runner queue
+
+Every successful `gate.yml` run created between 2026-10-11 12:04Z and
+22:53Z, 58 runs of 4 groups on each platform, read from the Actions API
+(each job's `created_at`, `started_at` and `completed_at`). Twelve Linux
+and nine macOS jobs, re-run attempts, report a start before their creation;
+those waits count as zero:
+
+| Platform | Jobs | Job run, median / max (min) | Slowest job's wait per run, median / mean / max (min) |
+| --- | ---: | --- | --- |
+| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 1.8 / 12.0 |
+| macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
+
+A run's wall from its first job's creation to its last job's completion had
+a median of 8.4 minutes and a maximum of 43.6.
+
+The wait follows load. By the hour the run was created, the slowest macOS
+job's wait per run (job creation to start, minutes):
+
+| Hour (UTC) | Runs | Median | Max |
+| --- | ---: | ---: | ---: |
+| 12 | 10 | 5.5 | 11.4 |
+| 13 | 4 | 2.3 | 7.0 |
+| 14 | 8 | 3.1 | 5.3 |
+| 15 | 7 | 0.9 | 2.4 |
+| 16–20 | 9 | 0.1–0.2 | 0.2 |
+| 21 | 13 | 13.6 | 37.5 |
+| 22 | 7 | 10.3 | 26.8 |
+
+Measured instead from the run's creation to its slowest macOS job's start,
+which adds the selection job and any later re-run of failed jobs, the median
+is 5.4, the mean 9.6 and the 21Z and 22Z medians 15.9 and 22.4; the
+coordinator's count over 55 of these runs gave a median of 5.1, a mean of 8.7
+and a maximum of 39.7, and its earlier 13.5-minute mean covered the 25 most
+recent runs, all in the busy hours. Several sessions pushed work branches in
+those hours, and every push queued four macOS jobs; the macOS wait, not the
+jobs, made the slow runs. From this, the gate runs macOS only where its
+answer decides a merge (a ready pull request, `main`, a manual run) and checks
+both platforms per revision in a final job
+([decision](../../../design/compiler/verification.md)).
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

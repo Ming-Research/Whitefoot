@@ -2638,6 +2638,10 @@ impl<'program> Walker<'program> {
             && matches!(callee.name.as_str(), "place_back" | "take_back"))
         .then(|| self.place_window_call(state, call, &callee.name, &values, result))
         .flatten();
+        let relocated_window = formal.is_none()
+            && self.prelude.contains(&callee.declaration)
+            && matches!(callee.name.as_str(), "grow" | "grow_paged")
+            && self.relocate_window_call(state, call, &values);
         // Reads and writes through reference arguments [EFF-5].
         let (writes, reads): (Vec<crate::DeclarationId>, Vec<crate::DeclarationId>) = match formal {
             Some(effects) => (
@@ -2658,7 +2662,9 @@ impl<'program> Walker<'program> {
             ),
         };
         for (position, parameter) in callee.parameters.iter().enumerate() {
-            if !parameter.mode.is_reference() || (window_result.is_some() && position == 0) {
+            if !parameter.mode.is_reference()
+                || ((window_result.is_some() || relocated_window) && position == 0)
+            {
                 continue;
             }
             let Some(Value::Ref(view)) = values.get(position).cloned() else {
@@ -2928,6 +2934,7 @@ impl<'program> Walker<'program> {
         if let Some(outer) = &mut self.world.log {
             outer.containers.extend(total.containers.iter().copied());
             outer.descriptors.extend(total.descriptors.iter().copied());
+            outer.capacities.extend(total.capacities.iter().copied());
             for (container, paths) in &total.projections {
                 outer
                     .projections
@@ -2969,6 +2976,11 @@ impl<'program> Walker<'program> {
         for container in log.descriptors {
             if existed(&self.world.containers[container as usize].location) {
                 deciding |= total.descriptors.insert(container);
+            }
+        }
+        for container in log.capacities {
+            if existed(&self.world.containers[container as usize].location) {
+                deciding |= total.capacities.insert(container);
             }
         }
         for (container, paths) in log.projections {
@@ -3019,6 +3031,11 @@ impl<'program> Walker<'program> {
             header
                 .generations
                 .insert(*container, self.world.new_generation());
+        }
+        for container in &modified.capacities {
+            if !modified.containers.contains(container) && !modified.descriptors.contains(container) {
+                header.relocate_container(&mut self.world, *container);
+            }
         }
         for (container, projections) in &modified.projections {
             if modified.containers.contains(container) {
