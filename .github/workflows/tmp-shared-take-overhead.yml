@@ -15,8 +15,6 @@
 name: tmp-shared-take-overhead
 
 on:
-  push:
-    branches: [claude/shared-take-fair-2]
   workflow_dispatch:
     inputs:
       mode:
@@ -51,7 +49,6 @@ env:
 
 jobs:
   measure:
-    if: github.event_name == 'workflow_dispatch'
     name: shared-take overhead (${{ inputs.mode }})
     runs-on: [self-hosted, 14900k]
     # Main: 6 blocks x 4 lists x 6 arms x about 3.1 s is about 7.5 minutes of
