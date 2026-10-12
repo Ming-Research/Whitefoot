@@ -73,6 +73,39 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
 }
 
 #[test]
+fn projected_contract_measure_has_the_operation_forms_affine_image() {
+    with_analyzer(|analyzer| {
+        let integer = CheckedType::Integer(IntegerType::U64);
+        let projected = goal_binding_place(
+            BindingId(0),
+            [GoalProjection::Measure(CheckedMeasure::Length)],
+            integer,
+        );
+        let operation = GoalExpression::Operation {
+            row: GoalOperation::ContainerMeasure {
+                measure: CheckedMeasure::Length,
+                measured: MeasuredKind::KeySet,
+                element: None,
+                constant: None,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: integer,
+            arguments: vec![goal_binding_place(BindingId(0), [], CheckedType::KeySet)],
+        };
+        let state = AffineFlowState::default();
+        let expected = analyzer
+            .reasoning()
+            .affine_goal_value(&operation, &state)
+            .expect("the ordinary measure operation has an affine image");
+        assert_eq!(
+            analyzer.reasoning().affine_goal_value(&projected, &state),
+            Some(expected)
+        );
+    });
+}
+
+#[test]
 fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
     use crate::semantic::entailment::state::{GoalOrigin, join};
     use crate::semantic::goal::GoalAdmission;

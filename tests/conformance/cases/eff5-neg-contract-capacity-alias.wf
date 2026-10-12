@@ -1,0 +1,14 @@
+fn helper(source: &Slots<u64>, target: &Slots<u64>) -> result: unit writes(target) contract {
+  requires source^.cap >= 1_u64;
+  requires target^.len == 1_u64;
+} {
+  set target^[0_u64] = 1_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let values = box_slots_new::<u64>(capacity: 4_u64);
+  place_back(window: &values.inner, value: 0_u64);
+  helper(source: &values.inner, target: &values.inner);
+  return unit;
+}
