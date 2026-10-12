@@ -31,16 +31,20 @@ permissions:
   contents: read
   pull-requests: read
 
-# A ready event and a push to the same branch share one group, so the later
-# run, which covers both platforms whenever the pull request is ready, wins.
-# If a push run asks GitHub before the ready state is visible, it runs Linux
-# only and Gate on both platforms is skipped, not passed, for that head: a
-# merge requires that job's success, and a manual run qualifies the head.
+# Pushes to one branch share a group, so a later push cancels the run of an
+# earlier head. The event of marking a pull request ready has a group of its
+# own, marked before the ref so that no branch name can reach it: it runs
+# both platforms on the head it was raised for, and cancelling the push run of
+# that same head, or being cancelled by it, would only leave a cancelled Gate
+# on both platforms beside the successful one. If a push run
+# asks GitHub before the ready state is visible, it runs Linux only and Gate on
+# both platforms is skipped, not passed, for that run; the ready run, a later
+# push or a manual run qualifies the head.
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
 concurrency:
-  group: gate-${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: gate-${{ github.event_name == 'pull_request' && 'ready-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:

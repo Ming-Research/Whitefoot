@@ -2658,6 +2658,7 @@ pub(super) fn summary_entailment(
     }
     super::super::entailment::FunctionEntailment {
         body_disposition: entailment.body_disposition,
+        operation_intervals: entailment.operation_intervals.clone(),
         loop_invariants: entailment.loop_invariants.clone(),
         postconditions,
         ..super::super::entailment::FunctionEntailment::default()

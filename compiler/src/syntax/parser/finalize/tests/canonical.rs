@@ -36,6 +36,20 @@ fn exact_empty_and_nonempty_source_forests_publish_canonical_syntax() {
     }
 }
 
+/// [GRAM-5, RANGE-1, FORM-2] a Bool guard and comparison guards share the
+/// comma-separated guard list; the colon still begins relation conclusions.
+#[test]
+fn range_bool_guards_round_trip_with_comparison_guards() {
+    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k], enabled: k == k;\n} {\n  return unit;\n}\n";
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+    audit_source(source, |outcome| {
+        assert!(
+            matches!(outcome, CanonicalOutcome::Complete(_)),
+            "bare and comparison guards must render canonically: {outcome:?}"
+        );
+    });
+}
+
 /// [FORM-2] a `<` or `>` selected by `compare_op` belongs to neither
 /// attachment set, so a comparison is spaced while a type-argument list and
 /// its `::` delimiter stay compact; the attached spelling of a comparison is
