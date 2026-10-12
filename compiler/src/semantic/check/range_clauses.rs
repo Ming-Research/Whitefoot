@@ -8,7 +8,7 @@
 //! it forms selects an existing element, and every user of an instance proves
 //! that where it uses one [RANGE-3].
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
@@ -62,6 +62,8 @@ struct RangeNames {
     /// Set when a term's type leaves the clause stating nothing at this
     /// concrete instance.
     unformed: Cell<bool>,
+    /// Typed source reads retained before arithmetic normalization [EFF-5].
+    contract_reads: RefCell<Vec<CheckedRangeTerm>>,
 }
 
 /// What the suffixes of a range place have selected so far.
@@ -174,6 +176,7 @@ impl Checker<'_, '_> {
             binders,
             guards,
             conclusions,
+            contract_reads: names.contract_reads.into_inner(),
         }))
     }
 
@@ -315,6 +318,7 @@ impl Checker<'_, '_> {
             binders: Vec::new(),
             guards: Vec::new(),
             conclusions: relation,
+            contract_reads: names.contract_reads.into_inner(),
         }))
     }
 
@@ -991,7 +995,14 @@ impl Checker<'_, '_> {
                 "read the value or the element instead of borrowing it",
             );
         };
-        self.range_place(context, place, bindings, names)
+        let operand = self.range_place(context, place, bindings, names)?;
+        // Preserve the already-typed place before range_sum can cancel it
+        // or multiply it by zero. Clause erasure changes no alias premise.
+        names
+            .contract_reads
+            .borrow_mut()
+            .push(operand.term().clone());
+        Ok(operand)
     }
 
     fn range_place(

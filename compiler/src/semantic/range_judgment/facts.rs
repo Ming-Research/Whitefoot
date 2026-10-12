@@ -1324,6 +1324,7 @@ mod aggregate_tests {
         Fact {
             frame,
             clause: CheckedRangeClause {
+                contract_reads: Vec::new(),
                 declaration: crate::DeclarationId::from_index(0).unwrap(),
                 name: "projected".to_owned(),
                 node: node.clone(),

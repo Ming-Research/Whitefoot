@@ -23,6 +23,10 @@ impl From<CheckedRangeTerm> for RangeOperand {
 }
 
 impl RangeOperand {
+    pub(super) fn term(&self) -> &CheckedRangeTerm {
+        &self.term
+    }
+
     /// [RANGE-1] a bare Bool guard states that its datum `is True`.
     pub(super) fn bool_guard(
         self,
