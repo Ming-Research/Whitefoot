@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A released small KeySet stays as its thread's spare
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#378's change to the design tree? The change: when a KeySet is released, its small blocks stay as the thread's spare instead of returning to the runtime pool each time, and the memory account still counts them as released" (translated), whose background stated the reading that PRE-2's "released blocks retained by an allocator" covers the spare, the 128 KiB per-thread bound kept until the process ends, and the 14900K measurement.
+
+Summary: A KeySet release still lowers the heap reading by exactly what `key_set_bytes` reported, but a store of at most 1,024 keys with an arena of at most 64 KiB may stay as the releasing thread's one spare, recorded as released, instead of always returning to the runtime pool, because the pool takes its one free-list lock on every driver and returning every release cost firn's two-core `MSET` a quarter of its throughput, which the spare recovers within twin noise; PRE-2's heap holding excludes released blocks an allocator retains. The refused alternative of a spare whose kept blocks stay in the reading is recorded, since its release would lower the reading by nothing.
+
 ## 2026-10-12 Cursor transport through mixed joins
 
 Nodes: compiler/match-dispatch-lowering
