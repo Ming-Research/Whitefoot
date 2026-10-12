@@ -3,6 +3,8 @@
 //! neither IR values nor source ownership (compiler/storage-placement).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::io::Write;
+use std::sync::{Mutex, OnceLock};
 
 use super::{BackendFailure, FlowGraph, FunctionStoragePlan, index};
 use crate::backend::abi::FunctionAbi;
@@ -34,6 +36,9 @@ struct SnapshotFacts<'a> {
     /// Callee plans are deliberately built without snapshot selection, so
     /// recursion cannot recursively invoke this analysis.
     immutable: BTreeMap<u32, BTreeSet<usize>>,
+    /// Experiment only: each callee's parameters that a call-free body
+    /// observes only as scalars ([`Criterion::Scalar`]).
+    leaf_scalar: BTreeMap<u32, BTreeSet<usize>>,
     sequential: bool,
 }
 
@@ -259,6 +264,17 @@ impl FunctionStoragePlan {
                 {
                     continue;
                 }
+                let criterion = Criterion::selected();
+                let selected = facts.criterion_reads_through(
+                    criterion,
+                    (block_index, instruction_index),
+                    *result,
+                    &family,
+                )?;
+                criterion.trace(function, (block_index, instruction_index), selected);
+                if !selected {
+                    continue;
+                }
                 for slot in slots {
                     self.read_through[slot] = Some(*address);
                 }
@@ -385,6 +401,7 @@ impl<'a> SnapshotFacts<'a> {
             definitions,
             roots: vec![None; origins.len()],
             immutable: BTreeMap::new(),
+            leaf_scalar: BTreeMap::new(),
             sequential,
         };
         for value in 0..origins.len() {
@@ -458,16 +475,54 @@ impl<'a> SnapshotFacts<'a> {
     }
 
     fn scalar(&self, value: IrValueId) -> bool {
-        match self.function.value_type(value) {
-            Some(IrType::Unit | IrType::Bool | IrType::Integer { .. } | IrType::Float { .. }) => {
-                true
+        scalar_value(self.program, self.function, value)
+    }
+
+    /// Experiment only: whether the selected criterion lets this eligible
+    /// Load snapshot read through its source ([`Criterion`]).
+    fn criterion_reads_through(
+        &mut self,
+        criterion: Criterion,
+        load: Point,
+        result: IrValueId,
+        family: &BTreeSet<usize>,
+    ) -> Result<bool, BackendFailure> {
+        Ok(match criterion {
+            Criterion::All => true,
+            Criterion::Off => false,
+            Criterion::Scalar => {
+                let program = self.program;
+                let function = self.function;
+                let sequential = self.sequential;
+                let memo = &mut self.leaf_scalar;
+                !scalar_observations(program, function, family, &mut |callee, position| {
+                    let positions = match memo.entry(callee) {
+                        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(leaf_scalar_parameters(program, callee, sequential)?)
+                        }
+                    };
+                    Ok(positions.contains(&position))
+                })?
             }
-            Some(IrType::Nominal(id)) => self
-                .program
-                .nominal(id)
-                .is_some_and(|nominal| nominal.is_tag_only_enum()),
-            _ => false,
-        }
+            Criterion::Leaves => {
+                let ty = self
+                    .function
+                    .value_type(result)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                scalar_leaves(self.program, ty, &mut BTreeSet::new())? > SCALAR_LEAF_LIMIT
+            }
+            Criterion::Block => {
+                let body = &self.function.blocks()[load.0];
+                let used = |operands: Vec<IrValueId>| {
+                    operands.iter().any(|value| family.contains(&index(*value)))
+                };
+                body.instructions()[load.1 + 1..]
+                    .iter()
+                    .any(|instruction| used(instruction.operands()))
+                    || used(body.terminator().operands())
+            }
+        })
     }
 
     /// A checked own argument with only inline data cannot reach another
@@ -882,6 +937,273 @@ impl<'a> SnapshotFacts<'a> {
             },
         })
     }
+}
+
+/// Experiment only, selected by `WHITEFOOT_READ_THROUGH` for the read-through
+/// criterion experiment (research/investigations/in-place-parameters,
+/// "Read-through criterion experiment"): which eligible Load snapshots read
+/// through their source. `All`, the default, is the maintained rule; `Off`
+/// keeps every Load copy. This switch and its trace are removed once the
+/// owner selects a criterion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Criterion {
+    All,
+    Off,
+    /// Keep the copy when every use observes the snapshot only as scalars,
+    /// directly or through a call-free callee whose parameter is observed
+    /// only as scalars.
+    Scalar,
+    /// Keep the copy when the snapshot has at most [`SCALAR_LEAF_LIMIT`]
+    /// scalar leaves.
+    Leaves,
+    /// Keep the copy when no use follows the Load in its own block.
+    Block,
+}
+
+/// Two leaves: a tag and one word-sized payload, Halo's `Value`.
+const SCALAR_LEAF_LIMIT: u64 = 2;
+
+impl Criterion {
+    fn selected() -> Self {
+        static SELECTED: OnceLock<Criterion> = OnceLock::new();
+        *SELECTED.get_or_init(|| {
+            match std::env::var_os("WHITEFOOT_READ_THROUGH")
+                .as_deref()
+                .map(std::ffi::OsStr::to_str)
+            {
+                None => Self::All,
+                Some(Some("all")) => Self::All,
+                Some(Some("off")) => Self::Off,
+                Some(Some("scalar")) => Self::Scalar,
+                Some(Some("leaves")) => Self::Leaves,
+                Some(Some("block")) => Self::Block,
+                Some(_) => {
+                    panic!("WHITEFOOT_READ_THROUGH must be all, off, scalar, leaves or block")
+                }
+            }
+        })
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Off => "off",
+            Self::Scalar => "scalar",
+            Self::Leaves => "leaves",
+            Self::Block => "block",
+        }
+    }
+
+    /// Appends one line per eligible Load to `WHITEFOOT_READ_THROUGH_TRACE`:
+    /// criterion, function, block:instruction and the decision.
+    fn trace(self, function: &IrFunction, load: Point, read_through: bool) {
+        static OUTPUT: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+        let output = OUTPUT.get_or_init(|| {
+            std::env::var_os("WHITEFOOT_READ_THROUGH_TRACE").and_then(|path| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .ok()
+                    .map(Mutex::new)
+            })
+        });
+        if let Some(file) = output
+            && let Ok(mut file) = file.lock()
+        {
+            let _ = writeln!(
+                file,
+                "{}\t{}\t{}:{}\t{}",
+                self.name(),
+                function.name(),
+                load.0,
+                load.1,
+                if read_through { "read-through" } else { "copy" }
+            );
+        }
+    }
+}
+
+fn scalar_value(program: &IrProgram, function: &IrFunction, value: IrValueId) -> bool {
+    match function.value_type(value) {
+        Some(IrType::Unit | IrType::Bool | IrType::Integer { .. } | IrType::Float { .. }) => true,
+        Some(IrType::Nominal(id)) => program
+            .nominal(id)
+            .is_some_and(|nominal| nominal.is_tag_only_enum()),
+        _ => false,
+    }
+}
+
+/// Whether every use of `family` in `function` observes it only as scalars:
+/// a match on it, a non-consuming field or payload projection with a scalar
+/// result, an unchanged carry into another family member, or a call argument
+/// that `callee_reads(callee, position)` accepts.
+fn scalar_observations(
+    program: &IrProgram,
+    function: &IrFunction,
+    family: &BTreeSet<usize>,
+    callee_reads: &mut dyn FnMut(u32, usize) -> Result<bool, BackendFailure>,
+) -> Result<bool, BackendFailure> {
+    let member = |value: &IrValueId| family.contains(&index(*value));
+    for block in function.blocks() {
+        for instruction in block.instructions() {
+            if !instruction.operands().iter().any(member) {
+                continue;
+            }
+            let scalar = match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation:
+                        IrOperation::ProjectVariant { .. }
+                        | IrOperation::ProjectStruct {
+                            consume_root: false,
+                            ..
+                        },
+                    ..
+                } => scalar_value(program, function, *result),
+                IrInstruction::Define {
+                    operation:
+                        IrOperation::Call {
+                            function: callee,
+                            arguments,
+                        },
+                    ..
+                } => {
+                    let mut reads = true;
+                    for (position, argument) in arguments.iter().enumerate() {
+                        if member(argument) && !callee_reads(*callee, position)? {
+                            reads = false;
+                        }
+                    }
+                    reads
+                }
+                _ => false,
+            };
+            if !scalar {
+                return Ok(false);
+            }
+        }
+        let terminator = block.terminator();
+        if !terminator.operands().iter().any(member) {
+            continue;
+        }
+        let scalar = match terminator {
+            IrTerminator::Match { .. } => true,
+            IrTerminator::Jump {
+                target,
+                arguments,
+                drops,
+            } => {
+                let parameters = function
+                    .blocks()
+                    .get(target.index())
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .parameters();
+                !drops.iter().any(|drop| member(&drop.operand()))
+                    && arguments
+                        .iter()
+                        .zip(parameters)
+                        .all(|(argument, (parameter, _))| !member(argument) || member(parameter))
+            }
+            _ => false,
+        };
+        if !scalar {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The positions of `callee`'s by-value parameters that its body observes
+/// only as scalars, when that body contains no call: the host inliner takes
+/// such a body, and the caller's copy then folds into scalar loads.
+fn leaf_scalar_parameters(
+    program: &IrProgram,
+    callee: u32,
+    sequential: bool,
+) -> Result<BTreeSet<usize>, BackendFailure> {
+    let function = program
+        .functions()
+        .get(callee as usize)
+        .ok_or(BackendFailure::InvalidIr)?;
+    let mut positions = BTreeSet::new();
+    if function.blocks().is_empty()
+        || function.waits()
+        || function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .any(|instruction| {
+                matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::Call { .. },
+                        ..
+                    }
+                )
+            })
+    {
+        return Ok(positions);
+    }
+    let plan = FunctionStoragePlan::build_copies(program, function, sequential)?;
+    for (position, (parameter, _)) in function.parameters().iter().enumerate() {
+        let family: BTreeSet<_> = plan
+            .origins
+            .iter()
+            .enumerate()
+            .filter_map(|(value, origin)| (*origin == Some(index(*parameter))).then_some(value))
+            .collect();
+        if scalar_observations(program, function, &family, &mut |_, _| Ok(false))? {
+            positions.insert(position);
+        }
+    }
+    Ok(positions)
+}
+
+/// Scalar leaves of a type's representation: a tag counts as one leaf and a
+/// payload enum adds its largest variant. Anything else is unbounded.
+fn scalar_leaves(
+    program: &IrProgram,
+    ty: IrType,
+    visiting: &mut BTreeSet<usize>,
+) -> Result<u64, BackendFailure> {
+    Ok(match ty {
+        IrType::Unit | IrType::Bool | IrType::Integer { .. } | IrType::Float { .. } => 1,
+        IrType::Array { element, length } => length.saturating_mul(scalar_leaves(
+            program,
+            program.element(element).ok_or(BackendFailure::InvalidIr)?,
+            visiting,
+        )?),
+        IrType::Nominal(id) => {
+            let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
+            if !visiting.insert(id.index()) {
+                return Err(BackendFailure::InvalidIr);
+            }
+            let mut sum = |fields: &[crate::IrField]| -> Result<u64, BackendFailure> {
+                let mut total = 0_u64;
+                for field in fields {
+                    total = total.saturating_add(scalar_leaves(program, field.ty(), visiting)?);
+                }
+                Ok(total)
+            };
+            let leaves = match nominal.kind() {
+                IrNominalKind::Struct { fields } => sum(fields)?,
+                IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => 1,
+                IrNominalKind::Enum { variants } => {
+                    let mut largest = 0_u64;
+                    for variant in variants {
+                        largest = largest.max(sum(variant.fields())?);
+                    }
+                    largest.saturating_add(1)
+                }
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => 1,
+                IrNominalKind::Opaque => u64::MAX,
+            };
+            visiting.remove(&id.index());
+            leaves
+        }
+        _ => u64::MAX,
+    })
 }
 
 #[cfg(test)]

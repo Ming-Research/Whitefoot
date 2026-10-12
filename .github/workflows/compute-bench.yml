@@ -11,6 +11,12 @@
 # With `experiment: par-suite` it serves the generated --par baseline suite
 # and reuses the formal paired instrument. Its H1 cells are observations;
 # incomplete data, checksum errors and a failed formal null control stop it.
+# With `experiment: read-through` it serves the read-through criterion
+# experiment (research/investigations/in-place-parameters, "Read-through
+# criterion experiment"): Halo's bench program built once per
+# WHITEFOOT_READ_THROUGH criterion by this revision's compiler, timed
+# interleaved with a twin of the default build. Remove that job and its
+# option when the owner selects a criterion.
 #
 # research-boundary: manual-only
 # Explicitly requested framework comparison; no push or pull-request trigger.
@@ -37,17 +43,17 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, code placement, or the par-suite baseline
+        description: The compute scoreboard, code placement, the par-suite baseline, or the read-through criteria
         type: choice
-        options: [scoreboard, placement, par-suite]
+        options: [scoreboard, placement, par-suite, read-through]
         default: scoreboard
       placement_runner:
-        description: Where placement or par-suite runs, GitHub or the owner's i9-14900K runner
+        description: Where placement, par-suite or read-through runs, GitHub or the owner's i9-14900K runner
         type: choice
         options: [github, 14900k]
         default: github
       placement_rounds:
-        description: Placement or par-suite rounds over every image and width (par-suite requires at least 3)
+        description: Placement or par-suite rounds over every image and width (par-suite requires at least 3); read-through rounds over every build
         type: string
         default: "10"
       placement_unaligned:
@@ -55,7 +61,7 @@ on:
         type: string
         default: ""
       placement_cpus:
-        description: The vCPUs every timed placement process is pinned to with taskset
+        description: The vCPUs every timed placement or read-through process is pinned to with taskset
         type: string
         default: "0-3"
       placement_event:
@@ -432,3 +438,183 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: the read-through criterion experiment. One compiler build; one
+  # Halo bench build per WHITEFOOT_READ_THROUGH criterion, `all` (main's rule)
+  # as the base and a copy of it as the twin; fib, loop and binary-trees timed
+  # interleaved with a rotating order, each launch checked against PUC Lua's
+  # checksum. A hosted run is a dry run of the builds, traces and
+  # disassembly; only the i9-14900K's timings are evidence.
+  read-through:
+    name: read-through (${{ inputs.placement_runner }})
+    if: inputs.experiment == 'read-through'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    env:
+      # Halo-wf main on 2026-10-12, pinned to wf-d837678c6905, an ancestor of
+      # this branch's base.
+      HALO_REVISION: c900a68b2f06af0de2adccfd0dd348d49af184de
+      CRITERIA: all off scalar leaves block
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the host tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in /usr/bin/clang cargo make python3 git nm objdump taskset curl; do
+            command -v "$tool"
+          done
+          /usr/bin/clang --version
+          lscpu
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-${{ runner.arch }}-read-through-${{ inputs.placement_runner }}-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-read-through-${{ inputs.placement_runner }}-
+      - name: Build the compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+      - name: Build Halo with every criterion
+        run: |
+          set -euo pipefail
+          halo="$RUNNER_TEMP/halo"
+          out="$RUNNER_TEMP/read-through"
+          wfc="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          rm -rf "$halo" "$out"
+          mkdir -p "$out/disasm" "$out/ir"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$halo"
+          git -C "$halo" checkout --quiet "$HALO_REVISION"
+          cd "$halo"
+          for criterion in $CRITERIA; do
+            WHITEFOOT_READ_THROUGH=$criterion WHITEFOOT_READ_THROUGH_TRACE="$out/trace-$criterion.raw" \
+              "$wfc" --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o "$out/halo-$criterion"
+            sort -u "$out/trace-$criterion.raw" > "$out/trace-$criterion.tsv"
+            rm "$out/trace-$criterion.raw"
+            WHITEFOOT_READ_THROUGH=$criterion \
+              "$wfc" --graph research/experiments/halo-bench/modules.wfg --entry bench --emit-llvm -o "$out/bench-$criterion.ll"
+          done
+          cp "$out/halo-all" "$out/halo-twin"
+          {
+            echo "whitefoot $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD), halo $HALO_REVISION"
+            sha256sum "$wfc" "$out"/halo-*
+            /usr/bin/clang --version | head -n 1
+          } | tee "$out/manifest.txt"
+      - name: Summarize each criterion's decisions
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/read-through"
+          focus='instruction_for_loop|instruction_for_prep|\.prepare|instruction_get_table|instruction_set_table|instruction_self|register_value'
+          for criterion in $CRITERIA; do
+            trace="$out/trace-$criterion.tsv"
+            echo "== $criterion: $(wc -l < "$trace") eligible Load snapshots, $(grep -c 'read-through$' "$trace" || true) read through, $(grep -c 'copy$' "$trace" || true) copied"
+            grep -E "$focus" "$trace" | cut -f2- || true
+          done | tee "$out/decisions.txt"
+      - name: Disassemble the numeric-for handler
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/read-through"
+          for criterion in $CRITERIA; do
+            ll="$out/bench-$criterion.ll"
+            awk '/^define .*instruction_for_loop/ { keep = 1 } keep { print } /^}/ { keep = 0 }' "$ll" > "$out/ir/for_loop-$criterion.ll"
+            arms=$(awk '
+              /^define / { name = $0; sub(/^[^@]*@"?/, "", name); sub(/"?\(.*/, "", name) }
+              /^}/ { name = "" }
+              /instruction_for_loop/ && name ~ /\.body\.arm\./ { print name }
+            ' "$ll" | sort -u)
+            rm "$ll"
+            [ -n "$arms" ] || { echo "$criterion: no arm of run calls instruction_for_loop"; exit 1; }
+            for arm in $arms; do
+              file="$out/disasm/$criterion-$(echo "$arm" | sed 's/.*\.body\.//').txt"
+              objdump -d --no-show-raw-insn -M intel --disassemble="$arm" "$out/halo-$criterion" > "$file"
+              printf '%s\t%s\t%s instructions\t%s rsp-relative operands\n' "$criterion" "$arm" \
+                "$(grep -c -E '^ +[0-9a-f]+:' "$file" || true)" \
+                "$(grep -c -E '\[rsp' "$file" || true)" | tee -a "$out/handler.tsv"
+            done
+            helper=$(nm "$out/halo-$criterion" | awk '$2 ~ /[tT]/ && $3 ~ /instruction_for_loop/ { print $3 }' | head -n 1)
+            if [ -n "$helper" ]; then
+              objdump -d --no-show-raw-insn -M intel --disassemble="$helper" "$out/halo-$criterion" > "$out/disasm/$criterion-for_loop.txt"
+              echo "$criterion: instruction_for_loop is out of line, $(grep -c -E '^ +[0-9a-f]+:' "$out/disasm/$criterion-for_loop.txt" || true) instructions" | tee -a "$out/handler.tsv"
+            else
+              echo "$criterion: instruction_for_loop is inlined" | tee -a "$out/handler.tsv"
+            fi
+          done
+      - name: Time fib, loop and binary-trees interleaved
+        env:
+          ROUNDS: ${{ inputs.placement_rounds }}
+          CPUS: ${{ inputs.placement_cpus }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/read-through"
+          sh "$RUNNER_TEMP/halo/research/experiments/halo-oracle/fetch-redis.sh" "$RUNNER_TEMP/redis"
+          python3 -I - "$RUNNER_TEMP/redis/redis-7.0.15/deps/lua/src/lua" "$RUNNER_TEMP/halo" "$out" <<'PY'
+          import json, os, re, statistics, subprocess, sys, time
+          from pathlib import Path
+          lua, halo, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+          rounds = int(os.environ['ROUNDS'])
+          cpus = os.environ['CPUS']
+          labels = ['all', 'twin'] + [c for c in os.environ['CRITERIA'].split() if c != 'all']
+          kernels = {'fib': None, 'loop': None, 'binary-trees': 14}
+          wrapper = 'local f=assert(loadstring(io.read("*a"), "@user_script")); f()'
+          def launch(command, source):
+              start = time.perf_counter()
+              done = subprocess.run(['taskset', '-c', cpus] + command, input=source, capture_output=True, timeout=180)
+              return time.perf_counter() - start, done
+          results = {}
+          for kernel, scale in kernels.items():
+              source = (halo / 'research/experiments/halo-bench/kernels' / f'{kernel}.lua').read_bytes()
+              if scale is not None:
+                  source, count = re.subn(rb'\Alocal N = [0-9]+', f'local N = {scale}'.encode(), source)
+                  assert count == 1
+              _, reference = launch([str(lua), '-e', wrapper], source)
+              assert reference.returncode == 0, reference.stderr
+              expected = reference.stdout
+              times = {label: [] for label in labels}
+              for run in range(rounds):
+                  shift = run % len(labels)
+                  for label in labels[shift:] + labels[:shift]:
+                      seconds, done = launch([str(out / f'halo-{label}')], source)
+                      stats = done.stderr.decode('ascii', 'replace').split()
+                      if done.returncode or done.stdout != expected or len(stats) != 2 or stats[0] != '0':
+                          raise SystemExit(f'{kernel}/{label}: exit {done.returncode}, stdout {done.stdout!r}, expected {expected!r}, stats {stats}')
+                      times[label].append(seconds)
+              base = statistics.median(times['all'])
+              results[kernel] = times
+              print(f'== {kernel} ({rounds} rounds, median seconds, min-max, median against all)')
+              for label in labels:
+                  median = statistics.median(times[label])
+                  print(f'{kernel}\t{label}\t{median:.6f}\t{min(times[label]):.6f}-{max(times[label]):.6f}\t{median / base:.4f}')
+          (out / 'times.json').write_text(json.dumps(dict(rounds=rounds, cpus=cpus, times=results), indent=2) + '\n')
+          PY
+      - name: Publish
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/read-through"
+          {
+            echo "## read-through (${{ inputs.placement_runner }})"
+            echo
+            echo '```text'
+            cat "$out/manifest.txt" "$out/handler.tsv" 2>/dev/null
+            echo
+            head -n 60 "$out/decisions.txt" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: read-through-${{ inputs.placement_runner }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/read-through/manifest.txt
+            ${{ runner.temp }}/read-through/trace-*.tsv
+            ${{ runner.temp }}/read-through/decisions.txt
+            ${{ runner.temp }}/read-through/handler.tsv
+            ${{ runner.temp }}/read-through/times.json
+            ${{ runner.temp }}/read-through/disasm/
+            ${{ runner.temp }}/read-through/ir/
