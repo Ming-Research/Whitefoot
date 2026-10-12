@@ -1,0 +1,29 @@
+enum Node {
+  Open(live: Bool);
+  Closed(slot: u64);
+}
+
+fn need_zero(slot: u64) -> result: unit pure contract {
+  requires slot == 0_u64;
+} {
+  return unit;
+}
+
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit reads(nodes) contract {
+  requires nodes^.len == 1_u64;
+  requires forall held(k in 0_u64..nodes^.len) when nodes^[k].Open.live: nodes^[k].Closed.slot == 0_u64;
+} {
+  let selected = nodes^[0_u64];
+  match selected {
+    Open(live: held_live) => {
+    }
+    Closed(slot: held_slot) => {
+      need_zero(slot: held_slot);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.131: Bool range guards, operation relations in the range walk, and `take_back` images
+
+Rules: changed GRAM-5, RANGE-1, RANGE-2
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-v0128-approve, "approve the specification amendment v0.131 and the added design tree decisions in Ming-Research/Whitefoot#366 (head 4f881b446)?" (translated), whose background summarized every changed rule; the directions were the owner's choices of A on three cards on 2026-10-11: a range guard on a Bool field, the range judgment using the S7 operation relations, and `take_back` handing over the removed element.
+
+Summary: GRAM-5 widens a range clause's guard to `range_guard`, a comparison or one expression, and RANGE-1 admits a lone expression only as one Bool datum, an element projection ending at `Bool` or a live own-mode `Bool` binding, holding where it equals `True`. RANGE-2 enters an `if` on a held Bool selection with `True`'s tag in the then-block and `False`'s in the else path, written or implicit. The range walk, which treated every expression it could not name exactly as a fresh unknown, now adds for each ENT-3.S7 operation the relations its S7 row states between the result and each operand, judged on the operand intervals S7 read at that statement. A `take_back` result, formerly fresh storage, is defined by the window's version before the call at the old last index, and later writes to it make only its own versions. Selection ground: writers already guard at run time with the same Bool fields, the two judgments share one operation table that v2h's jump-table index needs, and moving a prepared element must keep the facts proved while it was stored. The approval named v0.131 after #369 and #363 took v0.129 and v0.130.
+
 ## 2026-10-12 v0.130: an empty Paged shares the static header and page 0 grows to B
 
 Rules: changed TYPE-9, WIN-1, STOR-1, STOR-3, STOR-6, OP-10, OP-13
