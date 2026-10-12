@@ -568,7 +568,6 @@ def acc_control_arms():
         o += ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
     o += ["    BrTableNC(c: cv, start: startv, count: countv) => {", "      let count = cvt::<u32, u64>(countv^);",
           "      let i32v = cvt.wrap::<u64, u32>(acc);", "      let i = cvt::<u32, u64>(i32v);", "      let pick = imin(i, count);",
-          "      invariant tablenc_pick_bound: pick <= count;",
           "      let base = cvt::<u32, u64>(startv^);", "      let at = base + pick;",
           "      let slot = brtab^.inner[at];", "      let target = cvt::<u32, u64>(slot.t);"]
     o += tail("target", 6) + ["    }"]

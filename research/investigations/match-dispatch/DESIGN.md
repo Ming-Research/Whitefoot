@@ -1652,15 +1652,17 @@ statement through `Box<Slots<...>>`, including a relation between one
 container's enum payloads and another container's length, once Whitefoot#354
 kept range facts read through a box across loop heads.
 
-Two local invariants restate facts the arms already have:
-`pick <= count` after `imin`, and the moved slots' bounds before
-`move_slot`. Without them the checker refuses the arm. The checker line
-found both refusals conformant to the active specification, yet a gap in
-the natural form: the range walk sees `imin`'s result as a fresh unknown
-instead of using its [ENT-3.S7] relation, and it forgets a written window's
-length when a call's length-preserving postcondition names `entry(...)`.
-They are recorded as status board item proof-bl-imin-span-annotation; the
-invariants go when the specification changes.
+The first version needed two local invariants restating facts the arms
+already have: `pick <= count` after `imin`, and the moved slots' bounds
+before `move_slot`. Without them the checker refused the arm. The checker
+line found both refusals conformant to the specification then active, yet
+a gap in the natural form: the range walk saw `imin`'s result as a fresh
+unknown instead of using its [ENT-3.S7] relation, and it forgets a written
+window's length when a call's length-preserving postcondition names
+`entry(...)`. Specification v0.131 gives the range walk the S7 operation
+relations, so the three `pick <= count` invariants are gone. The moved
+slots' bounds remain until the `entry(...)` postcondition gap closes
+(status board item proof-bl-imin-span-annotation).
 
 Observed on the 14900K, at `9d640d1c3` against `89ddad886`, both generators
 compiled by `89ddad886`'s compiler, with a byte-identical twin of the

@@ -282,7 +282,6 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let i32v = cvt.wrap::<u64, u32>(iw);
         let i = cvt::<u32, u64>(i32v);
         let pick = imin(i, count);
-        invariant table_pick_bound: pick <= count;
         let base = cvt::<u32, u64>(startv^);
         let at = base + pick;
         let slot = brtab^.inner[at];
@@ -305,7 +304,6 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let i32v = cvt.wrap::<u64, u32>(iw);
         let i = cvt::<u32, u64>(i32v);
         let pick = imin(i, count);
-        invariant tablen_pick_bound: pick <= count;
         let base = cvt::<u32, u64>(startv^);
         let at = base + pick;
         let slot = brtab^.inner[at];
