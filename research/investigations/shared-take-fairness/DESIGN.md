@@ -8,9 +8,11 @@ its later ordinary-object acquisition, and the claim mechanism that bounds
 it. It retains the question, protocol and evidence that chose that
 mechanism. Supersede this protocol in place as the mechanism changes,
 retaining dated results as evidence; remove the temporary workflows and the
-research sweep runner when the hosted comparison and the mutant run are
-complete; keep the required native regression and its maintained count
-checker. The native witness belongs under `compiler/src/backend/completion/`
+research sweep runner when the hosted comparison, the mutant run and the
+14900K cost comparison are complete; keep the required native regression,
+its maintained count checker and the cost comparison's bundle
+(`research/experiments/shared-take-overhead/`) as the record of its
+procedure. The native witness belongs under `compiler/src/backend/completion/`
 and joins runtime checks without a dependency on research inputs.
 
 The owner selected option B: escalation to nonparking handoff claims after
@@ -463,14 +465,120 @@ implementation as it stands.
    then take one ordinary object, so every take is admitted at its first
    look. The head's median run time must be at most 1.02 times the base's,
    with the twin within 0.99 to 1.01 of the base; a twin outside that range
-   makes the run inconclusive, not a pass. The program and runner are not
-   yet written; they will be recorded here before the run, without changing
-   these thresholds. The 2 percent threshold is the owner's provisional
-   choice, not a derived cost bound, and is reopened if a workload shows the
-   uncontended path.
+   makes the run inconclusive, not a pass. The program and runner are
+   recorded under [Uncontended-cost procedure](#uncontended-cost-procedure),
+   written before any run, without changing these thresholds. The 2 percent
+   threshold is the owner's provisional choice, not a derived cost bound,
+   and is reopened if a workload shows the uncontended path.
 
 The arbitration fixtures and the mutant run (below) are correctness
 evidence, separate from this criterion.
+
+## Uncontended-cost procedure
+
+Written 2026-10-12, before any run, for part 3 of the registered
+criterion. The bundle is `research/experiments/shared-take-overhead/`
+(`run.sh` documents its interface) and the dispatch-only workflow is
+`.github/workflows/tmp-shared-take-overhead.yml` on the 14900K.
+
+**What the change adds to an uncontended statement.** Read from the diff
+of `bridge.c` between the base and the candidate: `wf__shared_take` now
+initializes a stack claim record and checks the claim slot twice under the
+object's lock, and no longer reads the object's state before taking that
+lock; the ordinary admission (`wf_shared_admits_context`, every `wf__shared_acquire`)
+first checks the claim slot; the free release (`wf_shared_free_locked`)
+checks it again; and every reservation read decodes the slot's low bit. The
+uncontended take took the object's lock once before and takes it once now.
+These are a few loads, stores and branches on lines the statement already
+touches, so the expectation, stated here as exploratory and not as a
+prediction the verdict rests on, is a candidate-to-base time ratio below
+1.01.
+
+**Revisions.** Base `96520e70e3ea9f9000887d1dcf3c453d77f05fe9`, the
+registered base and the parent of the claims' first commit
+(`2c92dc5fa`). The base branch has since advanced to `2b7c9e5c1`, which
+changes only design-tree prose, so its compiler and standard library are
+the same bytes; the registered base is kept. The candidate is the
+workflow's checked-out revision, whose `compiler/` and `lib/` equal this
+branch's head when the procedure was written (`70964a385`); the run
+records both revisions and the `compiler/` and `lib/` diff between them.
+The runtime is compiled into the compiler (`include_str!` of `bridge.c`),
+so the candidate compiler links the candidate runtime into every image.
+
+**Programs.** Two entries of one package, each built from the same source
+by both compilers:
+
+- `take` (`take.wf`), the registered program: each context makes its own
+  concurrent map and its own `Shared<u64>`; each atomic statement names the
+  map's one entry and then the object, so it holds the entry when it takes
+  the object and finds the object free at its first look; no claim ever
+  queues.
+- `own` (`own.wf`): each context's statements name its own `Shared<u64>`
+  alone, through the ordinary acquisition, which the change also reaches.
+
+Each context runs statements in batches of 1,024, reading the clock once
+per batch, until a deadline every context receives from one gate opened
+after all are spawned; it then checks in one more statement that its entry
+and object both hold its statement count, and the program exits 3 when any
+context's do not. It prints the summed statement count and the elapsed
+nanoseconds; the rate is their quotient. One context runs per driver.
+
+**Images and controls.** Per program: `base` and `candidate`, and `twin`,
+a byte-for-byte copy of `base` (as the guard-fairness probe's twin was)
+checked with `cmp`, which runs in its own rotation slot and so measures
+run-to-run and position noise. The build refuses to proceed when a
+candidate image is byte-identical to its base (the change would not reach
+the program) or when the take program's emitted LLVM calls neither
+`wf__shared_take` nor a group acquisition (the program would not reach the
+take). It records image hashes, the call-site counts of both compilers'
+LLVM, and whether the two compilers emit the same LLVM.
+
+**Cells.** Six arms (two programs by three images) on CPU lists `0`,
+`0,2`, `0,2,4,6` and `0,2,4,6,8,10,12,14`, one hyperthread of each of 1, 2,
+4 and 8 P-cores, with `WF_DRIVERS` 1, 2, 4 and 8. Each cell lasts 3 s.
+Within a block every list runs the six arms once; each block starts the
+arm order one position later, so the main run's six blocks put every arm in
+every position once. The host must be under 5 percent busy over 5 s before
+the compilers are built and again before the cells. A cell whose exit
+status is not 0, whose driver or context count differs from the list's, or
+whose objects ended wrong leaves no row and fails the run. The pilot, one
+block at the 8-P-core list, decides nothing; it shows that the images run,
+how long a cell takes and how far the twin strays, and the main run follows
+it.
+
+**Measure and verdict.** At each cell, over blocks, t = median rate of base
+/ median rate of candidate (the candidate's time per statement over the
+base's) and w = median rate of base / median rate of twin. A cell with w
+outside [0.99, 1.01] is inconclusive; otherwise it passes when t <= 1.02 and
+rejects when t > 1.02.
+
+- The registered verdict is the take program's one-driver cell, exactly
+  part 3 above.
+- The every-cell extension, registered here, applies the same rule to all
+  eight cells: it rejects when any cell rejects, passes when every cell
+  passes, and is otherwise inconclusive. It covers the ordinary acquisition,
+  which the claim check also enters, and shows whether the per-statement
+  cost moves with the driver count; with every object private to its
+  context, it measures no contention.
+- Beside each cell the summary prints whether t's distance from 1.02 is
+  larger than e = |w - 1|. That reading is descriptive and changes no
+  verdict.
+
+The falsifier is a valid cell (w within [0.99, 1.01]) with t > 1.02: at the
+take program's one-driver cell it rejects the claims as they stand on
+part 3; at any other cell it rejects the extension. The instrument can see
+a change of that size only when the twin stays within 1 percent, which is
+why a twin outside that range decides nothing rather than passing.
+`summarize.py --self-test`, run in the workflow before the summary, checks
+the rule on fixtures: equality, t exactly 1.02 and just above it, w exactly
+0.99, w outside its range, a rejection outside the registered cell, a
+rejection beside an inconclusive cell, medians against one slow block, a
+pilot without the registered cell, and missing, duplicate, uneven, zero-rate,
+wrong-count and misnamed rows, which exit 1.
+
+This compares one compiler build pair on one machine and one workload shape;
+it says nothing about the contended path, the claim queue's cost when
+claims wait, guard reservations or other hosts.
 
 ## Required regression and pending evidence
 

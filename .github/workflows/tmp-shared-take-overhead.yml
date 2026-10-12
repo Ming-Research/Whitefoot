@@ -1,0 +1,175 @@
+# Temporary: the uncontended-cost comparison of the shared-take claims
+# (research/investigations/shared-take-fairness/DESIGN.md, "Registered
+# criterion", part 3, and "Uncontended-cost procedure") on the owner's
+# i9-14900K. It builds the compiler at the base revision and at this run's
+# revision, builds research/experiments/shared-take-overhead with each, and
+# runs the interleaved cells. A pilot (one block at the 8-P-core list) comes
+# first; the main run follows the pilot's reading. Removed with the other
+# temporary shared-take workflows, the results copied into the investigation.
+#
+#   gh workflow run tmp-shared-take-overhead.yml --ref <branch> -f mode=pilot
+#   gh workflow run tmp-shared-take-overhead.yml --ref <branch> -f mode=main
+#
+# research-boundary: manual-only
+# Explicitly requested measurement; no push or pull-request trigger.
+name: tmp-shared-take-overhead
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: pilot is one block at the 8-P-core list; main is the interleaved blocks at all four lists
+        type: choice
+        options: [pilot, main]
+        default: pilot
+      blocks:
+        description: Blocks of the main run (six puts every arm at every rotation position once)
+        type: string
+        default: "6"
+      base:
+        description: Base revision, the parent of the claims' first commit (registered)
+        type: string
+        default: 96520e70e3ea9f9000887d1dcf3c453d77f05fe9
+
+defaults:
+  run:
+    shell: bash
+
+# One run at a time on the 14900K, queued rather than cancelled.
+concurrency:
+  group: tmp-shared-take-overhead-14900k
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  measure:
+    name: shared-take overhead (${{ inputs.mode }})
+    runs-on: [self-hosted, 14900k]
+    # Main: 6 blocks x 4 lists x 6 arms x about 3.1 s is about 7.5 minutes of
+    # cells, plus two compiler builds. Bounds a stuck runner only.
+    timeout-minutes: 60
+    env:
+      MODE: ${{ inputs.mode }}
+      BLOCKS: ${{ inputs.blocks }}
+      BASE: ${{ inputs.base }}
+      PILOT: ${{ inputs.mode == 'pilot' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Name the output directory
+        run: echo "OUT=$RUNNER_TEMP/shared-take-overhead" >> "$GITHUB_ENV"
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the inputs and the host's tools
+        run: |
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "base must be a full 40-digit revision"; exit 1; }
+          [[ "$BLOCKS" =~ ^[1-9][0-9]?$ ]] || { echo "blocks must be a number from 1 to 99"; exit 1; }
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang cargo perl taskset python3 sha256sum cmp awk lscpu timeout git; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          git cat-file -e "$BASE^{commit}"
+          git merge-base --is-ancestor "$BASE" HEAD || { echo "$BASE is not an ancestor of $(git rev-parse HEAD)"; exit 1; }
+          /usr/bin/clang --version
+          rustc -vV
+          nproc
+
+      # A cancelled earlier run can leave its images running; stop them and
+      # say so. Then the machine must be idle.
+      - name: Stop leftovers and check that the host is idle
+        run: |
+          ps -eo pid,args | grep -E '/shared-take-overhead/bin/' | grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          sleep 2
+          bash research/experiments/shared-take-overhead/run.sh --out "$OUT" --idle-check
+
+      - name: Check the summarizer against its fixtures
+        run: python3 -B research/experiments/shared-take-overhead/summarize.py --self-test
+
+      # The base compiler comes from a worktree at the base revision, the
+      # candidate from this checkout; each has its own target directory.
+      - name: Build the base and candidate compilers
+        run: |
+          git worktree prune
+          rm -rf "$RUNNER_TEMP/take-overhead-base"
+          git worktree add --detach "$RUNNER_TEMP/take-overhead-base" "$BASE"
+          {
+            echo "base $BASE"
+            echo "candidate $(git rev-parse HEAD)"
+            echo "compiler and library changes from base to candidate:"
+            git diff --stat "$BASE" HEAD -- compiler lib
+          } | tee "$RUNNER_TEMP/revisions.txt"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/take-overhead-base/compiler/Cargo.toml"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          CARGO_TARGET_DIR="$RUNNER_TEMP/take-overhead-base-target" WHITEFOOT_CHECK_TIMEOUT=900 \
+            perl .github/run-check.pl take-overhead/base-compiler \
+            cargo build --manifest-path "$RUNNER_TEMP/take-overhead-base/compiler/Cargo.toml" \
+            --locked --profile gate --bin whitefootc
+          CARGO_TARGET_DIR="$RUNNER_TEMP/take-overhead-candidate-target" WHITEFOOT_CHECK_TIMEOUT=900 \
+            perl .github/run-check.pl take-overhead/candidate-compiler \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+
+      - name: Build the images
+        run: |
+          mkdir -p "$OUT"
+          cp "$RUNNER_TEMP/revisions.txt" "$OUT/revisions.txt"
+          BASE_WFC="$RUNNER_TEMP/take-overhead-base-target/gate/whitefootc" \
+          CAND_WFC="$RUNNER_TEMP/take-overhead-candidate-target/gate/whitefootc" \
+          BASE_REV="$BASE" CAND_REV="$(git rev-parse HEAD)" \
+            bash research/experiments/shared-take-overhead/run.sh --out "$OUT" --build-only
+
+      - name: Check that the host is still idle
+        run: bash research/experiments/shared-take-overhead/run.sh --out "$OUT" --idle-check
+
+      - name: Run the cells
+        run: bash research/experiments/shared-take-overhead/run.sh --out "$OUT" --run
+
+      - name: Summarize
+        if: always()
+        run: |
+          test -s "$OUT/raw.tsv" || { echo "no rows were written"; exit 0; }
+          status=0
+          python3 -B research/experiments/shared-take-overhead/summarize.py "$OUT/raw.tsv" > "$OUT/summary.txt" || status=$?
+          cat "$OUT/summary.txt"
+          {
+            echo "## shared-take overhead ($MODE)"
+            echo
+            echo '```text'
+            cat "$OUT/revisions.txt" 2>/dev/null
+            echo
+            cat "$OUT/host.txt" 2>/dev/null
+            echo
+            cat "$OUT/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-take-overhead-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/shared-take-overhead/raw.tsv
+            ${{ runner.temp }}/shared-take-overhead/summary.txt
+            ${{ runner.temp }}/shared-take-overhead/host.txt
+            ${{ runner.temp }}/shared-take-overhead/revisions.txt
+            ${{ runner.temp }}/shared-take-overhead/llvm/
+            ${{ runner.temp }}/shared-take-overhead/runs/
