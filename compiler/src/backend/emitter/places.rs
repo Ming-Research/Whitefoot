@@ -855,8 +855,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let pointer = self.next_temporary()?;
                 writeln!(
                     self.output,
-                    "  %{pointer} = load ptr, ptr {}",
-                    self.value_name(address)
+                    "  %{pointer} = load ptr, ptr {}{}",
+                    self.value_name(address),
+                    storage_alias::Role::BoxOwner.attachment()
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
                 format!("%{pointer}")
@@ -1060,8 +1061,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  %{temporary} = load {}, ptr {address}",
-                emitted_type_0
+                "  %{temporary} = load {}, ptr {address}{}",
+                emitted_type_0,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)?;
@@ -1096,6 +1098,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
+        // Producer fields can have been stored separately in another function.
+        // Retain the same layout boundaries for incoming and heap values as
+        // for local values. The host's inline cost charges this expansion;
+        // the in-place-parameters research record tracks its consequences.
         if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
             .map_err(BackendFailure::TargetLayout)?
         {
@@ -1223,6 +1229,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// An exact checked source store, rather than a constructor, result
+    /// placement or whole-value transfer that may change a storage role.
+    pub(super) fn store_source_value_at(
+        &mut self,
+        value: IrValueId,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+        let alias = storage_alias::source_write(self.program, ty);
+        if alias.is_empty() {
+            return self.store_value_at(value, destination);
+        }
+        let llvm = self.output.type_name(self.program, ty)?;
+        writeln!(
+            self.output,
+            "  store {llvm} {}, ptr {destination}{alias}",
+            self.value_name(value)
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// Stores a first-class result into the slot its plan selected. The
     /// operations that produce a memory-only result write that slot
     /// themselves, and `emit_definition` admits no other producer of one.
@@ -1280,9 +1307,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {address}",
+                "  {} = load {}, ptr {address}{}",
                 value_name(result),
-                emitted_type_1
+                emitted_type_1,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)

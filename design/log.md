@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Storage-role facts, in-place looping consumers and source-independent transfers
+
+Nodes: compiler/backend-facts, compiler/checker-facts, compiler/payload-enum-layout, compiler/storage-placement
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card lm-357-design-approve, "approve Whitefoot#357 (head 4c9a3e47f)'s design-tree changes: alias facts, looping callees reading parameters in place, field-wise transfers from every source (with #351's tag prefix), and the two rejected approaches?" (translated), and option A, "merge #357 and split the remaining slowdown into its own item" (translated), on the card lm-357-accept-split.
+
+Summary: Whitefoot#344 and #345 slowed Halo's concat and Snowghost's edits. Compiler-owned window length, capacity and head words, Paged directory entries, Box owners and explicit source scalar writes receive storage-role TBAA, and reads through a read-only reference parameter whose effect row covers its whole state receive alias scopes that a whole-state writer's header writes exclude, so LLVM keeps window metadata in registers across element writes; lowering records declared whole-state reads and the absence of writes for those scopes without changing any judgment. A body that is only one window placement primitive is expanded at a caller holding a read-only owner scope. A looping callee reads an immutable indirect own parameter in place, because Halo's node_find materialized its key only because the consumer check excluded loops. Structs and enums of at most 128 bytes and 16 granules are transferred field by field from every source, unions after replacing the tag with #351's common tag-and-padding prefix, because limiting granules to values the same function had just stored restored wide loads across separately stored caller fields (Halo concat 1.174, string-key 1.300). Whitefoot's own IR-budget forced inlining is rejected: it forced 44% of Halo's functions inline, grew text by 25.7% and still missed the target. Snowghost's word and sentence edits remain 6-11% slower than before #345 because small accessors returning records by value are no longer inlined; that remainder is a separate item.
 ## 2026-10-12 A range reference's referent is a run, not a value
 
 Nodes: language/ownership/range-reference

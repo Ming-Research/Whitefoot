@@ -263,8 +263,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let pointer = self.aggregate_field_pointer(container_type, &address, 0)?;
                     writeln!(
                         self.output,
-                        "  {} = load i64, ptr {pointer}",
-                        self.value_name(result)
+                        "  {} = load i64, ptr {pointer}{}{}",
+                        self.value_name(result),
+                        storage_alias::Role::ArrayLen.attachment(),
+                        self.owner_alias.read(container)
                     )
                     .map_err(|_| BackendFailure::TextEmission)
                 }
@@ -451,7 +453,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let updated = self.prepare_run_update(result, run, run_type)?;
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, updated, &physical)?;
-        self.store_value_at(value, &format!("%{element_pointer}"))?;
+        self.store_source_value_at(value, &format!("%{element_pointer}"))?;
         self.move_run_boundary(shape, run_type, run, row)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
@@ -464,7 +466,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         row: IrBoundary,
     ) -> Result<(), BackendFailure> {
         let length = self.run_word(run_type, run, shape.length_field())?;
-        let head = self.window_origin(shape, run_type, run)?;
         // The new descriptor words. A back operation leaves `head` where it
         // was; a front operation moves it by one, modulo the capacity.
         let new_length = self.next_temporary()?;
@@ -478,32 +479,44 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // touched: a front placement's is the slot it wrote, and a front
         // removal's is one past the slot it read.
         let new_head = if row.front() {
-            if row.places() {
+            Some(if row.places() {
                 self.boundary_slot(shape, run_type, run, row)?
             } else {
+                let head = self.window_origin(shape, run_type, run)?;
                 self.wrap_offset(shape, run_type, run, &head, "1")?
-            }
+            })
         } else {
-            head
+            None
         };
         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let owner_alias = if shape.capacity.is_none() {
+            self.owner_alias.write(run)
+        } else {
+            String::new()
+        };
         let length_address =
             self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
         writeln!(
             self.output,
-            "  store i64 %{new_length}, ptr {length_address}"
+            "  store i64 %{new_length}, ptr {length_address}{}{}",
+            storage_alias::runtime_word(run_type, shape.length_field()),
+            owner_alias
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         // Only a `Ring` stores a window origin [WIN-1]; a `Slots` window
         // begins at slot zero and no operation moves it, so a front
         // operation over one is no row of [OP-10] this emitter can serve.
-        if let Some(field) = shape.head_field() {
+        if let Some(new_head) = new_head {
+            let field = shape.head_field().ok_or(BackendFailure::InvalidIr)?;
             let head_address =
                 self.aggregate_field_pointer(run_type, &destination, field as usize)?;
-            writeln!(self.output, "  store i64 {new_head}, ptr {head_address}")
-                .map_err(|_| BackendFailure::TextEmission)?;
-        } else if row.front() {
-            return Err(BackendFailure::InvalidIr);
+            writeln!(
+                self.output,
+                "  store i64 {new_head}, ptr {head_address}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(())
     }
@@ -536,7 +549,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     self.output,
                     "  %{at_start} = icmp eq i64 {head}, 0\n  %{predecessor} = select i1 %{at_start}, i64 {capacity}, i64 {head}\n  %{physical} = sub i64 %{predecessor}, 1",
                 )
-                .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
                 Ok(format!("%{physical}"))
             }
             IrBoundary::PlaceBack | IrBoundary::TakeBack => {
@@ -592,8 +605,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let word = self.next_temporary()?;
         if let Some(address) = self.run_storage(run)? {
             let pointer = self.aggregate_field_pointer(run_type, &address, field as usize)?;
-            writeln!(self.output, "  %{word} = load i64, ptr {pointer}")
-                .map_err(|_| BackendFailure::TextEmission)?;
+            let owner_alias = if storage_alias::runtime_word(run_type, field).is_empty() {
+                String::new()
+            } else {
+                self.owner_alias.read(run)
+            };
+            writeln!(
+                self.output,
+                "  %{word} = load i64, ptr {pointer}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
             return Ok(format!("%{word}"));
         }
         writeln!(
@@ -677,7 +700,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output,
                 "  %{pointer}.nonnegative = icmp sge i64 {physical}, 0\n  call void @llvm.assume(i1 %{pointer}.nonnegative)"
             )
-            .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
         }
         writeln!(
             self.output,
@@ -869,8 +892,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let length_address =
             self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
-        writeln!(self.output, "  store i64 %{moved}, ptr {length_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(
+            self.output,
+            "  store i64 %{moved}, ptr {length_address}{}",
+            storage_alias::runtime_word(run_type, shape.length_field())
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -898,7 +925,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let offset = self.value_name(index);
         let physical = self.wrap_offset(shape, run_type, run, &origin, &offset)?;
         let slot = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.store_value_at(value, &format!("%{slot}"))?;
+        self.store_source_value_at(value, &format!("%{slot}"))?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -958,7 +985,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output,
                 "  %{count} = sub i64 {source_length}, {index}\n  %{empty} = icmp eq i64 %{count}, 0\n  br i1 %{empty}, label %{done}, label %{head_label}\n"
             )
-            .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(head_label.to_string());
             write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{commit}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(body.to_string());
@@ -1019,7 +1046,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         writeln!(
             self.output,
-            "  store i64 {index}, ptr {source_length_address}"
+            "  store i64 {index}, ptr {source_length_address}{}",
+            storage_alias::runtime_word(source_type, source_shape.length_field())
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let destination_storage = self
@@ -1032,7 +1060,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         writeln!(
             self.output,
-            "  store i64 %{grown}, ptr {destination_length_address}"
+            "  store i64 %{grown}, ptr {destination_length_address}{}",
+            storage_alias::runtime_word(destination_type, destination_shape.length_field())
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         writeln!(self.output, "  br label %{done}")?;
@@ -1107,7 +1136,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         self.output.open_block(oom);
         self.output.symbol("wf_resource_abort");
-        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
         self.output.open_block(init.clone());
         let block_address = format!("%{fresh}");
         let length_address = self.aggregate_field_pointer(
@@ -1115,15 +1147,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             &block_address,
             shape.length_field() as usize,
         )?;
-        writeln!(self.output, "  store i64 0, ptr {length_address}")?;
+        writeln!(
+            self.output,
+            "  store i64 0, ptr {length_address}{}",
+            storage_alias::runtime_word(block_type, shape.length_field())
+        )?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let capacity_address =
             self.aggregate_field_pointer(block_type, &block_address, capacity_field as usize)?;
-        writeln!(self.output, "  store i64 {count}, ptr {capacity_address}")?;
+        writeln!(
+            self.output,
+            "  store i64 {count}, ptr {capacity_address}{}",
+            storage_alias::runtime_word(block_type, capacity_field)
+        )?;
         if let Some(head) = shape.head_field() {
             let head_address =
                 self.aggregate_field_pointer(block_type, &block_address, head as usize)?;
-            writeln!(self.output, "  store i64 0, ptr {head_address}")?;
+            writeln!(
+                self.output,
+                "  store i64 0, ptr {head_address}{}",
+                storage_alias::runtime_word(block_type, head)
+            )?;
         }
         writeln!(self.output, "  br label %{ready}")?;
         self.output.open_block(ready);
@@ -1186,15 +1230,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let header_size = self.window_header_size(shape, block_type)?;
         let cell_address = self.value_name(cell);
         let old = self.next_temporary()?;
-        writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(
+            self.output,
+            "  %{old} = load ptr, ptr {cell_address}{}",
+            storage_alias::Role::BoxOwner.attachment()
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let old_capacity_address =
             self.aggregate_field_pointer(block_type, &format!("%{old}"), capacity_field as usize)?;
         let old_capacity = self.next_temporary()?;
         writeln!(
             self.output,
-            "  %{old_capacity} = load i64, ptr {old_capacity_address}"
+            "  %{old_capacity} = load i64, ptr {old_capacity_address}{}",
+            storage_alias::runtime_word(block_type, capacity_field)
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let fresh = self.next_temporary()?;
@@ -1235,14 +1284,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         self.output.open_block(oom);
         self.output.symbol("wf_resource_abort");
-        writeln!(self.output, "  call void @wf_resource_abort()\n  unreachable")?;
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
         self.output.open_block(init);
         let fresh_block = format!("%{fresh}");
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(
             self.output,
-            "  store i64 {count}, ptr {fresh_capacity_address}\n  store ptr %{fresh}, ptr {cell_address}\n  br label %{ready}"
+            "  store i64 {count}, ptr {fresh_capacity_address}{capacity_alias}\n  store ptr %{fresh}, ptr {cell_address}{owner_alias}\n  br label %{ready}",
+            capacity_alias = storage_alias::runtime_word(block_type, capacity_field),
+            owner_alias = storage_alias::Role::BoxOwner.attachment(),
         )?;
         self.output.open_block(ready);
         self.emit_constant(result, ty, IrConstant::Unit)

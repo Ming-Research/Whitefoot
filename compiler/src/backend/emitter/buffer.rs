@@ -297,7 +297,8 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             write!(
                 self.output,
-                "  store i64 {count}, ptr {length_address}\n  br label %{head}\n"
+                "  store i64 {count}, ptr {length_address}{}\n  br label %{head}\n",
+                storage_alias::Role::ArrayLen.attachment()
             )
             .map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(head.to_string());
@@ -354,8 +355,9 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
         writeln!(
             self.output,
-            "  {} = load i64, ptr {length_address}",
+            "  {} = load i64, ptr {length_address}{}",
             self.value_name(result),
+            storage_alias::Role::ArrayLen.attachment(),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
@@ -458,8 +460,12 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                 let address = self.value_name(buffer);
                 let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
                 let length = self.next_temporary()?;
-                writeln!(self.output, "  %{length} = load i64, ptr {length_address}")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                writeln!(
+                    self.output,
+                    "  %{length} = load i64, ptr {length_address}{}",
+                    storage_alias::Role::ArrayLen.attachment()
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
                 let zero = "0".to_owned();
                 let first = self.buffer_element_pointer(block, &address, &zero)?;
                 (format!("%{length}"), first)
