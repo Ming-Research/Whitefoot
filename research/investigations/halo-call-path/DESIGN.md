@@ -155,8 +155,8 @@ require spilling a parameter on a path that makes no call.
 ## Method
 
 First step: attribution, no compiler change, nothing timed. The temporary
-workflow `.github/workflows/halo-call-path.yml` (manual dispatch, one hosted
-x86-64 job, the LLVM major `.github/llvm-major` pins) builds this branch's
+workflow `.github/workflows/halo-call-path.yml` (run by a push to its
+experiment branch, one hosted x86-64 job, the LLVM major `.github/llvm-major` pins) builds this branch's
 compiler, builds Halo-wf `c900a68b2f06`'s bench host with full LTO once
 plainly and once with lld keeping its LTO temporaries, and records:
 
@@ -174,3 +174,163 @@ Each question is answered by the observations its section names. A compiler
 change that follows gets its own question, comparison and rejection
 criterion in this record before it is measured; its timing runs on the
 14900K against a twin of its base.
+
+## Results (2026-10-12, run 38311876567)
+
+Every number below comes from Whitefoot
+[run 38311876567](https://github.com/Ming-Research/Whitefoot/actions/runs/38311876567),
+artifact `halo-call-path`. The run built `f49d0d19c367`, which is main
+`abc27fbd3` plus only the workflow and this record, with Halo-wf
+`c900a68b2f06`, clang and LLD 22.1.8 and valgrind 3.22.0 on a hosted AMD EPYC
+7763. Instruction counts are callgrind's executed instructions (`Ir`) divided
+by fib(32)'s 7,049,155 Lua calls (`callgrind/summary.txt`,
+`callgrind/counts-<function>.txt`). The plain and save-temps binaries are
+byte-identical (`manifest.txt`), so the LTO modules are the profiled code's.
+The program executes 862.53 instructions per Lua call, Halo-wf's figure
+(862.5); PUC Lua 5.1.5 executes 403.0 on the same kernel (Halo-wf run
+38236457893). The dispatch ledger splits `run` into 73 arms taking all 11
+integer argument registers `preserve_none` offers, keeps no value in the
+frame, and dispatches through the tag-indexed table; it prints no handler-word
+line for `run`. The five arms each execute once per Lua call (`hot-arms.tsv`:
+`Call` arm 63, `Return` arm 65, `SubRK` arm 25, `LtJmpRK` arm 54, `GetUpval`
+arm 5).
+
+### R1: the frame stores are the shared-frame placement of the join's slots (H1)
+
+In the emitted module (`ir/call-path.emitted.ll`) every slot of the `Call`
+arm is a `getelementptr` into `%wf.frame`, the join's `Result`
+(`%wf.slot.35`) and `Cursor` (`%wf.slot.36`) among them; the arm's only
+`alloca` is its pin slot. After LTO (`ir/call-path.0.4.opt.ll`)
+`checked_step` is inlined into the arm, and the two slots lie at frame offsets
+1016 to 1064. The linked `Call` arm stores the `Result` (a tag word and three
+payload words, frame offsets 0x3f8 to 0x410) and the `Cursor` (0x418 to
+0x428) through the frame pointer it received in `r11` (copied to `rbx`), then
+tail-jumps to the next arm with the same three values in registers. The
+`Return` arm does the same through `rbp`, holding the frame pointer it
+reloads from its stack. In the optimized module the 73 parts hold 1,045
+store instructions to these offsets and no load of them, and the enclosing
+function reads nothing from the frame after it calls the dispatch function.
+
+| arm | stores to the join's `Result` and `Cursor` frame slots on the executed path, instructions per Lua call (this run; ideal 0) | loads of those slots in any part or the enclosing function, count (H1 predicts 0) | where the stores are |
+|---|---:|---:|---|
+| `Call` (arm 63) | 7.00 | 0 | `6c21d` to `6c24b`, base `rbx` = incoming frame pointer |
+| `Return` (arm 65) | 7.00 | 0 | `6c946` to `6c974`, base `rbp` = frame pointer |
+
+- **H1 survives.** The slots are frame `getelementptr`s in every part, the
+  stores reach the `musttail` transfer, and nothing reads them.
+- **H2 is rejected.** The `Ok` path stores and transfers. The `Err` path,
+  which runs once in the whole run, stores its own `Result` before returning,
+  and no path reads what the `Ok` path stored.
+- **H3 is rejected.** No part loads those offsets, and neither does the
+  enclosing function.
+- **H4 is rejected.** `checked_step` has no symbol in the binary and no
+  definition after LTO. The stores are the arm's own.
+- **The header's `Step::Error()`** costs nothing on the hot arms: `SubRK`,
+  `LtJmpRK` and `GetUpval` execute no frame store.
+
+The cost is 14 executed instructions per Lua call. It comes from
+compiler/match-dispatch-lowering's decision on the frame, "a frame slot that
+exactly one part uses and the enclosing function never uses is that part's
+own allocation". The join after the `match` is copied into each of the 73
+arms, so its slots have 73 users and stay in the shared frame, whose pointer
+every guaranteed tail call passes on. If a slot whose value never crosses a
+transfer were each part's own allocation, the host could remove these stores,
+as it removed the `match` scrutinee's copy in the measurement that decision
+cites. That change narrows the decision and goes to the owner first.
+
+### R2: `enter_lua` and `finish` stay calls, so `Step` returns through memory
+
+After LTO neither function is inlined. `prepare`, which the `Call` arm calls,
+tail-calls `enter_lua` with its own destination. The arm set that destination
+to frame offset 40 (`%wf.slot.2`, the loop's `step`). The `Return` arm calls
+`finish` with the same slot (`ir/call-path.0.4.opt.ll`). Each callee writes
+the `Jump` tag word and three payload words there (`enter_lua` at `2feb1` to
+`2fec5`, `finish` at `2f3ac` to `2f3c0`). The arm reads the tag and the three
+words back from frame offsets 40 to 64 to run the inlined `checked_step`.
+
+| function | executed instructions per Lua call (this run) | executions per Lua call | `Step` stores into the destination, per Lua call (ideal 0 with a register return) | `Step` loads by the calling arm, per Lua call (ideal 0) |
+|---|---:|---:|---:|---:|
+| `enter_lua` (from `prepare`, from the `Call` arm) | 190.00 | 1.00 | 4.00 | 4.00 (`Call` arm, `6c178`, `6c1b2`, `6c1c3`, `6c20b`) |
+| `finish` (from the `Return` arm) | 93.00 | 1.00 | 4.00 | 4.00 (`Return` arm, `6c8ce`, `6c8e1`, `6c8f2`, `6c934`) |
+
+The "remain calls" branch holds: 16 memory operations per Lua call, Halo-wf's
+figure. Two approved decisions require them. compiler/result-registers' first
+decision returns a result in registers only when it has at most three integer
+leaves, and compiler/payload-enum-layout's fourth decision keeps a
+union-laid-out enum memory-only, returned through a destination. `Step::Jump`
+needs a tag and three words. That the destination is a shared-frame slot
+(R1's mechanism) adds nothing here, because an out-of-line callee writes
+whatever slot it is given.
+
+### R3: most of the hot arms' spills serve their slow paths
+
+`SubRK`, `LtJmpRK` and `GetUpval` execute no call: every `call` in them
+counts 0. Yet each sets up a stack frame and stores to the stack on every
+execution. Reading them instruction by instruction
+(`callgrind/counts-...arm.{25,54,5}.txt`) sorts the overhead into five kinds:
+
+- (a) a loop-state value stored at entry and reloaded before the tail jump,
+  because the executed path used its register for a temporary;
+- (b) a value stored at entry that only the slow path reads; in `SubRK` and
+  `LtJmpRK` one of these is the pin slot holding the code run's pointer,
+  which emission stores in every part's prelude (compiler/match-dispatch-lowering,
+  the decision on pinned references);
+- (c) the stack frame: `push rbp`, `sub rsp`, `add rsp`, `pop rbp`;
+- (d) copies of loop-state values into `rbx`, `rbp` or `r10` and back;
+- (e) the address of the join's `Result` slot, formed on the executed path
+  and used only by the slow path.
+
+| arm | executed instructions per Lua call (this run) | (a) spilled and reloaded on the executed path | (b) stored for the slow path only | (c) stack frame | (d) register copies | (e) slow-path slot address | overhead, instructions per Lua call (Halo-wf's figure in brackets; ideal 0) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `SubRK` (arm 25) | 53 | 6 (`rdi`, `r13`, `r14`) | 3 (`r8` twice, `rsi`) | 4 | 4 | 1 | 18 (18) |
+| `LtJmpRK` (arm 54) | 56 | 7 (`rdi`, `rcx`, `r8`, a byte temporary) | 3 (`r8`, `r13`, `rsi`) | 4 | 4 | 1 | 19 (19) |
+| `GetUpval` (arm 5) | 62 | 5 (`r8` reloaded twice, `rdi`) | 0 | 4 | 3 | 0 | 12 (12) |
+| total | 171 | 18 | 6 | 12 | 11 | 2 | 49 |
+
+- **Kinds (b) to (e), 31 instructions per Lua call, are spills around calls
+  the executed path does not make.** The slow paths call `slow`,
+  `heap.intern`, `unwind` and `restore_stopped_stack` under the C convention.
+  A value live across those calls must be in one of the six registers they
+  preserve, or on the stack. LLVM placed the frame, the spills and the copies
+  at the arm's entry, which every execution runs.
+- **Kind (a), 18 instructions per Lua call, is pressure on the executed
+  path.** All 11 loop-state values must be back in their argument registers
+  at the tail jump. That leaves `rax`, `rbx`, `rbp` and `r10`, plus the
+  cursor's register once its operands are read, for temporaries. This run
+  does not show whether those would suffice once the slow paths no longer
+  claim registers.
+- **The `Call` and `Return` arms differ: they call on every execution**
+  (`prepare` and `finish`), so their stack traffic is spilling around a hot
+  call. `Call` executes 7 stack stores, 12 stack loads and 7 pushes of stack
+  arguments, since `prepare` takes twelve parameters. `Return` executes 18
+  stack stores, 8 of which copy the popped call frame that `finish` takes by
+  value, and 12 stack loads (`callgrind/summary.txt`).
+
+No design decision places these spills; compiler/match-dispatch-lowering's
+convention decision fixes 11 integer parameters, and where the frame and
+spills go inside an arm is LLVM's choice. The candidate this points to is
+moving each arm's slow path out of the arm, into a part of its own entered by
+a tail call with the loop state as arguments, so the arm itself calls
+nothing. That would make up to the 31 instructions per Lua call of kinds (b)
+to (e) unnecessary in these three arms, and kind (a) may shrink with it. The
+status board study of pinning the state in one function with inline-assembly
+constraints addresses kind (a) only.
+
+### What the data does not settle
+
+- The savings above count instructions the named change would make
+  unnecessary, read off this run. No changed compiler was measured, and they
+  are instruction counts on a hosted guest, not time.
+- Whether a four-word `Step` can return in registers at all: LLVM returns at
+  most three integer leaves in registers on x86-64
+  ([result-register investigation](../result-registers/DESIGN.md#demotion-probe)).
+  Removing R2's 16 operations therefore needs a narrower `Step`
+  representation, or `enter_lua` and `finish` inlined together with R1's
+  part-local slots, or a different convention for such calls.
+- `storage_parts` gives a block that several arms reach only the last arm's
+  identity. This run does not bear on it: the emitter places the join's
+  slots by its count of using parts, which the data confirms, not through
+  `storage_parts`.
+- No handler word for Halo's `Cell`: the ledger prints the table dispatch,
+  and every arm loads its next handler from the tag-indexed table. Why the
+  composition-wide plan did not select `Cell` was not examined here.

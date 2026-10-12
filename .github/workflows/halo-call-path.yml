@@ -357,6 +357,9 @@ jobs:
           print('\n'.join(summary))
           PY
 
+      # Each file is printed only if it exists: `missing.txt` exists only
+      # when something was not found, and a `cat` of an absent file failed
+      # this step under bash -e in run 38311876567.
       - name: Publish
         if: always()
         run: |
@@ -365,9 +368,9 @@ jobs:
             echo "## halo-call-path"
             echo
             echo '```text'
-            cat "$out/manifest.txt" "$out/hot-arms.tsv" "$out/missing.txt" "$out/disasm/sizes.txt" 2> /dev/null
-            echo
-            cat "$out/callgrind/summary.txt" 2> /dev/null
+            for file in manifest.txt hot-arms.tsv missing.txt disasm/sizes.txt "" callgrind/summary.txt; do
+              if [ -z "$file" ]; then echo; elif [ -f "$out/$file" ]; then cat "$out/$file"; fi
+            done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
