@@ -2,7 +2,7 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form. Older entries also record refused amendments,
+the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
 ## 2026-10-11 Growth keeps length and filled-element facts
@@ -12,6 +12,21 @@ Nodes: compiler/checker-facts, language/checks-and-proofs/automatic-facts, langu
 Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every added and changed decision and Rejected item verbatim.
 
 Summary: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements while capacity and invalidated-reference support die and the whole-cell row stays, because growth moves storage without changing those values; per-element equality postconditions, a capacity-only effect row and re-proving facts in a loop were rejected. The checker marks canonical growth calls' proof write events as relocations, keeping their full resolved write places, and one support classifier applies the mark to every fact component and range version. The range walk places growth by that classification next to `place_back` and `take_back`.
+## 2026-10-11 The gate runs macOS where it decides a merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card wf-gate-368-approve, which asked "approve the design-tree change in Whitefoot #368 (head f6d7da395) recording that the gate's macOS jobs run only for ready pull requests, main and manual runs?" (translated); the direction was the owner's choice of A on the card coord-gate-macos-queue the same day.
+
+Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
+
+## 2026-10-11 Goal data admit integer terms by the place as written
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#358 (head 11fa213a5) adding this decision to the design tree node compiler/checker-facts?" (translated).
+
+Summary: The checker admitted writable fields below a subscript as ENT-2 terms when a constructor or call result was placed into indexed storage, accepting eight programs the specification rejects. Carried values are now published only when their target place as written is admissible, and a goal datum carries its written place as an admission annotation outside its typed identity: one canonical goal per identity keeps whole-goal truth, so a `+defined` guard or Boolean fact still crosses spellings, while integer projection and normalization belong to one admission view per spelling, so a numeric relation admitted through one spelling cannot reach an inadmissible one. Refusing the goal datum of an inadmissible indexed field was rejected because it removes the value identity that a guard on a writable indexed field and a readonly field reached by struct-equality projection need.
 ## 2026-10-11 Freeing moved map tables once their statements end
 
 Nodes: compiler/waiting-contexts/concurrent-map

@@ -2698,10 +2698,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 declaration,
                 projections,
                 ty,
+                admission,
             }) => Ok(GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: *declaration,
                 projections: projections.clone(),
                 ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
+                admission: admission.clone(),
             })),
             GoalExpression::Datum(GoalDatum::Literal(value)) => {
                 Ok(GoalExpression::Datum(GoalDatum::Literal(

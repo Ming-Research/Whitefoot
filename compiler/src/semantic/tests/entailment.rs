@@ -817,6 +817,7 @@ fn retained_origin_expansion(
                 root,
                 projections,
                 ty,
+                ..
             }) => {
                 let Some(definition) = definitions.get(root) else {
                     return expression.clone();
@@ -12427,4 +12428,60 @@ fn main() -> status: std::process::ExitStatus pure {
                 && mechanical_fix.contains("guard the access with `if offset < b.len`")
         )
     });
+}
+
+#[test]
+fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+    let source = br#"struct Cell {
+  len: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit reads(cells) {
+  if cells^[0_u64].len +defined 254_u8 {
+    let value = cells^[0_u64].len + 254_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    let domain = summary
+        .derivations
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            DerivationNode::IntegerDomain {
+                goal: Some(goal),
+                parents,
+            } if matches!(
+                &summary.inventory.goals[goal.0 as usize].expression,
+                GoalExpression::Operation {
+                    row: GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::AddDefined,
+                        ..
+                    },
+                    ..
+                }
+            ) =>
+            {
+                Some(parents)
+            }
+            _ => None,
+        })
+        .expect("the addition retains its exact domain goal");
+    assert_eq!(domain.len(), 1);
+    assert!(matches!(
+        summary.derivations.nodes[domain[0].0 as usize],
+        DerivationNode::SourceGoal {
+            sign: GoalSign::Positive,
+            ..
+        }
+    ));
+    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+        TermKind::Place(place, IntegerType::U8)
+            if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
+                && matches!(place.path.last(), Some(PlaceStep::Field(_))))));
 }

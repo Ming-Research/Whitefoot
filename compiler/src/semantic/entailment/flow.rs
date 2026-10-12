@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::super::goal::{
-    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalDatum, GoalExpression,
-    GoalOperation, GoalProjection,
+    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalAdmission, GoalDatum,
+    GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::model::expression_children;
 use super::super::model::{
@@ -2064,6 +2064,7 @@ mod indexed_goal_kill_tests {
                 root: BindingId(0),
                 projections: projections.clone(),
                 ty: CheckedType::Bool,
+                admission: Default::default(),
             }),
             None,
             None,
@@ -2098,6 +2099,7 @@ mod indexed_goal_kill_tests {
                     facts.establish_goal(
                         goal,
                         sign,
+                        &analyzer.vocabulary.goals,
                         &mut analyzer.vocabulary.derivations,
                         established,
                     );
@@ -2124,6 +2126,7 @@ mod indexed_goal_kill_tests {
                 facts.establish_goal(
                     goal,
                     sign,
+                    &analyzer.vocabulary.goals,
                     &mut analyzer.vocabulary.derivations,
                     established,
                 );

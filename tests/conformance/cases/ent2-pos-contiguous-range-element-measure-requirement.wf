@@ -1,0 +1,16 @@
+fn exactly_four(word: &u64) -> result: u64 reads(word) contract {
+  requires word^ == 4_u64;
+} {
+  return word^;
+}
+
+fn observe_contiguous(rows: &[Array<Array<u8, 7>, 4>]) -> result: u64 reads(rows) contract {
+  requires 0_u64 < rows^.len;
+} {
+  doc "FN-8, MSR-1, REF-4: the first selected range element retains its Array length four when that readonly measure is borrowed as a scalar reference actual.";
+  return exactly_four(word: &rows^[0_u64].len);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
