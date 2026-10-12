@@ -664,7 +664,7 @@ define pre = 0_i32 +wrap 1_i32;
 define post = 0_i32 +wrap 1_i32;
 requires pre;
 requires pre /defined post;
-requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32: run[k] <= run[m], 0_u64 <= k;
+requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32, run[m] is not None: run[k] <= run[m], 0_u64 <= k, run[k] is Some;
 ensures when Some(value: routed): routed;
 ensures 2_i32 * routed + 1_i32 <= post - 1_i32;
 }
@@ -768,7 +768,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 101);
+    assert_eq!(productions().len(), 102);
     assert_eq!(
         parsed
             .tree

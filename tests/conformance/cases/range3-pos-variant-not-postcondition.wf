@@ -1,0 +1,19 @@
+enum Instr {
+  Jump(t: u64);
+  Branch(t: u64, c: u64);
+  Halt();
+}
+
+fn finish(code: &Slots<Instr, 4>) -> result: unit writes(code) contract {
+  requires code^.len < 4_u64;
+  ensures forall ends(j in 0_u64..code^.len) when j + 1_u64 == code^.len: code^[j] is not Halt;
+} {
+  doc "Appends a Jump, so the last instruction is not a Halt.";
+  let last = Jump(t: 0_u64);
+  place_back(window: code, value: last);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -125,7 +125,8 @@ fn complete_inventory_is_pinned() {
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
     // v0.128 adds `range_guard` [GRAM-5, RANGE-1].
-    assert_eq!(productions().len(), 101);
+    // v0.135 adds `range_variant` [GRAM-5, RANGE-1].
+    assert_eq!(productions().len(), 102);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
@@ -159,7 +160,10 @@ fn complete_inventory_is_pinned() {
     // v0.128 admits projections inside `entry` [GRAM-5, MSR-3]:
     // `pbase` gains one `psuffix*` repeat.
     // v0.128's range guard optional comparison adds one decision.
-    assert_eq!(DECISIONS.len(), 180);
+    // v0.135's variant relation adds three: the comparison-or-variant choice
+    // of `range_guard` and of `range_relation`, and `range_variant`'s
+    // optional `not`.
+    assert_eq!(DECISIONS.len(), 183);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -179,7 +183,8 @@ fn complete_inventory_is_pinned() {
     // Together the projected entry former and the guard comparison add
     // 95 + 104 rows to the 7,932-row v0.127 inventory.
     assert_eq!(SELECT_ROWS.len(), 8_131);
-    assert_eq!(diagnostic_terminal_order().len(), 115);
+    // v0.135's `not` is one new terminal [RANGE-1].
+    assert_eq!(diagnostic_terminal_order().len(), 116);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
     // with the module graph productions; [GRAM-3] adds `type_path` and
@@ -213,11 +218,12 @@ fn complete_inventory_is_pinned() {
     assert_eq!(productions()[90], Production::RangeBinder);
     assert_eq!(productions()[91], Production::RangeGuard);
     assert_eq!(productions()[92], Production::RangeRelation);
-    assert_eq!(productions()[96], Production::Effect);
-    assert_eq!(productions()[97], Production::EffectPath);
-    assert_eq!(productions()[98], Production::Epbase);
-    assert_eq!(productions()[99], Production::Epsuffix);
-    assert_eq!(productions()[100], Production::Erange);
+    assert_eq!(productions()[93], Production::RangeVariant);
+    assert_eq!(productions()[97], Production::Effect);
+    assert_eq!(productions()[98], Production::EffectPath);
+    assert_eq!(productions()[99], Production::Epbase);
+    assert_eq!(productions()[100], Production::Epsuffix);
+    assert_eq!(productions()[101], Production::Erange);
     assert_eq!(Production::ForStmt.index(), 63);
     assert_eq!(Production::ForBinding.index(), 64);
     assert_eq!(Production::HeaderInvariant.index(), 65);
@@ -253,6 +259,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(Production::TypeInvariant.index(), 94);
     assert_eq!(Production::PackageDecl.index(), 99);
     assert_eq!(Production::RangeGuard.index(), 100);
+    assert_eq!(Production::RangeVariant.index(), 101);
     // Index 2 is `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2], so
     // every decision after `item` follows that optional before
     // that modifier entered the grammar.
@@ -362,7 +369,9 @@ fn complete_inventory_is_pinned() {
     // suffix decisions; later decision identities move by one [MSR-3].
     assert_eq!(DECISIONS[156].production(), Production::Pbase);
     assert_eq!(DECISIONS[156].kind(), DecisionKind::Repeat0);
-    assert_eq!(DECISIONS[156].rows().len(), 92);
+    // v0.135's variant relation lets `is` follow a place in a range clause,
+    // so the repeat's exit gains the row `) is`.
+    assert_eq!(DECISIONS[156].rows().len(), 93);
     assert_eq!(DECISIONS[157].production(), Production::Psuffix);
     assert_eq!(DECISIONS[157].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[158].production(), Production::Psuffix);
@@ -378,14 +387,23 @@ fn complete_inventory_is_pinned() {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
-    // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison.
-    assert_eq!(DECISIONS[163].production(), Production::RangeGuard);
-    assert_eq!(DECISIONS[163].kind(), DecisionKind::Optional);
+    // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison, and
+    // v0.135's choice between a comparison and a variant relation in a guard
+    // and in a conclusion, then the variant relation's optional `not`.
+    for (index, production, kind) in [
+        (163, Production::RangeGuard, DecisionKind::Optional),
+        (164, Production::RangeGuard, DecisionKind::Choice),
+        (165, Production::RangeRelation, DecisionKind::Choice),
+        (166, Production::RangeVariant, DecisionKind::Optional),
+    ] {
+        assert_eq!(DECISIONS[index].production(), production);
+        assert_eq!(DECISIONS[index].kind(), kind);
+    }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[178].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[178].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[179].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[179].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[181].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[181].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[182].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[182].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -468,10 +486,11 @@ fn the_retired_atoms_leave_the_inventory_and_the_new_ones_enter() {
     for (spelling, terminal) in [
         (b"apart".as_slice(), FixedTerminal::Apart),
         (b"forall".as_slice(), FixedTerminal::Forall),
+        (b"not".as_slice(), FixedTerminal::Not),
     ] {
         assert_eq!(FixedTerminal::from_spelling(spelling), Some(terminal));
     }
-    assert_eq!(ALL_FIXED_TERMINALS.len(), 108);
+    assert_eq!(ALL_FIXED_TERMINALS.len(), 109);
     // No fixed atom is capitalized any more, so nothing competes with TYPEID.
     assert!(ALL_FIXED_TERMINALS.iter().all(|terminal| {
         !terminal
@@ -515,14 +534,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 180 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 183 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 180);
+    assert_eq!(decisions, 183);
 }
 
 #[test]
@@ -579,7 +598,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 180);
+    assert_eq!(DECISIONS.len(), 183);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {

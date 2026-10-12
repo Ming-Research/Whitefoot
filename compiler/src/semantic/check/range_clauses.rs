@@ -702,8 +702,8 @@ impl Checker<'_, '_> {
         )
     }
 
-    /// [RANGE-1] a comparison guard is a relation; a bare Bool datum holds
-    /// where its versioned declaration-order tag is True's tag.
+    /// [RANGE-1] a comparison or variant guard is a relation; a bare Bool
+    /// datum states that it `is True`.
     fn range_guard(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -719,6 +719,14 @@ impl Checker<'_, '_> {
             .is_some()
         {
             return self.range_comparison(context, node, node, bindings, names);
+        }
+        if let Some(variant) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::RangeVariant)?
+        {
+            return self.range_variant(context, node, variant, bindings, names);
         }
         let expression = self
             .types
@@ -737,7 +745,46 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if let Some(variant) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::RangeVariant)?
+        {
+            return self.range_variant(context, node, variant, bindings, names);
+        }
         self.range_comparison(context, node, node, bindings, names)
+    }
+
+    /// [RANGE-1] `e is V` or `e is not V` in the guard or conclusion `node`:
+    /// e's versioned tag [RANGE-2] compared with V's declaration-order number.
+    fn range_variant(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        variant: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        let expression = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::AffineExpr)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let operand = self.range_expression(context, expression, bindings, names)?;
+        let negated = self
+            .types
+            .declarations
+            .tree
+            .has_fixed(variant, FixedTerminal::Not)?;
+        let name = self
+            .types
+            .declarations
+            .deferred_use_at(variant, crate::DeferredUseRole::TestedVariant)?
+            .spelling()
+            .to_owned();
+        operand.variant_relation(self, node, &name, negated)
     }
 
     /// One comparison of two range terms: the `affine_expr` children of

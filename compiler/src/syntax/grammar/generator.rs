@@ -126,6 +126,8 @@ const ENUM_ORDER: &[&str] = &[
     "package_decl",
     // v0.128 [GRAM-5, RANGE-1]: guards admit a single Bool datum.
     "range_guard",
+    // v0.135 [GRAM-5, RANGE-1]: the variant relation `e is V`, `e is not V`.
+    "range_variant",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.

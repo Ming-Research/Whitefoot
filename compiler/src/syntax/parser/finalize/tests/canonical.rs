@@ -50,6 +50,21 @@ fn range_bool_guards_round_trip_with_comparison_guards() {
     });
 }
 
+/// [GRAM-5, RANGE-1, FORM-2] a variant relation, plain and negated, is a
+/// guard and a conclusion: `is` and `not` are spaced words before the
+/// variant's TYPEID, beside comparison and Bool guards.
+#[test]
+fn range_variant_relations_round_trip_as_guards_and_conclusions() {
+    let source = b"enum Step {\n  Next();\n  Stop();\n}\n\nfn inspect(steps: &[Step], flags: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..steps^.len) when k < flags^.len, steps^[k] is not Stop, flags^[k]: steps^[k] is Next, k + 1_u64 < steps^.len;\n} {\n  return unit;\n}\n";
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+    audit_source(source, |outcome| {
+        assert!(
+            matches!(outcome, CanonicalOutcome::Complete(_)),
+            "variant relations must render canonically: {outcome:?}"
+        );
+    });
+}
+
 /// [FORM-2] a `<` or `>` selected by `compare_op` belongs to neither
 /// attachment set, so a comparison is spaced while a type-argument list and
 /// its `::` delimiter stay compact; the attached spelling of a comparison is
