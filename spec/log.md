@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.135: a call separates the places a callee's contract reads
+
+Rules: changed EFF-2, EFF-5
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#373 (head commit 4d8025bb6) changing the specification and the design tree?" (translated), whose background listed EFF-5's contract-read footprint with its kept and widened positions, EFF-2's pointer to it, and the two design-tree decisions in call-site-check.md and checker-facts.md.
+
+Summary: A callee proves its contract treating its reference parameters as separate roots, but EFF-5 compared only the runtime row, so one object passed as two reference arguments whose rows touch different fields made a requirement or postcondition false at run time. EFF-5 now adds the callee's contract-read footprint, the places its requirements and postconditions read through each reference parameter after definition expansion, including range clauses, entry-state reads, measures and published type invariants, to the call's pairwise comparison as reads supplied by that argument, compared only with other arguments' effects. A subscript or range position is kept when it is fixed at the call (no clause-bound variable or result, and a requirement or literal/const/by-value arithmetic), and otherwise widened to the whole run. The footprint is erased proof syntax and serves only this comparison; the declared row, reference invalidation, fact kills and scheduling are unchanged, and EFF-2 points to EFF-5. Selection ground: the call is where separation is known, and dropping the separate-root assumption in the callee instead would kill facts on every helper with two same-typed reference parameters.
+
 ## 2026-10-12 v0.134: the runtime's driver count in Inputs
 
 Rules: changed WAIT-2, PRE-2

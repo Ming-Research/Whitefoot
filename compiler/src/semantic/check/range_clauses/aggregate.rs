@@ -22,6 +22,10 @@ impl From<CheckedRangeTerm> for RangeOperand {
 }
 
 impl RangeOperand {
+    pub(super) fn term(&self) -> &CheckedRangeTerm {
+        &self.term
+    }
+
     /// [RANGE-1, PRE-1] Bool is True first, False second. Reuse the tag
     /// projection of value equality, with the ordinary read domain retained.
     pub(super) fn bool_guard(
