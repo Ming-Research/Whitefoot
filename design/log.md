@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A struct's type invariants travel through enum payloads
+
+Nodes: language/checks-and-proofs
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit f42b49029?" (translated), whose background listed the two added decisions and three refused alternatives in checks-and-proofs.md; earlier the owner chose option A, "merge Whitefoot#398 now, accept the consequence and open a follow-up item" (translated), on the card asking whether generic wrappers and container reads of a struct with invariants are refused for now.
+
+Summary: A type invariant now crosses a function boundary inside an own enum's variant field as a routed requirement or postcondition, proved and assumed only in that payload's context, and a generated route that no exit selects holds vacuously, because fallible producers return their structs inside Result or Option and a generic failure helper has no payload to speak of. The rule provisionally reaches only an own enum's field holding an invariant struct, since refusing the other positions is safe and each needs its own rule; it reopens when a real program needs one. Refused: a written every-exit-is-`Err` contract form alone, that form beside the generated routes, and assuming a parameter's routed invariant at body entry, which an invariant no value satisfies would make vacuous.
+
 ## 2026-10-12 A heap reading loads the pool counter without the pool lock
 
 Nodes: language/system-interface/memory-statistics

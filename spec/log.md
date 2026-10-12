@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.136: a struct's type invariants travel through enum payloads
+
+Rules: changed TYPE-11, FN-9, ENT-5, ENT-2, DIAG-2, CALL-6
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision and design-tree change of Whitefoot#398 at commit f42b49029?" (translated), whose background listed the added TYPE-11 enum-payload routes, FN-9's selection of exits by routed variant with a generated route no exit selects holding vacuously, ENT-5's one conditional context per payload route, the wording changes from Result or Option and success to enum and route, and the two design-tree decisions with three refused alternatives; earlier the owner chose option A, "merge Whitefoot#398 now, accept the consequence and open a follow-up item" (translated), on the card asking whether generic wrappers and container reads of a struct with invariants are refused for now.
+
+Summary: A type invariant crossed a function boundary only as a direct struct parameter or result, so a fallible producer returning `Option<Span>` or `Result<Span, E>` lost `lo <= hi` and every caller had to restate it. TYPE-11 now routes each invariant of a struct held in an own enum parameter's or result's variant field: a parameter's is a requirement proved at each call in that payload's context and assumed in the body only inside the payload, and a result's is a postcondition routed to that variant. FN-9 selects an exit for a routed clause unless it constructs another variant or is known to hold one; a generated invariant postcondition that no exit selects holds vacuously, so a generic failure helper returning only `Err` is accepted at such an instance, while a written clause still needs a selected exit. ENT-5 keeps one conditional context per payload route instead of one success context, and ENT-2, DIAG-2 and CALL-6 say enum and route where they said Result, Option and success. The rule reaches only an own enum's field holding an invariant struct; a generic wrapper's bare type parameter and container elements are refused until a program needs them. A written every-exit-is-`Err` form, alone or beside the generated routes, and assuming a parameter's routed invariant at body entry, are refused.
+
 ## 2026-10-12 v0.135: a call separates the places a callee's contract reads
 
 Rules: changed EFF-2, EFF-5
