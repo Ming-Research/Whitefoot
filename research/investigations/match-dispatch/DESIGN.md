@@ -1751,6 +1751,79 @@ small (few new arms, no clear rise in checking time). Under it `BrTableN`
 restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
 stay reverted.
 
+### Attribution refreshed on 2026-10-12
+
+Whitefoot run 38231805057 on the 14900K (main at `51c5f4263`, CPU 2,
+CoreMark 2000 iterations, `perf` cpu-clock sampling at 20 kHz, wasmi
+2.0.0): v2h scores 5362 iterations/s in all three launches and wasmi 5618,
+5618 and 5571, so v2h is 0.957 of wasmi (main measured 0.941 on 2026-10-11, before
+the cursor transport through mixed joins; a comparison across runs, not
+an attribution of that change). Task-clock medians are 387.3 ms and
+357.6 ms: 29.7 ms, 8.3% of wasmi's time, remains.
+
+Handler names come from the IR, not from the order of `gen.py --names`:
+each instruction constructor stores its variant tag and its handler's
+address (`store i16 203` then `store ptr @wf_run.arm.197`), and tag order is
+the names order. All 362 arms map to exactly one tag. Arm numbers do not
+follow tag order, so a label taken from the arm number's line in the names
+list is wrong for most arms (the disassembly of arm 197 is a 32-bit load,
+`I32LoadSD`, not a select).
+
+The two instruction sets differ (wasmi fuses a compare into its branch and
+select forms and has register-operand load forms; v2h has accumulator
+forms), so the comparison groups handlers by operation kind. Times are the
+sample share times the task-clock median; each report lists handlers above
+0.3% of samples, and the rest is the last row:
+
+| Operation kind | v2h ms | wasmi ms | v2h − wasmi |
+|---|---|---|---|
+| conditional and unconditional branches (`Br*`, `Jump`; `branch*`) | 49.9 | 36.0 | +13.8 |
+| jump tables (`BrTableN`, `BrTableNC`; `branch_table_*`) | 26.1 | 19.0 | +7.1 |
+| bitwise and | 22.9 | 16.0 | +6.9 |
+| call and return (`Call`, `Return`; `call_internal`, `return`) | 19.6 | 14.7 | +4.8 |
+| select | 6.0 | 3.8 | +2.2 |
+| `memset` from the C library | 3.7 | 2.2 | +1.5 |
+| loads | 111.2 | 118.7 | −7.6 |
+| adds | 47.2 | 54.0 | −6.8 |
+| copies (`Copy*`; `*_copy_*`) | 29.2 | 40.5 | −11.4 |
+| handlers below 0.3% each | 30.4 | 12.9 | +17.5 |
+
+Control flow (branches, jump tables, calls and returns) accounts for about
+26 ms of the 29.7; loads, adds and copies are cheaper in v2h, and a longer
+tail of rare handlers is dearer. In the IR, every v2h branch arm checks its
+target index against the code length before forming the next cursor, and
+the fall-through path checks the next index too; the taken path of a jump
+(`Jump`, arm 1) is a compare, a trap branch and the dispatch. The machine code
+(Whitefoot run 38233487080, hosted x86-64, the same main revision) shows
+what the branch arms pay over wasmi's:
+
+- wasmi's `branch_i32_not_eq_si` is a compare and, on either path,
+  `ip += offset; jmp *(ip)`: five instructions on the taken path, no
+  bounds check. Its `branch` is four.
+- v2h's `BrI32Ne` (arm 185) keeps both the index and the cursor. Taken, it
+  loads the target index, compares it with the code length, rebuilds the
+  cursor from the index (two `lea` and an `add`, since an `Op` with its
+  handler word is 24 bytes), loads the handler and copies the index:
+  nine instructions after the compare. Not taken, it checks index + 1
+  against the code length before advancing the cursor.
+- `Jump` (arm 1) is ten instructions to wasmi's four, the difference being
+  the target check and the cursor rebuild.
+- Every straight-line arm ends with the same fall-through check
+  (`lea 1(%r15); cmp; jae`), so its cost is spread over all handlers
+  rather than visible in the branch rows; `I32AddSD` (arm 278) shows it.
+- `BrTableN` (arm 7) also loads the table from the frame and checks the
+  entry index against the table length, the check
+  [the jump-table change](https://github.com/Ming-Research/Whitefoot/pull/360)
+  removes with loader validation and per-element contract facts.
+- `Return` (arm 8) checks the saved return pc against the code length and
+  the caller's frame base against the stack length less 65536.
+
+The branch-target checks are of the kind the jump-table change already
+removes: a loader can validate every target once, and a per-element fact
+on the interpreter's code carries it to each arm. Whether the fall-through
+check can be stated the same way, as a fact that a non-terminating
+instruction always has a successor, is the open question.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors
