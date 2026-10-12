@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-11 v0.128: growth relocates storage and keeps length and filled-element facts
+
+Rules: changed OP-10, FN-9, EFF-2, EFF-5, MSR-2, CALL-3, CALL-5, ENT-5, RANGE-2
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every changed rule verbatim; the direction was the owner's choice of A on the card paged-grow-keeps-facts the same day.
+
+Summary: `grow` and `grow_paged` keep their whole-cell `writes(cell)` rows, reference invalidation and parallel permission, but every fact supported by the window's length or its filled elements, owned descendants included, was killed with them, so Snowghost's inverse-table invariant could not survive a Paged growth. ENT-5 classifies each write for support survival: a relocation write, the `writes(cell)` event of the compiler-owned growth declarations, keeps support that denotes the window's `len` word or its filled element storage and the owning `Box` binding, while capacity support and support through an invalidated reference die as before; every other write is ordinary and unchanged. OP-10 states that `grow` relocates the element storage and that both operations' fact survival is ENT-5's; MSR-2, FN-9, EFF-2, EFF-5, CALL-3 and CALL-5 refer to the ENT-5 classification instead of restating the overlap kill; RANGE-2's loop header forgets only what its body can kill under ENT-5 and a growth call applies the relocation classification to the window version. The conformance case for a Paged page length after growth changes from rejection to acceptance, because that length's support is the filled length. Selection ground: growth changes where elements live, not their values, while per-element equality postconditions cannot cover non-comparable elements, a capacity-only effect row would let parallel reads race the freed block, and re-proving facts after growth hides the gap. The approval named v0.127; the merge order gave v0.127 to struct destructuring, so these unchanged rules are numbered v0.128.
+
 ## 2026-10-11 v0.127: struct destructuring of copy values, and the prelude's `release`
 
 Rules: changed GRAM-4, PROV-6, PRE-1, FORM-2, CALL-4, MOD-5, MSR-3

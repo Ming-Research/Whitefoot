@@ -181,6 +181,8 @@ pub(super) struct World {
 pub(super) struct Modified {
     pub(super) containers: BTreeSet<ContainerId>,
     pub(super) descriptors: BTreeSet<ContainerId>,
+    /// Relocations change capacity alone; loop headers retain logical length.
+    pub(super) capacities: BTreeSet<ContainerId>,
     pub(super) projections: BTreeMap<ContainerId, BTreeSet<Vec<CheckedRangeProjection>>>,
     pub(super) bindings: BTreeSet<BindingId>,
     pub(super) slots: BTreeSet<Location>,
@@ -720,6 +722,22 @@ impl State {
                 .entry(container)
                 .or_default()
                 .insert(projection);
+        }
+    }
+
+    /// [ENT-5] give a relocated window a fresh capacity observation while
+    /// retaining the current logical length and every element version.
+    pub(super) fn relocate_container(&mut self, world: &mut World, container: ContainerId) {
+        let old_generation = self.generation(container);
+        let new_generation = world.new_generation();
+        self.generations.insert(container, new_generation);
+        for measure in [CheckedMeasure::Length, CheckedMeasure::Head] {
+            let old = world.measure(container, old_generation, measure);
+            let new = world.measure(container, new_generation, measure);
+            self.conds.push(Literal::new(new, Relation::Equal, old));
+        }
+        if let Some(log) = &mut world.log {
+            log.capacities.insert(container);
         }
     }
 

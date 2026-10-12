@@ -1337,17 +1337,13 @@ fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
     );
 }
 
-/// The whole-cell write of grow_paged reaches the same direct length support
-/// as a write to p.inner.len, even though its contract preserves total len.
+/// [ENT-5, MSR-2] grow_paged preserves initialized-length support, including
+/// a direct page length derived from that length and an unchanged page offset.
 #[test]
-fn direct_page_length_fact_dies_after_grow_paged() {
-    assert_call_goal(
-        include_bytes!(
-            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-grow.wf"
-        ),
-        CallRequirementDisposition::Unproved,
-        "p^.inner.pages[0].len == 1_u64",
-    );
+fn direct_page_length_fact_survives_grow_paged() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/msr2-pos-direct-page-length-after-grow.wf"
+    ));
 }
 
 /// [MSR-2] removal reaches direct length support through take_back's len
