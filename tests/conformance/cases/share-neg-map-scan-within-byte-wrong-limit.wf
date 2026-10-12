@@ -1,0 +1,18 @@
+fn account_scan(map: &ConcurrentHashMap<u8>, keys: &KeySet, cursor: u64, count: u64, limit: u64, left: u64) -> remaining: u64 reads(map), writes(keys) {
+  doc "The scan publishes a bound using its limit actual, not every u64: after minus before is safe, but subtracting it from unrelated left fails OP-2.";
+  let before = key_set_bytes(keys: keys);
+  match map_scan_within::<u8>(map: map, cursor: cursor, count: count, limit: limit, keys: keys) {
+    Next(next: next_cursor) => {
+      let after = key_set_bytes(keys: keys);
+      let used = after - before;
+      set left = left - used;
+    }
+    Needs(bytes: required) => {
+    }
+  }
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

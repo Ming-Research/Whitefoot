@@ -1228,6 +1228,7 @@ pub(super) fn stored_projections(
                     CheckedMeasure::Length,
                     CheckedMeasure::Capacity,
                     CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
                 ] {
                     path.push(CheckedRangeProjection::Measure(measure));
                     let value = world.measure(container, generation, measure);

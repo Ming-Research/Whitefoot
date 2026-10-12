@@ -136,15 +136,21 @@ impl<'unit> SyntaxView<'unit> {
         node: NodeId,
         production: Production,
     ) -> Result<Vec<NodeId>, SyntaxViewFailure> {
-        Ok(self
-            .children(node)?
-            .iter()
-            .copied()
-            .filter(|child| {
-                self.production(*child)
-                    .is_ok_and(|actual| actual == production)
-            })
-            .collect())
+        let mut selected = Vec::new();
+        // The entry former freezes its written projection. Expose that
+        // projection as the prefix of the enclosing place's suffix path,
+        // so type selection and clause expansion read both spellings alike.
+        if production == Production::Psuffix
+            && self.production(node)? == Production::Place
+            && let Some(base) = self.first_child_with(node, Production::Pbase)?
+        {
+            selected.extend(self.children_with(base, Production::Psuffix)?);
+        }
+        selected.extend(self.children(node)?.iter().copied().filter(|child| {
+            self.production(*child)
+                .is_ok_and(|actual| actual == production)
+        }));
+        Ok(selected)
     }
 
     pub(crate) fn only_child(&self, node: NodeId) -> Result<NodeId, SyntaxViewFailure> {
