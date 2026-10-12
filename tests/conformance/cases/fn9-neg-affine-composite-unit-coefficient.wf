@@ -1,5 +1,5 @@
 fn unchanged(base: u64, limit: u64) -> after: u64 pure contract {
-  ensures after <= base + (1_u64 + 0_u64) * limit;
+  ensures after <= base +(1_u64 + 0_u64) * limit;
 } {
   doc "A composite expression equal to one cannot supply the direct integer literal factor required for affine multiplication; folding its value must not broaden FN-9 formation.";
   return base;
