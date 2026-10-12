@@ -216,6 +216,56 @@ publishing the join; the group resides in the starter's frame and survives the
 released record. This is covered by the program's exact post-join balance,
 with execution still pending CI.
 
+### Pool counter read without the pool lock
+
+The first implementation read the pool's granted total under the pool's spin
+lock. A reading therefore performed a test-and-set on the lock's cache line,
+so readings on several drivers contended even when nothing allocated.
+Firn's per-command peak recording made this visible. On the i9-14900K
+(native Linux, 64 contexts, 3 passes of 5 s per cell), a loop doing one
+`heap_in_use` per operation completed, in total across drivers, 51.1 million
+readings per second on 2 performance cores, 28.5 million on 4, 16.3 million
+on 8 and 7.5 million on all 16 hyperthreads, while the same loop touching
+only per-context state rose from 89.6 to 438.5 million
+([Firn-wf run 38230753463](https://github.com/Ming-Research/Firn-wf/actions/runs/38230753463),
+witness `heap.wf` in Firn-wf `research/experiments/runtime-contention`).
+`perf c2c` on firn's GET path put the hottest contended line at the lock's
+location.
+
+The total is now an atomic padded to its own cache line. Only a lock holder
+changes it, with a relaxed load and store, and a reading loads it without
+the lock, as it already loads the per-driver counters. Each stored value is
+exact when stored, so the quiescent-exact and bounded-concurrent reading of
+PRE-2 is unchanged. That the lock was the cause is the hypothesis the
+acceptance comparison tests: the same loop on 8 performance cores at least 3
+times its 2-core rate, and firn GET at pipeline depth 16 on 8 performance
+cores at least 20% faster than the base release built from the same main
+commit, interleaved with a twin of each. The thresholds are provisional,
+set by the request before measurement.
+
+Result, 2026-10-12, both on the 14900K through Firn-wf's CI, with
+experiment release `wf-exp-45c544b24638` (this change at `45c544b24`, before
+the padding of the total, which changes no access) against release
+`wf-51c5f4263f51` (its base, main `51c5f4263`):
+
+- The loop of readings ([Firn-wf run 38233704502](https://github.com/Ming-Research/Firn-wf/actions/runs/38233704502),
+  64 contexts, 3 passes of 5 s, spread at most 1.02) completed 1,980, 3,963,
+  7,927 and 15,724 million readings per second in total on 2, 4 and 8
+  performance cores and 16 hyperthreads: 4.0 times the 2-core rate on 8
+  cores, where the criterion asked for 3. The per-context control was
+  unchanged (89.5 to 441.2 million). The 2-core rate is about the loop's own
+  speed, so the compiler may have hoisted or folded the relaxed load; the
+  witness shows that readings no longer serialize, not a reading's cost.
+- Firn GET at depth 16 on 8 performance cores, 4 interleaved passes of 10 s
+  ([Firn-wf run 38234681969](https://github.com/Ming-Research/Firn-wf/actions/runs/38234681969)),
+  identical Firn source on both lines: base 18.27 million per second and its
+  twin 17.38 (0.95 of the base), this change 25.65 and its twin 25.74. The
+  change is 40% faster than the base, beyond the 5% twin spread and the 20%
+  criterion; Firn without any peak recording had measured 27.0 million.
+
+The lock was therefore the cause of the readings' collapse and of most of
+firn's remaining loss to its per-command peak recording.
+
 ## Concurrent-map accounting correction
 
 Source inspection at base `f887e82c46119dedf20e364c73461cb14fb2dfb3`
