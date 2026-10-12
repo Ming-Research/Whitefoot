@@ -2,8 +2,10 @@
 
 ## Status and question
 
-**This is a draft proposal. No implementation exists, nothing has been
-measured for it, and it promises no latency.** It is a read-only design study
+**This is a draft proposal. Sub-step 1 of section 5 is implemented on the
+work branch with the tests of section 7, while the owner has not chosen
+among the candidates; nothing has been measured for it, and it promises no
+latency.** It is a read-only design study
 of `main` at `51c5f4263` (2026-10-12). No code changed, and no compiler, build
 or test was run to write it. The runtime evidence comes from two places: the
 earlier driver-handoff measurements

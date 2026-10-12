@@ -42,6 +42,9 @@ mod programs {
     mod raw_deflate;
     #[cfg(unix)]
     mod raw_deflate_vectors;
+    // The trigger watches a kernel ring, and only Linux runs two drivers.
+    #[cfg(target_os = "linux")]
+    mod ring_assist;
     #[cfg(unix)]
     mod runs;
     #[cfg(unix)]
