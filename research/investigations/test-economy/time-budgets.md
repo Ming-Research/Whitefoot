@@ -504,6 +504,24 @@ four branches with different changes, Whitefoot#346, #355, #358 and #359, at
 so the owner approved a raise of 10 s, to 115 s, on the status board on
 2026-10-11 (card coord-budget-baseline-raise).
 
+**`compiler/test-corpus` on ubuntu, raised to 185 s.** The stage's time
+depends on the hosted runner's processor: an AMD EPYC 9V45 host ran it in
+109.6 s (main, run 38214030096), while Intel Xeon Platinum 8370C, AMD EPYC
+7763 and AMD EPYC 9V74 hosts took 170.0 to 178.6 s (main runs 38238443040
+and 38303779039; Whitefoot#394 and #400, the latter a research-only change).
+Main itself kept 2 s of margin, so any change landing on a slow host failed.
+The owner approved a raise of 10 s, to 185 s, with `check/corpus` on ubuntu
+to 315 s, on the status board on 2026-10-12 (card ci-corpus-budget-raise).
+Per-processor budgets would restore the sensitivity this raise gives up.
+
+**`compiler/test-build-unit` on macOS, raised to 300 s.** Four pull requests
+that did not change the Rust test build took 282.7, 290.4, 282.5 and 321.9 s
+against 270 s on 2026-10-12; a 10-s raise would not have covered three of
+them. The owner approved a raise of 30 s, to 300 s, with `check/unit` on
+macOS to 425 s, on the status board on 2026-10-12 (card
+coord-ci-budget-1012), and asked whether macOS speed also depends on the
+host assigned, to lower the budget or split it by host once known.
+
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
 two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
