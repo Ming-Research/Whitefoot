@@ -1036,6 +1036,7 @@ impl Reasoning<'_, '_, '_> {
                 declaration,
                 projections,
                 ty: CheckedType::Integer(_),
+                ..
             }) if projections.is_empty() => self
                 .input
                 .context
@@ -1045,6 +1046,7 @@ impl Reasoning<'_, '_, '_> {
                 root,
                 projections,
                 ty: CheckedType::Integer(_),
+                ..
             }) if projections.is_empty() => state.values.get(root).cloned(),
             GoalExpression::Operation {
                 row:
@@ -1536,6 +1538,7 @@ impl Reasoning<'_, '_, '_> {
                 element,
                 source,
                 narrowed,
+                relocation,
             } => self.event_kills_term(
                 separations,
                 substitution.term,
@@ -1543,6 +1546,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    relocation: *relocation,
                     narrowed: narrowed.clone(),
                 },
             ),
@@ -1563,15 +1567,21 @@ impl Reasoning<'_, '_, '_> {
             KillEvent::Write {
                 place,
                 element: false,
+                relocation,
                 ..
             }
             | KillEvent::EntryImageHolderWrite {
                 place,
                 element: false,
+                relocation,
                 ..
-            } => live_holders
-                .iter()
-                .any(|holder| self.input.write_replaces_live_holder(*holder, place)),
+            } => live_holders.iter().any(|holder| {
+                if *relocation {
+                    self.input.relocation_kills_holder(separations, *holder, place)
+                } else {
+                    self.input.write_replaces_live_holder(*holder, place)
+                }
+            }),
             KillEvent::Write { element: true, .. }
             | KillEvent::EntryImageHolderWrite { element: true, .. } => false,
         };
@@ -1592,6 +1602,7 @@ impl Reasoning<'_, '_, '_> {
                 element,
                 source,
                 narrowed,
+                relocation,
             } => self.event_kills_term(
                 separations,
                 term,
@@ -1599,6 +1610,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    relocation: *relocation,
                     narrowed: narrowed.clone(),
                 },
             ),
@@ -1707,6 +1719,20 @@ impl Reasoning<'_, '_, '_> {
                 MeasuredKind::Range,
                 None,
             ));
+        }
+        if measure.is_none() {
+            let GoalExpression::Datum(datum) = actual else {
+                return None;
+            };
+            let mut admission = datum.admission()?.clone();
+            if admission.written.is_none() && admission.root_type.is_none() {
+                admission.root_type = Some(actual.ty());
+                admission.root_is_range = mode.is_range();
+            }
+            admission.projections.extend_from_slice(projections);
+            if !self.input.goal_integer_place_admitted(&admission) {
+                return None;
+            }
         }
         let (root, projections) = self.input.call_parameter_place(actual, projections)?;
         if let Some(measure) = measure {
@@ -2074,9 +2100,14 @@ impl Reasoning<'_, '_, '_> {
                 self.projected_destination_term(place, projections, measure, ty)
             }
             ResultDestination::SetTarget { target, place } => {
-                if measure.is_none() && !self.input.set_result_integer_admitted(target, projections)
-                {
-                    return None;
+                if measure.is_none() {
+                    let path = projections
+                        .iter()
+                        .map(|projection| projection.place_step())
+                        .collect::<Vec<_>>();
+                    if !self.input.set_integer_place_admitted(target, &path) {
+                        return None;
+                    }
                 }
                 self.projected_destination_term(place.clone(), projections, measure, ty)
             }

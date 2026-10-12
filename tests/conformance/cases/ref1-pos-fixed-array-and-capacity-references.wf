@@ -1,0 +1,27 @@
+fn read_fixed_word(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn fixed_array_length(array: &Array<u8, 4>) -> result: u64 reads(array.len) {
+  return read_fixed_word(word: &array^.len);
+}
+
+fn fixed_slot_capacity(window: &Slots<u8, 6>) -> result: u64 reads(window.cap) {
+  return read_fixed_word(word: &window^.cap);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let array = array_filled::<u8, 4>(value: 0_u8);
+  let slots = slots_new::<u8, 6>();
+  let length = fixed_array_length(array: &array);
+  let capacity = fixed_slot_capacity(window: &slots);
+  if length == 4_u64 {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if capacity == 6_u64 {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

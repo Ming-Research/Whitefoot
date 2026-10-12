@@ -1,0 +1,13 @@
+fn probe(values: &Slots<u8, 4>) -> result: u64 reads(values) contract {
+  requires values^.len == 2_u64;
+} {
+  doc "A saved reference to a measure keeps the measure's term identity when its read has no written container type, so the requirement's length fact reaches the copied value and discharges the subtraction.";
+  let length = &values^.len;
+  let n = length^;
+  let difference = n - 2_u64;
+  return difference;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

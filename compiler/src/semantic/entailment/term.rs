@@ -344,6 +344,16 @@ impl TermTable {
     fn identity(kind: TermKind) -> TermKind {
         match kind {
             TermKind::Constant(0) => TermKind::Zero,
+            // [ENT-2, OP-15] an exact reference to a declared measure
+            // reads the same term as that readonly field's direct read.
+            TermKind::Place(mut place, IntegerType::U64)
+                if matches!(place.path.last(), Some(PlaceStep::Measure(_))) =>
+            {
+                let Some(PlaceStep::Measure(measure)) = place.path.pop() else {
+                    unreachable!();
+                };
+                TermKind::Measure(measure, place.term_identity())
+            }
             TermKind::Place(place, fragment) => TermKind::Place(place.term_identity(), fragment),
             TermKind::Measure(measure, place) => TermKind::Measure(measure, place.term_identity()),
             other => other,
@@ -401,4 +411,41 @@ pub(crate) const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
         }
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::BindingId;
+
+    /// [ENT-2, MSR-2] a measure reference's integer read shares the
+    /// direct field's term, so it shares its standing bounds and word kills.
+    #[test]
+    fn measure_reference_read_has_the_direct_measure_identity() {
+        let mut terms = TermTable::new();
+        let base = ResolvedPlace::binding(BindingId(0));
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            let direct = terms.intern(TermKind::Measure(measure, base.clone()));
+            let mut selected = base.clone();
+            selected.path.push(PlaceStep::Measure(measure));
+            let through_reference = terms.intern(TermKind::Place(selected, IntegerType::U64));
+            assert_eq!(direct, through_reference);
+            terms.set_measure_bound(direct, MeasureBound::Constant(7));
+            assert_eq!(
+                terms.measure_bound(through_reference),
+                Some(MeasureBound::Constant(7))
+            );
+            assert_eq!(
+                terms.kind(through_reference),
+                &TermKind::Measure(measure, base.clone())
+            );
+        }
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, base.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, base));
+        assert_ne!(length, capacity);
+    }
 }

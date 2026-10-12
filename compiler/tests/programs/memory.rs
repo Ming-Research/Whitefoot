@@ -31,6 +31,19 @@ fn heap_reading_tracks_boxes_release_grown_cells_and_shared_map_storage() {
 }
 
 #[test]
+fn paged_small_owners_count_only_their_actual_page_extent_and_release_to_baseline() {
+    // Zero capacity and empty release count nothing. U64 capacities 1, 2,
+    // 3 and 4 use 8, 16, 32 and 32 page bytes plus the 32-byte cell.
+    // The program checks sparse page-zero replacement, growth past B,
+    // every retained element, small/full cleanup and zero-stride bytes.
+    let program = build_program(&compile_program("paged_small_owners.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
 fn owned_element_assignments_release_displaced_boxes_at_commit_and_scope_exit() {
     let program = build_program(&compile_program("element_assignment_release.wf"));
     // args_count includes argv[0]. Each case runs in a fresh process so a

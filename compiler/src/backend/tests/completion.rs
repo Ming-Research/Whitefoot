@@ -83,15 +83,20 @@ int memory_probe(void) {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-/// A scripted host failure and success cross the production C body and LLVM
-/// register-return wrapper. A scalar return, wrong tag or stale payload fails
-/// this ABI observation; no source-language verdict is synthesized here.
+/// Resident failure/success and UTF-8 success/error cross the production C
+/// bodies and LLVM register wrappers. Sleep also writes its three-byte result
+/// next to a sentinel, exposing a stale wider result write. These observations
+/// share one linked executable and do not synthesize source verdicts.
 #[test]
-fn resident_reading_returns_none_and_some_through_the_ordinary_abi() {
+fn linked_enum_results_preserve_narrow_tags_payloads_and_destinations() {
     use super::BoundedOutput;
     let directory = test_directory();
     let llvm = r#"
-declare { i32, i64 } @wf_std.process.resident_bytes(ptr)
+@wf_test_valid_text = private constant [1 x i8] [i8 65]
+@wf_test_invalid_text = private constant [1 x i8] [i8 -1]
+declare { i8, i64 } @wf_std.process.resident_bytes(ptr)
+declare { i8, i64, i1 } @wf_std.text.host_utf8_len(ptr)
+declare void @wf_test_sleep(ptr)
 declare i32 @wf__floor_run(i32, ptr)
 define i32 @main(i32 %argc, ptr %argv) {
   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
@@ -100,22 +105,57 @@ define i32 @main(i32 %argc, ptr %argv) {
 define i32 @wf__main_body(i32 %argc, ptr %argv) {
   %meter = alloca { i64, i64, i64, i64 }, align 16
   store { i64, i64, i64, i64 } zeroinitializer, ptr %meter, align 16
-  %missing = call { i32, i64 } @wf_std.process.resident_bytes(ptr %meter)
-  %missing.tag = extractvalue { i32, i64 } %missing, 0
-  %none = icmp eq i32 %missing.tag, 0
-  %present = call { i32, i64 } @wf_std.process.resident_bytes(ptr %meter)
-  %present.tag = extractvalue { i32, i64 } %present, 0
-  %present.bytes = extractvalue { i32, i64 } %present, 1
-  %some = icmp eq i32 %present.tag, 1
+  %missing = call { i8, i64 } @wf_std.process.resident_bytes(ptr %meter)
+  %missing.tag = extractvalue { i8, i64 } %missing, 0
+  %none = icmp eq i8 %missing.tag, 0
+  %present = call { i8, i64 } @wf_std.process.resident_bytes(ptr %meter)
+  %present.tag = extractvalue { i8, i64 } %present, 0
+  %present.bytes = extractvalue { i8, i64 } %present, 1
+  %some = icmp eq i8 %present.tag, 1
   %bytes = icmp eq i64 %present.bytes, 8192
   %tags = and i1 %none, %some
-  %ok = and i1 %tags, %bytes
+  %resident.ok = and i1 %tags, %bytes
+  %text = alloca { ptr, i64, i64, i64 }, align 16
+  store { ptr, i64, i64, i64 } { ptr @wf_test_valid_text, i64 1, i64 0, i64 0 }, ptr %text, align 16
+  %valid = call { i8, i64, i1 } @wf_std.text.host_utf8_len(ptr %text)
+  %valid.tag = extractvalue { i8, i64, i1 } %valid, 0
+  %valid.count = extractvalue { i8, i64, i1 } %valid, 1
+  %valid.ok = icmp eq i8 %valid.tag, 0
+  %count.ok = icmp eq i64 %valid.count, 1
+  store ptr @wf_test_invalid_text, ptr %text, align 16
+  %invalid = call { i8, i64, i1 } @wf_std.text.host_utf8_len(ptr %text)
+  %invalid.tag = extractvalue { i8, i64, i1 } %invalid, 0
+  %invalid.error = extractvalue { i8, i64, i1 } %invalid, 2
+  %invalid.ok = icmp eq i8 %invalid.tag, 1
+  %error.ok = icmp eq i1 %invalid.error, false
+  %utf8.success = and i1 %valid.ok, %count.ok
+  %utf8.error = and i1 %invalid.ok, %error.ok
+  %utf8.ok = and i1 %utf8.success, %utf8.error
+  %sleep = alloca { { i8, i8, i8 }, [5 x i8] }, align 1
+  store { { i8, i8, i8 }, [5 x i8] } { { i8, i8, i8 } { i8 -1, i8 -1, i8 -1 }, [5 x i8] [i8 90, i8 90, i8 90, i8 90, i8 90] }, ptr %sleep, align 1
+  call void @wf_test_sleep(ptr %sleep)
+  %sleep.tag = load i8, ptr %sleep, align 1
+  %sleep.ok = icmp eq i8 %sleep.tag, 0
+  %sentinel = getelementptr inbounds { { i8, i8, i8 }, [5 x i8] }, ptr %sleep, i32 0, i32 1, i64 0
+  %sentinel.value = load i8, ptr %sentinel, align 1
+  %sentinel.ok = icmp eq i8 %sentinel.value, 90
+  %sleep.result.ok = and i1 %sleep.ok, %sentinel.ok
+  %registers.ok = and i1 %resident.ok, %utf8.ok
+  %ok = and i1 %registers.ok, %sleep.result.ok
   %status = select i1 %ok, i32 0, i32 1
   ret i32 %status
 }
 "#;
     let host = r#"
+#include "ordinary_values.h"
 #include <stdint.h>
+void wf_test_sleep(wf_sleep_result *result) {
+    wf_instant elapsed = {0};
+    wf_cancel_handle never;
+    wf__body_cancel_never(&never);
+    wf__body_sleep_until(result, &elapsed, &never);
+    wf__body_close_cancel_watch(&never);
+}
 int wf_test_resident_bytes(uint64_t *bytes) {
     static unsigned calls;
     if (calls++ == 0) return 0;
@@ -132,9 +172,9 @@ int wf_test_resident_bytes(uint64_t *bytes) {
     );
     let output = Command::new(executable)
         .bounded_output()
-        .expect("run optional resident reading");
+        .expect("run linked narrow enum results");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    std::fs::remove_dir_all(directory).expect("remove resident reading case");
+    std::fs::remove_dir_all(directory).expect("remove linked narrow enum result case");
 }
 
 /// glibc's unknown-code strerror_l path can allocate a persistent TLS buffer

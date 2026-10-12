@@ -1,0 +1,13 @@
+fn reserve(cell: &Box<Paged<u64>>, extra: u64, limit: u64, capacity: u64) -> result: unit writes(cell) contract {
+  requires cell^.inner.len + extra <= limit;
+  requires capacity >= cell^.inner.cap;
+} {
+  invariant before: cell^.inner.len + extra <= limit;
+  grow_paged(cell: cell, capacity: capacity);
+  invariant after: cell^.inner.len + extra <= limit;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

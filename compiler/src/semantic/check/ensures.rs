@@ -17,7 +17,7 @@ use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
     CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId,
+    CheckedValue, FunctionId, IntegerType,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
@@ -700,6 +700,8 @@ impl<'unit> Checker<'_, 'unit> {
                     .tree
                     .first_child_with(definition, Production::Expr)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                self.types
+                    .check_range_referent_places(check_context, expression, bindings)?;
                 if !self.types.declarations.validate_clause_computation(
                     ClauseKind::Postcondition(record),
                     definition,
@@ -763,6 +765,8 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(clause, Production::ClauseExpr)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            self.types
+                .check_range_referent_places(check_context, expression, bindings)?;
             self.types.declarations.validate_clause_condition(
                 ClauseKind::Postcondition(record),
                 clause,
@@ -2129,6 +2133,7 @@ impl<'unit> TypeContext<'unit> {
                     };
                     referent
                 }
+                CheckedPlaceStep::Measure(_) => CheckedType::Integer(IntegerType::U64),
                 CheckedPlaceStep::Subscript(index) => {
                     if ty != index.base_type {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());

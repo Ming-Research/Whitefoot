@@ -1,0 +1,15 @@
+fn probe(r: &[u64]) -> result: u64 reads(r) contract {
+  requires r^.len >= 2_u64;
+} {
+  let q = r;
+  let first = r^[0_u64];
+  let count = r^.len;
+  let one = &r^[0_u64];
+  let part = &r^[0_u64..2_u64];
+  let selected = part^[1_u64];
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

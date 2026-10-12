@@ -1,0 +1,12 @@
+fn narrowed(items: &Slots<i64>, x: i64) -> result: i64 pure contract {
+  requires 0_i64 <= x;
+  requires forall bounds(k in 0_u64..items^.len): x < items^[k];
+  ensures forall shifted(k in 0_u64..items^.len): result < items^[k];
+} {
+  let shifted = ishr(x, 1_u32);
+  return shifted;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1166,6 +1166,7 @@ impl Analyzer<'_, '_> {
         if let Some(carrier) = expression.carrier() {
             judgment.reached &= self.judging().judge_call_separations(carrier, states);
         }
+        self.capture_operation_intervals(expression, &states.facts);
         judgment
     }
 
@@ -1247,6 +1248,9 @@ impl Analyzer<'_, '_> {
                 }
                 CheckedPlaceStep::BoxReferent(_) => {
                     base.path.push(PlaceStep::Deref);
+                }
+                CheckedPlaceStep::Measure(measure) => {
+                    base.path.push(PlaceStep::Measure(*measure));
                 }
                 CheckedPlaceStep::Subscript(subscript) => {
                     if matches!(subscript.base_type, CheckedType::Nominal(_)) {
@@ -1333,6 +1337,7 @@ impl Analyzer<'_, '_> {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
+                CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
                     if matches!(subscript.base_type, CheckedType::Nominal(_)) {
                         reached = reached

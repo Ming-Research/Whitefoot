@@ -28,6 +28,8 @@ mod state;
 mod term;
 mod work;
 
+pub(crate) use flow::operation_facts;
+
 pub(crate) use state::DerivationId;
 #[cfg(test)]
 pub(crate) use state::GoalId;
@@ -131,6 +133,8 @@ impl CallTransport {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntailmentCallee {
     pub(crate) range_boundary: bool,
+    /// Canonical prelude grow/grow_paged relocation [ENT-5].
+    pub(crate) relocation: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Per parameter, the `epsuffix*` of every declared `writes` entry
@@ -172,6 +176,7 @@ impl EntailmentCallee {
         };
         Self {
             range_boundary: false,
+            relocation: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -1226,6 +1231,11 @@ pub(crate) struct BooleanGoalDecomposition {
 /// Retained summary of one function's entailment analysis [DIAG-2].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FunctionEntailment {
+    /// Operand intervals read from the ordinary closed state at each integer
+    /// operation [ENT-3.S7], for the later range walk [RANGE-2]. `None` names
+    /// a contradictory point, where the operation establishes no facts.
+    pub(crate) operation_intervals:
+        std::collections::BTreeMap<NodePath, Option<Vec<operation_facts::Interval>>>,
     /// Checked disposition after all independent S4 sources close at body
     /// entry. An uninhabited function retains the exact contradiction root.
     pub(crate) body_disposition: super::model::CheckedBodyDisposition,

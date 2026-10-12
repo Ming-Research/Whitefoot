@@ -277,6 +277,7 @@ impl Signature {
             body: body.render(entry_allocations)?,
             linkage: self.linkage,
             global: false,
+            fragment_local: false,
             references,
         })
     }
@@ -298,6 +299,9 @@ pub(crate) struct Entity {
     pub(crate) body: String,
     pub(crate) linkage: Linkage,
     pub(crate) global: bool,
+    /// Immutable dependency-free data replicated privately in each using
+    /// fragment rather than promoted to cross-fragment linkage [STOR-7].
+    pub(crate) fragment_local: bool,
     pub(crate) references: References,
 }
 
@@ -404,9 +408,31 @@ impl Module {
             body: String::new(),
             linkage: Linkage::Private,
             global: true,
+            fragment_local: false,
             references,
         });
     }
+    /// Emit dependency-free immutable data with private storage in every
+    /// emitted fragment that uses it [STOR-7]. No address identity is promised.
+    pub(crate) fn fragment_local_constant(
+        &mut self,
+        name: String,
+        ty: String,
+        value: String,
+        align: Option<u64>,
+    ) {
+        let index = self.entities.len();
+        self.global(
+            name,
+            "unnamed_addr constant",
+            ty,
+            value,
+            align,
+            References::default(),
+        );
+        self.entities[index].fragment_local = true;
+    }
+
     pub(crate) fn named_type(&mut self, name: String, body: String, references: References) {
         self.parts.push(ModulePart::Type(name.clone()));
         self.types.insert(
@@ -483,7 +509,7 @@ impl Write for FunctionBody {
 impl Module {
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = ModelWriter(Vec::new());
-        out.text("whitefoot emission 1");
+        out.text("whitefoot emission 2");
         out.number(self.parts.len());
         for part in &self.parts {
             match part {
@@ -536,6 +562,7 @@ impl Module {
                 Linkage::Internal => 3,
             });
             out.number(usize::from(entity.global));
+            out.number(usize::from(entity.fragment_local));
             out.references(&entity.references);
             out.references(&entity.declaration_references);
         }
@@ -549,7 +576,7 @@ impl Module {
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let mut input = ModelReader(bytes);
-        if input.text()? != "whitefoot emission 1" {
+        if input.text()? != "whitefoot emission 2" {
             return None;
         }
         let mut module = Self::default();
@@ -594,8 +621,18 @@ impl Module {
                 1 => true,
                 _ => return None,
             };
+            let fragment_local = match input.integer()? {
+                0 => false,
+                1 => true,
+                _ => return None,
+            };
             let references = input.references()?;
             let declaration_references = input.references()?;
+            if fragment_local
+                && (!global || linkage != Linkage::Private || references != References::default())
+            {
+                return None;
+            }
             module.entities.push(Entity {
                 name,
                 header,
@@ -604,6 +641,7 @@ impl Module {
                 body,
                 linkage,
                 global,
+                fragment_local,
                 references,
                 declaration_references,
             });
