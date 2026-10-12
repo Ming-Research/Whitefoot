@@ -47,26 +47,28 @@ pub(crate) struct RelationTemplate {
     pub(crate) normalized: NormalizedRelation,
 }
 
-/// One operand of a declared relation: one datum displaced by a written
-/// constant [FN-9].
-///
-/// A clause side is an `affine_expr` [MSR-5], and the part of it that is not
-/// the datum reduces to one mathematical integer. That is exactly the shape
-/// [ENT-4]'s closure represents and the shape every declared relation of the
-/// kernel declaration domain writes [BLK-0], so `len_of(rest) + 1_u64 ==
-/// len_of(vector)` is one relation occurrence and not a second fact class.
+/// One FN-9 side: a datum displaced by a mathematical integer constant,
+/// optionally adding one bare own integer parameter with coefficient one.
+/// At most one side of a relation carries that additional parameter.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RelationTerm {
     pub(crate) datum: RelationDatum,
     pub(crate) displacement: i128,
+    /// One additional bare own integer parameter, with coefficient one.
+    pub(crate) parameter: Option<RelationDatum>,
 }
 
 impl RelationTerm {
+    pub(crate) fn datums(&self) -> impl Iterator<Item = &RelationDatum> {
+        std::iter::once(&self.datum).chain(self.parameter.iter())
+    }
+
     pub(crate) const fn undisplaced(datum: RelationDatum) -> Self {
         Self {
             datum,
             displacement: 0,
+            parameter: None,
         }
     }
 

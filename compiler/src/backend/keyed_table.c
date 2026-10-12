@@ -12,8 +12,7 @@
  * wf_table_entry for one key, a hold for several keys or the whole table,
  * and a watch for a guard. So one statement may hold entries of several
  * targets and several maps at once, and this unit keeps nothing per
- * thread for a statement; it keeps each thread's spare key set memory, which
- * no statement holds.
+ * thread for a statement.
  */
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
@@ -38,11 +37,6 @@
 /* The calling thread's user of a map, whose spare memory a hold's keys
  * reuse. */
 #define WF_CMAP_CURRENT_USER(map) wf_cmap_user_at((map), wf__driver_index())
-/* The calling thread's spare key set memory. A thread of its own, not a
- * driver's number: the key set's functions are pure, so a compute worker may
- * build a set too, and every thread that is no driver counts as driver 0. */
-static _Thread_local void *wf_key_set_spare;
-#define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
 #include "concurrent_map.c"
 
 /* What a statement on one key keeps in its frame: the entry's unlock, the
@@ -74,6 +68,8 @@ static inline void table_written(wf_cmap *map) {
 }
 
 void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_cmap_key_set_new(out, capacity); }
+
+uint64_t wf__key_set_bytes(const wf_key_set *set) { return wf_cmap_key_set_bytes(set); }
 
 uint64_t wf__key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
     return wf_cmap_key_set_insert(set, key, length);

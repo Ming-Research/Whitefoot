@@ -12,6 +12,8 @@ Decision: TcpConnection is an ordinary public struct of separately closable dire
 
 Decision: Arguments and paths preserve the target host's bytes with explicit conversion, and range-bearing operations expose their exact window and result relations through ordinary contracts, because a Unicode-only path model cannot represent every host path and an implicit window cannot supply a source proof, instead of string-typed paths or operation-name proof sources.
 
+Decision: An IoError exposes its complete host description through a nonwaiting ordinary function that copies into a proved destination window and returns the required length without writing when the window is too small, using private C-locale POSIX text, US-English Windows system messages encoded as UTF-8, fixed texts for code-less and synthesized conditions, and a distinct unavailable result, because diagnostics need the host's explanation while the caller retains storage ownership and ambient locale must not select the bytes, instead of allocating a writer-visible string, truncating the text, changing the process locale or formatting only the portable error class.
+
 Rejected:
 - Passing a branded heap provider through the invocation and allocating call chains: rejected because the single trusted-base heap has no source-visible store distinction or allocation effect for that parameter to convey.
 - Raw syscall numbers and integer descriptors in source: rejected because they expose forgeable identity and unchecked host access outside the ordinary ownership boundary.

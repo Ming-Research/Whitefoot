@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 42] = [
+    let declarations: [(&str, &str, &[&str]); 43] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -289,6 +289,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__key_set_new", "void", &["ptr", "i64"]),
         ("wf__key_set_insert", "i64", &["ptr", "ptr", "i64"]),
+        ("wf__key_set_bytes", "i64", &["ptr"]),
         ("wf__key_set_free", "void", &["ptr"]),
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),

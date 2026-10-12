@@ -1,0 +1,18 @@
+fn account_scan(map: &ConcurrentHashMap<u8>, keys: &KeySet, cursor: u64, count: u64, left: u64) -> remaining: u64 reads(map), writes(keys) {
+  doc "Without a pre-call byte read, a zero baseline does not name the entry measure: the total retained bytes need not fit limit, so the outer exact subtraction fails OP-2 rather than name resolution.";
+  let before = 0_u64;
+  match map_scan_within::<u8>(map: map, cursor: cursor, count: count, limit: left, keys: keys) {
+    Next(next: next_cursor) => {
+      let after = key_set_bytes(keys: keys);
+      let used = after - before;
+      set left = left - used;
+    }
+    Needs(bytes: required) => {
+    }
+  }
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

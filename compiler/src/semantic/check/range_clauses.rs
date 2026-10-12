@@ -1292,12 +1292,9 @@ impl Checker<'_, '_> {
                         }
                         .into());
                     }
-                    if at_end && (name == "len" || name == "cap") {
-                        let measure = if name == "len" {
-                            CheckedMeasure::Length
-                        } else {
-                            CheckedMeasure::Capacity
-                        };
+                    if at_end && matches!(name.as_str(), "len" | "cap" | "bytes") {
+                        let measure = super::types::measure_named(&name)
+                            .expect("admitted measure spelling");
                         let measured = match selected {
                             Selected::Run(_) => measure == CheckedMeasure::Length,
                             Selected::Value(ty) => ty
@@ -1549,13 +1546,10 @@ impl Checker<'_, '_> {
             }
             if position + 1 == suffixes.len()
                 && selected.measured().is_some()
-                && (name == "len" || name == "cap")
+                && matches!(name.as_str(), "len" | "cap" | "bytes")
             {
-                let measure = if name == "len" {
-                    CheckedMeasure::Length
-                } else {
-                    CheckedMeasure::Capacity
-                };
+                let measure =
+                    super::types::measure_named(&name).expect("admitted measure spelling");
                 if selected
                     .measured()
                     .is_some_and(|kind| measure.cell(kind) == MeasureCell::Absent)

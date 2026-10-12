@@ -1,7 +1,11 @@
 /* Ordinary prelude implementations, linked using the same symbols and ABI as
  * Whitefoot function definitions. No compiler operation identity reaches this
  * unit. Opaque contents are this library's private representation. */
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32)
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -21,9 +25,13 @@
 #include <shellapi.h>
 #else
 #include <fcntl.h>
+#include <locale.h>
 #include <signal.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #endif
 
 static const void *wf_value_pointer(const wf_value *value) {
@@ -82,6 +90,160 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
                wf_value_pointer(value), (size_t)bytes);
     }
     result->ok.value = start + bytes;
+}
+
+/* The XSI entry writes into caller storage and reports EINVAL for an unknown
+ * code. In contrast, glibc's strerror_l unknown-code path allocates a hidden
+ * thread-local string. _GNU_SOURCE selects the GNU strerror_r declaration,
+ * so name glibc's allocation-free XSI entry here. */
+#if !defined(_WIN32) && defined(__GLIBC__)
+extern int __xpg_strerror_r(int code, char *buffer, size_t length);
+#endif
+
+static void wf_description_copy(wf_copy_result *result, const char *text,
+                                size_t length, wf_view *destination,
+                                uint64_t start, uint64_t end) {
+    if (length > end - start) {
+        result->tag = 1;
+        result->err.error.tag = 0;
+        result->err.error.required = length;
+        return;
+    }
+    if (length != 0) memcpy(wf_window(destination, start), text, length);
+    result->tag = 0;
+    result->ok.value = start + length;
+}
+
+void wf__body_error_copy_description(wf_copy_result *result,
+                                     const wf_io_error *error,
+                                     wf_view *destination,
+                                     uint64_t start, uint64_t end) {
+    static const char *const fixed[] = {
+        "Not found", "Permission denied", "Already exists", "Not a directory",
+        "Is a directory", "Directory not empty", "Read-only resource",
+        "Resource busy", "Invalid input", "Invalid path", "Unsupported operation",
+        "Timed out", "Deadline passed", "Cancelled", "Broken pipe",
+        "Write returned zero bytes", "Unexpected end of input", "Connection refused",
+        "Connection reset", "Connection aborted", "Not connected", "Address in use",
+        "Address unavailable", "Resource exhausted", "File too large", "No space left",
+        "Quota exceeded", "Cross-device operation", "Device failure", "Other I/O error"
+    };
+    const uint32_t tag = error->tag;
+    const uint32_t code = tag == WF_IO_DEADLINE_PASSED || tag == WF_IO_CANCELLED
+        ? 0 : error->code;
+    _Static_assert(sizeof(fixed) / sizeof(fixed[0]) == WF_IO_OTHER + 1,
+                   "ordinary error description table");
+    memset(result, 0, sizeof(*result));
+    /* Every failure before the final copy leaves destination untouched. */
+    result->tag = 1;
+    result->err.error.tag = 1;
+    if (tag > WF_IO_OTHER) return;
+    if (code == 0) {
+        wf_description_copy(result, fixed[tag], strlen(fixed[tag]),
+                            destination, start, end);
+        return;
+    }
+#if defined(_WIN32)
+    WCHAR local_wide[128];
+    WCHAR *wide = local_wide;
+    DWORD capacity = (DWORD)(sizeof(local_wide) / sizeof(local_wide[0]));
+    DWORD units;
+    for (;;) {
+        units = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM |
+                               FORMAT_MESSAGE_IGNORE_INSERTS,
+                               NULL, code, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                               wide, capacity, NULL);
+        if (units != 0) break;
+        const DWORD status = GetLastError();
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+        if (status != ERROR_INSUFFICIENT_BUFFER || capacity == (DWORD)INT_MAX)
+            return;
+        /* Format into caller-owned storage so the runtime pool charges every
+         * temporary block. Discard each refused buffer before growing it. The
+         * conversion API's signed length is the largest useful wide extent. */
+        capacity = capacity <= (DWORD)INT_MAX / 2
+            ? capacity * 2 : (DWORD)INT_MAX;
+        wide = wf__runtime_take((uint64_t)capacity * sizeof(*wide));
+    }
+    while (units != 0 && (wide[units - 1] == L'\r' || wide[units - 1] == L'\n'))
+        units--;
+    if (units > INT_MAX) {
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+        return;
+    }
+    if (units == 0) {
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+        wf_description_copy(result, "", 0, destination, start, end);
+        return;
+    }
+    int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                   (int)units, NULL, 0, NULL, NULL);
+    if (bytes <= 0) {
+        if (wide != local_wide)
+            wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+        return;
+    }
+    if ((uint64_t)bytes > end - start) {
+        result->err.error.tag = 0;
+        result->err.error.required = (uint64_t)bytes;
+    } else {
+        char *text = wf__runtime_take((uint64_t)bytes);
+        /* Convert privately: even an unexpected conversion failure must not
+         * write part of the description into the caller's destination. */
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                (int)units, text, bytes, NULL, NULL) == bytes)
+            wf_description_copy(result, text, (size_t)bytes, destination, start, end);
+        wf__runtime_give(text, (uint64_t)bytes);
+    }
+    if (wide != local_wide)
+        wf__runtime_give(wide, (uint64_t)capacity * sizeof(*wide));
+#else
+    if (code > INT_MAX) return;
+#if defined(__APPLE__)
+    /* Darwin exports an immutable C locale object. Borrow it directly rather
+     * than asking newlocale to allocate a host-owned locale structure. */
+    locale_t c_locale = _c_locale;
+#else
+    /* glibc returns its static immutable C object for this exact request;
+     * neither newlocale here nor the matching freelocale allocates. */
+    locale_t c_locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    if (c_locale == (locale_t)0) return;
+#endif
+    /* Lookup into caller-owned storage first, so unknown-code formatting
+     * cannot allocate an uncounted host buffer. A complete scratch result is
+     * required: ERANGE may have written a truncated string. */
+    char local[128];
+    char *text = local;
+    size_t capacity = sizeof(local);
+    locale_t previous = uselocale(c_locale);
+    if (previous != (locale_t)0) {
+        int status;
+        for (;;) {
+#if defined(__GLIBC__)
+            status = __xpg_strerror_r((int)code, text, capacity);
+#else
+            status = strerror_r((int)code, text, capacity);
+#endif
+            if (status != ERANGE) break;
+            if (capacity > SIZE_MAX / 2) wf__runtime_exhausted();
+            size_t next_capacity = capacity * 2;
+            char *expanded = wf__runtime_take(next_capacity);
+            if (text != local) wf__runtime_give(text, capacity);
+            text = expanded;
+            capacity = next_capacity;
+        }
+        (void)uselocale(previous);
+        if (status == 0)
+            wf_description_copy(result, text, strlen(text), destination, start, end);
+        if (text != local) wf__runtime_give(text, capacity);
+    }
+#if !defined(__APPLE__)
+    freelocale(c_locale);
+#endif
+#endif
 }
 
 #if !defined(_WIN32)
