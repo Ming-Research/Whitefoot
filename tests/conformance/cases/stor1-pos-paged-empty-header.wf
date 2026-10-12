@@ -1,0 +1,42 @@
+alias MemoryMeter = std::process::MemoryMeter;
+
+fn hold(meter: &MemoryMeter, before: u64) -> result: u8 writes(meter) {
+  doc "The shared empty Paged header and zero growth occupy no allocation; its first positive growth allocates storage.";
+  let p = box_paged_new::<u64>(capacity: 0_u64);
+  let second = box_paged_new::<u64>(capacity: 0_u64);
+  grow_paged(cell: &p, capacity: 0_u64);
+  let empty = std::process::heap_in_use(meter: meter);
+  if empty != before {
+    return 1_u8;
+  }
+  release::<Box<Paged<u64>>>(value: move second);
+  let empty_released = std::process::heap_in_use(meter: meter);
+  if empty_released != before {
+    return 2_u8;
+  }
+  grow_paged(cell: &p, capacity: 1_u64);
+  place_back(window: &p.inner, value: 73_u64);
+  let grown = std::process::heap_in_use(meter: meter);
+  if grown <= before {
+    return 3_u8;
+  }
+  if p.inner[0_u64] != 73_u64 {
+    return 4_u8;
+  }
+  release::<Box<Paged<u64>>>(value: move p);
+  let released = std::process::heap_in_use(meter: meter);
+  if released != before {
+    return 5_u8;
+  }
+  return 0_u8;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let before = std::process::heap_in_use(meter: &meter);
+  let code = hold(meter: &meter, before: before);
+  return std::process::exit_status(code: code);
+}
