@@ -2326,8 +2326,9 @@ The statement reads its handle places and index atoms when it begins. Each objec
 The bindings are in scope in the guard and the block, and their roots leave scope when the block ends by any edge [REF-2]. A binding `es` whose atom is a key set `ks` establishes `es^.len == ks.len` at the block's entry, as a guard's comparison is established there [ENT-3.S1], and a write to `ks` while `es` is valid invalidates `es` [REF-2].
 Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
+No path of the guard's footprint, read or written, has a type that is a self-changing host handle [PRE-2] or has one as a part at any depth of field, payload field, element or `Box` content.
 The guard and the block together name every binding.
-A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1].
+A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1]. For a footprint path with a self-changing host handle, the offending `call` is the guard's call whose projected row [EFF-5] reads or writes that path, and the repair waits for a time outside the guard, with a deadline [PRE-2] or with a context that waits for the deadline and fires a cancellation source whose state the guard reads.
 The statement's footprint is its handle places and index atoms, read, together with the footprint of its guard and block from which every path that starts at a target's state is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
@@ -2335,6 +2336,7 @@ Its guard and block execute with exclusive access to the states its targets name
 The atomic statements and the cancellation-state updates of [PRE-2] take effect in one order [WAIT-2], and those of one context take effect in its source order.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 A statement that has begun and has not taken effect waits for its guard while its guard is false in its targets' states, and [WAIT-2] states when it takes effect.
+A guard writes nothing and reaches no self-changing host handle [SHARE-2], and its context executes nothing else while it waits [WAIT-2], so its value changes only when an atomic statement or a cancellation-state update changes one of its targets' states.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 An implementation may hold less than a statement's states, or hold them together with other statements, wherever the program's outcomes are those it has when every statement's block executes with exclusive access to its states.
 
@@ -2602,6 +2604,14 @@ The host has one monotonic clock, whose reading never decreases, and every `Inst
 `CancelSource` and `CancelWatch` are opaque structs whose private fields hold, respectively, a `Shared<CancelState>` and a `SharedRead<CancelState>` of one shared cancellation state. Their capabilities and field-wise release follow [PROV-6]. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Dropping a source or watch releases only its shared handle and neither fires nor clears the state; the explicit `close_cancel_source` and `close_cancel_watch` consume and drop their argument; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch retaining a private shared state for which no source is made available, so its state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
 `MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
+The self-changing host handles are the host handles of this table. Through each, a host function observes a value that the host changes with no write by the program, so an atomic statement's guard reaches none of them [SHARE-2].
+
+| Self-changing host handle | Value its host functions observe |
+|---|---|
+| `std::time::Clock` | The monotonic clock's reading, through `now` |
+| `std::time::WallClock` | The calendar time, through `unix_nanoseconds` |
+| `std::process::MemoryMeter` | The process memory, through `heap_in_use`, `resident_bytes` and `release_map_reserve` |
+
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
 A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
@@ -2675,7 +2685,42 @@ The fixed texts are ASCII bytes, without the table's backticks:
 | `DeviceFailure` | `Device failure` |
 | `Other` | `Other I/O error` |
 
-For a description of byte length n, a window of length at least n receives all n bytes beginning at `start` and returns `Ok(start + n)`; every byte outside that copied range is unchanged, and no terminating NUL is written. A shorter window returns `DescriptionTooSmall(required: n)` and leaves the entire destination unchanged. A code the host cannot describe, or failure to obtain or encode the selected description, returns `DescriptionUnavailable` and leaves the entire destination unchanged.
+`error_copy_class_description` describes its argument's variant, its class, and its selection ignores `code` and `origin`. Its description is the description `error_copy_description` selects for that variant carrying the class's code on the host as its `code`. The class's code is the code the following table names for the host: on a POSIX host, the value the host C library's `<errno.h>` gives the named constant, and on Windows, the system error code shown. A class whose entry is None, or whose named constant the host C library does not define, has no code on that host.
+
+| Variant | POSIX code | Windows code |
+|---|---|---|
+| `NotFound` | `ENOENT` | `ERROR_FILE_NOT_FOUND` (2) |
+| `PermissionDenied` | `EACCES` | `ERROR_ACCESS_DENIED` (5) |
+| `AlreadyExists` | `EEXIST` | `ERROR_ALREADY_EXISTS` (183) |
+| `NotDirectory` | `ENOTDIR` | `ERROR_DIRECTORY` (267) |
+| `IsDirectory` | `EISDIR` | None |
+| `DirectoryNotEmpty` | `ENOTEMPTY` | `ERROR_DIR_NOT_EMPTY` (145) |
+| `ReadOnly` | `EROFS` | `ERROR_WRITE_PROTECT` (19) |
+| `ResourceBusy` | `EBUSY` | `ERROR_BUSY` (170) |
+| `InvalidInput` | `EINVAL` | `ERROR_INVALID_PARAMETER` (87) |
+| `InvalidPath` | `ENAMETOOLONG` | `ERROR_INVALID_NAME` (123) |
+| `Unsupported` | `ENOTSUP` | `ERROR_NOT_SUPPORTED` (50) |
+| `TimedOut` | `ETIMEDOUT` | `ERROR_SEM_TIMEOUT` (121) |
+| `DeadlinePassed` | None | None |
+| `Cancelled` | None | None |
+| `BrokenPipe` | `EPIPE` | `ERROR_BROKEN_PIPE` (109) |
+| `WriteZero` | None | None |
+| `UnexpectedEnd` | None | None |
+| `ConnectionRefused` | `ECONNREFUSED` | `ERROR_CONNECTION_REFUSED` (1225) |
+| `ConnectionReset` | `ECONNRESET` | `ERROR_NETNAME_DELETED` (64) |
+| `ConnectionAborted` | `ECONNABORTED` | `ERROR_REQUEST_ABORTED` (1235) |
+| `NotConnected` | `ENOTCONN` | `ERROR_NOT_CONNECTED` (2250) |
+| `AddressInUse` | `EADDRINUSE` | `WSAEADDRINUSE` (10048) |
+| `AddressUnavailable` | `EADDRNOTAVAIL` | `WSAEADDRNOTAVAIL` (10049) |
+| `ResourceExhausted` | `EMFILE` | `ERROR_TOO_MANY_OPEN_FILES` (4) |
+| `FileTooLarge` | `EFBIG` | `ERROR_FILE_TOO_LARGE` (223) |
+| `NoSpace` | `ENOSPC` | `ERROR_DISK_FULL` (112) |
+| `QuotaExceeded` | `EDQUOT` | `ERROR_NOT_ENOUGH_QUOTA` (1816) |
+| `CrossDevice` | `EXDEV` | `ERROR_NOT_SAME_DEVICE` (17) |
+| `DeviceFailure` | `EIO` | `ERROR_IO_DEVICE` (1117) |
+| `Other` | None | None |
+
+Each description function selects one description by its rule above. For a selected description of byte length n, a window of length at least n receives all n bytes beginning at `start` and returns `Ok(start + n)`; every byte outside that copied range is unchanged, and no terminating NUL is written. A shorter window returns `DescriptionTooSmall(required: n)` and leaves the entire destination unchanged. A code the host cannot describe, a class with no code on the host, or failure to obtain or encode the selected description, returns `DescriptionUnavailable` and leaves the entire destination unchanged.
 
 `std::time`, the record `time/module.wfm`:
 
@@ -2799,6 +2844,13 @@ public fn error_copy_description(error: &IoError, destination: &[u8], start: u64
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Copies the description of error under PRE-2.";
+
+public fn error_copy_class_description(error: &IoError, destination: &[u8], start: u64, end: u64) -> result: Result<u64, DescriptionError> reads(error), writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the host's description of the class of error under PRE-2.";
 
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 

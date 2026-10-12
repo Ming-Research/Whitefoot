@@ -149,4 +149,42 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 "#],
     },
+    RepairPair {
+        name: "atomic-guard-reads-wall-clock.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-guard-reads-wall-clock.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicGuardReadsSelfChanging\n",
+            "\n  mechanical_fix: wait for the time outside the guard: call `std::time::sleep_until` with the deadline before the statement, or spawn a context that sleeps until the deadline and then fires a cancellation source, and give the statement a target on that source's `cancel_state` whose `fired` the guard reads\n",
+        ],
+        repaired: &[
+            br#"struct Progress {
+  n: u64;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+  let never = std::time::cancel_never();
+  std::time::sleep_until(deadline: deadline, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-run-guard-deadline-through-a-cancel-watch.wf"
+            ),
+        ],
+    },
 ];

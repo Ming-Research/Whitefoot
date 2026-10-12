@@ -1,0 +1,28 @@
+alias Instant = std::time::Instant;
+
+struct Progress {
+  n: u64;
+}
+
+fn reached(clock: &std::time::Clock, deadline: Instant) -> result: Bool writes(clock) {
+  doc "Reports whether the monotonic clock has reached deadline.";
+  let reading = std::time::now(clock: clock);
+  let done = std::time::instant_reached(deadline: deadline, instant: reading);
+  return done;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard that waits for the monotonic clock through now reads a self-changing host handle.";
+  let std::process::Inputs(cwd: directory, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when reached(clock: &clock, deadline: deadline) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

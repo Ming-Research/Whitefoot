@@ -1,0 +1,42 @@
+alias CancelSource = std::time::CancelSource;
+alias Instant = std::time::Instant;
+
+struct Progress {
+  n: u64;
+}
+
+fn timer(source: CancelSource, deadline: Instant) -> result: unit pure waits {
+  doc "Waits for deadline with the deadline wait and then fires source.";
+  let never = std::time::cancel_never();
+  std::time::sleep_until(deadline: deadline, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "The rewrite of a guard that waits for a time: a spawned context waits for the deadline and fires a cancellation source whose state the guard reads.";
+  let std::process::Inputs(cwd: directory, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  spawn timer(source: move source, deadline: deadline);
+  atomic g = &state, fired = &stop when fired^.fired {
+    set g^.n = 7_u64;
+  }
+  let reached = 0_u64;
+  atomic g = &state {
+    set reached = g^.n;
+  }
+  let code = cvt.wrap::<u64, u8>(reached);
+  return std::process::exit_status(code: code);
+}
