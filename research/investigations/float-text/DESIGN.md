@@ -260,8 +260,9 @@ Every operation needed exists in v0.134:
 - The digit count invariant of `FloatDigits` is a range type invariant
   ([TYPE-11]).
 
-No language gap was found by reading; E2 found two, in the `imulhi` fact row
-and in the right shift, and a candidate one in storing a bounded count (see
+No language gap was found by reading; E2 found three: in the `imulhi` fact
+row, in bounding a quotient by its divisor, and in fields reached through a
+reference (see
 [E2 results](#e2-results-2026-10-12)). The open question is the proof burden,
 which reading cannot settle: the downstream copies never prove their
 bounds; they guard them at run time (`if index < decimal^.digits.len`, a
@@ -286,33 +287,34 @@ continues.
 
 ### E2 results (2026-10-12)
 
-Dated measurements from two CI runs of the temporary witness job: run
-38303849577 on branch head ffd67eedfa75 and run 38306103794 on head
-9c592f2b78dc. Both use the compiler and specification of the branch's base
-51c5f4263f51 (specification v0.134; the branch changes neither). The
-generator `witnesses/generate.py` writes the programs and states each prior
-prediction (`expected`); W2 is split into the left shift (w2a), the right
-shift (w2b) and the move toward the end (w2c), and W1 and W3 into two files
-each, so one refusal does not hide the next. Witnesses added after a run
-isolate what that run refused. `run` is the compiled program's exit status,
-0 meaning every value matched the one computed in Python.
+Dated measurements from three CI runs of the temporary witness job: run
+38303849577 on branch head ffd67eedfa75, run 38306103794 on 9c592f2b78dc and
+run 38306957238 on ed7f0e5ac2d9. All three use the compiler and
+specification of the branch's base 51c5f4263f51 (specification v0.134; the
+branch changes neither). The generator `witnesses/generate.py` writes the
+programs and states each prior prediction (`expected`); W2 is split into the
+left shift (w2a), the right shift (w2b) and the move toward the end (w2c),
+and W1 and W3 into two files each, so one refusal does not hide the next.
+Witnesses added after a run isolate what that run refused. `run` is the
+compiled program's exit status, 0 meaning every value matched the one
+computed in Python.
 
-| Witness | First run: expected, result | Second run: expected, result | Disposition |
-|---|---|---|---|
-| w1a table lookup | accept; rejected, FORM-3 at `let entry = power_table[index];` | accept; accepted, run 0 | authoring error, fixed |
-| w1b product and scale | accept; rejected, the same FORM-3 | accept; rejected, FN-9 `ensures high <= left;` in `product` at its return | language gap; prediction now reject |
-| w1c high word bound | - | added after the second run, predicted reject | w1b's gap alone |
-| w2a left shift | open; accepted, run 0 | open; accepted, run 0 | - |
-| w2b right shift | reject; rejected, OP-6 at `cvt::<u64, u8>(quotient)` | reject; rejected, the same | language gap, as predicted |
-| w2c front shift | open; rejected, FN-9 (the `count <= 800` type invariant) at `return unit;` | reject; rejected, the same | candidate language gap |
-| w2d front shift, bound restated | - | accept; accepted, run 0 | the restated form is accepted |
-| w2e quotient bound | - | reject; rejected, FN-9 `ensures result <= 9_u64;` | w2b's gap alone, as predicted |
-| w2f field bound | - | reject; rejected, but at OP-2 on `let total = count + delta;`, not at the return | w2c's candidate gap, refused earlier than predicted |
-| w2g field bound with type invariant | - | added after the second run, predicted reject at the return | finds what w2c has and w2f lacks |
-| w2h field sum without postcondition | - | added after the second run, predicted reject at OP-2 | the same |
-| w3a window write | open; accepted, run 0 | open; accepted, run 0 | - |
-| w3b index write | open; accepted, run 0 | open; accepted, run 0 | - |
-| w4 scan | open; accepted, run 0 | open; accepted, run 0 | - |
+| Witness | Expected | Third run (38306957238) | Earlier runs | Disposition |
+|---|---|---|---|---|
+| w1a table lookup | accept | accepted, run 0 | first run: FORM-3 at `let entry = power_table[index];` | authoring error, fixed |
+| w1b product and scale | reject | rejected, FN-9 `ensures high <= left;` in `product` at its return | first run: the same FORM-3; second run predicted accept, refused as now | gap: `imulhi` relations |
+| w1c high word bound | reject | rejected, FN-9 `ensures result <= left;` at `return high;` | - | that gap alone, as predicted |
+| w2a left shift | open | accepted, run 0 | the same | - |
+| w2b right shift | reject | rejected, OP-6 at `cvt::<u64, u8>(quotient)` | the same | gap: quotient bound, as predicted |
+| w2c front shift | reject | rejected, FN-9 (the `count <= 800` type invariant) at `return unit;` | the same | gap: field without an affine image |
+| w2d front shift, bound restated | accept | accepted, run 0 | the same | the restated form is accepted |
+| w2e quotient bound | reject | rejected, FN-9 `ensures result <= 9_u64;` | the same | quotient gap alone, as predicted |
+| w2f field bound | reject | rejected, OP-2 at `let total = count + delta;` | second run: the same, predicted at the return | field gap, refused earlier than first predicted |
+| w2g field bound with type invariant | reject | rejected, OP-2 at `let total = count + delta;` | - | predicted at the return: wrong |
+| w2h field sum without postcondition | reject | rejected, OP-2 at `let total = count + delta;` | - | as predicted |
+| w3a window write | open | accepted, run 0 | the same | - |
+| w3b index write | open | accepted, run 0 | the same | - |
+| w4 scan | open | accepted, run 0 | the same | - |
 
 The w2c and w2d `main` tests each decimal's count against the room the move
 needs before calling it: `append_digit` publishes nothing about the count,
@@ -338,11 +340,14 @@ product `(2^64 - 1)^2` exceeds the `i128` range, so the row establishes
 nothing, not even the relation that needs no arithmetic. The checker does
 the same: its row computes the hull with a checked multiplication and drops
 the relations when that fails. The row therefore says nothing in exactly the
-case `imulhi` exists for, 64-bit words with no narrower bound. A writer could
-pass the checker by adding `requires left <= 2^53` to `product`, which keeps
-the product within `i128`, but that narrows a general helper to one caller's
-range to get around the arithmetic; it stays in its natural form. Minimal
-semantic witness, run as w1c with a `main` that calls it on four pairs:
+case `imulhi` exists for, 64-bit words with no narrower bound. The range
+judgment's own reading of S7 rows ([RANGE-2]) takes a row's relations where
+the row's and the relation's conditions hold, with no representability
+condition, so the two rules disagree on when these relations hold. A writer
+could pass the checker by adding `requires left <= 2^53` to `product`, which
+keeps the product within `i128`, but that narrows a general helper to one
+caller's range to get around the arithmetic; it stays in its natural form.
+The minimal witness w1c is refused as predicted:
 
 ```wf
 fn high_word(left: u64, right: u64) -> result: u64 pure contract {
@@ -361,23 +366,23 @@ products cannot overflow (each corner's result lies within the operand type,
 so only the intermediate product needs wider arithmetic). Which form that
 takes is the owner's decision.
 
-**w2b: a gap.** Each quotient digit is `ishr(remainder * 10 + digit, shift)`
-with `remainder < 2^shift`, so it is below ten, and storing it as a `u8`
-digit needs that bound (here only its `<= 255` part, for the conversion; the
-digit type invariant needs `<= 9`). No rule derives it. The [ENT-3] S7 row
-for `ishr` gives only the interval hull of `floor(a / 2^s)` over the operand
-intervals and `r <= a`; with `s` anywhere in `0..60` the hull is the
-dividend's own range. Nothing relates the shift's result to the live value
-`ishl(1, shift)`, and even the exact division row, which captures the images
-of `q = a / d`, yields only `d * q <= a` at a later runtime product. Deriving
-`q <= c - 1` from `a <= c * d - 1` divides by the symbolic `d`, which no
-certificate can do: [PRF-1]'s integer tightening divides only by the two
-constant factors [ENT-6] fixes, and a named multiplicity only multiplies. The
-checker matches the specification here (its S7 shift row is the interval
-hull plus `r <= a`). Stating the strongest natural loop invariant,
-`remainder <= mask` instead of the witness's `remainder <= 2^60 - 1`, leaves
-the gap unchanged. The minimal semantic witness, w2e, is refused as
-predicted, at its postcondition:
+**w2b: a gap in bounding a quotient by its divisor.** Each quotient digit is
+`ishr(remainder * 10 + digit, shift)` with `remainder < 2^shift`, so it is
+below ten, and storing it as a `u8` digit needs that bound (here only its
+`<= 255` part, for the conversion; the digit type invariant needs `<= 9`).
+No rule derives it. The [ENT-3] S7 row for `ishr` gives only the interval
+hull of `floor(a / 2^s)` over the operand intervals and `r <= a`; with `s`
+anywhere in `0..60` the hull is the dividend's own range. Nothing relates the
+shift's result to the live value `ishl(1, shift)`, and even the exact
+division row, which captures the images of `q = a / d`, yields only
+`d * q <= a` at a later runtime product. Deriving `q <= c - 1` from
+`a <= c * d - 1` divides by the symbolic `d`, which no certificate can do:
+[PRF-1]'s integer tightening divides only by the two constant factors
+[ENT-6] fixes, and a named multiplicity only multiplies. The checker matches
+the specification here (its S7 shift row is the interval hull plus
+`r <= a`). Stating the strongest natural loop invariant, `remainder <= mask`
+instead of the witness's `remainder <= 2^60 - 1`, leaves the gap unchanged.
+The minimal witness w2e is refused as predicted, at its postcondition:
 
 ```wf
 fn leading_digit(total: u64, divisor: u64) -> result: u64 pure contract {
@@ -400,27 +405,46 @@ value proved positive, so that `d * q <= c * d - 1` with `d >= 1` gives
 `q <= c - 1`. Which form those take is the owner's decision; the witness
 stays in its natural form until then.
 
-**w2c: a candidate gap.** In `shift_front` the requirement
-`decimal^.count + delta <= 800` bounds the sum the function stores, and the
-checker proves the overflow of `count + delta` and every
-`digits[index + delta]` subscript (it reports body obligations before FN-9
-relations, so the FN-9 report shows those were discharged). The return's
-goal, though, is over the field `decimal^.count` after the `set`, and that
-current value has no affine image: [ENT-6] gives images to bindings and
-measures, a field reached through a reference is neither, and [INV-1]
-refuses such a field as an invariant term, so a writer cannot even state the
-bound over it. Only the L0 route reaches the goal: the `set` establishes
-`decimal^.count = total` ([ENT-3] S5), and `total` has no L0 upper bound.
-The checker matches the specification here (its affine value of a place
-with any field step is none). The contract already implies the bound and the
-program stores exactly the bounded value, yet the writer must restate it,
-as `invariant fits: total <= 800_u64;` after `let total`, which [ENT-3] S16
-publishes as an L0 fact over `total` that the two loops do not kill. w2d is
-that restated form and is accepted, so `fits` itself is proved automatically
-from the requirement.
+**w2c, w2f, w2g, w2h: a gap in fields reached through a reference.** What is
+established: ordinary entailment gives an integer field reached through a
+reference, such as `counter^.count`, no affine image. [ENT-6] gives images
+to bindings and measures only, so the [ENT-3] S4 affine form of a
+requirement over `counter^.count + delta` is not admitted, and [INV-1]
+refuses such a field as an invariant term, so a writer cannot state a bound
+over it either. Two consequences are observed. A requirement over
+`counter^.count + delta` gives the local copy `let count = counter^.count;`
+no affine fact, so `count + delta` is not proved to fit in `u64` (w2f, w2g,
+w2h, OP-2). And after `set counter^.count = total;` the field is equal to
+`total` only in the L0 domain, where `total` has no upper bound, so a
+postcondition or type invariant over the stored field is not proved (w2c,
+FN-9). The checker matches the specification here (its affine value of a
+place with any field step is none).
 
-The minimal witness w2f was refused earlier than predicted, at the overflow
-of the copied count rather than at the return:
+Why `shift_front` proves the same overflow, and w2d's restated
+`invariant fits: total <= 800_u64;`, when `advance` does not: reading the
+specification and the checker answers it, and all four observations fit,
+though no witness yet isolates it. `shift_front` takes part in the range
+judgment ([RANGE-2]) because `Decimal` has a range type invariant (the
+digits are at most nine), which makes the function have a range requirement;
+`Counter` has none, so `advance` does not take part, with or without the
+plain `count <= 800` invariant w2g added. In a function that takes part, an
+OP-2 obligation or a local invariant that ordinary entailment leaves
+unproved is owed to the range judgment, whose walk names a field read
+exactly, so the copy and the field are one value, and holds the function's
+affine requirements as path conditions; it proves the overflow and `fits`.
+An FN-9 relation is not owed to it, which is why w2c is still refused at the
+return. The requirement is written the same way in both programs, over the
+parameter-rooted place the copy reads, the copy is the first read in both,
+and the field is `u64` in both, so none of those explains the difference;
+the w2g prediction (that the plain type invariant was the difference) was
+wrong. A witness that adds a range type invariant to `Counter` would move
+w2f's refusal to the return if this account is right. A finding in passing:
+whether `count + delta` is accepted thus depends on whether the function has
+an unrelated range invariant.
+
+w2d shows a writer can restate the bound as `fits` where the function takes
+part in the range judgment; w2h shows nothing can be written where it does
+not. The minimal witness is w2h:
 
 ```wf
 struct Counter {
@@ -430,8 +454,8 @@ struct Counter {
 
 fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
   requires counter^.count + delta <= 800_u64;
-  ensures counter^.count <= 800_u64;
 } {
+  doc "Adds delta to the count; the requirement bounds the sum that is stored.";
   let count = counter^.count;
   let total = count + delta;
   set counter^.count = total;
@@ -439,33 +463,13 @@ fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contra
 }
 ```
 
-So in w2f the requirement's sum bound does not reach `count + delta` over
-the local copy, while in `shift_front`, written the same way (`let count =
-decimal^.count;` from a field of a plain reference parameter, no `Box`, the
-requirement over the field), it does. Two differences remain: `Decimal`
-carries the type invariant `count <= 800`, which is a requirement of
-`shift_front`, and `advance` has a written postcondition over the field. The
-type invariant alone can explain w2c's overflow proof without any link
-between the copy and the requirement (the copy is at most 800, the
-requirement makes `delta` at most 800, so the sum fits in `u64`), but not
-w2d's `fits`, which needs `count + delta <= 800` itself. Reading has not
-settled which difference matters; w2g (w2f plus the type invariant) and w2h
-(w2f without the postcondition) each change one of them. The prediction is
-that the type invariant matters: w2g refused at the return like w2c, w2h
-refused at the overflow like w2f.
-
-Either way the refusals share one cause: an integer field reached through a
-reference has no current affine image, so the bound the requirement states
-over the field neither reliably reaches a copy read from it nor reaches the
-field again after a `set`. w2f's overflow refusal is the more basic form of
-w2c's and stays as the minimal witness. The single change that would close
-both gives such a place a current affine image as a measure already has one:
-its entry image is the one the requirement's premise names, a copy read from
-it takes that image, a [SET-1] commit sets it to the committed value's
-image, the same [ENT-5] writes that kill its L0 facts kill it, and [INV-1]
-admits it as a term. `count + delta` and the postcondition over the field
-then both read the requirement's sum. Which form that takes is the owner's
-decision.
+The change that would close the gap in ordinary entailment gives such a
+place a current affine image as a measure already has one: its entry image
+is the one the requirement's premise names, a copy read from it takes that
+image, a [SET-1] commit sets it to the committed value's image, the same
+[ENT-5] writes that kill its L0 facts kill it, and [INV-1] admits it as a
+term. `count + delta` and the postcondition over the field then both read
+the requirement's sum. Which form that takes is the owner's decision.
 
 ## 3. Licences of ported code
 
