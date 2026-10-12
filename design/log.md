@@ -5,6 +5,20 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 A heap reading loads the pool counter without the pool lock
+
+Nodes: language/system-interface/memory-statistics
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#381 (head commit d83539e29)'s change to the design tree? The change: reading memory use no longer takes the memory pool's lock, and the pool's total becomes an atomic on a cache line of its own" (translated), whose background listed the narrowed allocation-accounting decision, the added pool-reading decision with its refused alternative, and the two 14900K acceptance runs.
+
+Summary: The allocation-accounting decision now says only that the pool counter changes under its lock. A new decision has a reading load that counter without the lock, the counter being an atomic padded to its own cache line that only a lock holder changes with a relaxed load and store, because each stored value is exact when stored, so PRE-2's quiescent exactness and concurrent bound hold, while a reading under the lock wrote the lock's line on every driver. On the i9-14900K a loop of readings fell from 51.1 to 16.3 million per second in total from 2 to 8 performance cores under the lock and rose to 4.0 times its 2-core rate without it, and firn's GET on 8 performance cores became 40% faster against a 5% twin spread ([pool counter read without the pool lock](../research/investigations/memory-statistics/README.md#pool-counter-read-without-the-pool-lock)); reading the counter under the pool lock is refused.
+## 2026-10-12 A released small KeySet stays as its thread's spare
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#378's change to the design tree? The change: when a KeySet is released, its small blocks stay as the thread's spare instead of returning to the runtime pool each time, and the memory account still counts them as released" (translated), whose background stated the reading that PRE-2's "released blocks retained by an allocator" covers the spare, the 128 KiB per-thread bound kept until the process ends, and the 14900K measurement.
+
+Summary: A KeySet release still lowers the heap reading by exactly what `key_set_bytes` reported, but a store of at most 1,024 keys with an arena of at most 64 KiB may stay as the releasing thread's one spare, recorded as released, instead of always returning to the runtime pool, because the pool takes its one free-list lock on every driver and returning every release cost firn's two-core `MSET` a quarter of its throughput, which the spare recovers within twin noise; PRE-2's heap holding excludes released blocks an allocator retains. The refused alternative of a spare whose kept blocks stay in the reading is recorded, since its release would lower the reading by nothing.
 ## 2026-10-12 A call separates the places a callee's contract reads
 
 Nodes: compiler/checker-facts, language/effects/call-site-check
