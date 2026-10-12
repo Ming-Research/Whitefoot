@@ -117,6 +117,64 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
+        name: "indexed-handle-places-range-reference-possibly-equal.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-range-reference-possibly-equal.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: UndischargedCallSeparation\n",
+            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+        ],
+        repaired: &[
+            include_bytes!(
+                "../../../../tests/conformance/cases/share-pos-indexed-handle-places-range-reference-proved-apart.wf"
+            ),
+            br#"fn pour(shards: &[Shared<u64>], from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < shards^.len;
+  requires into < shards^.len;
+} {
+  let poured = 0_u64;
+  atomic source = &shards^[from] {
+    set poured = source^;
+  }
+  atomic target = &shards^[into] {
+    set target^ = target^ +wrap poured;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "indexed-handle-places-same-index.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-indexed-handle-places-same-index.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTargetNotShared\n",
+            "hold a handle whole once, or name its entries with entry and key-set targets",
+        ],
+        repaired: &[br#"fn pour(shards: &Array<Shared<u64>, 4>, slot: u64) -> result: unit reads(shards) waits contract {
+  requires slot < 4_u64;
+} {
+  atomic held = &shards^[slot] {
+    set held^ = held^ +wrap held^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "map-whole-target-unused.wf",
         rejected: include_bytes!("../../../../tests/conformance/cases/share-neg-target-unused.wf"),
         rule: "SHARE-2",

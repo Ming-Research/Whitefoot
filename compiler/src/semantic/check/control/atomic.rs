@@ -1,12 +1,13 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedExpression, CheckedMode,
-    CheckedNominalKind, CheckedRangeSource, CheckedSeparationOccasion, CheckedSetTarget,
-    CheckedShared, CheckedStatePath, CheckedStatement, CheckedTarget, CheckedTargetKind,
-    CheckedType, IntegerType, expression_children,
+    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedCallSeparationPositions,
+    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedRangeSource,
+    CheckedSeparationOccasion, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
+    CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
 };
 use super::super::super::places::{
-    CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations, places_overlap,
+    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations,
+    places_overlap,
 };
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
@@ -31,6 +32,22 @@ pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str 
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
 struct IndexHeader {
     atom: Option<NodeId>,
+}
+/// [SHARE-2] whether a position pair of two targets' handle places holds one
+/// value on every execution. The statement reads every index atom when it
+/// begins, and no atom writes [GRAM-5], so two reads of one binding among its
+/// targets read one value, as two equal literals do; the occurrence that
+/// distinguishes them elsewhere, in `CapturedValue::provably_same`, names
+/// no write between them here.
+fn one_value_where_the_statement_begins(position: &CheckedCallSeparationPositions) -> bool {
+    let CheckedCallSeparationPositions::Indices(left, right) = position else {
+        return false;
+    };
+    left.provably_same(*right)
+        || matches!(
+            (left.term, right.term),
+            (CapturedTerm::Binding(first), CapturedTerm::Binding(second)) if first == second
+        )
 }
 impl Checker<'_, '_> {
     pub(super) fn check_atomic(
@@ -98,46 +115,44 @@ impl Checker<'_, '_> {
                 .map(|last| self.types.declarations.tree.subscript_offset(*last))
                 .transpose()?
                 .flatten();
-            // A written last subscript is the target's own index step only
-            // when it applies to a handle place; on any other base it is an
-            // ordinary subscript [OP-4] within the handle place, such as
-            // `&shards^[slot]` over an `Array<Shared<T>, n>`.
-            let (target, atom) = match last_offset {
-                Some(offset) => {
-                    let prefix = self.check_place_borrow_prefix(
+            // [SHARE-2, OP-4] a written last subscript applies to the place
+            // its base selects, typed from declared types alone. It is the
+            // target's own index step only when that place is one handle
+            // place; on any other base, an `Array<Shared<T>, n>` or the run a
+            // range reference `&[Shared<T>]` names among them, it is an
+            // ordinary subscript within the handle place, such as
+            // `&shards^[slot]`.
+            let atom = match (last_offset, suffixes.split_last()) {
+                (Some(offset), Some((_, base))) => {
+                    let shape = self.selected_place_shape(
                         context,
                         *place,
-                        *place,
-                        *place,
+                        base,
                         &block_bindings,
-                        scope.loops.len(),
+                        LexicalUseRole::PlaceBase,
                     )?;
-                    if self.shared_handle_state(&prefix)?.is_some() {
-                        (prefix, Some(offset))
-                    } else {
-                        let whole = self.check_place_borrow(
-                            context,
-                            *place,
-                            *place,
-                            *place,
-                            &block_bindings,
-                            scope.loops.len(),
-                        )?;
-                        (whole, None)
-                    }
+                    let on_handle = match shape {
+                        Some(shape) if !shape.run => self.shared_handle_type(shape.ty)?.is_some(),
+                        _ => false,
+                    };
+                    on_handle.then_some(offset)
                 }
-                None => (
-                    self.check_place_borrow(
-                        context,
-                        *place,
-                        *place,
-                        *place,
-                        &block_bindings,
-                        scope.loops.len(),
-                    )?,
-                    None,
-                ),
+                _ => None,
             };
+            let borrow = if atom.is_some() {
+                Self::check_place_borrow_prefix
+            } else {
+                Self::check_place_borrow
+            };
+            let target = borrow(
+                self,
+                context,
+                *place,
+                *place,
+                *place,
+                &block_bindings,
+                scope.loops.len(),
+            )?;
             let header = IndexHeader { atom };
             let paths = target
                 .reference
@@ -162,7 +177,10 @@ impl Checker<'_, '_> {
             // [SHARE-2, OWN-7] two overlapping handle places each have an
             // index step. A pair that overlaps only unless its positions
             // differ, such as `&shards^[i]` beside `&shards^[j]`, is the fixed
-            // families' question where the statement begins.
+            // families' question where the statement begins. A pair whose
+            // every differing position holds one value there, such as
+            // `&shards^[i]` beside `&shards^[i]`, is one handle place, which
+            // no proof separates.
             for (prior, prior_target) in handles.iter().zip(&targets) {
                 if atom.is_some()
                     && !matches!(
@@ -178,6 +196,9 @@ impl Checker<'_, '_> {
                             continue;
                         }
                         let Some((positions, window)) = Checker::separable_by_position(a, b)
+                            .filter(|(positions, _)| {
+                                !positions.iter().all(one_value_where_the_statement_begins)
+                            })
                         else {
                             return self.types.declarations.issue_node(
                                 SemanticRule::Share2,
@@ -427,9 +448,18 @@ impl Checker<'_, '_> {
         &self,
         borrow: &TypedExpression,
     ) -> Result<Option<(CheckedType, bool)>, CheckStop> {
-        let (CheckedMode::Reference, CheckedType::Nominal(nominal)) =
-            (borrow.mode, borrow.expression.ty())
-        else {
+        if borrow.mode != CheckedMode::Reference {
+            return Ok(None);
+        }
+        self.shared_handle_type(borrow.expression.ty())
+    }
+    /// The state type and `SharedRead`-ness of a handle type `Shared<T>` or
+    /// `SharedRead<T>` [SHARE-1], and `None` for any other type.
+    fn shared_handle_type(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Option<(CheckedType, bool)>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
         let CheckedNominalKind::Shared {
