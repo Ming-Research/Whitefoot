@@ -137,12 +137,15 @@ jobs:
           bridge=compiler/src/backend/completion/bridge.c
           # The step's shell runs with -e: the status is captured on a list
           # that -e does not abort on. A failure prints each panic's message,
-          # which carries the runs' driver reports.
+          # which carries the runs' driver reports; every run whose computation
+          # answered before the echo and was run again with twice the steps
+          # prints its line, passing or failing.
           witness() {
             code=0
             timeout 1500s cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
-              --test corpus "$1" -- --test-threads=1 > "$out" 2>&1 || code=$?
+              --test corpus "$1" -- --test-threads=1 --show-output > "$out" 2>&1 || code=$?
             grep -E '^test |test result' "$out" | tail -20
+            grep -E 'run again with [0-9]+ steps' "$out" || true
             sed -n '/panicked at/,/^note: /p' "$out" | head -200
             return $code
           }
@@ -150,7 +153,10 @@ jobs:
           split=programs::ring_assist::an_echo_on_an_idle_driver_returns_within_100_ms_beside_a_computation
           if witness programs::ring_assist::; then echo "PASS control: every witness case"; else echo "FAIL control: witness"; status=1; fi
           # M1, the deadline-only trigger: the same-driver echo waits for the
-          # whole computation, while the split arm stays fast.
+          # whole computation, while the split arm stays fast. A computation
+          # too short to push the stalled echo past the bound only answers
+          # first, which the case reruns with twice the steps; the mutant
+          # passes this check only by failing the echo's bound.
           perl -0pi -e 's/(static int wf_monitor_ring_watch\(wf_driver \*driver, uint64_t now\) \{\n)/$1    if (driver) return 0;\n/ or die' "$bridge" || exit 1
           if witness "$same"; then
             echo "FAIL mutant M1: the same-driver witness passed"; status=1

@@ -2,16 +2,22 @@
 //! reaches its context within 100 ms, whether or not another driver is idle.
 //!
 //! `ring_assist.wf` accepts two loopback connections and serves each in a
-//! context of its own. One peer asks for a recurrence of about two seconds
-//! that never waits; the other sends four bytes 100 ms later and times their
-//! echo. With two drivers the entry starts both contexts on its own driver,
-//! so the echo's receive completes in the ring of the computing driver while
-//! the other driver is idle and has nothing to take: before the monitor
-//! handed such a role to a spare, the echo came back only after the whole
-//! computation. The split arm makes the entry compute briefly after the
-//! first spawn, which leaves that context ready long enough for the idle
-//! driver to take it, so the echo is served on a driver of its own; it is the
-//! control that the client and the timing detect the stall and nothing else.
+//! context of its own. One peer asks for a recurrence that never waits; the
+//! other sends four bytes 100 ms later and times their echo. With two
+//! drivers the entry starts both contexts on its own driver, so the echo's
+//! receive completes in the ring of the computing driver while the other
+//! driver is idle and has nothing to take: before the monitor handed such a
+//! role to a spare, the echo came back only after the whole computation.
+//! The client cannot know the runner's step rate in advance, so a run whose
+//! computation answered before an echo that stayed within the bound shows
+//! neither outcome: a stalled echo behind a computation too short to push it
+//! past the bound looks the same as a computation that ended before the echo
+//! was served. Such a run is run again with twice the steps, and only a run
+//! whose computation outlasts the echo decides the arm. The split arm makes
+//! the entry compute briefly after the first spawn, which leaves that context
+//! ready long enough for the idle driver to take it, so the echo is served on
+//! a driver of its own; it is the control that the client and the timing
+//! detect the stall and nothing else.
 //! Each run's placement is read from its `WF_SCHED_REPORT=2` lines, never
 //! assumed, and a run whose placement differs from its arm's is run again.
 //! A run is split when the idle driver took a context and the computing
@@ -26,11 +32,19 @@ use std::time::{Duration, Instant};
 
 use super::support::{CompiledProgram, build_program, compile_program};
 
-/// Recurrence steps of the computing peer: about two seconds on a hosted
-/// runner, and far longer than the 100 ms that pass before the echo is sent.
+/// Recurrence steps of the computing peer's first run. On the hosted runners
+/// they last at most about 170 to 240 ms from the request, so with the echo
+/// sent 100 ms after the request a stall can stay under the bound; a run
+/// that cannot decide is run again with twice the steps.
 const STEPS: u64 = 1_500_000_000;
-/// Steps the entry computes after the first spawn in the split arm, tens of
-/// milliseconds against the idle driver's 1 ms look for ready contexts.
+/// Doublings of the steps an arm may take before a computation that still
+/// answers before the echo fails the arm: sixteen times the first run's
+/// steps last seconds at the hosted runners' step rate.
+const DOUBLINGS: u32 = 4;
+/// Steps the entry computes after the first spawn in the split arm, a few
+/// milliseconds at the hosted runners' step rate against the idle driver's
+/// 1 ms look for ready contexts; a run where the idle driver took nothing is
+/// misplaced and run again.
 const SPLIT_SPIN: u64 = 20_000_000;
 const ECHO_LIMIT: Duration = Duration::from_millis(100);
 const ATTEMPTS: usize = 3;
@@ -139,14 +153,14 @@ struct Run {
 
 /// One run of the witness: `None` when the host refused the kernel ring, so
 /// the program ran one driver and no ring exists for the trigger to watch.
-fn run_once(program: &CompiledProgram, spin: u64) -> Option<Run> {
+fn run_once(program: &CompiledProgram, steps: u64, spin: u64) -> Option<Run> {
     let port = free_port().to_string();
-    let steps = STEPS.to_string();
+    let steps_argument = steps.to_string();
     let spin = spin.to_string();
     let child = program.spawn_on_route_with(
         true,
         &[("WF_DRIVERS", "2"), ("WF_SCHED_REPORT", "2")],
-        &[port.as_bytes(), steps.as_bytes(), spin.as_bytes()],
+        &[port.as_bytes(), steps_argument.as_bytes(), spin.as_bytes()],
     );
     let port = port.parse().expect("the reserved port");
     let mut echo = connect_when_ready(port);
@@ -187,7 +201,7 @@ fn run_once(program: &CompiledProgram, spin: u64) -> Option<Run> {
     compute.set_nonblocking(false).expect("wait for the computation's reply");
     let mut value = [0_u8; 8];
     compute.read_exact(&mut value).expect("read the computation's reply");
-    assert_eq!(u64::from_le_bytes(value), mix(1, STEPS), "the computed value");
+    assert_eq!(u64::from_le_bytes(value), mix(1, steps), "the computed value");
     echo.shutdown(Shutdown::Write).expect("end the echo's sending");
     let mut rest = Vec::new();
     echo.read_to_end(&mut rest).expect("the echo connection closes");
@@ -209,21 +223,23 @@ fn run_once(program: &CompiledProgram, spin: u64) -> Option<Run> {
 
 /// Runs one arm until a run shows the arm's placement, checking the echo's
 /// bound on every run before anything else, so a late echo always fails as
-/// one, and returns the run that showed the placement.
+/// one, and returns the run that showed the placement. A run whose
+/// computation answered before an echo within the bound decides nothing and
+/// is run again with twice the steps, at most `DOUBLINGS` times; it does not
+/// count as an attempt at the placement.
 fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Option<Run> {
     let program = build_program(&compile_program("ring_assist.wf"));
     let mut misplaced = String::new();
-    for attempt in 1..=ATTEMPTS {
-        let run = run_once(&program, spin)?;
+    let mut steps = STEPS;
+    let mut doublings = 0;
+    let mut attempt = 0;
+    let mut placements = 0;
+    while placements < ATTEMPTS {
+        attempt += 1;
+        let run = run_once(&program, steps, spin)?;
         assert!(
             run.echo < ECHO_LIMIT,
-            "{arm} arm, attempt {attempt}: the echo took {:?}, over {ECHO_LIMIT:?}:\n{}",
-            run.echo,
-            run.stderr
-        );
-        assert!(
-            !run.computed_first,
-            "{arm} arm, attempt {attempt}: the computation answered before an echo of {:?}, so it did not run beside the echo:\n{}",
+            "{arm} arm, attempt {attempt}: the echo took {:?}, over {ECHO_LIMIT:?}, beside a computation of {steps} steps:\n{}",
             run.echo,
             run.stderr
         );
@@ -233,6 +249,23 @@ fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Op
             "{arm} arm, attempt {attempt}: a spare was free:\n{}",
             run.stderr
         );
+        if run.computed_first {
+            assert!(
+                doublings < DOUBLINGS,
+                "{arm} arm, attempt {attempt}: the computation of {steps} steps still answered before an echo of {:?}, so it did not run beside the echo:\n{}",
+                run.echo,
+                run.stderr
+            );
+            println!(
+                "{arm} arm, attempt {attempt}: the computation of {steps} steps answered before an echo of {:?}; run again with {} steps",
+                run.echo,
+                steps * 2
+            );
+            steps *= 2;
+            doublings += 1;
+            continue;
+        }
+        placements += 1;
         if placed(&run.reports) {
             return Some(run);
         }
@@ -261,7 +294,8 @@ fn same_driver(reports: &[DriverReport]) -> bool {
 /// it to the ring trigger, which handed the computing driver's role over;
 /// the idle driver may take the echo's context once the handoff made it
 /// ready. Without the trigger the echo waits for the whole computation and
-/// fails the bound on its first same-driver run.
+/// fails the bound on its first same-driver run whose computation outlasts
+/// the bound.
 #[test]
 fn an_echo_beside_a_computation_on_its_driver_returns_within_100_ms() {
     let Some(run) = run_arm("same-driver", 0, same_driver) else {
