@@ -53,13 +53,15 @@ jobs:
     # plus the compiler download and eight builds. Bounds a stuck runner only.
     timeout-minutes: 90
     env:
-      OUT: ${{ runner.temp }}/shared-counters
       RELEASE: ${{ inputs.release }}
       MODE: ${{ inputs.mode }}
       BLOCKS: ${{ inputs.blocks }}
       PILOT: ${{ inputs.mode == 'pilot' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Name the output directory
+        run: echo "OUT=$RUNNER_TEMP/shared-counters" >> "$GITHUB_ENV"
 
       - name: Check the inputs and the host's tools
         run: |
