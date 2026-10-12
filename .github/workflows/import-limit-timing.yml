@@ -1,0 +1,638 @@
+# Temporary: step 2 of the fragment-link import limit experiment, the timing
+# on the owner's i9-14900K; delete before the branch is ready (the question,
+# comparison and falsifier are in research/experiments/small-accessor-inline/
+# README.md, "Fragment-link import limit: timing on the 14900K"). It builds
+# three compilers from this checkout: base (this branch with the ThinLTO
+# import limit argument removed), twin (the same source built separately, the
+# noise control) and candidate (this branch with the limit set to `limit`).
+# Each builds Snowghost's layout_oracle, sequential and --par, in fragment
+# mode, and Halo's bench program both in fragment mode and with --full-lto
+# (Halo's own timing uses --full-lto, where the fragment-link limit is not
+# passed). Snowghost's incremental-layout harness (its time-14900k.yml, run
+# 38197250440) times the edit cells with the three builds interleaved in
+# rotated order, `rounds` rounds, on a fixed CPU list; Halo's run.py times
+# base against twin and base against candidate. The job fails on a build or
+# a checked-output error and never on a measured number. With runner=github
+# (a smoke test of the whole pipeline; the times mean nothing) use
+# rounds=1 pages="ecma262 html5" edit_kinds="word fontsize".
+# The Halo and Snowghost inputs lie under those repositories, and the
+# workflow reads this repository's research directory, so it stays
+# manual-only (.github/check-research-inputs.py); invoke with
+#   gh workflow run import-limit-timing.yml --ref claude/small-accessor-inline
+name: import-limit-timing
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Where it runs, the owner's i9-14900K runner or a GitHub runner (smoke test)
+        type: choice
+        options: [14900k, github]
+        default: 14900k
+      limit:
+        description: The candidate's import limit in summary instructions
+        type: string
+        default: "150"
+      rounds:
+        description: Timed rounds per cell and Halo pairs per kernel
+        type: string
+        default: "7"
+      page_list:
+        description: Snowghost pages (apollo11 needs the 14900K's captured copy)
+        type: string
+        default: "ecma262 html5 apollo11"
+      edit_kinds:
+        description: Snowghost edit kinds; adding rootfont and block adds about 25 minutes
+        type: string
+        default: "word sentence colour fontsize"
+      edit_modes:
+        description: Snowghost builds, seq or par4 (the --par build at four workers)
+        type: string
+        default: "seq par4"
+      cpus:
+        description: taskset CPU list for the Snowghost timing; empty is 2,4,6,10,12,14 on the 14900K and 0-3 on GitHub
+        type: string
+        default: ""
+
+# Every shell step runs under `bash -eo pipefail`.
+defaults:
+  run:
+    shell: bash
+
+# One timing at a time on the 14900K, and never beside Snowghost's own.
+concurrency:
+  group: import-limit-timing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  # Snowghost-wf c8f5e17: its renderer/ and harness are byte-identical to
+  # main (8cfb8aa, the wf-d837678c6905 pin; git diff differs only in the
+  # accessor-ir workflow and whitefoot.pin), and the hosted probe already
+  # built it with this branch's compiler. Halo-wf 641eb29: the revision of
+  # the probe and of the benchmark Halo's acceptance runs used.
+  SNOWGHOST_COMMIT: c8f5e1776bc2a3f46f7ed07502f61002b3a52f4b
+  HALO_COMMIT: 641eb29f48334489ff62af3b3ed71721c2967fb6
+
+jobs:
+  timing:
+    if: github.ref == 'refs/heads/claude/small-accessor-inline'
+    runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 150
+    env:
+      RUNNER_CHOICE: ${{ inputs.runner }}
+      LIMIT: ${{ inputs.limit }}
+      ROUNDS: ${{ inputs.rounds }}
+      PAGE_LIST: ${{ inputs.page_list }}
+      EDIT_KINDS: ${{ inputs.edit_kinds }}
+      EDIT_MODES: ${{ inputs.edit_modes }}
+      CPUS_INPUT: ${{ inputs.cpus }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools and the inputs
+        run: |
+          case "$ROUNDS" in ''|*[!0-9]*|0*) echo "rounds must be a positive integer, not '$ROUNDS'" >&2; exit 1 ;; esac
+          case "$LIMIT" in ''|*[!0-9]*) echo "limit must be a number, not '$LIMIT'" >&2; exit 1 ;; esac
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          if [ "$RUNNER_CHOICE" = github ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            rustup default stable
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra \
+              fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf \
+              fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+            cpus=${CPUS_INPUT:-0-3}
+          else
+            cpus=${CPUS_INPUT:-2,4,6,10,12,14}
+          fi
+          echo "CPUS=$cpus" >> "$GITHUB_ENV"
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo make taskset perl python3 git curl sha256sum tar; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          wanted=$(tr -d '[:space:]' < .github/llvm-major)
+          found=$(/usr/bin/clang --version | sed -n '1s/.*version \([0-9]*\)\..*/\1/p')
+          if [ "$found" != "$wanted" ]; then
+            echo "clang major $found, the gate uses $wanted"
+            exit 1
+          fi
+          out="$RUNNER_TEMP/import-limit-timing"
+          rm -rf "$out"
+          mkdir -p "$out/results" "$out/logs"
+          {
+            echo "candidate checkout $(git rev-parse HEAD), limit $LIMIT, rounds $ROUNDS"
+            echo "Snowghost $SNOWGHOST_COMMIT, Halo $HALO_COMMIT"
+            echo "pages: $PAGE_LIST; kinds: $EDIT_KINDS; modes: $EDIT_MODES; Snowghost CPUs $cpus; Halo CPU 2"
+            /usr/bin/clang --version | head -1
+            ld.lld --version
+            cargo --version
+            python3 --version
+            uname -sr
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core'
+            lscpu -e=CPU,CORE,MAXMHZ || true
+          } | tee "$out/results/machine.txt"
+
+      - name: Build base, twin and candidate compilers
+        timeout-minutes: 30
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          source_file=compiler/src/bin/whitefootc.rs
+          for side in base twin candidate; do
+            tree="$out/source-$side"
+            mkdir -p "$tree"
+            git archive HEAD | tar -x -C "$tree"
+            if [ "$side" = candidate ]; then
+              # The candidate takes the requested limit in place of the branch's constant.
+              perl -pi -e 's/import-instr-limit=\d+/import-instr-limit=$ENV{LIMIT}/g' "$tree/$source_file"
+            else
+              # Base and twin drop the limit argument from the fragment link;
+              # the unused constant that remains only warns.
+              perl -0pi -e 's/\n[ \t]*\.arg\(THIN_LINK_IMPORT_LIMIT\);/;/ or die "no limit argument to remove\n"' \
+                "$tree/$source_file"
+            fi
+            diff -u "$source_file" "$tree/$source_file" > "$out/results/patch-$side.diff" || true
+            cat "$out/results/patch-$side.diff"
+            # Separate targets force an actual second base build.
+            export CARGO_TARGET_DIR="$out/target-$side"
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            make -C "$tree/compiler" build
+            cp "$CARGO_TARGET_DIR/gate/whitefootc" "$out/whitefootc-$side"
+          done
+          cmp "$out/source-base/$source_file" "$out/source-twin/$source_file"
+          (cd "$out" && sha256sum whitefootc-*) | tee "$out/results/compilers.sha256"
+          # The candidate carries the requested limit and the base and twin carry none.
+          for side in base twin candidate; do
+            found=$(grep -a -o 'import-instr-limit=[0-9]*' "$out/whitefootc-$side" | sort -u | tr '\n' ' ' || true)
+            echo "$side: import limit argument strings: ${found:-none}"
+            if [ "$side" = candidate ] && [ "$found" != "import-instr-limit=$LIMIT " ]; then exit 1; fi
+            if [ "$side" != candidate ] && [ -n "$found" ]; then exit 1; fi
+          done
+          rm -rf "$out"/target-*
+
+      - name: Check out the pinned Snowghost and Halo sources
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          git clone --quiet https://github.com/Ming-Research/Snowghost-wf "$out/snowghost"
+          git -C "$out/snowghost" checkout --quiet "$SNOWGHOST_COMMIT"
+          git -C "$out/snowghost" submodule update --quiet --init whitefoot-kit
+          git clone --quiet https://github.com/Ming-Research/Halo-wf "$out/halo"
+          git -C "$out/halo" checkout --quiet "$HALO_COMMIT"
+          git -C "$out/snowghost" log --oneline -1
+          git -C "$out/halo" log --oneline -1
+          sh "$out/halo/research/experiments/halo-oracle/fetch-redis.sh" "$out/redis"
+          test -x "$out/redis/redis-7.0.15/deps/lua/src/lua"
+
+      - name: Write the helper
+        run: |
+          cat > "$RUNNER_TEMP/import-limit-timing/timing.py" <<'PY'
+          """Builds, checks, timings and tables of the import-limit timing run.
+
+          usage: timing.py build OUT PROGRAM DIRECTORY ENTRY MODE CACHE
+                 timing.py agree OUT SNOWGHOST_ROOT PAGE...
+                 timing.py time OUT SNOWGHOST_ROOT ROUNDS PAGES KINDS MODES
+                 timing.py reduce OUT
+
+          The three compilers are OUT/whitefootc-{base,twin,candidate}. MODE is seq or
+          par (fragment builds) or lto (full LTO). Every build of one program runs by
+          the three compilers in turn, each with its own empty cache. Nothing here
+          decides a pass: a failure is a build or a checked-output error, never a
+          measured number.
+          """
+          import csv, hashlib, json, os, pathlib, re, shutil, statistics, subprocess, sys, time
+
+          SIDES = ("base", "twin", "candidate")
+          SCRIPT = "research/investigations/incremental-layout/run.sh"
+
+
+          def rotated(index):
+              shift = index % 3
+              return SIDES[shift:] + SIDES[:shift]
+
+
+          def digest(path):
+              return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+
+          def text_size(path):
+              try:
+                  listing = subprocess.run(["size", "-A", str(path)], check=True,
+                                           capture_output=True, text=True).stdout
+                  return next(int(line.split()[1]) for line in listing.splitlines()
+                              if line.split()[:1] == [".text"])
+              except (OSError, subprocess.CalledProcessError, StopIteration):
+                  return "NA"
+
+
+          def write_table(path, columns, rows, append=False):
+              exists = append and path.exists()
+              with path.open("a" if append else "w") as target:
+                  if not exists:
+                      target.write("\t".join(columns) + "\n")
+                  for row in rows:
+                      target.write("\t".join(str(row[column]) for column in columns) + "\n")
+
+
+          def command_build(out, program, directory, entry, mode, cache_name):
+              out, directory = pathlib.Path(out).resolve(), pathlib.Path(directory).resolve()
+              columns = ["program", "mode", "side", "wall_s", "link_ms", "fragments",
+                         "objects_compiled", "text_bytes", "sha256"]
+              rows = []
+              for side in SIDES:
+                  executable = out / "drivers" / f"{program}-{mode}-{side}"
+                  executable.parent.mkdir(parents=True, exist_ok=True)
+                  command = [str(out / f"whitefootc-{side}")]
+                  if mode == "lto":
+                      command += ["--full-lto"]
+                  else:
+                      command += ["--cache", str(out / f"cache-{cache_name}-{side}"), "--fragments", "function"]
+                  if mode == "seq":
+                      command += ["--report"]
+                  if mode == "par":
+                      command += ["--par"]
+                  command += ["--graph", "modules.wfg", "--entry", entry, "-o", str(executable)]
+                  start = time.perf_counter()
+                  build = subprocess.run(command, cwd=directory, capture_output=True, text=True)
+                  wall = time.perf_counter() - start
+                  log = out / "logs" / f"build-{program}-{mode}-{side}.log"
+                  log.parent.mkdir(exist_ok=True)
+                  log.write_text(f"$ {' '.join(command)}\nexit {build.returncode}\n"
+                                 f"--- stdout\n{build.stdout}--- stderr\n{build.stderr}")
+                  if build.returncode:
+                      print(log.read_text()[-6000:], file=sys.stderr)
+                      sys.exit(f"{program} {mode} {side}: whitefootc exited with {build.returncode}")
+                  report = {}
+                  for line in reversed(build.stdout.splitlines()):
+                      if line.startswith('{"build"'):
+                          report = json.loads(line)["build"]
+                          break
+                  row = {"program": program, "mode": mode, "side": side, "wall_s": f"{wall:.3f}",
+                         "link_ms": report.get("link_ms", "NA"), "fragments": report.get("fragments", "NA"),
+                         "objects_compiled": report.get("objects_compiled", "NA"),
+                         "text_bytes": text_size(executable), "sha256": digest(executable)[:16]}
+                  rows.append(row)
+                  print("\t".join(str(row[column]) for column in columns), flush=True)
+              write_table(out / "results" / "builds.tsv", columns, rows, append=True)
+
+
+          def install_drivers(out, root, side):
+              for engine in ("seq", "par"):
+                  shutil.copy(out / "drivers" / f"snowghost-{engine}-{side}", root / "build" / f"layout_oracle_{engine}")
+
+
+          def command_agree(out, root, *pages):
+              """The three builds print the same hashes after every edit of the word script."""
+              out, root = pathlib.Path(out).resolve(), pathlib.Path(root).resolve()
+              env = {key: value for key, value in os.environ.items()
+                     if key not in ("RUN_CHECK", "WF_WORKERS", "WHITEFOOT_CHECK_OWNER", "ALONE")}
+              kept = out / "results" / "agree"
+              kept.mkdir(parents=True, exist_ok=True)
+              failed = False
+              for page in pages:
+                  text = {}
+                  for side in SIDES:
+                      install_drivers(out, root, side)
+                      run = subprocess.run(["sh", SCRIPT, "edit", "seq", page, "word"], cwd=root, env=env,
+                                           capture_output=True, text=True)
+                      if run.returncode:
+                          print(run.stdout[-3000:], run.stderr[-3000:], file=sys.stderr)
+                          sys.exit(f"{page} word edit by {side}: run.sh exited with {run.returncode}")
+                      text[side] = (root / "build" / "x5" / "out" / f"{page}-word.seq.txt").read_text()
+                      (kept / f"{page}-word-{side}.txt").write_text(text[side])
+                  same = text["base"] == text["twin"] == text["candidate"]
+                  print(f"{page} word: hashes after every edit {'identical' if same else 'DIFFER'} "
+                        f"across base, twin and candidate ({len(text['base'].splitlines())} lines)", flush=True)
+                  failed |= not same
+              if failed:
+                  sys.exit("a build prints different layout hashes: the candidate or the twin is not the base's behavior")
+
+
+          US = re.compile(r"us min (\d+) median (\d+) p90 (\d+) max (\d+);")
+          HEAD = re.compile(r"edits timed (\d+), refused (\d+), rebuilt (\d+), runs (\d+)")
+          FALL = re.compile(r"structural style fallbacks (\d+) across")
+
+
+          def command_time(out, root, rounds, pages, kinds, modes):
+              out, root = pathlib.Path(out).resolve(), pathlib.Path(root).resolve()
+              rounds = int(rounds)
+              env = {key: value for key, value in os.environ.items()
+                     if key not in ("RUN_CHECK", "WF_WORKERS", "WHITEFOOT_CHECK_OWNER")}
+              env["ALONE"] = "1"
+              raw = out / "results" / "raw"
+              raw.mkdir(parents=True, exist_ok=True)
+              columns = ["mode", "page", "kind", "round", "position", "side", "edits", "refused", "rebuilt",
+                         "fallbacks", "us_min", "us_median", "us_p90", "us_max", "load1"]
+              table = (out / "results" / "snowghost-times.tsv").open("w")
+              table.write("\t".join(columns) + "\n")
+              cells = [(mode, page, kind) for mode in modes.split() for page in pages.split() for kind in kinds.split()]
+              started = time.time()
+              for number, (mode, page, kind) in enumerate(cells, 1):
+                  for index in range(rounds):
+                      for position, side in enumerate(rotated(index), 1):
+                          install_drivers(out, root, side)
+                          shutil.rmtree(root / "build" / "x5" / "time", ignore_errors=True)
+                          arguments = dict(env)
+                          engine = "seq"
+                          if mode == "par4":
+                              arguments["WF_WORKERS"] = "4"
+                              engine = "par"
+                          load1 = f"{os.getloadavg()[0]:.2f}"
+                          run = subprocess.run(["sh", SCRIPT, "time", engine, page, kind, "1"], cwd=root,
+                                               env=arguments, capture_output=True, text=True)
+                          label = f"{mode} {page} {kind} round {index + 1} {side}"
+                          head, fall, us = (pattern.search(run.stdout) for pattern in (HEAD, FALL, US))
+                          if run.returncode or not (head and fall and us):
+                              print(run.stdout[-3000:], run.stderr[-3000:], file=sys.stderr)
+                              sys.exit(f"{label}: run.sh exited with {run.returncode} or printed no summary")
+                          files = sorted((root / "build" / "x5" / "time").glob("*.txt"))
+                          if len(files) != 1:
+                              sys.exit(f"{label}: expected one raw file, found {len(files)}")
+                          shutil.copy(files[0], raw / f"{mode}-{page}-{kind}-r{index + 1}-{side}.txt")
+                          row = {"mode": mode, "page": page, "kind": kind, "round": index + 1,
+                                 "position": position, "side": side, "edits": head[1], "refused": head[2],
+                                 "rebuilt": head[3], "fallbacks": fall[1], "us_min": us[1], "us_median": us[2],
+                                 "us_p90": us[3], "us_max": us[4], "load1": load1}
+                          line = "\t".join(str(row[column]) for column in columns)
+                          table.write(line + "\n")
+                          table.flush()
+                          print(line, flush=True)
+                  print(f"# cell {number}/{len(cells)} done, {time.time() - started:.0f} s elapsed", flush=True)
+              table.close()
+
+
+          def span(values, digits):
+              return f"{statistics.median(values):.{digits}f} ({min(values):.{digits}f}-{max(values):.{digits}f})"
+
+
+          def reduce_snowghost(out):
+              path = out / "results" / "snowghost-times.tsv"
+              if not path.exists():
+                  return
+              with path.open() as source:
+                  rows = list(csv.DictReader(source, delimiter="\t"))
+              cells = {}
+              for row in rows:
+                  cells.setdefault((row["mode"], row["page"], row["kind"]), {}).setdefault(row["side"], {})[int(row["round"])] = row
+              focus = [("seq", page, "word") for page in ("ecma262", "html5", "apollo11")] + \
+                      [("par4", page, "word") for page in ("ecma262", "html5", "apollo11")] + [("seq", "apollo11", "fontsize")]
+              header = ("cell\tbase median us (range)\ttwin median us (range)\tcandidate median us (range)\t"
+                        "twin/base median (range)\tcandidate/base median (range)\tcandidate vs twin range\t"
+                        "edit counts agree")
+              lines = {}
+              for cell, sides in sorted(cells.items()):
+                  if any(side not in sides for side in SIDES):
+                      continue
+                  rounds = sorted(set(sides["base"]) & set(sides["twin"]) & set(sides["candidate"]))
+                  value = {side: [int(sides[side][r]["us_median"]) for r in rounds] for side in SIDES}
+                  if min(value["base"]) == 0:
+                      continue
+                  twin = [t / b for t, b in zip(value["twin"], value["base"])]
+                  candidate = [c / b for c, b in zip(value["candidate"], value["base"])]
+                  mid = statistics.median(candidate)
+                  if mid < min(twin):
+                      verdict = "faster than twin range"
+                  elif mid > max(twin):
+                      verdict = "slower than twin range" + ("; SLOWER than twin max +1%" if mid > max(twin) + 0.01 else "") + \
+                                ("; over the 3% veto" if mid > 1.03 else "")
+                  else:
+                      verdict = "within twin range"
+                  counts = {tuple(sides[side][r][key] for key in ("edits", "refused", "rebuilt", "fallbacks"))
+                            for side in SIDES for r in rounds}
+                  lines[cell] = (f"{' '.join(cell)}\t{span(value['base'], 0)}\t{span(value['twin'], 0)}\t"
+                                 f"{span(value['candidate'], 0)}\t{span(twin, 3)}\t{span(candidate, 3)}\t"
+                                 f"{verdict}\t{'yes' if len(counts) == 1 else 'NO ' + str(sorted(counts))}")
+              print(f"## Snowghost edit cells ({len({int(row['round']) for row in rows})} rounds; ratios are paired within a round)\n")
+              print("Focus cells\n")
+              print(header)
+              for cell in focus:
+                  if cell in lines:
+                      print(lines[cell])
+              print("\nAll cells\n")
+              print(header)
+              for cell in sorted(lines):
+                  print(lines[cell])
+
+
+          def reduce_builds(out):
+              path = out / "results" / "builds.tsv"
+              if not path.exists():
+                  return
+              with path.open() as source:
+                  rows = [row for row in csv.DictReader(source, delimiter="\t") if row["program"] != "program"]
+              print("\n## Builds (one per compiler and program; sha256 is of the executable)\n")
+              print("program\tmode\tside\twall s\tlink ms\ttext bytes\ttext vs base\tlink vs base\tsha256")
+              base = {(row["program"], row["mode"]): row for row in rows if row["side"] == "base"}
+              for row in rows:
+                  reference = base.get((row["program"], row["mode"]))
+
+                  def ratio(key):
+                      try:
+                          return f"{float(row[key]) / float(reference[key]):.4f}"
+                      except (TypeError, ValueError, ZeroDivisionError):
+                          return "-"
+                  print(f"{row['program']}\t{row['mode']}\t{row['side']}\t{row['wall_s']}\t{row['link_ms']}\t"
+                        f"{row['text_bytes']}\t{ratio('text_bytes')}\t{ratio('link_ms')}\t{row['sha256']}")
+
+
+          def reduce_halo(out):
+              files = sorted((out / "results").glob("halo-*.json"))
+              if not files:
+                  return
+              print("\n## Halo kernels (run.py pairs: base binary against twin or candidate, ratio = other / base, medians)\n")
+              print("build\tcomparison\tkernel\tratio\tbase median s\tother median s\tother range s")
+              for path in files:
+                  _, build, comparison = path.stem.split("-")
+                  data = json.loads(path.read_text())
+                  for kernel, record in data["kernels"].items():
+                      if "ratio" not in record:
+                          continue
+                      other = record["halo"]
+                      print(f"{build}\t{comparison}\t{kernel}\t{record['ratio']:.3f}\t{record['before']['median']:.4f}\t"
+                            f"{other['median']:.4f}\t{other['minimum']:.4f}-{other['maximum']:.4f}")
+
+
+          def command_reduce(out):
+              out = pathlib.Path(out).resolve()
+              reduce_snowghost(out)
+              reduce_builds(out)
+              reduce_halo(out)
+
+
+          if __name__ == "__main__":
+              commands = {"build": command_build, "agree": command_agree, "time": command_time, "reduce": command_reduce}
+              if len(sys.argv) < 2 or sys.argv[1] not in commands:
+                  sys.exit(__doc__)
+              commands[sys.argv[1]](*sys.argv[2:])
+          PY
+          python3 -I -m py_compile "$RUNNER_TEMP/import-limit-timing/timing.py"
+
+      # Snowghost's own Pages and Fonts steps (its time-14900k.yml). On the
+      # 14900K the fonts are the Ubuntu 24.04 faces that workflow unpacked
+      # into the runner user's home, and apollo11 is its checksummed capture;
+      # neither is fetched here, so every measurement lays text out as the
+      # earlier 14900K runs did.
+      - name: Snowghost pages and fonts
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          cd "$out/snowghost"
+          data=build/research/concurrency
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -f "$data/$f"; done
+          case " $PAGE_LIST " in
+            *" apollo11 "*)
+              capture=$HOME/snowghost-data/apollo11-capture-1
+              if [ ! -f "$capture/SHA256SUMS" ]; then
+                echo "no apollo11 capture at $capture; it is made by Snowghost-wf's time-14900k workflow"
+                exit 1
+              fi
+              (cd "$capture" && sha256sum -c SHA256SUMS)
+              cp "$capture"/apollo11* "$data/"
+              ;;
+          esac
+          rm -f "$data"/*.unverified
+          echo "pages:"; (cd "$data" && sha256sum ecma262* html5.html apollo11* 2>/dev/null)
+          if [ "$RUNNER_CHOICE" = github ]; then
+            font_root=
+          else
+            font_root=$HOME/snowghost-deps/fonts-noble/root
+            if [ ! -d "$font_root" ]; then
+              echo "no fonts at $font_root; Snowghost-wf's time-14900k workflow unpacks them"
+              exit 1
+            fi
+          fi
+          make -s oracle-fonts FONT_ROOT="$font_root"
+          ls build/fonts | wc -l
+
+      - name: Build Snowghost with each compiler, sequential and --par
+        timeout-minutes: 60
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          for mode in seq par; do
+            python3 -I "$out/timing.py" build "$out" snowghost "$out/snowghost/renderer" layout_oracle "$mode" snowghost
+          done
+
+      - name: Build Halo's bench program with each compiler, fragment and full LTO
+        timeout-minutes: 30
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          python3 -I "$out/timing.py" build "$out" halo "$out/halo/research/experiments/halo-bench" bench seq halo
+          python3 -I "$out/timing.py" build "$out" halo "$out/halo/research/experiments/halo-bench" bench lto halo
+
+      - name: Prepare the edit scripts and check that the three builds agree
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          cd "$out/snowghost"
+          cp "$out/drivers/snowghost-seq-base" build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare $PAGE_LIST
+          wc -l build/x5/scripts/*.edits
+          python3 -I "$out/timing.py" agree "$out" "$out/snowghost" $PAGE_LIST
+
+      # The builds leave the load average high for a while; wait for it to
+      # fall, up to five minutes, and record what else is running. The wait
+      # decides nothing but when the timing starts.
+      - name: Record the host and wait for it to be quiet
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          for _ in $(seq 30); do
+            awk -v load="$(cut -d' ' -f1 /proc/loadavg)" 'BEGIN { exit !(load < 1.0) }' && break
+            sleep 10
+          done
+          {
+            date -u
+            echo "cpus: $CPUS"
+            taskset -c "$CPUS" bash -c 'taskset -cp $$'
+            echo "load: $(cat /proc/loadavg)"
+            echo "no_turbo: $(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo unknown)"
+            for c in /sys/devices/system/cpu/cpu[0-9]*; do
+              f=$c/cpufreq
+              if [ -d "$f" ]; then
+                echo "${c##*/} governor $(cat "$f/scaling_governor") min_khz $(cat "$f/scaling_min_freq") max_khz $(cat "$f/scaling_max_freq") cur_khz $(cat "$f/scaling_cur_freq")"
+              fi
+            done
+            ps -eo pid,pcpu,etime,comm --sort=-pcpu | head -8 || true
+          } | tee "$out/results/host-before-timing.txt"
+
+      # Snowghost's harness as its time-14900k.yml runs it: ALONE=1 sh
+      # research/investigations/incremental-layout/run.sh time seq|par PAGE
+      # KIND 1, WF_WORKERS=4 for par, one process run per call, the drivers
+      # copied to build/layout_oracle_{seq,par} before each. Every cell runs
+      # the three builds back to back, the order rotating by round.
+      - name: Time the Snowghost edit cells
+        timeout-minutes: 100
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          taskset -c "$CPUS" python3 -I "$out/timing.py" time "$out" "$out/snowghost" "$ROUNDS" \
+            "$PAGE_LIST" "$EDIT_KINDS" "$EDIT_MODES" | tee "$out/results/snowghost-times.log"
+
+      # Halo's own pair instrument (research/experiments/halo-bench/run.py of
+      # the pinned revision, as its bench-upgrade acceptance runs used it),
+      # pinned to CPU 2: the base binary against the twin's and against the
+      # candidate's, `rounds` pairs per kernel, alternating which of the pair
+      # runs first, each pair checked against an independent PUC Lua run.
+      - name: Time Halo's kernels
+        timeout-minutes: 40
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          halo="$out/halo"
+          lua="$out/redis/redis-7.0.15/deps/lua/src/lua"
+          kernels=fib,loop,integer-table,string-key,concat,sort,binary-trees
+          for build in lto seq; do
+            echo "halo $build builds: $(cd "$out/drivers" && sha256sum halo-$build-* | awk '{ print $2 " " substr($1, 1, 16) }' | tr '\n' ' ')"
+          done | tee "$out/results/halo-hashes.txt"
+          for build in lto seq; do
+            for other in twin candidate; do
+              label="halo-$build-$other"
+              taskset -c 2 python3 -B "$halo/research/experiments/halo-bench/run.py" --lua "$lua" \
+                --before-binary "$out/drivers/halo-$build-base" --binary "$out/drivers/halo-$build-$other" \
+                --kernels "$kernels" --scale binary-trees=14 --runs "$ROUNDS" \
+                --out "$out/results/$label.json" --compiler "$out/whitefootc-base" \
+                > "$out/results/$label.log" 2>&1 || { cat "$out/results/$label.log"; exit 1; }
+              echo "== $label"
+              grep 'ratio=' "$out/results/$label.log" | sed 's/ before=.*//'
+            done
+          done
+
+      - name: Tables
+        if: ${{ !cancelled() }}
+        run: |
+          out="$RUNNER_TEMP/import-limit-timing"
+          python3 -I "$out/timing.py" reduce "$out" | tee "$out/results/summary.txt"
+          {
+            echo '```text'
+            cat "$out/results/machine.txt" "$out/results/halo-hashes.txt" 2>/dev/null
+            echo
+            cat "$out/results/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: import-limit-timing-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/import-limit-timing/results/
+            ${{ runner.temp }}/import-limit-timing/logs/
+
+      # The caches, compilers, sources and drivers are several gigabytes on
+      # the owner's machine; nothing outside the artifact is kept.
+      - name: Remove the scratch tree
+        if: always()
+        run: rm -rf "${RUNNER_TEMP:?}/import-limit-timing"

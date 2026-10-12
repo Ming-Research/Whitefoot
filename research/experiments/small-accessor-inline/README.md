@@ -1,6 +1,8 @@
 # Small accessor inline-cost witnesses
 
-This compile-only experiment belongs to board item `lm-small-accessor-inline`.
+This experiment belongs to board item `lm-small-accessor-inline`. Apart from
+the [import-limit timing](#fragment-link-import-limit-timing-on-the-14900k)
+at the end, it is compile-only.
 The question is whether a 48-byte by-value accessor result can keep narrow
 field accesses while remaining profitable at an LLVM 22 statically cold call
 site. The top-level witnesses are synthetic LLVM IR, not emitted Whitefoot
@@ -262,3 +264,53 @@ excludes the three styles accessors, and the ordinary threshold 225
 excludes `write_item`, `next_glyphs` and `text_of`. The origin variants
 compile and optimize; they are not executed, so their equivalence to the
 emitted functions rests on inspection of the edits.
+
+## Fragment-link import limit: timing on the 14900K
+
+Written before the run. The mechanism check, build costs and the adoption
+criterion are in the
+[investigation](../../investigations/in-place-parameters/DESIGN.md#fragment-link-import-limit-question-comparison-and-rejection-criterion);
+the hosted probes found that limits 200 and 150 remove the direct calls to the
+small accessors but make Halo's fragment link 48% slower at 150 (7.5 s to
+11.0 s). This is the timing the owner chose to take before weighing that cost.
+
+**Question.** How much of the slowdown of Snowghost's six word-edit cells
+(ecma262, html5 and apollo11, each in the sequential build and at four
+workers) and of apollo11's sequential font-size change does a ThinLTO import
+limit of 150 in the fragment link recover, and are Halo's seven kernels left
+no slower?
+
+**Comparison.** `.github/workflows/import-limit-timing.yml` (temporary) builds
+three compilers from this branch: base (the limit argument removed), twin (the
+same source built separately) and candidate (limit 150). Snowghost-wf `c8f5e17`
+(renderer and harness identical to its main) is built by each in fragment
+mode, sequential and `--par`, and its incremental-layout harness (the one
+behind Snowghost-wf run 38197250440) times the edit cells on the i9-14900K
+pinned to CPUs 2,4,6,10,12,14. Every cell runs the three builds back to back
+for 7 rounds, the order rotating each round. A cell's value in a round is the
+median microseconds over its edits; a ratio is candidate (or twin) over
+base within the same round, and the twin's noise in a cell is the minimum to
+maximum of its 7 twin/base ratios. Halo-wf `641eb29` is timed with its own
+pair instrument (`run.py --before-binary`, CPU 2, 7 pairs per kernel), base
+against twin and against candidate, in the fragment build, where the limit
+applies, and in the `--full-lto` build Halo's own timing uses, where it is not
+passed and the candidate's binary should be byte-identical to base (the run
+prints the hashes).
+
+**Falsifier.** If on every word-edit cell and on apollo11's sequential
+font-size cell the median candidate/base ratio lies inside the twin's range,
+the limit recovers none of the slowdown beyond noise, and the import gate is
+not what costs these cells time. A cell counts as faster only where that
+median is below the twin range's minimum. Halo is slower beyond noise for a
+kernel whose candidate/base ratio exceeds the twin's for that kernel.
+
+**Not decided here.** Whether the recovered share is at least half of the
+slowdown against `wf-78223721f77d` (the investigation's adoption bound) needs
+that release's cells, which this run does not build; compare ratios with run
+38197250440, not microseconds, since this run uses compilers built from this
+branch. The all-cells veto (no cell slower than base by more than the twin's
+range plus 1%) is reported for the cells timed: the word, sentence, colour and
+font-size edits on the three pages in both builds. The root-font and block
+edits (an input away), html5 style matching and the four-thread full layout
+stages are not timed. One machine, one Snowghost and one Halo revision, one
+compiler build.
