@@ -16,6 +16,16 @@
 //! IR after checking, adds nothing to an offer at run time and changes no value
 //! ([call-offer grain](../../../../research/investigations/call-offer-grain/DESIGN.md),
 //! [recursive offers](../../../../research/investigations/recursive-offer-grain/DESIGN.md)).
+//!
+//! Demand lowering also prices the other side of each hand-off: the join site,
+//! the member the caller runs itself before it joins, passes the same test or
+//! leaves the group. It then runs as the ordinary call it already is, after
+//! the join of the members before it, and the member before it becomes the
+//! join site and is priced in turn; a group left with one member dissolves. A
+//! single costly chain whose caller keeps only a tiny call before the join so
+//! offers nothing, while a balanced recursion's kept call reaches the same
+//! offered recursion and keeps its group
+//! ([both-sides grain](../../../../research/investigations/par-demand/DESIGN.md#experiment-6b-both-sides-grain-and-the-fir-single-thread-criterion-fixed-before-it-measures)).
 
 use std::collections::HashMap;
 
@@ -25,6 +35,15 @@ use super::{IrFunction, IrInstruction, IrOperation};
 /// the runtime's default split work unit (`WF_PAR_SPLIT_WORK_UNIT` in
 /// `backend/sched/entry.c`), the price a range chunk must reach.
 pub(super) const CALL_OFFER_WORK_UNIT: u64 = 150_000;
+
+/// Which sides of a hand-off the grain prices.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Sides {
+    /// Only the handed-out members; the join site always stays (`--par`).
+    HandedOut,
+    /// The handed-out members and the join site the caller keeps (demand).
+    Both,
+}
 
 /// Every function each function calls, a split counting its splitter and chunk.
 fn callees(function: &IrFunction) -> Vec<usize> {
@@ -112,15 +131,21 @@ fn reaches_recursion(functions: &[IrFunction], edges: &[Vec<usize>]) -> Vec<Reac
     reaches
 }
 
-/// Removes every published call offer below the grain, naming each in the
-/// actualization ledger with its callee's static work.
+/// Removes every published call offer below the grain, and under
+/// [`Sides::Both`] every join site below it, naming each in the actualization
+/// ledger with its callee's static work.
 ///
 /// Whether a component offers its own calls is read from the groups that
 /// remain, so it is decided again after every pass: omitting a small member
 /// can dissolve the group that made a recursion count as offering, and the
 /// budget spends nothing in a recursion whose groups are gone. Passes repeat
 /// until one omits nothing, which comes because each pass only removes.
-pub(super) fn prune(functions: &mut [IrFunction], weights: &[u64], ledger: &mut Vec<String>) {
+pub(super) fn prune(
+    functions: &mut [IrFunction],
+    weights: &[u64],
+    ledger: &mut Vec<String>,
+    sides: Sides,
+) {
     let edges: Vec<_> = functions.iter().map(callees).collect();
     let names: Vec<_> = functions
         .iter()
@@ -131,38 +156,61 @@ pub(super) fn prune(functions: &mut [IrFunction], weights: &[u64], ledger: &mut 
         let mut omitted_any = false;
         for function in functions.iter_mut() {
             let callee_of = member_callees(function);
+            // A member below the grain, with its callee's work and reach; a
+            // member that is no call is never below it.
+            let below = |member: &crate::ir::IrValueId| {
+                let &callee = callee_of.get(member)?;
+                let weight = weights.get(callee).copied().unwrap_or(u64::MAX);
+                let reach = recursive.get(callee).copied().unwrap_or(Reach::Offered);
+                (reach != Reach::Offered && weight < CALL_OFFER_WORK_UNIT)
+                    .then_some((callee, weight, reach))
+            };
             let mut omitted = Vec::new();
+            let mut unkept = Vec::new();
             for overlap in &mut function.overlaps {
+                // The caller runs the join site itself before it joins. Under
+                // both sides, one below the grain leaves the group and runs
+                // after the join, and the member before it is priced next,
+                // until one member is left, which hands nothing off.
+                while sides == Sides::Both && overlap.members.len() >= 2 {
+                    let Some(found) = overlap.join_site().and_then(|join| below(&join)) else {
+                        break;
+                    };
+                    unkept.push(found);
+                    overlap.members.pop();
+                }
                 let join = overlap.join_site();
                 overlap.members.retain(|member| {
                     // The source-last member is the join site, which is never
-                    // published; a member that is no call keeps its offer.
-                    let Some(&callee) = callee_of.get(member).filter(|_| Some(*member) != join)
-                    else {
+                    // published.
+                    let Some(found) = below(member).filter(|_| Some(*member) != join) else {
                         return true;
                     };
-                    let weight = weights.get(callee).copied().unwrap_or(u64::MAX);
-                    let reach = recursive.get(callee).copied().unwrap_or(Reach::Offered);
-                    let keep = reach == Reach::Offered || weight >= CALL_OFFER_WORK_UNIT;
-                    if !keep {
-                        omitted.push((callee, weight, reach));
-                    }
-                    keep
+                    omitted.push(found);
+                    false
                 });
             }
             function
                 .overlaps
                 .retain(|overlap| overlap.members.len() >= 2);
-            omitted_any |= !omitted.is_empty();
-            for (callee, weight, reach) in omitted {
-                let recursion = if reach == Reach::Unoffered {
+            omitted_any |= !omitted.is_empty() || !unkept.is_empty();
+            let recursion = |reach: Reach| {
+                if reach == Reach::Unoffered {
                     "reaches only recursion that offers none of its own calls"
                 } else {
                     "no recursion"
-                };
+                }
+            };
+            for (callee, weight, reach) in omitted {
                 ledger.push(format!(
-                    "PAR actualization  {}  call grain: omitted offer of {} (static work {weight} below {CALL_OFFER_WORK_UNIT}, {recursion})",
-                    function.name, names[callee]
+                    "PAR actualization  {}  call grain: omitted offer of {} (static work {weight} below {CALL_OFFER_WORK_UNIT}, {})",
+                    function.name, names[callee], recursion(reach)
+                ));
+            }
+            for (callee, weight, reach) in unkept {
+                ledger.push(format!(
+                    "PAR actualization  {}  call grain: join site {} runs after the join (kept static work {weight} below {CALL_OFFER_WORK_UNIT}, {})",
+                    function.name, names[callee], recursion(reach)
                 ));
             }
         }

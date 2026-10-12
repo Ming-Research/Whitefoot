@@ -266,8 +266,8 @@ interval's width by `sqrt(6/n)` and selects the first count whose projected
 width is at most 0.02 or its median's distance to the comparison point (1 for
 ratios, 0 for H3). The sample is never pooled with decisive observations.
 
-The compiler accepts `--par-demand-ablation none|order|seed|static|unversioned` only with
-`--par-demand`; omission is `none`. The current research switches are:
+The compiler accepts `--par-demand-ablation none|order|seed|static|unversioned|requested|one-sided`
+only with `--par-demand`; omission is `none`. The current research switches are:
 
 - `order` publishes near and runs far, keeping the original seeds, bounds,
   joins and near-then-far reduction combine.
@@ -283,6 +283,11 @@ The compiler accepts `--par-demand-ablation none|order|seed|static|unversioned` 
   estimator, order change and seed change themselves are unchanged.
 - `unversioned` disables only function-body cheap-region entry selection,
   retaining default demand pricing, slices, call grain, budget and runtime.
+- `requested` restores the request test in budgeted recursive functions
+  (experiment 6's previous arm).
+- `one-sided` prices only the handed-out members of a call group, as before
+  experiment 6b: the join site the caller keeps is not priced (experiment 6b's
+  previous arm).
 - `dedup` (`WF_PAR_DEMAND_DEDUP`) skips the counted request when the victim
   lane's `request_posted` flag is set; the posting thief sets it and the
   owner's publication clears it. The flag lives in the lane, which outlives
@@ -472,3 +477,28 @@ execution; this change adds none and assigns no invented decision count. No
 local build, test, harness execution or measurement is authorized. These
 construction checks and timing results remain unverified until the owner runs
 CI.
+
+
+## Experiment 6b: both-sides grain rerun
+
+Select `experiment=par-demand`, `par_demand_experiment=6b`,
+`placement_runner=14900k`, with `placement_rounds` empty. The
+[preregistration](../../investigations/par-demand/DESIGN.md#experiment-6b-both-sides-grain-and-the-fir-single-thread-criterion-fixed-before-it-measures)
+owns the change, predictions, falsifiers and criteria. The matrix, pins,
+inputs, identity construction and entry-dispatch witness are experiment 6's,
+with two differences: `previous` compiles with `--par-demand
+--par-demand-ablation one-sided`, and spine W4/W8 also run the three
+shifted-seq arms. Hosted construction additionally runs the `demand_grain_`
+compiler tests, and the driver and reducer refuse timing unless the identity
+evidence shows spine's timed entry with zero pool queries and recursion's with
+one.
+
+The reducer (`--experiment 6b`) applies exactly E6b-keep (demand/previous and
+demand/unversioned <= 1.05 in experiment 6's 25 qualified cells),
+E6b-recursion (recursion W8 demand/par <= 1.05), E6b-seq (demand/seq <= 1.00
+or inside the cell's own shifted-seq floor, at W1 except fir and at spine
+W4/W8) and E6b-fir-seq (fir W1 demand/seq <= 1.05). Other cells report
+`reported_demand_ratios` and their status is `not-applicable` unless their
+twin voids them. Sizing freezes an even count under `sizing-e6b/`. CI uses
+`build verify`, `measure` and `summarize` with `EXPERIMENT=6b`; nothing here
+runs locally.

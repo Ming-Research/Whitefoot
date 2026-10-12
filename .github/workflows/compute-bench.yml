@@ -49,7 +49,7 @@ on:
       par_demand_experiment:
         description: Demand experiment or bounded diagnostic (precise measurements require the 14900K; GitHub diagnostics are smoke only)
         type: choice
-        options: ["1", "2", "3", "4", "5a", "5c", "6", diagnostic-spine, diagnostic-fir, diagnostic-twin]
+        options: ["1", "2", "3", "4", "5a", "5c", "6", "6b", diagnostic-spine, diagnostic-fir, diagnostic-twin]
         default: "1"
       par_demand_inspection:
         # A committed record cannot name the commit introducing itself.
@@ -64,7 +64,7 @@ on:
         options: [github, 14900k]
         default: github
       placement_rounds:
-        description: Rounds over every image, kernel and width (empty uses 10, or 30 for demand experiment 2; demand 3/4/5a/5c/6 select rounds from sizing)
+        description: Rounds over every image, kernel and width (empty uses 10, or 30 for demand experiment 2; demand 3/4/5a/5c/6/6b select rounds from sizing)
         type: string
         default: ""
       placement_unaligned:
@@ -420,12 +420,17 @@ jobs:
             if [[ "$image" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
           done
       - name: Check eager recursive offers and their request-gated control
-        if: inputs.par_demand_experiment == '6'
+        if: inputs.par_demand_experiment == '6' || inputs.par_demand_experiment == '6b'
         run: |
           perl .github/run-check.pl compiler/test-unit \
             cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib budgeted_demand_offers_immediately_and_keeps_the_sequential_cut
+      - name: Check the both-sides call grain and its one-sided control
+        if: inputs.par_demand_experiment == '6b'
+        run: |
+          perl .github/run-check.pl compiler/test-unit \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib demand_grain_
       - name: Require sequential identity and once-per-entry dispatch before experiment 6 timing
-        if: inputs.par_demand_experiment == '6'
+        if: inputs.par_demand_experiment == '6' || inputs.par_demand_experiment == '6b'
         run: |
           python3 research/experiments/par-demand/identity.py --self-test
           python3 research/experiments/par-demand/identity.py \
@@ -471,7 +476,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Require the performance-core runner for experiments 2, 3, 4, 5a, 5c and 6
+      - name: Require the performance-core runner for experiments 2, 3, 4, 5a, 5c, 6 and 6b
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           RUNNER: ${{ inputs.placement_runner }}
@@ -480,7 +485,7 @@ jobs:
             diagnostic-*|1) ;;
             *)
               if [ "$RUNNER" != 14900k ]; then
-                echo "Experiments 2, 3, 4, 5a, 5c and 6 require the 14900K; GitHub diagnostics run smoke only." >&2
+                echo "Experiments 2, 3, 4, 5a, 5c, 6 and 6b require the 14900K; GitHub diagnostics run smoke only." >&2
                 exit 1
               fi
               ;;
@@ -528,7 +533,7 @@ jobs:
           esac
           sizing=()
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
-          if [ "$EXPERIMENT" = 4 ] || [ "$EXPERIMENT" = 5a ] || [ "$EXPERIMENT" = 5c ] || [ "$EXPERIMENT" = 6 ]; then
+          if [ "$EXPERIMENT" = 4 ] || [ "$EXPERIMENT" = 5a ] || [ "$EXPERIMENT" = 5c ] || [ "$EXPERIMENT" = 6b ] || [ "$EXPERIMENT" = 6 ]; then
             perl .github/run-check.pl par-demand/measure python3 research/experiments/par-demand/measure.py \
               --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT"
             cat "$RUNNER_TEMP/par-demand/summary.json" >> "$GITHUB_STEP_SUMMARY"

@@ -303,6 +303,10 @@ pub enum DemandAblation {
     Unversioned,
     /// Restore request-gated offers inside budgeted recursive functions.
     Requested,
+    /// Restore one-sided call grain: a group's join site, the work its caller
+    /// keeps, is not priced, so a group keeps an offer whose caller has
+    /// nothing worth doing before the join.
+    OneSided,
 }
 
 /// Whether lowering actualizes ordinary permission-derived overlap.

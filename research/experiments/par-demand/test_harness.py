@@ -13,7 +13,7 @@ import io
 from pathlib import Path
 from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E5C_ARMS, E3_WIDTHS, WIDTHS, MANIFEST, E5A_ARMS, E5A_PADDING, E5A_MANIFEST, layout_floor, load, summarize,
                        attempt_result_e2, attempt_result_e3, attempt_result_e4, attempt_result_e6, e6_attempt,
-                       cell_widths, cell_arms, E6_ARMS, E6_CORE_ARMS, E6_SWEEP, cause_verdict, e3_round_count, e4_round_count)
+                       cell_widths, cell_arms, E6_ARMS, E6_CORE_ARMS, E6_SWEEP, E6B, E6B_PROTECTED, cause_verdict, e3_round_count, e4_round_count)
 from measure import cpu_list, performance_cores, demand_setting, e5c_placement, E5C_PLACEMENT
 from inspection import IR_ARMS
 
@@ -1035,6 +1035,9 @@ class MeasurementModeTests(unittest.TestCase):
 
 
 class Experiment6Tests(unittest.TestCase):
+    EXPERIMENT = 6
+    POOLS = {}
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -1052,10 +1055,11 @@ class Experiment6Tests(unittest.TestCase):
                     hashes[filename] = hashlib.sha256(filename.encode()).hexdigest()
         records = {}
         for name in MANIFEST:
+            pool = self.POOLS.get(name, 1)
             record = dict(covered_widths=[1], comparisons=[dict(function="wf__par_seq_body", seq_function="wf_body",
                 role="reachable sequential body/helper", identical=True, seq_instructions=["ret"], demand_instructions=["ret"])],
-                failures=[], dispatch=dict(pool_decisions_per_timed_call=1, outside_loops=True, regions=[]),
-                actual_entry={"W1": dict(outside_loops=True, decision_trace=["pool-active"], computation="wf__par_seq_body")},
+                failures=[], dispatch=dict(pool_decisions_per_timed_call=pool, outside_loops=True, regions=[]),
+                actual_entry={"W1": dict(outside_loops=True, decision_trace=["pool-active"] * pool, computation="wf__par_seq_body")},
                 versioned_region_inventory=[])
             if name == "small_split":
                 record["covered_widths"] = [1, 2, 4, 8]
@@ -1084,9 +1088,9 @@ class Experiment6Tests(unittest.TestCase):
     def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
         lines = []
         for name in MANIFEST:
-            for width in cell_widths(6, name):
+            for width in cell_widths(self.EXPERIMENT, name):
                 for attempt in attempts:
-                    for arm in cell_arms(6, width):
+                    for arm in cell_arms(self.EXPERIMENT, width, name):
                         wall, cpu = (1000000, 1000000) if arm in ("seq", *E5A_PADDING) else (500000, 1000000)
                         wall, cpu = (changes or {}).get((name, width, arm), (changes or {}).get(arm, (wall, cpu)))
                         if attempt == 2:
@@ -1102,7 +1106,7 @@ class Experiment6Tests(unittest.TestCase):
                             for sample in (0, 1):
                                 lines.append(f"{name}\t{arm}\t{width}\t{r}\t{attempt}\t{sample}\t{wall}\t{cpu}\t1\n")
         self.path.write_text("".join(lines))
-        sample = self.build / "sizing-e6"
+        sample = self.build / f"sizing-e{self.EXPERIMENT}"
         sample.mkdir(exist_ok=True)
         (sample / "measurements.tsv").write_text("".join(line for line in lines if line.split("\t")[4] == "1"))
         entry = dict(calibration={str(w): dict(calls=1024, pilots=[self.entry_sample(w)]) for w in (1, 2, 4, 8)},
@@ -1369,6 +1373,134 @@ class Experiment6Tests(unittest.TestCase):
         self.assertIn("$(BUILD)/entry-leaf-active.o $(BUILD)/entry-leaf-inactive.o $(native-demand)", makefile)
         self.assertIn("$(BUILD)/seq/%.o $(BUILD)/micro-%.o", makefile)
 
+
+
+class Experiment6bTests(unittest.TestCase):
+    """The rerun's registered criteria (DESIGN.md, "Experiment 6b") and no others."""
+    EXPERIMENT = E6B
+    POOLS = {"spine": 0}
+    setUp = Experiment6Tests.setUp
+    write = Experiment6Tests.write
+    entry_sample = staticmethod(Experiment6Tests.entry_sample)
+
+    def result(self):
+        return summarize(self.path, self.inspection, experiment=E6B)
+
+    def row(self, name, width):
+        return next(cell for cell in self.result()["cells"] if cell["workload"] == name and cell["width"] == width)
+
+    def test_exactly_the_registered_rules_apply_to_each_cell(self):
+        self.write()
+        cells = self.result()["cells"]
+        self.assertEqual(len(E6B_PROTECTED), 25)
+        for cell in cells:
+            name, width = cell["workload"], cell["width"]
+            expected = set()
+            if (name, width) in E6B_PROTECTED:
+                expected |= {"E6b-keep-unversioned", "E6b-keep-previous"}
+            if (name, width) == ("recursion", 8):
+                expected.add("E6b-recursion")
+            if (name, width) == ("fir", 1):
+                expected.add("E6b-fir-seq")
+            elif width == 1 or (name, width) in (("spine", 4), ("spine", 8)):
+                expected.add("E6b-seq")
+            self.assertEqual(set(cell["verdicts"]), expected, (name, width))
+            self.assertEqual(cell["status"], "not-applicable" if not expected else "pass", (name, width))
+            self.assertEqual(set(cell["initial"]["reported_demand_ratios"]), {"par", "previous", "unversioned"})
+        # A cell outside every rule is reported only, even when par is faster.
+        self.write({("records", 8, "par"): (100000, 1000000)})
+        self.assertEqual(self.row("records", 8)["status"], "not-applicable")
+        self.assertNotIn("E6-par", self.row("fir", 8)["verdicts"])
+
+    def test_spine_wide_cells_run_their_own_floor_and_are_judged_against_seq(self):
+        self.write()
+        for width in (4, 8):
+            self.assertEqual(set(cell_arms(E6B, width, "spine")), set(E6_ARMS))
+            self.assertEqual(set(cell_arms(E6B, width, "recursion")), set(E6_CORE_ARMS))
+        # Spine's demand stays at seq's wall at W4: the sequentialized point.
+        seq_like = {("spine", width, arm): (1000000, 1000000)
+                    for width in (4, 8) for arm in ("demand", "twin")}
+        self.write(seq_like)
+        self.assertEqual(self.row("spine", 4)["verdicts"]["E6b-seq"], "pass")
+        # Slightly slower than seq but inside its own same-cell shift floor.
+        inside = {("spine", 4, "demand"): (1001000, 1000000), ("spine", 4, "twin"): (1001000, 1000000),
+                  ("spine", 4, "seq-shift64"): (1002000, 1000000)}
+        self.write(inside)
+        rule = self.row("spine", 4)["initial"]["rules"]["E6b-seq"]
+        self.assertEqual((rule["status"], rule["reading"]), ("pass", "at the floor"))
+        # E6's spine loss, persisting in a rerun, fails against seq.
+        slow = {("spine", 8, "demand"): (4500000, 1000000), ("spine", 8, "twin"): (4500000, 1000000)}
+        self.write(slow, attempts=(1, 2))
+        self.assertEqual(self.row("spine", 8)["verdicts"]["E6b-seq"], "fail")
+        self.write(slow)
+        self.assertEqual(self.row("spine", 8)["verdicts"]["E6b-seq"], "needs-rerun")
+
+    def test_fir_one_worker_uses_seq_at_1_05_and_reports_par(self):
+        # E6's fir W1 shape: 0.4 percent slower than seq, 5 percent slower than par.
+        fir = {("fir", 1, "demand"): (1004000, 1000000), ("fir", 1, "twin"): (1004000, 1000000),
+               ("fir", 1, "par"): (954600, 1000000)}
+        self.write(fir)
+        cell = self.row("fir", 1)
+        self.assertEqual(cell["verdicts"], {"E6b-fir-seq": "pass"})
+        self.assertGreater(cell["initial"]["reported_demand_ratios"]["par"]["interval"][0], 1.05)
+        self.write({("fir", 1, "demand"): (1060000, 1000000), ("fir", 1, "twin"): (1060000, 1000000)}, attempts=(1, 2))
+        self.assertEqual(self.row("fir", 1)["verdicts"]["E6b-fir-seq"], "fail")
+        # Other one-worker cells keep 1.00 or their floor, not 1.05.
+        self.write({("mandelbrot", 1, "demand"): (1010000, 1000000), ("mandelbrot", 1, "twin"): (1010000, 1000000)},
+                   attempts=(1, 2))
+        self.assertEqual(self.row("mandelbrot", 1)["verdicts"]["E6b-seq"], "fail")
+
+    def test_recursion_w8_against_par_and_keep_against_both_controls(self):
+        regress = {("recursion", 8, "demand"): (550000, 1000000), ("recursion", 8, "twin"): (550000, 1000000)}
+        self.write(regress, attempts=(1, 2))
+        verdicts = self.row("recursion", 8)["verdicts"]
+        self.assertEqual(verdicts["E6b-recursion"], "fail")
+        self.assertEqual(verdicts["E6b-keep-previous"], "fail")
+        for reference in ("unversioned", "previous"):
+            self.write({("large_helper", 4, reference): (400000, 1000000)}, attempts=(1, 2))
+            self.assertEqual(self.row("large_helper", 4)["verdicts"][f"E6b-keep-{reference}"], "fail")
+        # A cell that was not protected is not held to the controls.
+        self.write({("large_helper", 8, "previous"): (400000, 1000000)}, attempts=(1, 2))
+        self.assertEqual(self.row("large_helper", 8)["status"], "not-applicable")
+
+    def test_twin_voids_a_cell_with_or_without_rules(self):
+        self.write({("records", 8, "twin"): (600000, 1000000), ("records", 4, "twin"): (600000, 1000000)})
+        self.assertEqual(self.row("records", 8)["status"], "void")
+        self.assertEqual(self.row("records", 4)["status"], "void")
+
+    def test_construction_requires_spines_sequentialized_point(self):
+        self.write()
+        path = self.build / "sequential-identity.json"
+        evidence = json.loads(path.read_text())
+        self.assertEqual(self.result()["construction_admission"]["spine"]["entry_decisions"]["pool_decisions_per_timed_call"], 0)
+        for name, pool in (("spine", 1), ("recursion", 0)):
+            wrong = copy.deepcopy(evidence)
+            record = wrong["workloads"][name]
+            record["dispatch"]["pool_decisions_per_timed_call"] = pool
+            record["actual_entry"]["W1"]["decision_trace"] = ["pool-active"] * pool
+            classify_construction(record, "wf_bench_fixture", {"wf__par_seq_body"}, {})
+            path.write_text(json.dumps(wrong))
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "experiment 6b construction"):
+                self.result()
+
+    def test_sizing_freezes_an_even_count(self):
+        self.write()
+        sizing = summarize(self.path, sizing=True, experiment=E6B)
+        self.assertEqual(sizing["decisive_rounds"] % 2, 0)
+        self.assertEqual({c["status"] for c in sizing["cells"]} - {"not-applicable"}, {"inconclusive"})
+        # A projected width that first fits at seven rounds freezes eight.
+        cells = [dict(initial=dict(rounds=6, rules={"rule": dict(interval=[1.0, 1.0216], median=1.0,
+                                                                  bound=1.0, status="pass")}))]
+        self.assertEqual(e4_round_count(cells), 7)
+        self.assertEqual(e4_round_count(cells, step=2), 8)
+
+    def test_makefile_and_workflow_wire_the_one_sided_previous_arm(self):
+        makefile = (Path(__file__).parent / "Makefile").read_text()
+        self.assertIn("ifeq ($(EXPERIMENT),6b)\nflags-previous := --par-demand --par-demand-ablation one-sided", makefile)
+        workflow = (Path(__file__).resolve().parents[3] / ".github/workflows/compute-bench.yml").read_text()
+        self.assertIn('"6", "6b"', workflow)
+        self.assertIn('[ "$EXPERIMENT" = 6b ]', workflow)
+        self.assertIn("--lib demand_grain_", workflow)
 
 if __name__ == "__main__":
     unittest.main()

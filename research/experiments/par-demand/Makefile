@@ -19,8 +19,9 @@ else ifeq ($(EXPERIMENT),4)
 ARMS := seq par demand static twin
 else ifeq ($(EXPERIMENT),5c)
 ARMS := seq par demand unversioned twin
-# E6 reconstructs E5c with the request-gated budget ablation.
-else ifeq ($(EXPERIMENT),6)
+# E6 reconstructs E5c with the request-gated budget ablation; E6b keeps that
+# matrix and reconstructs E6's one-sided call grain as its previous arm.
+else ifneq ($(filter 6 6b,$(EXPERIMENT)),)
 PADDING_SIZES := 64 4160 65664
 ARMS := seq par demand unversioned previous twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifeq ($(EXPERIMENT),5a)
@@ -29,21 +30,21 @@ WORKLOADS := $(KERNELS)
 PADDING_SIZES := 64 4160 65664
 ARMS := seq par demand twin $(addprefix seq-shift,$(PADDING_SIZES))
 else ifneq ($(EXPERIMENT),1)
-$(error EXPERIMENT must be 1, 2, 3, 4, 5a, 5c or 6)
+$(error EXPERIMENT must be 1, 2, 3, 4, 5a, 5c, 6 or 6b)
 endif
 IMAGES := $(foreach arm,$(ARMS),$(addprefix $(BUILD)/$(arm)/,$(WORKLOADS)))
 DEFAULT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE
 .DEFAULT_GOAL := build
 .DELETE_ON_ERROR:
 include $(ROOT)/compiler/runtime.mk
-ifeq ($(EXPERIMENT),6)
+ifneq ($(filter 6 6b,$(EXPERIMENT)),)
 # Identity needs private function and data-object names in the final ELF.
 # Keep assembler temporaries and linker locals; do not change optimization.
 NATIVE_OPTIMIZATION_FLAGS += -Wa,-L
 NATIVE_LINK_FLAGS += -Wl,--discard-none
 endif
 build: $(IMAGES)
-ifeq ($(EXPERIMENT),6)
+ifneq ($(filter 6 6b,$(EXPERIMENT)),)
 build: $(BUILD)/entry-dispatch
 endif
 # Ordinary arms preprocess out demand fields and instructions. Only candidate
@@ -110,6 +111,9 @@ flags-extent := --par-demand
 flags-static := --par-demand --par-demand-ablation static
 flags-unversioned := --par-demand --par-demand-ablation unversioned
 flags-previous := --par-demand --par-demand-ablation requested
+ifeq ($(EXPERIMENT),6b)
+flags-previous := --par-demand --par-demand-ablation one-sided
+endif
 
 # Stage-one attribution instruments only; retire with this investigation.
 # The default core is never compiled with these observation/counter macros.
@@ -155,7 +159,7 @@ else ifeq ($(EXPERIMENT),4)
 $(eval $(call arm-rules,static))
 else ifeq ($(EXPERIMENT),5c)
 $(eval $(call arm-rules,unversioned))
-else ifeq ($(EXPERIMENT),6)
+else ifneq ($(filter 6 6b,$(EXPERIMENT)),)
 $(foreach arm,unversioned previous,$(eval $(call arm-rules,$(arm))))
 endif
 $(addprefix $(BUILD)/dedup/,$(MICROS)): $(BUILD)/dedup/%: $(BUILD)/demand/%.o $(BUILD)/micro-%.o $(BUILD)/runner.o $(native-dedup)
@@ -180,7 +184,7 @@ $(addprefix $(BUILD)/seq-shift$(1)/,$(KERNELS)): $(BUILD)/seq-shift$(1)/%: $(BUI
 	@mkdir -p $$(@D)
 	$(CLANG) -O2 $$^ $(NATIVE_LINK_FLAGS) -o $$@
 endef
-ifneq ($(filter 5a 6,$(EXPERIMENT)),)
+ifneq ($(filter 5a 6 6b,$(EXPERIMENT)),)
 $(foreach size,$(PADDING_SIZES),$(eval $(call layout-rules,$(size))))
 endif
 

@@ -13,8 +13,9 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from summarize import (E5A_PADDING, experiment_matrix, parse_experiment, attempt_result,
-                       attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity, e2_excluded, load, summarize)
+from summarize import (E5A_PADDING, E6B, E6_FAMILY, experiment_matrix, parse_experiment, attempt_result,
+                       attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity,
+                       e6b_construction, e2_excluded, load, summarize)
 from entry_dispatch import (MIN_CALLS, MAX_CALLS, MIN_BATCH_NS, WIDTHS as ENTRY_WIDTHS,
                             validate_proof as entry_dispatch_proof, validate_sample)
 from inspection import validate_inspection
@@ -161,7 +162,7 @@ def e5c_placement(root=Path("/sys/devices/system/cpu"),
 def demand_setting(experiment, arm):
     return "on" if (experiment == 2 and arm in ("demand", "idle1", "twin")
                     or experiment in (3, 4) and arm not in ("seq", "par")
-                    or experiment in ("5a", "5c", 6) and arm in ("demand", "unversioned", "previous", "twin")) else "off-never-request"
+                    or experiment in ("5a", "5c", *E6_FAMILY) and arm in ("demand", "unversioned", "previous", "twin")) else "off-never-request"
 
 
 def layout_identity(build, manifest):
@@ -200,13 +201,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--rounds", type=int)
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6, E6B), default=1)
     parser.add_argument("--instrumented", action="store_true")
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    if args.experiment in (3, 4, "5a", "5c", 6) and args.rounds is not None:
-        parser.error("experiments 3, 4, 5a, 5c and 6 select their rounds from six sizing rounds; omit --rounds")
+    if args.experiment in (3, 4, "5a", "5c", *E6_FAMILY) and args.rounds is not None:
+        parser.error("experiments 3, 4, 5a, 5c, 6 and 6b select their rounds from six sizing rounds; omit --rounds")
     if args.instrumented and (args.experiment != 3 or args.sizing or args.verify_only):
         parser.error("--instrumented requires experiment 3 without sizing or verify-only")
     if args.rounds is None:
@@ -228,13 +229,13 @@ def main():
         if hashes[name]["demand"] != hashes[name]["twin"]:
             raise ValueError(f"{name}: candidate/twin images differ")
     topology = None
-    if args.experiment in (2, 3, 4, "5a", "5c", 6) and not args.verify_only:
+    if args.experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY) and not args.verify_only:
         if platform.system() != "Linux" or shutil.which("taskset") is None:
-            raise ValueError("experiments 2, 3, 4, 5a, 5c and 6 require Linux topology and taskset pinning")
-        if args.experiment in ("5c", 6):
+            raise ValueError("experiments 2, 3, 4, 5a, 5c, 6 and 6b require Linux topology and taskset pinning")
+        if args.experiment in ("5c", *E6_FAMILY):
             # CPU 0 itself need not be in this service's allowed affinity.
             pinned, topology = e5c_placement()
-            if args.experiment == 6:
+            if args.experiment in E6_FAMILY:
                 pinned[2] = [2, 4]
                 topology["placement_policy"] = "fixed E6 P-core sets; never CPU 0"
             cores = []
@@ -244,13 +245,13 @@ def main():
         # Verification has no timing verdict and may run on the hosted sizing
         # machine. Every experiment-2 timing batch, sizing included, is strict.
         cores = one_cpu_per_core()
-    if args.experiment not in ("5c", 6) or args.verify_only:
+    if args.experiment not in ("5c", *E6_FAMILY) or args.verify_only:
         pinned = {width: cores[:max(width, 1)] for width in widths_for_run} if len(cores) >= max(widths_for_run) else {}
     if args.experiment == "5a" and not args.verify_only:
         if 2 not in cores or topology["performance_cpus"] is None or 2 not in topology["performance_cpus"]:
             raise ValueError("experiment 5a requires CPU 2 to be an allowed first P-core sibling")
         pinned = {1: [2]}
-    layout = layout_identity(build, manifest) if args.experiment in ("5a", 6) else None
+    layout = layout_identity(build, manifest) if args.experiment in ("5a", *E6_FAMILY) else None
     def pin(width, command):
         cpus = pinned.get(width)
         return ["taskset", "-c", ",".join(map(str, cpus))] + command if cpus else command
@@ -259,14 +260,14 @@ def main():
                     dirty=run(["git", "status", "--porcelain"], capture_output=True).stdout,
                     hashes=hashes, experiment=args.experiment, topology=topology,
                     settings={arm: demand_setting(args.experiment, arm) for arm in arms_for_run},
-                    setting="on" if args.experiment in (2, 3, 4, "5a", "5c", 6) else "off-never-request", manifest=manifest,
+                    setting="on" if args.experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY) else "off-never-request", manifest=manifest,
                     instrumented=args.instrumented, layout=layout)
     (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     if args.verify_only:
         for name in manifest:
             for arm in arms_for_run:
-                for width in cell_widths(args.experiment, name) if args.experiment in (2, 3, 4, "5a", "5c", 6) else (1, 4):
-                    if arm not in cell_arms(args.experiment, width):
+                for width in cell_widths(args.experiment, name) if args.experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY) else (1, 4):
+                    if arm not in cell_arms(args.experiment, width, name):
                         continue
                     for setting in ("on", "off-never-request"):
                         run([str(build / arm / name), "verify"],
@@ -286,8 +287,9 @@ def main():
                             env=dict(settings, WF_WORKERS=str(width), WF_SCHED_REPORT="2",
                                      WF_PAR_DEMAND=demand_setting(3, arm)), stdout=output, stderr=output)
         return
-    if args.experiment == 6:
-        construction_identity(build)
+    if args.experiment in E6_FAMILY:
+        # E6b also requires spine's sequentialized hand-off before timing.
+        (e6b_construction if args.experiment == E6B else construction_identity)(build)
         entry_dispatch_proof(build)
     entry_evidence = dict(calibration={}, sizing=[], decisive=[])
     inspection = {}
@@ -297,7 +299,7 @@ def main():
         completed = run(pin(width, [str(build / "entry-dispatch"), str(width), str(calls), str(order)]),
                         env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND="on"), capture_output=True)
         return validate_sample(json.loads(completed.stdout), width, calls, order)
-    if args.experiment == 6:
+    if args.experiment in E6_FAMILY:
         for width in ENTRY_WIDTHS:
             calls, pilots = MIN_CALLS, []
             while True:
@@ -314,7 +316,7 @@ def main():
         require_paired_rounds(args.rounds, sizing=sizing)
         with path.open("w" if attempt == 1 else "a") as output:
             for round_id in range(args.rounds):
-                if args.experiment == 6 and attempt == 1:
+                if args.experiment in E6_FAMILY and attempt == 1:
                     phase = "sizing" if len(entry_evidence["sizing"]) < 6 * len(ENTRY_WIDTHS) else "decisive"
                     for width in ENTRY_WIDTHS:
                         calls = entry_evidence["calibration"][str(width)]["calls"]
@@ -325,13 +327,13 @@ def main():
                     meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
-                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["repetitions"])
-                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["extent"])
+                        settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", *E6_FAMILY) else meta["repetitions"])
+                        settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", *E6_FAMILY) else meta["extent"])
                     widths = balanced_order(cell_widths(args.experiment, name), round_id)
                     for width in widths:
                         if (name, width) not in selected:
                             continue
-                        arms = balanced_order(cell_arms(args.experiment, width), round_id, widths_for_run.index(width))
+                        arms = balanced_order(cell_arms(args.experiment, width, name), round_id, widths_for_run.index(width))
                         for arm in arms:
                             print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
                             run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
@@ -339,7 +341,7 @@ def main():
                                          WF_PAR_DEMAND=demand_setting(args.experiment, arm)), stdout=output)
                             output.flush()
     selected = {(name, width) for name in manifest for width in cell_widths(args.experiment, name)}
-    if args.experiment in (3, 4, "5a", "5c", 6):
+    if args.experiment in (3, 4, "5a", "5c", *E6_FAMILY):
         args.rounds = 6
         sizing_start = time.monotonic()
         batch(1, selected, sizing=True)
@@ -352,8 +354,9 @@ def main():
         identity.update(rounds=6, sizing=True)
         (sample_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         args.rounds = sample["decisive_rounds"]
-        if args.experiment == 6:
-            invocations = sum(len(cell_arms(6, width)) for name in manifest for width in cell_widths(6, name))
+        if args.experiment in E6_FAMILY:
+            invocations = sum(len(cell_arms(args.experiment, width, name)) for name in manifest
+                              for width in cell_widths(args.experiment, name))
             identity["duration_projection"] = dict(sizing_elapsed_seconds=sizing_seconds,
                 decisive_rounds=args.rounds, image_invocations_per_round=invocations,
                 timed_workload_calls_per_round=2 * invocations,
@@ -370,7 +373,7 @@ def main():
             batch(1, selected)
             (build / "summary.json").write_text(json.dumps(summarize(path, inspection, experiment=args.experiment), indent=2) + "\n")
             return
-    if args.experiment not in (3, 4, "5a", "5c", 6) and not args.sizing:
+    if args.experiment not in (3, 4, "5a", "5c", *E6_FAMILY) and not args.sizing:
         require_paired_rounds(args.rounds)
         inspection = checked_inspection()
     batch(1, selected, sizing=args.sizing)
@@ -380,8 +383,8 @@ def main():
         repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if args.sizing else meta.get("repetitions", 0)
         return meta.get("decisions_per_repetition", 0) * repetitions
     def exceeded(name, width, arms):
-        if args.experiment == 6:
-            return e6_attempt(name, arms, width)["status"] == "exceeds"
+        if args.experiment in E6_FAMILY:
+            return e6_attempt(name, arms, width, experiment=args.experiment)["status"] == "exceeds"
         if args.experiment in (4, "5c"):
             return attempt_result_e4(arms, width,
                                      excluded=e2_excluded(name, inspection.get(name, {})),

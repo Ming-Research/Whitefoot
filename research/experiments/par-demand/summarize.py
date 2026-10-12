@@ -31,6 +31,20 @@ E6_SWEEP = ("stencil", "histogram")
 E5A_PADDING = {"seq-shift64": 64, "seq-shift4160": 4160, "seq-shift65664": 65664}
 E5A_ARMS = ("seq", "par", "demand", "twin", *E5A_PADDING)
 E6_ARMS = (*E6_CORE_ARMS, *E5A_PADDING)
+# Experiment 6b reruns 6's matrix with the both-sides call grain (DESIGN.md,
+# "Experiment 6b"). Its previous arm is the one-sided ablation; spine W4/W8
+# also run the shifted-seq controls that give their registered floor.
+E6B = "6b"
+E6_FAMILY = (6, E6B)
+E6B_FLOOR_WIDE = (("spine", 4), ("spine", 8))
+# The 25 cells experiment 6's replayed reduction qualified as pass
+# (inspection-38179220701.json); only these carry E6b-keep.
+E6B_PROTECTED = frozenset(
+    [("small_split", w) for w in (1, 4, 8)] + [("recursion", w) for w in (1, 4, 8)]
+    + [("spine", 1)] + [("hot_helper", w) for w in (1, 4, 8)] + [("large_helper", 4)]
+    + [("mandelbrot", w) for w in (1, 4, 8)] + [("records", w) for w in (1, 4)]
+    + [("fir", 8)] + [("stencil", w) for w in (1, 2, 8)] + [("prefix", w) for w in (1, 8)]
+    + [("histogram", w) for w in (2, 4, 8)])
 E5A_MANIFEST = {name: MANIFEST[name] for name in
                 ("mandelbrot", "records", "fir", "stencil", "prefix", "histogram")}
 E3_WIDTHS = (4, 8)
@@ -39,11 +53,11 @@ FIELDS = ("workload", "arm", "width", "round", "attempt", "sample", "wall_ns", "
 
 
 def parse_experiment(value):
-    return value if value in ("5a", "5c") else int(value)
+    return value if value in ("5a", "5c", E6B) else int(value)
 
 
 def experiment_matrix(experiment):
-    if experiment == 6:
+    if experiment in E6_FAMILY:
         return E6_ARMS, (1, 2, 4, 8), MANIFEST
     if experiment == "5a":
         return E5A_ARMS, (1,), E5A_MANIFEST
@@ -52,11 +66,13 @@ def experiment_matrix(experiment):
 
 
 def cell_widths(experiment, name):
-    return ((1, 2, 4, 8) if name in E6_SWEEP else WIDTHS) if experiment == 6 else experiment_matrix(experiment)[1]
+    return ((1, 2, 4, 8) if name in E6_SWEEP else WIDTHS) if experiment in E6_FAMILY else experiment_matrix(experiment)[1]
 
 
-def cell_arms(experiment, width):
-    return (E6_ARMS if width == 1 else E6_CORE_ARMS) if experiment == 6 else experiment_matrix(experiment)[0]
+def cell_arms(experiment, width, name=None):
+    if experiment == E6B and (name, width) in E6B_FLOOR_WIDE:
+        return E6_ARMS
+    return (E6_ARMS if width == 1 else E6_CORE_ARMS) if experiment in E6_FAMILY else experiment_matrix(experiment)[0]
 
 
 def load(path, experiment=1, sample_index=1):
@@ -70,7 +86,7 @@ def load(path, experiment=1, sample_index=1):
                 raise ValueError(f"malformed measurement: {row}")
             name, arm = row[:2]
             width, round_id, attempt, sample, wall, cpu, count = map(int, row[2:])
-            if (name not in manifest or arm not in expected_arms or width not in cell_widths(experiment, name) or arm not in cell_arms(experiment, width)
+            if (name not in manifest or arm not in expected_arms or width not in cell_widths(experiment, name) or arm not in cell_arms(experiment, width, name)
                     or round_id < 0 or attempt not in (1, 2) or sample not in (0, 1)
                     or min(wall, cpu, count) <= 0):
                 raise ValueError(f"invalid measurement: {row}")
@@ -80,13 +96,13 @@ def load(path, experiment=1, sample_index=1):
             if key in seen:
                 raise ValueError(f"duplicate measurement: {key}")
             seen.add(key)
-            if experiment in (2, 3, 4, "5a", "5c", 6):
-                cell = name if experiment == 6 else (name, width) if experiment in (4, "5a", "5c") else (name, width, attempt)
+            if experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY):
+                cell = name if experiment in E6_FAMILY else (name, width) if experiment in (4, "5a", "5c") else (name, width, attempt)
                 if counts.setdefault(cell, count) != count:
                     raise ValueError(f"comparison extent changed: {cell}")
             if sample == sample_index:  # second call judges; first reports startup
                 groups.setdefault((name, width, attempt), {}).setdefault(arm, {})[round_id] = (wall, cpu)
-    if experiment in (2, 3, 4, "5a", "5c", 6):
+    if experiment in (2, 3, 4, "5a", "5c", *E6_FAMILY):
         for key in seen:
             if key[:-1] + (1 - key[-1],) not in seen:
                 raise ValueError(f"missing first/second call: {key}")
@@ -161,8 +177,8 @@ def bound_inspection(path, inspection, experiment):
 
 
 def summarize(path, inspection=None, sizing=False, experiment=1):
-    if experiment == 6:
-        return summarize_e6(path, inspection, sizing)
+    if experiment in E6_FAMILY:
+        return summarize_e6(path, inspection, sizing, experiment)
     if not sizing:
         inspection = bound_inspection(path, inspection, experiment)
     if experiment == "5a":
@@ -418,15 +434,16 @@ def attempt_result_e4(arms, width, startup=None, excluded=False, experiment=4):
     return result
 
 
-def e4_round_count(cells):
+def e4_round_count(cells, step=1):
+    """Smallest n in 6..30 (every step-th) meeting the projected widths, else 30."""
     if any(cell["initial"]["rounds"] != 6 or "rerun" in cell for cell in cells):
         raise ValueError("E4 sizing rule requires exactly six rounds without reruns")
     quantities = [(rule["interval"][1] - rule["interval"][0],
                    max(0.02, abs(rule["median"] - rule["bound"])))
                   for cell in cells for rule in cell["initial"]["rules"].values()
                   if rule["status"] != "not-applicable"]
-    return next((n for n in range(6, 31) if all(width * (6 / n) ** 0.5 <= target
-                                               for width, target in quantities)), 30)
+    return next((n for n in range(6, 31, step) if all(width * (6 / n) ** 0.5 <= target
+                                                     for width, target in quantities)), 30)
 
 
 def summarize_e4(path, inspection=None, sizing=False, experiment=4):
@@ -451,10 +468,38 @@ def summarize_e4(path, inspection=None, sizing=False, experiment=4):
 
 
 
-def attempt_result_e6(arms, width, startup=None):
-    expected = cell_arms(6, width)
+def floor_bound(values, radius):
+    """E6b-seq: pass at or below 1.00, or wholly inside the cell's own floor."""
+    result = quantity(values)
+    low, high = result["interval"]
+    inside = radius is not None and 1 - radius <= low and high <= 1 + radius
+    result.update(bound=1.00, floor_radius=radius,
+                  status="pass" if high <= 1.00 or inside else
+                  "exceeds" if low > 1 + (radius or 0) else "inconclusive")
+    if inside and high > 1.00:
+        result["reading"] = "at the floor"
+    return result
+
+
+def e6b_rules(name, width, ratios, floor):
+    """Exactly the registered E6b criteria for one cell; the rest is reported."""
+    rules = {}
+    if (name, width) in E6B_PROTECTED:
+        for reference in ("unversioned", "previous"):
+            rules[f"E6b-keep-{reference}"] = upper_bound(ratios("demand", reference), 1.05)
+    if (name, width) == ("recursion", 8):
+        rules["E6b-recursion"] = upper_bound(ratios("demand", "par"), 1.05)
+    if (name, width) == ("fir", 1):
+        rules["E6b-fir-seq"] = upper_bound(ratios("demand"), 1.05)
+    elif width == 1 or (name, width) in E6B_FLOOR_WIDE:
+        rules["E6b-seq"] = floor_bound(ratios("demand"), floor)
+    return rules
+
+
+def attempt_result_e6(arms, width, startup=None, name=None, experiment=6):
+    expected = cell_arms(experiment, width, name)
     if set(arms) != set(expected):
-        raise ValueError("missing experiment-6 arm")
+        raise ValueError(f"missing experiment-{experiment} arm")
     rounds = set(arms["seq"])
     if not rounds or rounds != set(range(len(rounds))) or any(set(rows) != rounds for rows in arms.values()):
         raise ValueError("unpaired or missing experiment-6 rounds")
@@ -465,17 +510,21 @@ def attempt_result_e6(arms, width, startup=None):
         return [a / b for a, b in zip(source[numerator], source[denominator])]
     twin = quantity(ratios(walls, "twin", "demand"))
     void = not twin["interval"][0] <= 1 <= twin["interval"][1]
-    rules = {f"E6-keep-{reference}": upper_bound(ratios(walls, "demand", reference), 1.05)
-             for reference in ("unversioned", "previous")}
-    # Preserve par speedups. The preregistered recursion W8 check is applied
-    # unconditionally by summarize_e6, even if this run's par interval is noisy.
-    rules["E6-par"] = upper_bound(ratios(walls, "demand", "par"), 1.05)
-    if quantity(ratios(walls, "par"))["interval"][1] >= 1:
-        rules["E6-par"].update(status="not-applicable", reason="par/seq interval is not wholly below 1")
     literal = upper_bound(ratios(walls, "demand"), 1.00)
-    controls = {arm: quantity(ratios(walls, arm)) for arm in E5A_PADDING} if width == 1 else {}
+    controls = {arm: quantity(ratios(walls, arm)) for arm in E5A_PADDING} if set(E5A_PADDING) <= set(expected) else {}
     floor = max((max(abs(q["interval"][0] - 1), abs(q["interval"][1] - 1))
                  for q in controls.values()), default=None)
+    if experiment == E6B:
+        rules = e6b_rules(name, width, lambda numerator, denominator="seq": ratios(walls, numerator, denominator),
+                          None if void else floor)
+    else:
+        rules = {f"E6-keep-{reference}": upper_bound(ratios(walls, "demand", reference), 1.05)
+                 for reference in ("unversioned", "previous")}
+        # Preserve par speedups. The preregistered recursion W8 check is applied
+        # unconditionally by summarize_e6, even if this run's par interval is noisy.
+        rules["E6-par"] = upper_bound(ratios(walls, "demand", "par"), 1.05)
+        if quantity(ratios(walls, "par"))["interval"][1] >= 1:
+            rules["E6-par"].update(status="not-applicable", reason="par/seq interval is not wholly below 1")
     floor_status = ("void" if void else "at the floor" if floor is not None and
                     1 - floor <= literal["interval"][0] and literal["interval"][1] <= 1 + floor
                     else "outside the floor" if floor is not None else "not measured at this width")
@@ -487,7 +536,7 @@ def attempt_result_e6(arms, width, startup=None):
             rule["status"] = "void"
     statuses = {rule["status"] for rule in rules.values()}
     result = dict(status="void" if void else "exceeds" if "exceeds" in statuses else
-                  "inconclusive" if "inconclusive" in statuses else "pass",
+                  "inconclusive" if "inconclusive" in statuses else "pass" if rules else "not-applicable",
                   rounds=len(rounds), rules=rules, twin_wall_ratio=twin,
                   wall_ns={arm: quantity(values) for arm, values in walls.items()},
                   cpu_ns={arm: quantity(values) for arm, values in cpus.items()},
@@ -497,6 +546,10 @@ def attempt_result_e6(arms, width, startup=None):
                   layout_floor=dict(status=floor_status, radius=None if void else floor,
                                     band=None if floor is None or void else [1 - floor, 1 + floor], controls=controls),
                   h3=margins, h3_policy="reported; no E6 gate or rerun; scaling evidence is reported separately")
+    if experiment == E6B:
+        # Reported, never gated: E6b fixes exactly its registered rules.
+        result["reported_demand_ratios"] = {reference: quantity(ratios(walls, "demand", reference))
+                                            for reference in ("par", "previous", "unversioned")}
     if startup is not None:
         if set(startup) != set(expected) or any(set(rows) != rounds for rows in startup.values()):
             raise ValueError("unpaired first calls")
@@ -507,8 +560,10 @@ def attempt_result_e6(arms, width, startup=None):
     return result
 
 
-def e6_attempt(name, arms, width, startup=None):
-    result = attempt_result_e6(arms, width, startup)
+def e6_attempt(name, arms, width, startup=None, experiment=6):
+    result = attempt_result_e6(arms, width, startup, name, experiment)
+    if experiment == E6B:
+        return result
     if name in ("small_constant", "spine") and result["status"] != "void":
         result["rules"]["E6-par"].update(status="not-applicable", reason="reported E4 control; par rule decides nothing")
     if name == "recursion" and width == 8 and result["status"] != "void":
@@ -589,30 +644,45 @@ def construction_identity(build):
             raise ValueError(f"sequential identity artifact changed: {filename}")
     return evidence
 
-def summarize_e6(path, inspection=None, sizing=False):
-    groups = load(path, experiment=6)
-    startup = load(path, experiment=6, sample_index=0)
+def e6b_construction(build):
+    """E6b-identity: option-D identity plus spine's sequentialized hand-off.
+
+    Spine's timed entry must make no pool query (its only hand-off point now
+    lowers to the ordinary computation), while recursion keeps its one query
+    (its balanced hand-off stays). Anything else stops timing.
+    """
+    evidence = construction_identity(build)
+    pools = {name: evidence["workloads"][name].get("dispatch", {}).get("pool_decisions_per_timed_call")
+             for name in ("spine", "recursion")}
+    if pools != {"spine": 0, "recursion": 1}:
+        raise ValueError(f"experiment 6b construction: spine must make 0 and recursion 1 pool queries per timed call, observed {pools}")
+    return evidence
+
+
+def summarize_e6(path, inspection=None, sizing=False, experiment=6):
+    groups = load(path, experiment=experiment)
+    startup = load(path, experiment=experiment, sample_index=0)
     if sizing and any(attempt != 1 for _, _, attempt in groups):
         raise ValueError("E6 sizing rule requires exactly six rounds without reruns")
     if not sizing:
         evidence_path = Path(path).parent / "sequential-identity.json"
-        construction = construction_identity(Path(path).parent)
-        inspection = bound_inspection(path, inspection, 6)
+        construction = (e6b_construction if experiment == E6B else construction_identity)(Path(path).parent)
+        inspection = bound_inspection(path, inspection, experiment)
     inspection = inspection or {}
     cells = []
     for name, meta in MANIFEST.items():
         checked = inspection.get(name, {})
         inspected = (checked.get("hot_work_survives") is True and bool(checked.get("evidence"))
                      and bool(checked.get("check_compiles_to")))
-        for width in cell_widths(6, name):
+        for width in cell_widths(experiment, name):
             key = (name, width, 1)
             if key not in groups:
-                raise ValueError(f"missing experiment 6 cell: {name}/{width}")
-            initial = e6_attempt(name, groups[key], width, startup[key])
+                raise ValueError(f"missing experiment {experiment} cell: {name}/{width}")
+            initial = e6_attempt(name, groups[key], width, startup[key], experiment)
             cell = dict(workload=name, width=width, attribution=meta["kind"], initial=initial)
             second = groups.get((name, width, 2))
             if second is not None:
-                cell["rerun"] = e6_attempt(name, second, width, startup[name, width, 2])
+                cell["rerun"] = e6_attempt(name, second, width, startup[name, width, 2], experiment)
             verdicts = {}
             for key, rule in initial["rules"].items():
                 status = rule["status"]
@@ -631,12 +701,15 @@ def summarize_e6(path, inspection=None, sizing=False):
                 cell["reason"] = ("sizing only" if sizing else
                     "optimized hot work or intended site did not survive" if checked.get("hot_work_survives") is False else
                     "optimized hot-site inspection missing")
-            if "void" in verdicts.values():
+            # A cell with no registered E6b rule still reports its twin.
+            void = "void" in verdicts.values() or not verdicts and "void" in (
+                initial["status"], cell.get("rerun", {}).get("status"))
+            if void:
                 for attempt in (initial, *([cell["rerun"]] if "rerun" in cell else [])):
                     attempt["layout_floor"].update(status="void", radius=None, band=None)
             cell["verdicts"] = verdicts
-            cell["status"] = next((s for s in ("void", "fail", "needs-rerun", "inconclusive", "pass")
-                                   if s in verdicts.values()), "not-applicable")
+            cell["status"] = "void" if void else next((s for s in ("fail", "needs-rerun", "inconclusive", "pass")
+                                                       if s in verdicts.values()), "not-applicable")
             cells.append(cell)
     if sizing:
         # Floor controls and the literal diagnostic participate in sizing,
@@ -648,16 +721,17 @@ def summarize_e6(path, inspection=None, sizing=False):
             rules.update({arm: dict(q, bound=1, status="intervals")
                           for arm, q in initial["layout_floor"]["controls"].items()})
             sizing_cells.append(dict(initial=dict(initial, rules=rules)))
-        count = e4_round_count(sizing_cells)
+        # E6b fixes an even count so every arm pair is order-balanced.
+        count = e4_round_count(sizing_cells, step=2 if experiment == E6B else 1)
     else:
-        sample_path = Path(path).parent / "sizing-e6" / "measurements.tsv"
+        sample_path = Path(path).parent / f"sizing-e{experiment}" / "measurements.tsv"
         if not sample_path.exists():
-            raise ValueError("missing experiment 6 six-round sizing evidence")
-        count = summarize_e6(sample_path, sizing=True)["decisive_rounds"]
+            raise ValueError(f"missing experiment {experiment} six-round sizing evidence")
+        count = summarize_e6(sample_path, sizing=True, experiment=experiment)["decisive_rounds"]
         if any(attempt["rounds"] != count for cell in cells
                for attempt in (cell["initial"], *([cell["rerun"]] if "rerun" in cell else []))):
             raise ValueError("decisive rounds differ from the count frozen by sizing")
-    result = dict(experiment=6, sizing=sizing, cells=cells, decisive_rounds=count,
+    result = dict(experiment=experiment, sizing=sizing, cells=cells, decisive_rounds=count,
                   sweep=e6_sweep(groups, cells, sizing),
                   h3_policy="reported for every cell; inspect adjacent-width speedup before interpreting CPU margin")
     if not sizing:
@@ -864,7 +938,7 @@ def main():
     parser.add_argument("measurements", type=Path)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--sizing", action="store_true")
-    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6), default=1)
+    parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6, E6B), default=1)
     args = parser.parse_args()
     if args.sizing:
         inspection = None  # Sizing is unqualified and never needs an inspection.

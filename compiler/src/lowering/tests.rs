@@ -3042,3 +3042,80 @@ fn calls_to(program: &IrProgram, caller: &IrFunction, names: &[&str]) -> Vec<IrV
         })
         .collect()
 }
+
+/// Both sides of a demand hand-off meet the call grain's work unit at the same
+/// boundary: a join-site callee at exactly the unit keeps the group and one
+/// unit below dissolves it, while the one-sided grain, which `--par` keeps,
+/// leaves the group in place, as every demand build did before the join site
+/// was priced. The handed-out side keeps its own boundary under both.
+#[test]
+fn demand_grain_prices_the_join_site_at_the_work_unit() {
+    let source = br#"fn heavy(seed: u64) -> result: u64 pure {
+  return imulhi(seed, 2654435761_u64);
+}
+
+fn light(seed: u64) -> result: u64 pure {
+  return irotl(seed, 7_u32);
+}
+
+fn caller(seed: u64) -> result: u64 pure {
+  let a = heavy(seed: seed);
+  let b = light(seed: seed);
+  return a +wrap b;
+}
+"#;
+    // Every permitted offer kept, so the group exists before pricing.
+    let demand = OverlapLowering::Demand {
+        ablation: crate::DemandAblation::None,
+        budget: crate::RecursionBudget::RuntimeDerived,
+        call_grain: crate::CallGrain::Every,
+        sequential_refusal: false,
+    };
+    with_ir_mode(source, demand, |program| {
+        let ordinal = |name: &str| {
+            program
+                .functions()
+                .iter()
+                .position(|function| function.name() == name)
+                .unwrap_or_else(|| panic!("lowered program must contain {name}"))
+        };
+        let (heavy, light, caller) = (ordinal("heavy"), ordinal("light"), ordinal("caller"));
+        assert_eq!(program.functions()[caller].overlaps().len(), 1);
+        let unit = super::builder::CALL_OFFER_WORK_UNIT;
+        let price = |handed_out: u64, kept: u64, both_sides: bool| {
+            let mut functions = program.functions().to_vec();
+            let mut weights = vec![1_u64; functions.len()];
+            weights[heavy] = handed_out;
+            weights[light] = kept;
+            let ledger = super::builder::prune_call_offers(&mut functions, &weights, both_sides)
+                .into_iter()
+                .filter(|line| line.starts_with("PAR actualization  caller  "))
+                .collect::<Vec<_>>();
+            (functions[caller].overlaps().len(), ledger)
+        };
+        assert_eq!(price(unit, unit, true), (1, Vec::new()));
+        assert_eq!(
+            price(unit, unit - 1, true),
+            (
+                0,
+                vec![format!(
+                    "PAR actualization  caller  call grain: join site light runs after the join (kept static work {} below {unit}, no recursion)",
+                    unit - 1
+                )]
+            )
+        );
+        assert_eq!(price(unit, unit - 1, false), (1, Vec::new()));
+        for both_sides in [true, false] {
+            assert_eq!(
+                price(unit - 1, unit, both_sides),
+                (
+                    0,
+                    vec![format!(
+                        "PAR actualization  caller  call grain: omitted offer of heavy (static work {} below {unit}, no recursion)",
+                        unit - 1
+                    )]
+                )
+            );
+        }
+    });
+}

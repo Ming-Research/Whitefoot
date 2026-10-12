@@ -51,6 +51,7 @@ fn default_demand_is_unchanged_after_each_ablation() {
         crate::DemandAblation::Static,
         crate::DemandAblation::Unversioned,
         crate::DemandAblation::Requested,
+        crate::DemandAblation::OneSided,
     ] {
         let _ = emit_lowered(SMALL.as_bytes(), ablation(arm));
         assert_eq!(before, emit_lowered(SMALL.as_bytes(), ablation(Default::default())));
@@ -385,6 +386,129 @@ fn demand_takes_the_par_call_grain_so_a_cheap_group_never_polls() {
     let every_offer = emit_lowered(source, DEMAND);
     let every = function_body(&every_offer, "@wf_helper");
     assert!(every.contains(POLL), "{every}");
+}
+
+/// Demand's default lowering: the `--par` call grain, priced on both sides.
+const GRAINED: OverlapLowering = OverlapLowering::Demand {
+    ablation: crate::DemandAblation::None,
+    budget: RecursionBudget::RuntimeDerived,
+    call_grain: CallGrain::WorkUnit,
+    sequential_refusal: false,
+};
+
+fn one_sided() -> OverlapLowering {
+    OverlapLowering::Demand {
+        ablation: crate::DemandAblation::OneSided,
+        budget: RecursionBudget::RuntimeDerived,
+        call_grain: CallGrain::WorkUnit,
+        sequential_refusal: false,
+    }
+}
+
+// A linear recursion whose one recursive call is followed by a tiny call: the
+// shape of the par-demand experiment's spine, written here without importing
+// the research fixture.
+const CHAIN: &str = r#"fn leaf(v: u64) -> result: u64 pure {
+  let rotated = irotl(v, 7_u32);
+  return rotated *wrap 3_u64;
+}
+
+fn spine(n: u64, v: u64) -> result: u64 pure {
+  if n == 0_u64 {
+    return v;
+  }
+  let shorter = n -wrap 1_u64;
+  let next = v +wrap 1_u64;
+  let a = spine(n: shorter, v: next);
+  let b = leaf(v: v);
+  return a +wrap b;
+}
+"#;
+
+// A balanced recursion: both members of its group call the recursion.
+const BALANCED: &str = r#"fn fib(n: u64) -> result: u64 pure {
+  if n < 2_u64 {
+    return n;
+  }
+  let one = n -wrap 1_u64;
+  let two = n -wrap 2_u64;
+  let a = fib(n: one);
+  let b = fib(n: two);
+  return a +wrap b;
+}
+"#;
+
+/// The caller of a hand-off keeps the group's join site. When that call is
+/// below the work unit and reaches no offered recursion, the point lowers to
+/// the ordinary sequential call pair: the chain's body is the ordinary body,
+/// no budget family is emitted and nothing is published. Before both sides
+/// were priced, the chain handed its whole remaining recursion to another lane
+/// at every budgeted level while its caller ran one rotate before joining,
+/// which the one-sided ablation still emits.
+#[test]
+fn demand_grain_sequentializes_a_chain_whose_caller_keeps_a_tiny_call() {
+    let source = CHAIN.as_bytes();
+    let grained = emit_lowered(source, GRAINED);
+    let ordinary = emit_lowered(source, OverlapLowering::Off);
+    assert_eq!(
+        function_body(&grained, "@wf_spine"),
+        function_body(&ordinary, "@wf_spine"),
+        "the sequentialized point is the ordinary computation"
+    );
+    for forbidden in ["@wf__par_budget_spine", "@wf__par_seq_spine", "call void @wf__par_publish(", POLL] {
+        assert!(!grained.contains(forbidden), "{forbidden}: {grained}");
+    }
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[SourceInput::new("test.wf", source)],
+        CompilerLimits::default(),
+        GRAINED,
+    )
+    .expect("the chain compiles");
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  spine  call grain: join site leaf runs after the join (kept static work "
+        ) && line.ends_with(", no recursion)")),
+        "the ledger names the kept call: {ledger:?}"
+    );
+    let previous = emit_lowered(source, one_sided());
+    let budgeted = function_body(&previous, "@wf__par_budget_spine");
+    assert!(budgeted.contains("@wf__par_acquire_lane"), "{budgeted}");
+    assert!(budgeted.contains("@wf__par_publish"), "{budgeted}");
+}
+
+/// A balanced recursion's kept call reaches the same offered recursion, so
+/// pricing the kept side changes nothing: its budgeted variant still offers
+/// immediately, and the module is the one-sided module byte for byte.
+#[test]
+fn demand_grain_keeps_balanced_recursion_eager() {
+    let source = BALANCED.as_bytes();
+    let grained = emit_lowered(source, GRAINED);
+    let budgeted = function_body(&grained, "@wf__par_budget_fib");
+    assert!(budgeted.contains("@wf__par_acquire_lane"), "{budgeted}");
+    assert!(budgeted.contains("@wf__par_publish"), "{budgeted}");
+    assert!(!budgeted.contains(POLL), "{budgeted}");
+    assert_eq!(grained, emit_lowered(source, one_sided()));
+}
+
+/// A loop slice's halves both call its own driver, a recursion that offers
+/// its own calls, so the driver keeps its request-gated hand-off and the
+/// module is the one-sided module byte for byte.
+#[test]
+fn demand_grain_keeps_loop_slices() {
+    let source = SMALL.as_bytes();
+    let grained = emit_lowered(source, GRAINED);
+    assert!(grained.contains(POLL), "{grained}");
+    assert!(grained.contains("call void @wf__par_publish("), "{grained}");
+    assert_eq!(grained, emit_lowered(source, one_sided()));
+    super::system::with_mutated_ir_lowering(source, GRAINED, |program| {
+        let driver = program
+            .functions()
+            .iter()
+            .find(|f| f.name().starts_with("_par_slice_dynamic"))
+            .expect("the dynamic loop keeps its slice driver");
+        assert_eq!(driver.overlaps.len(), 1);
+        assert_eq!(driver.overlaps[0].members.len(), 2);
+    });
 }
 
 // A formal lowering witness: repeated guarded calls, a loop-carried offset,

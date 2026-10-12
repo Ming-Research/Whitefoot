@@ -73,7 +73,7 @@ def validate_inspection(build, records, revision, workloads, arms):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', required=True, type=Path)
-    parser.add_argument('--experiment', required=True, choices=('1', '2', '3', '4', '5a', '5c', '6'))
+    parser.add_argument('--experiment', required=True, choices=('1', '2', '3', '4', '5a', '5c', '6', '6b'))
     parser.add_argument('--revision', required=True)
     parser.add_argument('--inspection', type=Path)
     args = parser.parse_args()

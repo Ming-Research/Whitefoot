@@ -56,6 +56,28 @@ pub(crate) fn lower_checked_with_layout(
     lower_checked_from(checked, overlap, target, None)
 }
 
+/// The call grain's work unit, for tests that price offers at its boundary.
+#[cfg(test)]
+pub(super) const CALL_OFFER_WORK_UNIT: u64 = call_grain::CALL_OFFER_WORK_UNIT;
+
+/// Applies the call grain to already lowered functions with the given static
+/// work, pricing the join sites too when `both_sides`; returns its ledger.
+#[cfg(test)]
+pub(super) fn prune_call_offers(
+    functions: &mut [IrFunction],
+    weights: &[u64],
+    both_sides: bool,
+) -> Vec<String> {
+    let mut ledger = Vec::new();
+    let sides = if both_sides {
+        call_grain::Sides::Both
+    } else {
+        call_grain::Sides::HandedOut
+    };
+    call_grain::prune(functions, weights, &mut ledger, sides);
+    ledger
+}
+
 /// Select optional target-fitting loop shapes after semantic acceptance, using
 /// the same target that will qualify and emit their transported signatures,
 /// emitting only the functions `roots` reach through their calls when roots
@@ -241,7 +263,14 @@ fn lower_checked_in_world(
     functions.extend(synthesized);
     let weights = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
-        call_grain::prune(&mut functions, &weights, &mut actualization);
+        // Demand prices both sides of a group; --par keeps its one-sided
+        // grain, whose emission the legacy identity control pins.
+        let sides = if par_demand && demand_ablation != crate::DemandAblation::OneSided {
+            call_grain::Sides::Both
+        } else {
+            call_grain::Sides::HandedOut
+        };
+        call_grain::prune(&mut functions, &weights, &mut actualization, sides);
     }
     if par_demand {
         demand::prune_and_report(&mut functions, &mut actualization);

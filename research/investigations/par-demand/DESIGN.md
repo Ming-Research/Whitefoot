@@ -4367,3 +4367,138 @@ compile the demand section of `compiler/src/backend/sched/core.c`.
   count, which could let the old runtime pass by chance; it cannot make the
   repaired runtime fail. Whether the repair removes the near-seq calls in
   timed runs is a separate measurement.
+
+### Experiment 6b: both-sides grain and the fir single-thread criterion, fixed before it measures
+
+**Registered 2026-10-12, before any measurement of the changed compiler.** No
+build, run or timing of this change preceded this text. It applies two owner
+rulings of 2026-10-12:
+
+1. **Spine grain, option A ("both sides worth it").** At each hand-off point
+   the compiler checks, with the existing static work estimate of the call
+   grain (the three-round weighted instruction count against the
+   150,000-unit work unit, with its exemption for a callee that belongs to or
+   reaches recursion offering its own calls), both the handed-out member and
+   the work the caller keeps before the join. Either side below the unit makes
+   the point compile to sequential code. The decision reads source structure
+   only, adds no runtime branch and names no workload.
+2. **fir W1, option A.** Demand's one-worker code stays identical to the
+   single-thread build. The fir W1 criterion becomes demand/seq wall upper
+   bound <= 1.05, on the ground of the [FIR diagnostic](#fir-diagnostic-results):
+   par's one-worker advantage is the legacy ordered four-tap loop, about 5%,
+   not the adapter. Demand/par at fir W1 is still reported, as no criterion.
+
+**Question.** Does pricing the kept side remove spine's useless hand-offs,
+which the [spine diagnostic](#spine-diagnostic-results) measured at 2.7/1.7
+extra publications per invocation over the request-gated control and a
+demand/seq wall of 3.7/4.5 at W4/W8, while balanced recursion, loop slices and
+every cell experiment 6 qualified keep their results?
+
+**Change.** Under `--par-demand` with the default call grain, the grain also
+prices each group's join site, the member the caller runs itself. A join site
+below the unit leaves the group and runs as the ordinary call it already is,
+after the join of the members before it; the member before it becomes the join
+site and is priced in turn; a group left with one member dissolves. A function
+with no remaining hand-off gets no budget family or sequential clone, so the
+point lowers through the canonical sequential path, which the identity check
+covers. Spine's group pairs its recursive call with `leaf`, a rotate and
+multiply, so it dissolves; fib's kept call is fib itself, and a slice
+driver's near half calls the driver, so both keep their groups. `--par` keeps
+its one-sided grain: its emission is pinned by the legacy identity control.
+The research-only `--par-demand-ablation one-sided` restores experiment 6's
+demand grain. The work unit, the static estimate and the recursion exemption
+are unchanged; no tunable is added.
+
+**Arms and construction.** Experiment 6's matrix, inputs, widths, pins
+(W1 {2}, W2 {2,4}, W4 {2,4,6,8}, W8 {2,4,6,8,10,12,14,1}, CPU 0 excluded, the
+CPU-1 sharing caveat kept), oracles, request settings, first/second-call
+boundary, twin and entry-dispatch witness. `previous` now compiles with
+`--par-demand --par-demand-ablation one-sided`: the candidate of experiment 6
+on this branch's compiler and runtime, which differs from default demand only
+in the kept-side pricing. `unversioned` keeps the new grain with region
+versioning disabled. Both share the demand runtime, which on this branch
+includes the [startup exposure repair](#startup-exposure-repair), so neither
+comparison attributes that repair. The three shifted-seq arms run at W1 for
+every workload, as in experiment 6, and also at spine W4 and W8: the
+sequentialized spine starts no pool at any width, so its wide cells execute
+the W1 code, and their floor is measured in the same cell and attempt. That
+adds six images per round to experiment 6's 264.
+
+**Criteria, fixed now; these and no others gate the result.**
+
+- **E6b-identity.** Option-D sequential identity
+  ([option D](#identity-construction-option-d)) passes for every workload,
+  including spine's sequentialized point, and the construction evidence shows
+  spine's timed entry making zero pool queries and recursion's making one.
+  Anything else stops the run before timing; timing never repairs it.
+- **E6b-keep.** In each cell experiment 6's replayed reduction qualified
+  as pass, demand/previous **and** demand/unversioned wall upper bounds
+  <= 1.05. These 25 cells are small_split W1/4/8, recursion W1/4/8, spine W1,
+  hot_helper W1/4/8, large_helper W4, mandelbrot W1/4/8, records W1/4, fir W8,
+  stencil W1/2/8, prefix W1/8 and histogram W2/4/8 (see
+  [inspection replay](#stage-1-inspection-and-bounded-diagnostics-fixed-before-measurement)).
+- **E6b-recursion.** Recursion W8 demand/par wall upper bound <= 1.05,
+  unconditionally. This guards against misclassifying balanced recursion.
+- **E6b-seq.** At W1 for every workload except fir, and at spine W4 and W8,
+  demand/seq wall upper bound <= 1.00, or the entire interval inside the
+  cell's own same-attempt layout floor `[1-F, 1+F]`, with `F` the largest
+  distance from 1 of any shifted-seq/seq interval endpoint, experiment 6's
+  formula. A lower bound above `1+F` exceeds; anything else is inconclusive.
+- **E6b-fir-seq.** fir W1 demand/seq wall upper bound <= 1.05.
+
+Every rule uses paired second-call ratios, their median, 10,000 bootstrap
+draws, seed 20261010 and 95% intervals. A twin/demand interval excluding 1
+voids its cell, with or without a rule. An exceeding gated cell gets exactly
+one further attempt of the frozen count with all its arms; a persistent
+exceedance fails; disagreement or a straddle is inconclusive; no further
+reruns. A pass needs this build's validated inspection, as in experiment 6.
+Every other cell, including the void and inconclusive cells of experiment 6
+outside the lists above, reports demand/par, demand/previous, demand/unversioned
+and demand/seq with no verdict. Experiment 6's general par rule, H3 and the
+entry-dispatch witness are reported only. Six full-work sizing rounds go to
+`sizing-e6b/`; they freeze the smallest **even** `n` from 6 to 30 whose
+projected interval widths, scaled by `sqrt(6/n)`, are at most
+`max(0.02, |median-bound|)` over every rule, the literal demand/seq diagnostic
+and every shifted-seq control, otherwise 30, so every arm pair is
+order-balanced. Sizing never decides a cell.
+
+**Predictions.**
+
+- P1. Default and one-sided demand emit identical LLVM for every workload but
+  spine, whose ledger names `leaf` as the join site that runs after the join.
+  A workload whose emission also differs is no failure: its ledger names the
+  sequentialized join site, and its own cells decide.
+- P2. Spine W4 and W8 demand/seq lie at or below 1.00 or inside their floor,
+  against experiment 6's 3.69 and 4.49, and spine demand/previous at W4 and W8
+  has upper bound below 0.5.
+- P3. Recursion W8 demand/par stays near experiment 6's 0.997, and
+  demand/previous includes 1 in every protected cell where P1 holds.
+- P4. fir W1 demand/seq stays near experiment 6's 1.004 and passes 1.05, while
+  the reported demand/par stays near 1.05.
+
+**Falsifiers.** A persistent E6b-recursion exceedance means the kept-side
+test misclassifies balanced recursion and rejects the rule as implemented. A
+persistent spine W4/W8 E6b-seq failure means sequentializing the point does
+not remove spine's cost and rejects the claim that the grain was the cause. A
+persistent E6b-keep failure rejects preservation. A persistent W1 E6b-seq
+failure rejects demand's one-worker identity for that workload. Identity
+failure stops the run before any of these readings.
+
+**Limits.** The kept side is priced statically, like the handed-out side, so
+a kept call that is large only through its runtime extents, such as a loop
+over a large argument, dissolves its group. No measured workload has that
+shape; this is the existing grain's provisional limit, to be reopened when a
+measured program loses speedup to it. The inspection-delivery gap stands: a
+committed inspection record cannot bind the commit that adds it, so a
+qualified run needs build-bound inspection delivered after the build. The
+expected cost is experiment 6's 27-minute job scaled by 270/264 images per
+round, about 28-31 minutes for 30 rounds before reruns; reserve 35-40 minutes.
+
+**Implementation boundary.** The compiler change, its tests (a chain that
+sequentializes, a balanced recursion and a loop slice that do not, and the
+exact work-unit boundary on both sides), the one-sided ablation, the reducer,
+its self-tests, the driver, Makefile and workflow wiring were written without
+any local build, test or run; edited Python was only syntax-compiled. All of
+them, the identity check and the measurement await CI. Dispatch
+`compute-bench.yml` with `experiment=par-demand`, `par_demand_experiment=6b`,
+`placement_runner=14900k` and empty `placement_rounds`.
