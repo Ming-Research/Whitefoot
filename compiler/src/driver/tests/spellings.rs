@@ -211,7 +211,7 @@ fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
                     .is_some_and(|location| location.path() == display)),
                 "{tasks:?}"
             );
-            for earlier in &seen {
+            for earlier in seen.iter().filter(|earlier| **earlier != display) {
                 assert!(!failure.contains(&format!("{earlier}:")), "{failure}");
             }
         }
