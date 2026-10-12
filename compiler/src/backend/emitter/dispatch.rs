@@ -1328,9 +1328,10 @@ impl FunctionEmitter<'_, '_> {
 
     /// Emits the dispatch function, every arm's function and the handler
     /// table after the enclosing function. A frame slot that the enclosing
-    /// function never uses and exactly one part uses is that part's own
-    /// allocation, which the host can then remove; every other slot is
-    /// reached through the shared frame.
+    /// function never uses and whose contents no transfer carries (see
+    /// `confined`) is the own allocation of each part that uses it, which
+    /// the host can then remove; every other slot is reached through the
+    /// shared frame.
     pub(super) fn emit_dispatch_parts(
         &mut self,
         module: &mut Module,
@@ -1433,21 +1434,20 @@ impl FunctionEmitter<'_, '_> {
                 symbol.strip_suffix(".dispatch").unwrap_or(&symbol)
             ));
         }
-        let mut users: HashMap<FunctionSlot, usize> = HashMap::new();
-        for (_, _, uses) in &parts {
-            for key in uses {
-                *users.entry(*key).or_default() += 1;
-            }
-        }
+        let across = self.storage.allocations_across(
+            self.program,
+            self.function,
+            header.index(),
+            self.sequential_clones.is_some(),
+        )?;
         for (signature, mut body, uses) in parts {
+            // The enclosing function also runs instructions the loop's
+            // blocks hold (hoisted header values and pinned projections),
+            // which the loop's value liveness does not place there.
             let locals: HashSet<FunctionSlot> = uses
                 .iter()
                 .copied()
-                .filter(|key| {
-                    !enclosing_uses.contains(key)
-                        && users.get(key) == Some(&1)
-                        && !matches!(key, FunctionSlot::Address(_))
-                })
+                .filter(|key| !enclosing_uses.contains(key) && confined(*key, &across))
                 .collect();
             let mut prelude =
                 self.frame
@@ -2643,6 +2643,31 @@ impl FunctionEmitter<'_, '_> {
         if let Some(dispatch) = &mut self.dispatch {
             dispatch.part = part;
         }
+    }
+}
+
+/// Whether every part that uses the frame slot `key` writes it before it
+/// reads it and nothing reads it after the part transfers: the enclosing
+/// function's call of the dispatch function, a part's tail call of it or
+/// of an arm, and a part's return are the transfers
+/// (compiler/match-dispatch-lowering). A planned value's allocation is
+/// confined unless it is in `across`, the allocations the storage plan
+/// finds carried across the header; an edge's snapshot, the transfer
+/// scratch and an array fill's index serve one edge or one instruction;
+/// any other slot is kept in the shared frame.
+fn confined(key: FunctionSlot, across: &BTreeSet<usize>) -> bool {
+    match key {
+        FunctionSlot::OwnedValue(slot) => !across.contains(&slot),
+        FunctionSlot::EdgeSnapshot(_)
+        | FunctionSlot::TransferScratch
+        | FunctionSlot::ArrayFillIndex(_) => true,
+        FunctionSlot::Address(_)
+        | FunctionSlot::IndexedDirectory(_)
+        | FunctionSlot::IndexedReference(..)
+        | FunctionSlot::Result
+        | FunctionSlot::WaitingResult(_)
+        | FunctionSlot::ContextResult(_)
+        | FunctionSlot::Spill(_) => false,
     }
 }
 

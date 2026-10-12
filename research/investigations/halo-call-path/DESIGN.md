@@ -154,10 +154,11 @@ require spilling a parameter on a path that makes no call.
 
 ## Method
 
-First step: attribution, no compiler change, nothing timed. The temporary
-workflow `.github/workflows/halo-call-path.yml` (run by a push to its
-experiment branch, one hosted x86-64 job, the LLVM major `.github/llvm-major` pins) builds this branch's
-compiler, builds Halo-wf `c900a68b2f06`'s bench host with full LTO once
+First step: attribution, no compiler change, nothing timed. A temporary
+workflow, `.github/workflows/halo-call-path.yml` on the experiment branch
+`claude/halo-call-path` at 7517c9d02bb2 (run by a push to that branch, one
+hosted x86-64 job, the LLVM major `.github/llvm-major` pins), builds that
+branch's compiler, builds Halo-wf `c900a68b2f06`'s bench host with full LTO once
 plainly and once with lld keeping its LTO temporaries, and records:
 
 - the module Whitefoot emits, the merged module before LTO optimization and

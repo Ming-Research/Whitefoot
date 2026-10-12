@@ -208,6 +208,52 @@ impl FunctionStoragePlan {
             .map_or(slot, |field| field.parent_slot)
     }
 
+    /// The allocations whose contents a split dispatch loop's transfers
+    /// carry (compiler/match-dispatch-lowering). Its header runs in the
+    /// dispatch function, entered from the enclosing function or an arm and
+    /// left by a tail call of an arm, so the allocation of every value
+    /// handed into the header (live on entry to it, or one of its
+    /// parameters, which each edge into it writes) or handed from it to an
+    /// arm (live on entry to one of its successors) is carried, and so is
+    /// the allocation of every run a range view is taken of, since the
+    /// view points into it and the run's liveness bounds no read through
+    /// the view. An address taken of a value points into its binding's own
+    /// slot, not into this plan's allocation. A value held anywhere else is
+    /// written and read within one execution of one part.
+    pub(super) fn allocations_across(
+        &self,
+        program: &IrProgram,
+        function: &IrFunction,
+        header: usize,
+        sequential: bool,
+    ) -> Result<BTreeSet<usize>, BackendFailure> {
+        let graph = FlowGraph::from_function(program, function, sequential)?;
+        let entering = graph.live_in();
+        let block = graph.blocks.get(header).ok_or(BackendFailure::InvalidIr)?;
+        let mut handed = entering[header].clone();
+        handed.extend(block.parameters.iter().copied());
+        for successor in &block.successors {
+            handed.extend(entering[*successor].iter().copied());
+        }
+        let viewed = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::SliceFromRun { run },
+                    ..
+                } => Some(index(*run)),
+                _ => None,
+            });
+        Ok(handed
+            .into_iter()
+            .chain(viewed)
+            .filter_map(|value| self.values.get(value).copied().flatten())
+            .map(|slot| self.allocation_root(slot))
+            .collect())
+    }
+
     /// Whether every value its slot holds is `value` or a block parameter
     /// carrying only that same definition on every incoming edge, and the
     /// slot is a complete allocation: no binding destination, no field
