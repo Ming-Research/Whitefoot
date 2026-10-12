@@ -2958,6 +2958,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     }
                 }
                 self.emit_place_edge(*target, arguments, drops)?;
+                if self.emit_cursor_join_edge(block, *target, arguments)? {
+                    return Ok(());
+                }
                 writeln!(self.output, "  br label %{}", block_label(*target))
                     .map_err(|_| BackendFailure::TextEmission)
             }

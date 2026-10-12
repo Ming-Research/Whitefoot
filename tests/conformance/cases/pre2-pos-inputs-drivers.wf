@@ -1,0 +1,13 @@
+fn drivers_as_u64(inputs: &std::process::Inputs) -> result: u64 reads(inputs.drivers) {
+  doc "PRE-2: drivers is an ordinary u64 field readable through an ordinary field path. Before the field was added this program failed field lookup.";
+  return inputs^.drivers;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let selected = drivers_as_u64(inputs: &inputs);
+  let std::process::Inputs(cwd: directory, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  return std::process::exit_status(code: 0_u8);
+}

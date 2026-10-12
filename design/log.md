@@ -5,6 +5,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Cursor transport through mixed joins
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve these three design tree changes" (translated), on the card lm-b1-design, "approve Whitefoot#371 (head 4ef89a503)'s change to the design tree node on match dispatch lowering, cursor transport at joins (B1)?" (translated), after choosing option B, "merge B1 as an exception" (translated), on the card lm-b1-adopt.
+
+Summary: The element-address decision now moves the received address through joins whose incoming values are all the received index plus the same constant, where it required every incoming value to be the index. A new decision carries the address through a join that merges a constant step with an index from elsewhere and only tests that index below a bound: the test moves onto each incoming path, the stepping path moves the received address and the others form it from the run, merged by a pointer join, instead of forming the address from the run on every path or before the test. On the 14900K it raised the stage-3 wasm interpreter's CoreMark score 1.3% with Halo unchanged, below the 2% criterion; the owner kept it as an ordinary optimization. The ledger decision also prints how many joins carry the address.
+
+## 2026-10-12 The runtime's driver count is an invocation input
+
+Nodes: compiler/completion-runtime, compiler/waiting-contexts, language/system-interface
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#365 (head commit 48abf5b2f) changing the specification and the design tree so that a program reads the runtime's actual driver count from Inputs.drivers?" (translated), whose background listed the WAIT-2 and PRE-2 changes, the three design-tree nodes with their proposed decisions, and that existing destructurings of Inputs bind the new field with their conformance verdicts unchanged. The direction was the owner's choice of A on card gran-driver-count-shape on 2026-10-11.
+
+Summary: The invocation supplies the runtime driver count as the ordinary public u64 field `drivers` in `Inputs`, because a count fixed for the run is an execution input a program passes as an ordinary value, instead of a new function or a field reporting the requested configuration before runtime limits and host availability apply. The runtime selects and retains the count before calling the entry, probing the root kernel ring without starting helper or driver threads, then starts exactly that many driver roles on first need and stops with a report if a later role cannot initialize, instead of rereading configuration or CPU affinity on first spawn or silently starting fewer drivers; the driver-placement decision now refers to PRE-2 for the count. Only a root ring absent or refused by the pre-entry probe falls back silently to the blocking-helper adapter, while secondary-ring initialization follows the fixed count and a target failure after acceptance remains a fail-stop, because after acceptance a fallback would duplicate the operation and ignoring the error would strand it; the `MADV_DONTFORK` decision now refers to the same rule.
+
 ## 2026-10-12 A KeySet reports its retained heap bytes and a scan bounds their growth
 
 Nodes: compiler/proof-query-context, compiler/waiting-contexts/concurrent-map, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/requires-entry-contract, language/waiting/shared-objects/keyed-tables
