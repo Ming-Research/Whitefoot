@@ -1751,6 +1751,39 @@ small (few new arms, no clear rise in checking time). Under it `BrTableN`
 restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
 stay reverted.
 
+### Attribution refreshed on 2026-10-12
+
+Whitefoot run 38231805057 on the 14900K (main at `51c5f4263`, CPU 2,
+CoreMark 2000 iterations, `perf` cpu-clock sampling at 20 kHz, wasmi
+2.0.0): v2h scores 5362 iterations/s in all three launches and wasmi 5618,
+5618 and 5571, so v2h is 0.957 of wasmi (0.946 on 2026-10-11, before the
+cursor transport through mixed joins). Task-clock medians are 387.3 ms and
+357.6 ms: 29.7 ms, 8.3% of wasmi's time, remains.
+
+The two instruction sets differ (wasmi fuses a compare into its branch and
+select forms and has register-operand load forms; v2h has accumulator
+forms), so only operations with a counterpart compare one to one. Times are
+the sample share times the task-clock median:
+
+| Operation | v2h ms | wasmi ms | v2h − wasmi |
+|---|---|---|---|
+| jump table (`BrTableN`, `BrTableNC`; `branch_table_*`) | 24.8 | 19.0 | +5.8 |
+| call (`Call`; `call_internal`) | 15.6 | 12.9 | +2.7 |
+| return (`Return`; `return`) | 4.0 | 1.8 | +2.2 |
+| unconditional jump (`Jump`; `branch`) | 4.2 | 2.7 | +1.5 |
+| `memset` from the C library | 3.7 | 2.2 | +1.5 |
+| kernel page faults (`do_user_addr_fault`) | 3.5 | below 1.1 | about +2.4 |
+
+These account for about 16 ms of the 29.7. The rest lies in operations
+without a counterpart. The largest single v2h arm is `SelectC` (select
+with its condition in the accumulator): 10.1%, 39.2 ms, against 3.8 ms for
+all of wasmi's select forms; with the compare arms that feed it (`I32GeSB`
+5.9%, `I32LeUB` 2.9%, `I32GeUA` 1.5%, `I32GeSA` 1.1%), v2h spends 83 ms on
+compare-then-select, while wasmi computes the compare inside its select
+form. Whether `SelectC` itself compiles poorly (a branch instead of a
+conditional move, or the slot-to-slot move) or wasmi simply does less work
+is not yet known; its machine code is the next thing to read.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors
