@@ -18,4 +18,5 @@ Rejected:
 - Resident set as heap_in_use: rejected because pages can remain resident after their live allocations are freed, so eviction would not observe its own progress.
 - Signed counters that stop, saturate or are rebased at a limit: rejected because a block allocated on one driver and released on another drives two counters apart without bound while the live total stays small, so a limit on one counter would fail a program whose heap never grows.
 - One shared atomic counter, as used by Redis 7.0.15: rejected because all drivers would write one cache line on every allocation and release, whereas the selected bounded concurrent observation permits per-driver writes.
+- Reading the pool counter under the pool lock: rejected because every reading then writes the lock's cache line, so readings on several drivers contend although nothing allocates; on the i9-14900K readings fell from 51.1 to 16.3 million per second in total from 2 to 8 performance cores.
 - Placing MemoryMeter in std::time: rejected because it observes process memory, and following the clock's capability discipline does not make memory a clock.
