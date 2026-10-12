@@ -1500,7 +1500,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         ],
     },
     RepairPair {
-        // [EFF-5, SHARE-2] an atomic binder over one map entry is the entry itself, so its own subscript is not part of the spelling a writer reads back.
+        // [EFF-5, SHARE-2] two atomic binders over map entries differ only at each binder's own key subscript, a position no fact names, so no position separates the pair and the call is refused at once; each binder is spelled as written, without that subscript.
         name: "call-separation-atomic-entry-binders.wf",
         rejected: br#"const names: Array<u8, 2> =[97_u8, 98_u8];
 
@@ -1538,8 +1538,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
 "#,
         rule: "EFF-5",
         sentences: &[
-            "\n  residual: e^.Some.value.a and f^.Some.value.a require their captured indices to be distinct\n",
-            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
+            "\n  first: e^.Some.value.a\n  second: f^.Some.value.a\n",
+            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
         ],
         repaired: &[
             br#"const names: Array<u8, 2> =[97_u8, 98_u8];
@@ -1558,10 +1558,16 @@ fn copy_across(source: &u64, destination: &u64) -> result: unit reads(source), w
 fn main() -> status: std::process::ExitStatus pure waits {
   let store = shared_map_new::<Pair>(capacity: 2_u64);
   let k = &names[0_u64..1_u64];
-  atomic e = &store[k] {
+  atomic e = &store[k], f = &store[k] {
     match &e^ {
       Some(value: x) => {
-        copy_across(source: &x^.a, destination: &x^.b);
+        match &f^ {
+          Some(value: y) => {
+            copy_across(source: &x^.a, destination: &y^.b);
+          }
+          None() => {
+          }
+        }
       }
       None() => {
       }

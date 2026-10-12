@@ -915,7 +915,10 @@ fn an_undischarged_call_separation_names_ranges_formed_at_the_call() {
 
 /// [EFF-5] substitutes the scalar values of index actuals, not the storage
 /// paths from which those values were read. Distinct array elements can both
-/// contain zero and therefore select the same written window element.
+/// contain zero and therefore select the same written window element. An
+/// element read names no captured value, so no fact separates the two
+/// positions and the call is refused at once, without a proof question
+/// [DIAG-1].
 #[test]
 fn substituted_index_values_do_not_inherit_their_actual_storage_separation() {
     let source = br#"fn write_two(window: &Slots<u8, 2>, first: u64, second: u64) -> result: unit reads(window.len), writes(window[first]), writes(window[second]) {
@@ -940,8 +943,8 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule_kind(source, SemanticRule::Eff5, |kind| {
         matches!(
             kind,
-            SemanticIssueKind::UndischargedCallSeparation { residual, .. }
-                if residual.contains("captured indices to be distinct")
+            SemanticIssueKind::OverlappingCallEffects { mechanical_fix, .. }
+                if mechanical_fix.starts_with("these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them")
         )
     });
 }

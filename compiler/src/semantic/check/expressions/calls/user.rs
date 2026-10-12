@@ -906,10 +906,30 @@ impl<'unit> Checker<'_, 'unit> {
                 // A pair whose only unseparated steps are index or range
                 // positions, or an index beside a window part, is the fixed
                 // families' question; every other overlap is refused here and
-                // now.
-                if let Some((positions, window)) =
-                    Checker::separable_by_position(&left.place, &right.place)
-                {
+                // now. A position whose value no fact names is no question
+                // the families can answer, so a pair separable only there is
+                // one no position separates.
+                let separable = Checker::separable_by_position(&left.place, &right.place);
+                let named = separable.as_ref().and_then(|(positions, window)| {
+                    let positions = positions
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate.names_its_values())
+                        .collect::<Vec<_>>();
+                    // The window is read only by a position beside its part.
+                    let window = window.clone().filter(|_| {
+                        positions.iter().any(|candidate| {
+                            matches!(
+                                candidate,
+                                CheckedCallSeparationPositions::Live(_)
+                                    | CheckedCallSeparationPositions::RangeWithinLength(_)
+                            )
+                        })
+                    });
+                    (!positions.is_empty()).then_some((positions, window))
+                });
+                let unnamed_positions = separable.is_some() && named.is_none();
+                if let Some((positions, window)) = named {
                     // [OWN-7] positions below different range frames are
                     // relative to those frames. Name the range pair the
                     // proof actually compares, rather than descendant runs
@@ -971,11 +991,13 @@ impl<'unit> Checker<'_, 'unit> {
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
                         // separates the steps at which the two paths differ,
-                        // as for two places a joined argument may name. Only
-                        // the first is repaired at the call's positions.
+                        // as for two places a joined argument may name, or
+                        // whose positions there no fact names. Only the first
+                        // is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
+                            && !unnamed_positions
                             && left.place.root == right.place.root
                             && left.place.path.get(..left.formed)
                                 == right.place.path.get(..right.formed)

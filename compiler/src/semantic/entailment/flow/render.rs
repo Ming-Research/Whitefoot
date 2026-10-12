@@ -319,8 +319,10 @@ impl Input<'_, '_> {
     ///
     /// The selected type is kept through every step, so a field or payload
     /// below a window part, a page, a table entry or a shared object is named
-    /// by its declaration. A step whose type was lost is an inconsistent
-    /// checked place and never a source spelling with an ordinal in it.
+    /// by its declaration. A step whose type was lost belongs to an
+    /// inconsistent checked place; it is spelled with the `?` marker, never
+    /// an ordinal, so the residual degrades rather than stopping the compile,
+    /// since this renderer has no error channel.
     fn render_place_projections(
         &self,
         mut rendered: String,
@@ -348,11 +350,16 @@ impl Input<'_, '_> {
                         let field = variant.fields.get(*field as usize)?;
                         Some((&variant.name, &field.name, field.ty))
                     });
-                    let Some((variant, field, field_type)) = selected else {
-                        unreachable!("a checked payload step selects a declared variant field");
-                    };
-                    rendered.push_str(&format!(".{variant}.{field}"));
-                    ty = Some(field_type);
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
+                    }
                 }
                 PlaceStep::Range(range) => {
                     rendered.push_str(&format!(
@@ -372,15 +379,20 @@ impl Input<'_, '_> {
                     ty = Some(CheckedType::Integer(IntegerType::U64));
                 }
                 PlaceStep::Field(field) => {
-                    let Some((field_name, field_ty)) = ty
+                    match ty
                         .and_then(|current| self.field_name(current, *field))
                         .flatten()
-                    else {
-                        unreachable!("a checked field step selects a declared struct field");
-                    };
-                    rendered.push('.');
-                    rendered.push_str(&field_name);
-                    ty = Some(field_ty);
+                    {
+                        Some((field_name, field_ty)) => {
+                            rendered.push('.');
+                            rendered.push_str(&field_name);
+                            ty = Some(field_ty);
+                        }
+                        None => {
+                            rendered.push_str(".?");
+                            ty = None;
+                        }
+                    }
                 }
                 PlaceStep::Page(offset) => {
                     rendered.push_str(".pages");
