@@ -36,4 +36,14 @@ uint64_t wf__par_split_budget(uint64_t span, uint64_t weight);
 uint64_t wf__par_recursion_budget(void);
 unsigned long wf__par_grants(void);
 unsigned wf__sched_pool_running(void);
+#if defined(WF_PAR_DIAGNOSTIC_OBSERVATIONS) || defined(WF_PAR_DIAGNOSTICS)
+#include <stdio.h>
+/* Research images only: serialize observations outside every timed call.
+ * No observation changes startup, publication or the idle policy. */
+void wf__par_diagnostic_observe(FILE *stream);
+#endif
+#if defined(WF_PAR_DIAGNOSTICS)
+void wf__par_diagnostic_snapshot(FILE *stream);
+void wf__par_diagnostic_trace(FILE *stream);
+#endif
 #endif

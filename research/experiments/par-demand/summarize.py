@@ -13,6 +13,7 @@ import hashlib
 import json
 import random
 from identity import validate_admission
+from inspection import validate_inspection
 from functools import lru_cache
 from pathlib import Path
 from statistics import median
@@ -146,9 +147,24 @@ def attempt_result(arms, width, decisions=0):
                 floor=floor, bound=bound, wall_ns=wall, cpu_ns=cpu, rounds=len(rounds))
 
 
+def bound_inspection(path, inspection, experiment):
+    build = Path(path).parent
+    try:
+        identity = json.loads((build / 'identity.json').read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError('inspection requires measured build identity.json') from error
+    if not isinstance(identity, dict):
+        raise ValueError('inspection measured build identity.json is malformed')
+    arms, _, manifest = experiment_matrix(experiment)
+    return validate_inspection(build, build / 'inspection.json' if inspection is None else inspection,
+                               identity.get('revision'), manifest, arms)
+
+
 def summarize(path, inspection=None, sizing=False, experiment=1):
     if experiment == 6:
         return summarize_e6(path, inspection, sizing)
+    if not sizing:
+        inspection = bound_inspection(path, inspection, experiment)
     if experiment == "5a":
         return summarize_e5a(path, sizing)
     if experiment in (4, "5c"):
@@ -581,6 +597,7 @@ def summarize_e6(path, inspection=None, sizing=False):
     if not sizing:
         evidence_path = Path(path).parent / "sequential-identity.json"
         construction = construction_identity(Path(path).parent)
+        inspection = bound_inspection(path, inspection, 6)
     inspection = inspection or {}
     cells = []
     for name, meta in MANIFEST.items():
@@ -611,7 +628,9 @@ def summarize_e6(path, inspection=None, sizing=False):
                     status = "inconclusive"
                 verdicts[key] = status
             if not inspected or sizing:
-                cell["reason"] = "sizing only" if sizing else "optimized hot-site inspection missing"
+                cell["reason"] = ("sizing only" if sizing else
+                    "optimized hot work or intended site did not survive" if checked.get("hot_work_survives") is False else
+                    "optimized hot-site inspection missing")
             if "void" in verdicts.values():
                 for attempt in (initial, *([cell["rerun"]] if "rerun" in cell else [])):
                     attempt["layout_floor"].update(status="void", radius=None, band=None)
@@ -847,7 +866,10 @@ def main():
     parser.add_argument("--sizing", action="store_true")
     parser.add_argument("--experiment", type=parse_experiment, choices=(1, 2, 3, 4, "5a", "5c", 6), default=1)
     args = parser.parse_args()
-    inspection = json.loads(args.inspection.read_text()) if args.inspection and args.inspection.exists() else {}
+    if args.sizing:
+        inspection = None  # Sizing is unqualified and never needs an inspection.
+    else:
+        inspection = args.inspection  # Missing files fail in the common validator.
     rows = summarize(args.measurements, inspection, args.sizing, args.experiment)
     print(json.dumps(rows, indent=2))
     # Experiment verdicts are data, never a language or build gate. A malformed

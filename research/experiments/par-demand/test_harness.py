@@ -15,6 +15,29 @@ from summarize import (ARMS, E2_ARMS, E3_ARMS, E4_ARMS, E5C_ARMS, E3_WIDTHS, WID
                        attempt_result_e2, attempt_result_e3, attempt_result_e4, attempt_result_e6, e6_attempt,
                        cell_widths, cell_arms, E6_ARMS, E6_CORE_ARMS, E6_SWEEP, cause_verdict, e3_round_count, e4_round_count)
 from measure import cpu_list, performance_cores, demand_setting, e5c_placement, E5C_PLACEMENT
+from inspection import IR_ARMS
+
+FIXTURE_REVISION = 'a' * 40
+
+
+def bind_fixture(build, arms, records=None, workloads=MANIFEST):
+    """Bind synthetic reducer observations to synthetic artifacts, never code."""
+    records = records if records is not None else {name: dict(hot_work_survives=True,
+        evidence='controlled test artifact', check_compiles_to='controlled test shape') for name in workloads}
+    for name, record in records.items():
+        hashes = {}
+        for arm in arms:
+            suffixes = ('', '.ll') if arm in IR_ARMS else ('',)
+            for suffix in suffixes:
+                filename = f'{arm}/{name}{suffix}'
+                artifact = build / filename
+                artifact.parent.mkdir(exist_ok=True)
+                if not artifact.exists(): artifact.write_bytes(filename.encode())
+                hashes[filename] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        record.update(revision=FIXTURE_REVISION, hashes=hashes)
+    (build / 'identity.json').write_text(json.dumps(dict(revision=FIXTURE_REVISION)))
+    (build / 'inspection.json').write_text(json.dumps(records))
+    return records
 
 class VerdictTests(unittest.TestCase):
     def setUp(self):
@@ -23,6 +46,7 @@ class VerdictTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "rows.tsv"
         self.inspection = {name: dict(hot_work_survives=True, evidence="controlled test image",
                                     check_compiles_to="load and branch") for name in MANIFEST}
+        bind_fixture(self.path.parent, ARMS, self.inspection)
 
     def write(self, ratio=1.0, twin=None, attempts=(1,), one_ratio=1.0, twin_widths=WIDTHS, rounds=2, swing=0.0):
         lines = []
@@ -44,7 +68,8 @@ class VerdictTests(unittest.TestCase):
     def test_pass_requires_an_inspected_surviving_site(self):
         self.write()
         self.assertEqual({r["status"] for r in summarize(self.path, self.inspection)}, {"pass"})
-        self.assertEqual({r["status"] for r in summarize(self.path)}, {"inconclusive"})
+        (self.path.parent / 'inspection.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'inspection input'): summarize(self.path)
         self.assertEqual({r["status"] for r in summarize(self.path, self.inspection, sizing=True)}, {"inconclusive"})
 
     def test_exceeded_bound_needs_one_rerun_then_fails(self):
@@ -99,6 +124,7 @@ class Experiment2Tests(unittest.TestCase):
         self.path = Path(self.directory.name) / "rows.tsv"
         self.inspection = {name: dict(hot_work_survives=True, evidence="controlled E2 images",
                                     check_compiles_to="load and branch") for name in MANIFEST}
+        bind_fixture(self.path.parent, E2_ARMS, self.inspection)
 
     def write(self, changes=None, attempts=(1,), rerun_changes=None):
         # Independently chosen baseline: parallel wall 1/2 seq; CPU 1 seq.
@@ -182,7 +208,7 @@ class Experiment2Tests(unittest.TestCase):
         self.assertEqual(row["status"], "pass")
         self.assertEqual(row["initial"]["first_call_cpu_above_wall_ns"]["idle1"]["median"], 70000000)
         self.assertEqual(row["initial"]["wall_over_seq"]["par"]["interval"], [0.5, 0.5])
-        self.assertEqual(self.row(inspection={})["status"], "inconclusive")
+        with self.assertRaisesRegex(ValueError, 'inspection workload'): self.row(inspection={})
         self.write({"demand": (2.0, 3.0), "idle1": (2.0, 3.0)}, attempts=(1, 2))
         for name in ("spine", "small_constant"):
             self.assertEqual(self.row(name=name)["status"], "not-applicable")
@@ -217,6 +243,7 @@ class Experiment3Tests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "rows.tsv"
+        bind_fixture(self.path.parent, E3_ARMS)
 
     def write(self, changes=None, rounds=6):
         values = {arm: (0.5, 1.4) for arm in E3_ARMS}
@@ -299,13 +326,14 @@ class Experiment3Tests(unittest.TestCase):
     def test_measurement_sizes_then_freezes_and_counters_are_unjudged(self):
         build = Path(self.directory.name)
         for arm in E3_ARMS:
-            (build / arm).mkdir()
+            (build / arm).mkdir(exist_ok=True)
             for name in MANIFEST:
                 (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        bind_fixture(build, E3_ARMS)
         observed = []
         def fake_run(command, **kwargs):
             if command[0] == "git":
-                return type("Result", (), {"stdout": "fixture\n"})()
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
             image, mode, arm, width, round_id, attempt = command[3:]
             self.assertEqual(mode, "measure")
             self.assertEqual(attempt, "1")
@@ -348,6 +376,7 @@ class Experiment4Tests(unittest.TestCase):
         self.path = Path(self.directory.name) / "rows.tsv"
         self.inspection = {name: dict(hot_work_survives=True, evidence="controlled E4 images",
                                     check_compiles_to="load and branch") for name in MANIFEST}
+        bind_fixture(self.path.parent, E4_ARMS, self.inspection)
 
     def write(self, changes=None, attempts=(1,), rerun_changes=None, rounds=6):
         baseline = {"seq": (1.0, 1.0), "par": (0.5, 1.0),
@@ -425,12 +454,15 @@ class Experiment4Tests(unittest.TestCase):
         self.write()
         self.assertEqual(set(self.row()["verdicts"].values()), {"pass"})
         for field, wrong in (("hot_work_survives", False), ("evidence", ""), ("check_compiles_to", "")):
-            missing = {"large_helper": dict(self.inspection["large_helper"])}
+            missing = copy.deepcopy(self.inspection)
             del missing["large_helper"][field]
-            self.assertEqual(set(self.row(inspection=missing)["verdicts"].values()), {"inconclusive"})
+            with self.assertRaises(ValueError): self.row(inspection=missing)
             missing["large_helper"][field] = wrong
-            self.assertEqual(set(self.row(inspection=missing)["verdicts"].values()), {"inconclusive"})
-        self.assertEqual(set(self.row(inspection={})["verdicts"].values()), {"inconclusive"})
+            if field == 'hot_work_survives':
+                self.assertEqual(set(self.row(inspection=missing)["verdicts"].values()), {"inconclusive"})
+            else:
+                with self.assertRaises(ValueError): self.row(inspection=missing)
+        with self.assertRaises(ValueError): self.row(inspection={})
         self.write({"twin": (0.6, 1)})
         self.assertEqual(set(self.row()["verdicts"].values()), {"void"})
         self.write({"demand": (1.2, 2)}, attempts=(1, 2),
@@ -501,13 +533,14 @@ class Experiment4Tests(unittest.TestCase):
     def test_driver_sizes_then_runs_decisive_rounds_and_reruns_once(self):
         build = self.path.parent
         for arm in E4_ARMS:
-            (build / arm).mkdir()
+            (build / arm).mkdir(exist_ok=True)
             for name in MANIFEST:
                 (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        bind_fixture(build, E4_ARMS, self.inspection)
         observed = []
         def fake_run(command, **kwargs):
             if command[0] == "git":
-                return type("Result", (), {"stdout": "fixture\n"})()
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
             image, mode, arm, width, round_id, attempt = command[3:]
             name = Path(image).name
             self.assertEqual(mode, "measure")
@@ -558,6 +591,7 @@ class Experiment5cTests(unittest.TestCase):
                                     all_versioned_clones_compared=True,
                                     normalized_disassembly_evidence="clone-vs-seq.diff",
                                     walker_has_per_iteration_decision=False) for name in MANIFEST}
+        bind_fixture(self.path.parent, E5C_ARMS, self.inspection)
 
     def test_literal_e4_rules_and_keep_every_cell(self):
         self.write()
@@ -603,9 +637,12 @@ class Experiment5cTests(unittest.TestCase):
         self.write()
         for field in ("hot_work_survives", "evidence", "check_compiles_to",
                       "all_versioned_clones_compared", "normalized_disassembly_evidence"):
-            checked = dict(self.inspection["large_helper"])
-            del checked[field]
-            self.assertEqual(self.row(inspection={"large_helper": checked})["status"], "inconclusive")
+            checked = copy.deepcopy(self.inspection)
+            del checked['large_helper'][field]
+            if field in ('hot_work_survives', 'evidence', 'check_compiles_to'):
+                with self.assertRaises(ValueError): self.row(inspection=checked)
+            else:
+                self.assertEqual(self.row(inspection=checked)["status"], "inconclusive")
         for name in MANIFEST:
             spread = self.row(1, name)["e5a_layout_spread"]
             self.assertEqual(spread["overall_reading"], "inconclusive")
@@ -627,9 +664,12 @@ class Experiment5cTests(unittest.TestCase):
         for field in ("hot_work_survives", "evidence", "check_compiles_to",
                       "all_versioned_clones_compared", "normalized_disassembly_evidence",
                       "walker_has_per_iteration_decision"):
-            checked = dict(self.inspection["small_split"])
-            del checked[field]
-            self.assertEqual(self.row(4, "small_split", {"small_split": checked})["decision_whole_cause"], "undecided")
+            checked = copy.deepcopy(self.inspection)
+            del checked['small_split'][field]
+            if field in ('hot_work_survives', 'evidence', 'check_compiles_to'):
+                with self.assertRaises(ValueError): self.row(4, 'small_split', checked)
+            else:
+                self.assertEqual(self.row(4, 'small_split', checked)["decision_whole_cause"], "undecided")
 
     def test_missing_wrong_changed_and_sizing_evidence(self):
         self.write()
@@ -669,13 +709,14 @@ class Experiment5cTests(unittest.TestCase):
     def test_driver_fixed_placement_unpooled_sizing_and_one_rerun(self):
         build = self.path.parent
         for arm in E5C_ARMS:
-            (build / arm).mkdir()
+            (build / arm).mkdir(exist_ok=True)
             for name in MANIFEST:
                 (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        bind_fixture(build, E5C_ARMS, self.inspection)
         observed = []
         def fake_run(command, **kwargs):
             if command[0] == "git":
-                return type("Result", (), {"stdout": "fixture\n"})()
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
             image, mode, arm, width, r, attempt = command[3:]
             name = Path(image).name
             self.assertEqual(command[:3], ["taskset", "-c", ",".join(map(str, E5C_PLACEMENT[int(width)]))])
@@ -714,6 +755,7 @@ class Experiment5aTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "measurements.tsv"
+        bind_fixture(self.path.parent, E5A_ARMS, workloads=E5A_MANIFEST)
 
     def write(self, changes=None, rounds=6):
         values = {arm: 1.0 for arm in E5A_ARMS}
@@ -792,13 +834,14 @@ class Experiment5aTests(unittest.TestCase):
     def test_driver_pins_cpu_two_sizes_and_freezes_without_reruns(self):
         build = self.path.parent
         for arm in E5A_ARMS:
-            (build / arm).mkdir()
+            (build / arm).mkdir(exist_ok=True)
             for name in E5A_MANIFEST:
                 (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+        bind_fixture(build, E5A_ARMS, workloads=E5A_MANIFEST)
         observed = []
         def fake_run(command, **kwargs):
             if command[0] == "git":
-                return type("Result", (), {"stdout": "fixture\n"})()
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
             self.assertEqual(command[:3], ["taskset", "-c", "2"])
             image, mode, arm, width, r, attempt = command[3:]
             self.assertEqual((mode, width, attempt), ("measure", "1", "1"))
@@ -832,7 +875,7 @@ class Experiment5aTests(unittest.TestCase):
 
     def test_linked_padding_must_shift_the_reused_object(self):
         build = self.path.parent
-        (build / "seq").mkdir()
+        (build / "seq").mkdir(exist_ok=True)
         (build / "seq/records.o").write_bytes(b"same WF object")
         def fake_nm(command, **kwargs):
             path = Path(command[-1])
@@ -954,10 +997,11 @@ class MeasurementModeTests(unittest.TestCase):
                 (build / arm).mkdir()
                 for name in MANIFEST:
                     (build / arm / name).write_bytes((name + ("demand" if arm == "twin" else arm)).encode())
+            bind_fixture(build, E2_ARMS)
             observed = []
             def fake_run(command, **kwargs):
                 if command[:2] == ["git", "rev-parse"]:
-                    return type("Result", (), {"stdout": "fixture-revision\n"})()
+                    return type("Result", (), {"stdout": FIXTURE_REVISION + '\n'})()
                 if command[:2] == ["git", "status"]:
                     return type("Result", (), {"stdout": ""})()
                 self.assertEqual(command[:2], ["taskset", "-c"])
@@ -1025,6 +1069,7 @@ class Experiment6Tests(unittest.TestCase):
         (self.build / "sequential-identity.json").write_text(json.dumps(dict(
             status="pass", hashes=hashes,
             workloads=records)))
+        bind_fixture(self.build, E6_ARMS, self.inspection)
         proof_patch = patch("entry_dispatch.validate_proof", return_value={"status": "pass"})
         proof_patch.start()
         self.addCleanup(proof_patch.stop)
@@ -1188,12 +1233,38 @@ class Experiment6Tests(unittest.TestCase):
     def test_inspection_rerun_disagreement_and_sizing_do_not_manufacture_pass(self):
         self.write()
         self.inspection = {}
-        self.assertEqual(self.row()["status"], "inconclusive")
+        with self.assertRaisesRegex(ValueError, 'inspection workload'): self.row()
         self.assertEqual({c["status"] for c in summarize(self.path, sizing=True, experiment=6)["cells"]}, {"inconclusive"})
         self.assertEqual(summarize(self.path, sizing=True, experiment=6)["decisive_rounds"], 6)
         self.inspection = {name: dict(hot_work_survives=True, evidence="image", check_compiles_to="dispatch") for name in MANIFEST}
+        bind_fixture(self.build, E6_ARMS, self.inspection)
         self.write({"demand": (600000, 1000000)}, attempts=(1, 2), rerun_changes={"demand": (500000, 1000000)})
         self.assertEqual(self.row()["verdicts"]["E6-keep-previous"], "inconclusive")
+
+    def test_decisive_reducer_rejects_missing_stale_and_changed_inspection_binding(self):
+        self.write()
+        original = copy.deepcopy(self.inspection)
+        for change in ('missing', 'stale', 'hash'):
+            self.inspection = copy.deepcopy(original)
+            if change == 'missing': del self.inspection['spine']
+            if change == 'stale': self.inspection['spine']['revision'] = 'b' * 40
+            if change == 'hash': del self.inspection['spine']['hashes']['previous/spine.ll']
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'inspection'):
+                self.row()
+        self.inspection = original
+        # Previous is outside the seq/demand identity gate, so this must be
+        # rejected by inspection binding rather than an earlier identity error.
+        (self.build / 'previous/spine.ll').write_bytes(b'different inspected IR')
+        with self.assertRaisesRegex(ValueError, 'inspection artifact changed'):
+            self.row()
+
+    def test_valid_negative_inspection_names_the_lost_work_and_keeps_verdict(self):
+        self.write()
+        self.inspection['small_constant']['hot_work_survives'] = False
+        cell = self.row(name='small_constant', width=1)
+        self.assertEqual(cell['reason'], 'optimized hot work or intended site did not survive')
+        self.assertEqual(cell['status'], 'inconclusive')
+        self.assertEqual(cell['verdicts']['E6-keep-previous'], 'inconclusive')
 
     def test_missing_sizing_wrong_frozen_count_and_sizing_rerun_raise(self):
         self.write()
@@ -1215,10 +1286,11 @@ class Experiment6Tests(unittest.TestCase):
                 if arm not in ("seq", "demand"):
                     (self.build / arm / name).write_bytes((self.build / "demand" / name).read_bytes()
                                                         if arm == "twin" else (name + arm).encode())
+        bind_fixture(self.build, E6_ARMS, self.inspection)
         observed = []
         def fake_run(command, **kwargs):
             if command[0] == "git":
-                return type("Result", (), {"stdout": "fixture\n"})()
+                return type("Result", (), {"stdout": FIXTURE_REVISION + '\n' if command[1] == 'rev-parse' else ''})()
             if Path(command[3]).name == "entry-dispatch":
                 width, calls, order = map(int, command[4:])
                 return type("Result", (), {"stdout": json.dumps(self.entry_sample(width, order, calls))})()

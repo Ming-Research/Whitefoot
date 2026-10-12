@@ -3511,3 +3511,223 @@ Prefix W4 changes sign with order (0.978554 after versus 1.008689 before), but l
 | Full qualification, only after the preceding decisions/repairs | `identity.json.duration_projection.sizing_elapsed_seconds` = 243.806 s: six sizing plus 36 decisive rounds projects to 1706.642 s (28.44 min), including each process's startup/oracle preparation but excluding calibration/reduction/separate verification/reruns. Adding six rounds to the observed 27:06 job at that throughput suggests roughly 31 min if other costs persist. | Reserve 35-40 min; retain the 90-minute command bound. New sizing on changed code must confirm scale. A failure returns to analysis, not a further retry. |
 
 The full follow-up would retain every E6 comparison, oracle, identity obligation, floor formula, CPU report and one-rerun/twin rule, with its separately proposed balanced schedule/count and named new attribution controls. It does not reinterpret E6 or relax its failed bounds. Owner selection of compiler policy and the canonical boundary comes before implementation and before committing the final follow-up protocol.
+
+#### Stage 1: inspection and bounded diagnostics, fixed before measurement
+
+The owner selected follow-up option A, diagnose first and then change strategy,
+on 2026-10-11. This stage implements evidence delivery and causal controls only.
+No compiler grain policy, canonical production boundary or startup repair is
+adopted. The predictions and falsifiers in steps 1-4 above remain unchanged;
+the following fixes the diagnostic construction, counts and stopping rules
+before any diagnostic measurement. Six pilot rounds precede each diagnostic's
+fixed decisive count. Pilots never enter decisive intervals. Use the existing
+paired median, 10,000 bootstrap draws, seed 20261010 and 95% intervals. A
+straddling directional interval remains undecided; no additional rounds or
+outlier removal can rescue it.
+
+**Inspection replay, not a new experiment.** Fresh inspection of all twelve
+workloads in run 38179220701 is retained in
+[inspection-38179220701.json](../../experiments/par-demand/inspection-38179220701.json).
+Its records bind revision d8adf2c2a3b9519b94a920cc7e58397d1d511077, all selected
+linked images, emitted/raw IR, lowering ledgers and inspected disassembly by
+SHA-256. The evidence names selected timed loops, retained/pruned offers and
+the difference between a separately retained function and an inlined timed
+path. It is not copied from a historical inspection.
+The twelve records contain 384 artifact hash bindings; the retained inspection
+SHA-256 is `f0cfa0949b38b79b5f6971b65df6ee3cbf1c4325c2abbd105047f353a2f47dd7`.
+
+Small_constant's intended 200-million-repeat hot store loop does **not**
+survive in the selected timed path: demand `wf_bench_micro` at
+0x2b10-0x2b2a has only the final three stores, while its 0x2b40-0x2b99 backedge
+is the 4096-cell checksum. A repeat loop in the retained `wf_workload` does
+not establish execution of that loop inside the timed wrapper. Its three
+cells therefore remain inconclusive with explicit optimized-away evidence.
+The other eleven workloads retain their inspected hot work and intended
+non-pruned sites. Static inspection does not prove that a request, acquisition
+or steal happened at runtime.
+
+The untouched TSV was copied into a scratch reduction directory and reduced
+with `summarize.py --experiment 6 --inspection <fresh record>`. The original
+artifact remains read-only. `measurements.tsv` SHA-256 is
+`fc2a3bf36a27c818eb7b80dd9d5db6490af70584aa88d0e3e185e52b08135712`;
+the original `summary.json` SHA-256 is
+`8dbd6467dcbd5f1bdaba8b0ee201ec0e98991dc3d7cca05db0919cb901acf613`.
+The replayed summary SHA-256 is
+`8d26380a10d7dfcb6964c101b573bb62b20eb0e1553b01eedca0a1273b03a783`.
+No timing, interval, threshold, twin rule or construction admission changed.
+
+| Workload | Widths newly qualified as pass | Widths still rejected | Widths still void | Widths still inconclusive |
+| --- | --- | --- | --- | --- |
+| small_constant | none | none | none | 1, 4, 8: optimized-away hot work |
+| small_split | 1, 4, 8 | none | none | none |
+| recursion | 1, 4, 8 | none | none | none |
+| spine | 1 | 4, 8 | none | none |
+| hot_helper | 1, 4, 8 | none | none | none |
+| large_helper | 4 | none | 1, 8 | none |
+| mandelbrot | 1, 4, 8 | none | none | none |
+| records | 1, 4 | none | 8 | none |
+| fir | 8 | 1 | 4 | none |
+| stencil | 1, 2, 8 | none | 4 | none |
+| prefix | 1, 8 | none | 4 | none |
+| histogram | 2, 4, 8 | none | 1 | none |
+
+Source: old and replayed `summary.json.cells[].{workload,width,status}`.
+Of 38 cells, 25 change from inconclusive to pass; three remain inconclusive,
+three fail and seven are void. The candidate remains rejected. In particular,
+the newly qualified recursion W8 result does not erase spine's preservation
+failures or FIR W1's par-preservation failure. The new reduction output stays
+outside the repository; the evidence and this result are the retained record.
+
+**Inspection delivery and ordering contracts.** `inspection.py` validates
+complete workload coverage, the measured revision and every supplied artifact
+hash, including all selected images/IR and cited machine/ledger observations.
+Missing, stale, malformed or mismatched evidence fails before qualification;
+`measure.py` no longer supplies an empty mapping, and the reducer revalidates
+the input independently. This would have stopped E6's missing-inspection
+qualification path visibly. `hot_work_survives: false` is valid evidence that
+blocks a positive verdict, not a missing input.
+
+The new order uses rotation `(round_id // 2 + width_offset) % arm_count` and
+reverses the second round of each pair. Thus every arm pair is before/after
+balanced at each width, even without a complete positional rotation block.
+Authored six-/nine-arm tests count every pair in 30/36 rounds and every slot
+in a complete 12/18-round block; the old coupled rotation fails these counts.
+An odd decisive count from an existing sizing rule now fails explicitly,
+without changing that rule or rounding its result. The new diagnostic counts
+are fixed even counts.
+
+There is an inspection-delivery interface gap for fresh qualified builds:
+the workflow currently accepts a repository-relative manual record, but
+committing a record for HEAD H creates H', which must not accept revision H
+as its own evidence. An external post-build delivery mechanism is needed
+before the next full qualified run. This stage does not conceal that gap
+with historical evidence or a relaxed binding. Its diagnostics are causal
+controls with their own construction proofs, not qualified performance cells.
+
+**Spine diagnostic.** Question: do eager budgeted calls cause more acquisition
+attempts/publications than requested calls, and does the shipped idle window
+amplify their cost? Reuse the eager/requested WF objects; link both counter
+arms against the **same** research counter runtime. At W1/4/8 record second-call
+delta counts for attempts, refusals, publications, steals, attempted/posted
+requests and parks, plus spin/park nanoseconds, completed invocation count,
+actual lanes/ready helpers and the selected idle window. Normalize counts by
+completed invocation count. Counter timings are never performance evidence.
+Acquisition/publication claims use their respective positive paired difference
+and the rejection/undecided rules in step 2; actual partial startup cannot
+establish a full-width causal claim.
+
+Separately run uninstrumented eager/requested x shipped/zero-idle-window,
+with byte-identical twins for each of the four combinations plus seq: nine
+arms, W1/4/8, six pilots then 30 decisive rounds. Runtime observations remain
+outside the timed call; the hot runtime has no counter hooks. The shipped
+and zero builds differ only in the idle-window override. Report the step-2
+interaction and its registered rejection rule, every twin interval and the
+eager/requested zero-window interval. A twin excluding 1 voids its comparison;
+counter and uninstrumented observations are separate phases.
+
+**FIR diagnostic.** Question: does the ordered four-tap legacy computation
+explain par's advantage under matched adapters, and can adapter execution
+explain the roughly 32 us residue? A research-only IR merger imports the
+canonical closure and retains the legacy closure in **one** computation
+module/object, with noinline roots and no cross-boundary LTO. All images link
+that exact object, one common C wrapper/adapter object, one runtime and
+equal-size selector bridges. Globals/private dependencies are namespaced;
+native weak boundaries remain shared, and worker-reachable cold resource
+failure support remains latched. This diagnostic does not implement the
+owner's option-A production build structure or change ordinary --par.
+
+Compare canonical/legacy computation x direct/query adapter, with a copied
+twin for each of the four combinations: eight arms at W1, each under three
+padding treatments (64, 4160, 65664 bytes), six pilots then 30 decisive rounds
+per treatment. Inspect and hash the actual compared closure and its placement;
+require the legacy ordered four-tap loop to survive and one query outside
+loops. If matched construction fails or LLVM removes that loop shape, stop
+without a causal result; do not force optimization to obtain the prediction.
+Use the kernel ratio and adapter absolute-ns/ratio comparisons and rejection
+rules in step 3. Same-treatment twins provide the noise check; the three
+layouts are reported separately rather than choosing a favorable one.
+For the adapter's same-job layout floor, the 64-byte treatment is the fixed
+reference; pair each fixed direct computation at 4160 and 65664 bytes with
+its 64-byte counterpart by round. The radius is the largest absolute
+distance from 1 of either control's 95% interval endpoints. A query/direct
+interval contained in `[1-radius, 1+radius]` is at the floor. A void control
+or comparison cannot establish this floor. This new diagnostic floor does
+not replace any frozen E6 floor or failed criterion.
+
+**Twin/startup diagnostic.** Question: does balanced order/path-role crossover
+remove the seven voids, and do slow large_helper calls begin without exposed
+owner work? At the seven workload/width cells in the preceding void table,
+compare original demand/twin paths, swapped path roles and one identical
+executable path used for both labels: six arms, six pilots then 36 decisive
+rounds. All twin images are byte-identical and each label pair is ordered in
+both directions equally often. Save monotonic process/call start/end times,
+actual lanes/ready counts and `/proc/self/maps`; do not aggregate path
+treatments into a favorable replacement interval. The step-4 rejection rule
+applies to each balanced/swapped/same-path twin comparison.
+
+Run separate counter/trace large_helper W8 controls alongside this diagnostic,
+two path roles per round, not mixed into the uninstrumented wall intervals.
+Record helper-ready and owner-word-registration events, initial scan epochs,
+park/wake events, initial request observations and second-call request,
+publication and steal deltas. Retain the first 16 scan events per lane plus
+scan count and last timestamp/epoch, rather than logging every spin scan;
+the trace declares that sampling limit. Missing critical startup events or
+event-buffer drops block the specific startup interpretation. Trace overhead
+can perturb startup and is not evidence of its frequency in uninstrumented
+E6. A full wider pool with near-seq calls and no owner request/useful exposure
+supports the registered hypothesis; slow calls with sustained requests,
+publications and steals reject it. Partial startup is reported separately.
+
+**Dispatch, smoke and cost.** Use `compute-bench.yml`, `experiment=par-demand`,
+`par_demand_experiment=diagnostic-spine`, `diagnostic-fir` or
+`diagnostic-twin`, first with `placement_runner=github`, then `14900k`.
+Hosted runs perform construction/oracle checks and six pilot rounds only,
+with available CPUs and W1/W2 (FIR W1); they make no timing claim. Each native
+run first repeats/validates its own hosted smoke before artifact transfer,
+and verifies the transferred proof against its images. Native placement is
+E6's P-core placement without CPU 0: W1 {2}, W4 {2,4,6,8}, W8
+{2,4,6,8,10,12,14,1}. Native counts and intervals cannot use hosted pilots.
+
+| Diagnostic | Hosted expected total / smoke reservation | 14900K expected execution / hard stop |
+| --- | --- | --- |
+| Spine counters and idle interaction | About 8-12 min including both compiler builds; smoke at most 5 min | About 1-3 min including preparation; at most 5 min |
+| FIR computation/adapter | About 8-12 min including builds/IR construction; smoke at most 5 min | About 1-3 min including three layouts/preparation; at most 5 min |
+| Twin order/path/startup | About 8-12 min including builds; smoke at most 5 min | About 1-3 min including separate traces; at most 5 min |
+
+These are budgets and projections from E6, not new observations. Every mode
+has a 300-second wall deadline, including construction replay, pilots,
+preparation and reduction. After six pilots, a projection that exceeds the
+remaining reservation stops before decisive rounds. An incomplete mode
+retains its data/error and supplies no causal verdict. No full follow-up is
+authorized by passing smoke or by any one diagnostic.
+
+**Startup code finding: a general exposure defect, not an E6 attribution.**
+The saved runtime starts helpers and waits for their ready count before
+`wf__par_attach` registers lane 0's request word (`core.c` at the measured
+revision, 1596-1620). A request scan cannot post to a NULL word (424-441),
+and an unchanged scan epoch suppresses later scans (1219-1234). Registration
+neither advances that epoch nor wakes parked helpers.
+
+An allowed schedule is: all helpers announce ready, scan while lane 0's word
+is NULL, exhaust the finite idle window and park; the owner is delayed until
+after those final scans, then attaches and registers its word. If the root
+and its loop slices require a request before publishing, the owner sees zero
+requests and computes the entire root sequentially. No publication advances
+the epoch/wakes a helper, and no guaranteed event makes a helper request
+this newly registered owner. Consequently parallel work can stay unexposed
+for the rest of an arbitrarily long call. This is loss of progress of work
+exposure, **not program deadlock**: the owner still computes and terminates.
+Spurious wakes do not supply a guarantee, and the schedule does not require
+the 14900K's idle window to be zero.
+
+Proposed general fix, not implemented here: make owner registration part of
+the startup/exposure contract, either register a safely owned request word
+before helpers' first scan, or notify idle helpers and ensure the newly
+registered owner receives an initial targeted request/acknowledged rescan.
+Simply bumping an epoch or waking one random victim scan is insufficient to
+prove that this owner is requested. Preserve word withdrawal, request-user
+lifetime protection and partial-startup behavior; add a controlled late-owner
+schedule test before adopting a repair. The trace diagnostic establishes
+whether this static defect actually explains the saved twin behavior, not
+whether the schedule is possible. The defect goes to the owner independently
+of the experiment; no strategy change or retry is made in this stage.

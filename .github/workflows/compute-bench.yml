@@ -14,10 +14,12 @@
 # Formal correctness and paired regression use the maintained test system.
 #
 # With `experiment: par-demand`, hosted construction and verification precede
-# the selected runner's interleaved demand experiment. Experiments 3/4/5a/5c take
+# the selected runner's interleaved demand experiment. Experiments 3/4/5a/5c/6 take
 # their six-round sizing sample on the 14900K in the decisive job. Its pass/fail/inconclusive verdicts
 # are report data; only malformed evidence or construction/correctness errors
 # fail this manual workflow. No research path enters the formal gate.
+# Bounded diagnostics require hosted smoke construction before transfer;
+# When the selected runner is GitHub, diagnostics remain unqualified smoke.
 #
 # FAILURE POLICY. The job fails on a `deps`, `build` or `verify` failure and on
 # nothing else. The manual `compare` step's exit status is the reducer's, and the
@@ -45,10 +47,17 @@ on:
         options: [scoreboard, placement, par-demand]
         default: scoreboard
       par_demand_experiment:
-        description: Demand hand-out experiment (2, 3, 4, 5a, 5c and 6 require the 14900K; 5a/5c/6 exclude CPU 0)
+        description: Demand experiment or bounded diagnostic (precise measurements require the 14900K; GitHub diagnostics are smoke only)
         type: choice
-        options: ["1", "2", "3", "4", "5a", "5c", "6"]
+        options: ["1", "2", "3", "4", "5a", "5c", "6", diagnostic-spine, diagnostic-fir, diagnostic-twin]
         default: "1"
+      par_demand_inspection:
+        # A committed record cannot name the commit introducing itself.
+        # Build-matching manual evidence needs delivery after that build;
+        # this repository-path input does not supply external artifact delivery.
+        description: Repository-relative manual inspection file bound to this build; required for qualified demand timing
+        type: string
+        default: ""
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
         type: choice
@@ -393,8 +402,16 @@ jobs:
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
         run: |
+          base_experiment="$EXPERIMENT"
+          case "$EXPERIMENT" in diagnostic-*) base_experiment=6 ;; esac
           perl .github/run-check.pl par-demand/build \
-            make -C research/experiments/par-demand build verify idle-policy-identity ablation-identity BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT="$EXPERIMENT"
+            make -C research/experiments/par-demand build verify idle-policy-identity ablation-identity BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT="$base_experiment"
+          case "$EXPERIMENT" in
+            diagnostic-*)
+              make -C research/experiments/par-demand diagnostic-build \
+                BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT=6 DIAGNOSTIC_MODE="${EXPERIMENT#diagnostic-}"
+              ;;
+          esac
           if [ "$EXPERIMENT" = 3 ]; then
             make -C research/experiments/par-demand counter-build BUILD="$RUNNER_TEMP/par-demand" EXPERIMENT=3
           fi
@@ -414,6 +431,15 @@ jobs:
           python3 research/experiments/par-demand/identity.py \
             --build "$RUNNER_TEMP/par-demand" --output "$RUNNER_TEMP/par-demand/sequential-identity.json"
           python3 research/experiments/par-demand/entry_dispatch.py --build "$RUNNER_TEMP/par-demand"
+      - name: Require bounded diagnostic smoke before artifact transfer
+        if: startsWith(inputs.par_demand_experiment, 'diagnostic-')
+        env:
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
+          WHITEFOOT_CHECK_TIMEOUT: "300"
+        run: |
+          perl .github/run-check.pl par-demand/measure \
+            python3 research/experiments/par-demand/diagnostics.py \
+              --mode "${EXPERIMENT#diagnostic-}" --build "$RUNNER_TEMP/par-demand" --smoke
       - name: Small hosted sizing sample
         env:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
@@ -450,14 +476,36 @@ jobs:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           RUNNER: ${{ inputs.placement_runner }}
         run: |
-          if [ "$EXPERIMENT" != 1 ] && [ "$RUNNER" != 14900k ]; then
-            echo "Experiments 2, 3, 4, 5a, 5c and 6 require the 14900K; the hosted job above only builds and verifies their arms." >&2
-            exit 1
-          fi
+          case "$EXPERIMENT" in
+            diagnostic-*|1) ;;
+            *)
+              if [ "$RUNNER" != 14900k ]; then
+                echo "Experiments 2, 3, 4, 5a, 5c and 6 require the 14900K; GitHub diagnostics run smoke only." >&2
+                exit 1
+              fi
+              ;;
+          esac
       - uses: actions/download-artifact@v4
         with:
           name: par-demand-images
           path: ${{ runner.temp }}
+      - name: Unpack the checked demand build
+        run: tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/par-demand-images.tar.gz"
+      - name: Require build-bound manual inspection before qualified timing
+        if: inputs.placement_runner == '14900k' && !startsWith(inputs.par_demand_experiment, 'diagnostic-')
+        env:
+          EXPERIMENT: ${{ inputs.par_demand_experiment }}
+          INSPECTION: ${{ inputs.par_demand_inspection }}
+        run: |
+          if [ -n "$INSPECTION" ]; then
+            case "$INSPECTION" in /*|..|../*|*/../*|*/..) echo "Inspection must be repository-relative." >&2; exit 1 ;; esac
+            inspection_source=$(realpath -e -- "$INSPECTION")
+            inspection_repository=$(realpath -e -- "$GITHUB_WORKSPACE")
+            case "$inspection_source" in "$inspection_repository"/*) ;; *) echo "Inspection resolves outside the repository." >&2; exit 1 ;; esac
+            cp -- "$inspection_source" "$RUNNER_TEMP/par-demand/inspection.json"
+          fi
+          python3 research/experiments/par-demand/inspection.py \
+            --build "$RUNNER_TEMP/par-demand" --experiment "$EXPERIMENT" --revision "$(git rev-parse HEAD)"
       - name: Interleave arms, widths and rounds under the selected protocol
         env:
           ROUNDS: ${{ inputs.placement_rounds || (inputs.par_demand_experiment == '2' && '30' || '10') }}
@@ -465,8 +513,19 @@ jobs:
           EXPERIMENT: ${{ inputs.par_demand_experiment }}
           WHITEFOOT_CHECK_TIMEOUT: "5400"
         run: |
-          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/par-demand-images.tar.gz"
           { lscpu; cat /proc/self/status; printf 'runner=%s rounds=%s\n' "$RUNNER" "$ROUNDS"; } > "$RUNNER_TEMP/par-demand/measurement-host.txt"
+          case "$EXPERIMENT" in
+            diagnostic-*)
+              mode="${EXPERIMENT#diagnostic-}"
+              diagnostic_options=()
+              if [ "$RUNNER" = github ]; then diagnostic_options=(--smoke); fi
+              WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl par-demand/measure \
+                python3 research/experiments/par-demand/diagnostics.py \
+                  --mode "$mode" --build "$RUNNER_TEMP/par-demand" "${diagnostic_options[@]}"
+              cat "$RUNNER_TEMP/par-demand/diagnostic-$mode.json" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
           sizing=()
           if [ "$RUNNER" = github ]; then sizing=(--sizing); fi
           if [ "$EXPERIMENT" = 4 ] || [ "$EXPERIMENT" = 5a ] || [ "$EXPERIMENT" = 5c ] || [ "$EXPERIMENT" = 6 ]; then

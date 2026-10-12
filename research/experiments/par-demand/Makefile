@@ -110,6 +110,25 @@ flags-extent := --par-demand
 flags-static := --par-demand --par-demand-ablation static
 flags-unversioned := --par-demand --par-demand-ablation unversioned
 flags-previous := --par-demand --par-demand-ablation requested
+
+# Stage-one attribution instruments only; retire with this investigation.
+# The default core is never compiled with these observation/counter macros.
+DIAGNOSTIC_MODE ?= spine
+$(BUILD)/diagnostic_runner.o: diagnostic_runner.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
+	$(CLANG) $(DEFAULT_FLAGS) $(NATIVE_COMPILE_FLAGS) -c $< -o $@
+$(BUILD)/diagnostic_fir_adapter.o: diagnostic_fir_adapter.c $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -Wall -Wextra -Werror -ffp-contract=off -c $< -o $@
+$(BUILD)/diagnostic-shipped-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_DIAGNOSTIC_OBSERVATIONS=1 -c $< -o $@
+$(BUILD)/diagnostic-zero-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_DIAGNOSTIC_OBSERVATIONS=1 -DWF_PAR_IDLE_WINDOW_US=0 -c $< -o $@
+$(BUILD)/diagnostic-counter-core.o: $(NATIVE_ROOT)/sched/core.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND=1 -DWF_PAR_DIAGNOSTICS=1 -c $< -o $@
+$(BUILD)/diagnostic-prim.o: $(NATIVE_ROOT)/sched/prim_host.c $(NATIVE_HEADERS) $(NATIVE_CONFIG) Makefile
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -DWF_PAR_DEMAND_COUNTERS=1 -c $< -o $@
+diagnostic-build: build $(BUILD)/diagnostic_runner.o $(BUILD)/diagnostic_fir_adapter.o $(BUILD)/diagnostic-shipped-core.o $(BUILD)/diagnostic-zero-core.o $(BUILD)/diagnostic-counter-core.o $(BUILD)/diagnostic-prim.o $(addprefix $(BUILD)/layout/,$(addsuffix .o,64 4160 65664))
+	python3 diagnostics.py --prepare --mode "$(DIAGNOSTIC_MODE)" --build "$(BUILD)" --clang "$(CLANG)" --cflags="$(NATIVE_OPTIMIZATION_FLAGS)" --ldflags="$(NATIVE_LINK_FLAGS)" --native-objects $(native-demand)
+.PHONY: diagnostic-build
 # Static pattern rules let the maintained formal sources remain single-owned.
 define arm-rules
 $(addprefix $(BUILD)/$(1)/,$(addsuffix .ll,$(MICROS))): $(BUILD)/$(1)/%.ll: %.wf micro_host.ll $(WFC) Makefile

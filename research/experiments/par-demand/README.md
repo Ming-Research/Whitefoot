@@ -126,28 +126,57 @@ only for malformed/missing evidence or a build/execution/oracle error.
 
 No result may pass until optimized code is inspected. The build saves emitted
 LLVM, ledgers, optimized assembly and linked disassembly (including the C
-accessor). Put `inspection.json` beside the measurements with one entry per
-workload, for example:
+accessor). Put manually authored `inspection.json` beside the measurements
+with one entry per workload. Retain a run's inspection in this directory as
+`inspection-<run-id>.json`; [inspection-38179220701.json](inspection-38179220701.json)
+is fresh evidence for the archived experiment-6 build, not an input for future
+builds. Each record supplies the full measured `revision`, a Boolean
+`hot_work_survives`, concrete `check_compiles_to` and `evidence` observations,
+and `hashes` mapping build-relative paths to SHA-256 values. Bind every selected
+image, each selected seq/par/demand/previous/unversioned emitted IR file, and
+the disassembly and ledger cited by the observations. Include selected hot
+loop ranges and retained/pruned offer sites, not just function names.
 
-```json
-{
-  "small_constant": {
-    "hot_work_survives": true,
-    "check_compiles_to": "no request load at mark; the three stores survive",
-    "evidence": "demand/small_constant.disassembly: inspected mark and its callers"
-  }
-}
-```
-
-Use actual observations, never this example as evidence. `hot_work_survives`
+Use actual observations. `hot_work_survives`
 means the hot work and every intended non-pruned demand site survived; name the
-machine instructions in `check_compiles_to`. Missing inspection or optimized-away
-work blocks a pass. The initial report therefore remains inconclusive wherever
-timing alone meets the bounds. Inspecting code and applying the same reducer
+machine instructions in `check_compiles_to`. An inspected, optimized-away
+workload has `hot_work_survives: false` and blocks a positive verdict. Missing,
+stale or hash-mismatched inspection now fails validation visibly rather than
+silently reducing with an empty mapping. Sizing and diagnostic smoke are
+explicitly unqualified. Inspecting code and applying the same reducer
 completes the report without taking another measurement. A formal-kernel failure
 is attributed to the slice driver, recursion/spine/hot-helper to group checks,
 and tiny loops to pruning, as fixed in the investigation; inspect the ledger to
 identify an indexed fallback before interpreting that attribution.
+
+Qualified workflow timing requires `par_demand_inspection`, a repository-relative
+manual record matching the actual build. The workflow and `measure.py` validate
+it before decisive timing; the reducer independently validates it before any
+qualified verdict. This exposes a delivery gap: committing an inspection for
+revision H creates revision H', so that record cannot qualify the new HEAD.
+An external, post-build inspection delivery mechanism is still needed for a
+fresh CI build. Do not work around this by copying historical evidence or
+loosening the revision/hash check. Archived builds can be inspected and reduced
+with `summarize.py --inspection <record>` without rebuilding or retiming.
+
+Arm order rotates once per pair of rounds, then visits that rotation in both
+directions. Every pair is before/after balanced at every width. Decisive round
+counts must be even; an odd count selected by an existing sizing protocol is
+refused, never silently rounded. The registered diagnostic counts are fixed
+and even; this does not change experiment 6's historical sizing rule.
+
+## Post-experiment-6 diagnostics
+
+Dispatch `compute-bench.yml` with `experiment=par-demand` and
+`par_demand_experiment=diagnostic-spine`, `diagnostic-fir` or `diagnostic-twin`.
+First use `placement_runner=github` for construction/oracle smoke only, then
+`placement_runner=14900k`. Every native diagnostic also requires the hosted
+smoke record from its own transferred build. The three protocols and falsifiers
+are registered in [After experiment 6](../../investigations/par-demand/DESIGN.md#after-experiment-6).
+`diagnostics.py` writes `diagnostic-<mode>.json`, including construction hashes,
+pilot/decisive observations, mappings and causal-control intervals. Each has a
+300-second execution deadline; an incomplete run supplies no causal verdict.
+No diagnostic adopts compiler policy or repairs the startup ordering.
 
 ## Validation boundary
 

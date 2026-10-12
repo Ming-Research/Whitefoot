@@ -2,6 +2,9 @@
  * 9051576f; atomic ring cells and SC thief reads repair the two deque races.
  * Slots and lanes live until process exit. Only the offering thread joins and
  * releases its slots; callbacks must not block on I/O or migrate stacks. */
+#if defined(WF_PAR_DIAGNOSTICS)
+#define WF_PAR_DEMAND_COUNTERS 1
+#endif
 #include "entry.h"
 #include "prim.h"
 #include <stdlib.h>
@@ -361,12 +364,47 @@ static struct wf__par_lane wf__par_lanes[WF_PAR_MAX_LANES];
 #if defined(WF_PAR_DEMAND_COUNTERS)
 enum wf__par_counter {
     WF_COUNT_ATTEMPT, WF_COUNT_POST, WF_COUNT_PUBLISH, WF_COUNT_STEAL,
-    WF_COUNT_PARK, WF_COUNT_SPIN_NS, WF_COUNT_PARK_NS, WF_COUNT_LENGTH
+    WF_COUNT_PARK, WF_COUNT_SPIN_NS, WF_COUNT_PARK_NS,
+#if defined(WF_PAR_DIAGNOSTICS)
+    WF_COUNT_ACQUIRE, WF_COUNT_REFUSAL,
+#endif
+    WF_COUNT_LENGTH
 };
 static void wf__par_count(enum wf__par_counter counter, uint64_t value);
 #define WF_DEMAND_COUNT(counter, value) wf__par_count(counter, value)
 #else
 #define WF_DEMAND_COUNT(counter, value) ((void)0)
+#endif
+#if defined(WF_PAR_DIAGNOSTICS)
+/* First events are retained rather than overwritten. Single lane writers
+ * publish completed entries with release; snapshots acquire that prefix. */
+#define WF_DIAGNOSTIC_EVENTS 4096u
+struct wf__par_diagnostic_event { uint64_t ns, value; const char *kind; };
+static struct {
+    _Alignas(WF_PAR_CACHE_LINE) unsigned count;
+    unsigned dropped;
+    uint64_t scans, last_scan_ns, last_scan_epoch;
+    struct wf__par_diagnostic_event events[WF_DIAGNOSTIC_EVENTS];
+} wf__par_diagnostic_events[WF_PAR_MAX_LANES];
+static void wf__par_diagnostic_event(const char *kind, struct wf__par_lane *lane, uint64_t value) {
+    if (lane == NULL) return;
+    unsigned index = (unsigned)(lane - wf__par_lanes);
+    unsigned at = __atomic_load_n(&wf__par_diagnostic_events[index].count, __ATOMIC_RELAXED);
+    if (at >= WF_DIAGNOSTIC_EVENTS) {
+        __atomic_fetch_add(&wf__par_diagnostic_events[index].dropped, 1u, __ATOMIC_RELAXED);
+        return;
+    }
+    struct wf__par_diagnostic_event *event = &wf__par_diagnostic_events[index].events[at];
+    event->ns = wf_prim_monotonic_ns();
+    event->value = value;
+    event->kind = kind;
+    __atomic_store_n(&wf__par_diagnostic_events[index].count, at + 1u, __ATOMIC_RELEASE);
+}
+#define WF_DIAGNOSTIC_EVENT(kind, lane, value) wf__par_diagnostic_event(kind, lane, value)
+#define WF_DIAGNOSTIC_COUNT(counter, value) wf__par_count(counter, value)
+#else
+#define WF_DIAGNOSTIC_EVENT(kind, lane, value) ((void)0)
+#define WF_DIAGNOSTIC_COUNT(counter, value) ((void)0)
 #endif
 #if defined(WF_PAR_DEMAND)
 /* The --par-demand module supplies a strong marker. Read once before lazy
@@ -415,6 +453,7 @@ static void wf__par_word_key_create(void) {
 static void wf__par_register_word(struct wf__par_lane *lane) {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     __atomic_store_n(&lane->request_word, &wf__par_demand_word, __ATOMIC_RELEASE);
+    WF_DIAGNOSTIC_EVENT("word-registered", lane, (uint64_t)(uintptr_t)&wf__par_demand_word);
     if (pthread_once(&once, wf__par_word_key_create) != 0
         || pthread_setspecific(wf__par_word_key, lane) != 0) abort();
 }
@@ -850,10 +889,20 @@ static struct {
     _Alignas(WF_PAR_CACHE_LINE) uint64_t values[WF_COUNT_LENGTH];
 } wf__par_counters[WF_PAR_MAX_LANES];
 static void wf__par_count(enum wf__par_counter counter, uint64_t value) {
-    if (wf__par_self == NULL) return;
-    uint64_t *cell = &wf__par_counters[wf__par_self - wf__par_lanes].values[counter];
+    if (wf__par_self == NULL) {
+#if defined(WF_PAR_DIAGNOSTICS)
+        if (counter != WF_COUNT_ACQUIRE && counter != WF_COUNT_REFUSAL) return;
+#else
+        return;
+#endif
+    }
+    uint64_t *cell = &wf__par_counters[wf__par_self == NULL ? 0 : wf__par_self - wf__par_lanes].values[counter];
+#if defined(WF_PAR_DIAGNOSTICS)
+    __atomic_fetch_add(cell, value, __ATOMIC_RELAXED);
+#else
     uint64_t old = __atomic_load_n(cell, __ATOMIC_RELAXED);
     __atomic_store_n(cell, old + value, __ATOMIC_RELAXED);
+#endif
 }
 static void wf__par_counter_dump(void) {
     const char *report = getenv("WF_SCHED_REPORT");
@@ -863,7 +912,11 @@ static void wf__par_counter_dump(void) {
     for (int lane = 0; lane < lanes; ++lane) {
         fprintf(stderr, "demand_counters lane=%d", lane);
         const char *names[] = {"requests_attempted", "requests_posted", "publications",
-                              "steals", "parks", "spin_ns", "park_ns"};
+                              "steals", "parks", "spin_ns", "park_ns"
+#if defined(WF_PAR_DIAGNOSTICS)
+                              , "acquire_attempts", "acquire_refusals"
+#endif
+        };
         for (int c = 0; c < WF_COUNT_LENGTH; ++c)
             fprintf(stderr, " %s=%llu", names[c], (unsigned long long)
                     __atomic_load_n(&wf__par_counters[lane].values[c], __ATOMIC_RELAXED));
@@ -876,8 +929,10 @@ __attribute__((constructor)) static void wf__par_counter_initialize(void) {
 static void wf__par_counter_sleep(wf_prim_wait *wait) {
     uint64_t start = wf_prim_monotonic_ns();
     WF_DEMAND_COUNT(WF_COUNT_PARK, 1);
+    WF_DIAGNOSTIC_EVENT("park", wf__par_self, 0);
     wf_prim_wait_sleep(wait);
     uint64_t end = wf_prim_monotonic_ns();
+    WF_DIAGNOSTIC_EVENT("wake", wf__par_self, 0);
     if (start && end >= start) WF_DEMAND_COUNT(WF_COUNT_PARK_NS, end - start);
 }
 #define wf_prim_wait_sleep wf__par_counter_sleep
@@ -1087,6 +1142,15 @@ static struct wf__par_slot *wf__par_find(struct wf__par_lane *lane) {
 #if defined(WF_PAR_DEMAND_COUNTERS)
 static struct wf__par_slot *wf__par_counter_find(struct wf__par_lane *lane) {
     uint64_t start = wf_prim_monotonic_ns();
+#if defined(WF_PAR_DIAGNOSTICS)
+    unsigned index = (unsigned)(lane - wf__par_lanes);
+    uint64_t scans = __atomic_load_n(&wf__par_diagnostic_events[index].scans, __ATOMIC_RELAXED);
+    uint64_t epoch = wf__par_epoch_read();
+    __atomic_store_n(&wf__par_diagnostic_events[index].last_scan_ns, start, __ATOMIC_RELAXED);
+    __atomic_store_n(&wf__par_diagnostic_events[index].last_scan_epoch, epoch, __ATOMIC_RELAXED);
+    __atomic_store_n(&wf__par_diagnostic_events[index].scans, scans + 1, __ATOMIC_RELEASE);
+    if (scans < 16) WF_DIAGNOSTIC_EVENT("scan", lane, epoch);
+#endif
     struct wf__par_slot *slot = wf__par_find(lane);
     uint64_t end = wf_prim_monotonic_ns();
     if (start && end >= start) WF_DEMAND_COUNT(WF_COUNT_SPIN_NS, end - start);
@@ -1443,6 +1507,7 @@ static void wf__par_worker_main(void *opaque) {
 #endif
     wf_prim_floor_attach();
 
+    WF_DIAGNOSTIC_EVENT("helper-ready", lane, 0);
     __atomic_add_fetch(&wf__par_ready, 1u, __ATOMIC_RELEASE);
 
     for (;;) {
@@ -1563,6 +1628,7 @@ static void wf__par_start(void) {
         (cpus != 0u && (unsigned)requested <= cpus && levels <= 1u)
             ? (uint64_t)WF_PAR_IDLE_WINDOW_US
             : 0u;
+    WF_DIAGNOSTIC_EVENT("idle-window-selected", &wf__par_lanes[0], wf__par_idle_window_us);
     /* Prepare every deque before publishing a scan bound. Initialize the
      * owner's wait before any worker exists; preserve started workers on
      * later failure, and never destroy a station a worker may reach. */
@@ -1635,21 +1701,26 @@ void *wf__par_acquire_lane(uint64_t bytes) {
     struct wf__par_lane *lane = wf__par_self;
     struct wf__par_slot *slot;
     int index;
+    WF_DIAGNOSTIC_COUNT(WF_COUNT_ACQUIRE, 1);
     if (bytes > (unsigned long)WF_PAR_FRAME_BYTES) {
+        WF_DIAGNOSTIC_COUNT(WF_COUNT_REFUSAL, 1);
         return NULL;
     }
     if (lane == NULL) {
         if (wf__par_attached) {
+            WF_DIAGNOSTIC_COUNT(WF_COUNT_REFUSAL, 1);
 
             return NULL;
         }
         lane = wf__par_attach();
         if (lane == NULL) {
+            WF_DIAGNOSTIC_COUNT(WF_COUNT_REFUSAL, 1);
             return NULL;
         }
     }
     index = lane->free_head;
     if (index < 0) {
+        WF_DIAGNOSTIC_COUNT(WF_COUNT_REFUSAL, 1);
         return NULL;
     }
     slot = &lane->slots[index];
@@ -1857,3 +1928,75 @@ unsigned long wf__par_grants(void) {
         sum += __atomic_load_n(&wf__par_lanes[i].steals, __ATOMIC_RELAXED);
     return (unsigned long)sum;
 }
+
+#if defined(WF_PAR_DIAGNOSTIC_OBSERVATIONS) || defined(WF_PAR_DIAGNOSTICS)
+struct wf__par_diagnostic_observation { unsigned lanes, ready; uint64_t window, request; int registered; };
+static struct wf__par_diagnostic_observation wf__par_diagnostic_read(void) {
+    unsigned lanes = (unsigned)__atomic_load_n(&wf__par_lane_count, __ATOMIC_ACQUIRE);
+    uint64_t request = 0;
+    int registered = 0;
+#if defined(WF_PAR_DEMAND)
+    uint64_t *word = __atomic_load_n(&wf__par_lanes[0].request_word, __ATOMIC_ACQUIRE);
+    registered = word != NULL;
+    if (word != NULL) request = __atomic_load_n(word, __ATOMIC_RELAXED);
+#endif
+    struct wf__par_diagnostic_observation value = {lanes,
+        __atomic_load_n(&wf__par_ready, __ATOMIC_ACQUIRE), wf__par_idle_window_us, request, registered};
+    return value;
+}
+static void wf__par_diagnostic_print(FILE *stream, struct wf__par_diagnostic_observation value) {
+    fprintf(stream, "{\"lane_count\":%u,\"ready_count\":%u,\"idle_window_us\":%llu,\"owner_word_registered\":%s,\"owner_request\":%llu}",
+            value.lanes, value.ready, (unsigned long long)value.window,
+            value.registered ? "true" : "false", (unsigned long long)value.request);
+}
+void wf__par_diagnostic_observe(FILE *stream) {
+    wf__par_diagnostic_print(stream, wf__par_diagnostic_read());
+}
+#endif
+#if defined(WF_PAR_DIAGNOSTICS)
+void wf__par_diagnostic_snapshot(FILE *stream) {
+    const char *names[] = {"requests_attempted", "requests_posted", "publications", "steals",
+                          "parks", "spin_ns", "park_ns", "acquire_attempts", "acquire_refusals"};
+    uint64_t captured_start = wf_prim_monotonic_ns(), totals[WF_COUNT_LENGTH] = {0};
+    uint64_t scans[WF_PAR_MAX_LANES] = {0}, scan_ns[WF_PAR_MAX_LANES] = {0}, scan_epoch[WF_PAR_MAX_LANES] = {0};
+    struct wf__par_diagnostic_observation observation = wf__par_diagnostic_read();
+    for (int c = 0; c < WF_COUNT_LENGTH; ++c) {
+        for (unsigned lane = 0; lane < WF_PAR_MAX_LANES; ++lane)
+            totals[c] += __atomic_load_n(&wf__par_counters[lane].values[c], __ATOMIC_RELAXED);
+    }
+    for (unsigned lane = 0; lane < observation.lanes; ++lane) {
+        scans[lane] = __atomic_load_n(&wf__par_diagnostic_events[lane].scans, __ATOMIC_ACQUIRE);
+        scan_ns[lane] = __atomic_load_n(&wf__par_diagnostic_events[lane].last_scan_ns, __ATOMIC_RELAXED);
+        scan_epoch[lane] = __atomic_load_n(&wf__par_diagnostic_events[lane].last_scan_epoch, __ATOMIC_RELAXED);
+    }
+    uint64_t captured_end = wf_prim_monotonic_ns();
+    fprintf(stream, "{\"capture_start_ns\":%llu,\"capture_end_ns\":%llu,\"observation\":",
+            (unsigned long long)captured_start, (unsigned long long)captured_end);
+    wf__par_diagnostic_print(stream, observation);
+    fputs(",\"counters\":{", stream);
+    for (int c = 0; c < WF_COUNT_LENGTH; ++c)
+        fprintf(stream, "%s\"%s\":%llu", c ? "," : "", names[c], (unsigned long long)totals[c]);
+    fputs("},\"scans\":[", stream);
+    for (unsigned lane = 0; lane < observation.lanes; ++lane) {
+        fprintf(stream, "%s{\"lane\":%u,\"count\":%llu,\"last_scan_ns\":%llu,\"last_scan_epoch\":%llu}",
+                lane ? "," : "", lane, (unsigned long long)scans[lane],
+                (unsigned long long)scan_ns[lane], (unsigned long long)scan_epoch[lane]);
+    }
+    fputs("]}", stream);
+}
+void wf__par_diagnostic_trace(FILE *stream) {
+    fputs("{\"events\":[", stream);
+    unsigned printed = 0, dropped = 0;
+    for (unsigned lane = 0; lane < WF_PAR_MAX_LANES; ++lane) {
+        unsigned count = __atomic_load_n(&wf__par_diagnostic_events[lane].count, __ATOMIC_ACQUIRE);
+        dropped += __atomic_load_n(&wf__par_diagnostic_events[lane].dropped, __ATOMIC_RELAXED);
+        for (unsigned at = 0; at < count; ++at) {
+            struct wf__par_diagnostic_event event = wf__par_diagnostic_events[lane].events[at];
+            fprintf(stream, "%s{\"lane\":%u,\"kind\":\"%s\",\"monotonic_ns\":%llu,\"value\":%llu}",
+                    printed++ ? "," : "", lane, event.kind,
+                    (unsigned long long)event.ns, (unsigned long long)event.value);
+        }
+    }
+    fprintf(stream, "],\"dropped\":%u,\"retention\":\"first 16 scans and first 4096 retained events per lane; no overwrite; scan totals and latest timestamp/epoch in snapshots; helper-ready timestamp precedes release-ready publication\"}", dropped);
+}
+#endif

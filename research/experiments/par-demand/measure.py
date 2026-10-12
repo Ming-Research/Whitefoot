@@ -17,6 +17,24 @@ from summarize import (E5A_PADDING, experiment_matrix, parse_experiment, attempt
                        attempt_result_e2, attempt_result_e4, e6_attempt, cell_widths, cell_arms, construction_identity, e2_excluded, load, summarize)
 from entry_dispatch import (MIN_CALLS, MAX_CALLS, MIN_BATCH_NS, WIDTHS as ENTRY_WIDTHS,
                             validate_proof as entry_dispatch_proof, validate_sample)
+from inspection import validate_inspection
+
+
+def balanced_order(items, round_id, offset=0):
+    """Rotate once per round pair, then visit both directions of that rotation."""
+    items = list(items)
+    if not items or len(set(items)) != len(items) or type(round_id) is not int or round_id < 0:
+        raise ValueError('balanced order requires distinct items and a nonnegative round')
+    shift = (round_id // 2 + offset) % len(items)
+    ordered = items[shift:] + items[:shift]
+    return ordered[::-1] if round_id % 2 else ordered
+
+
+def require_paired_rounds(rounds, *, sizing=False):
+    if type(rounds) is not int or rounds < 1:
+        raise ValueError('paired ordering requires a positive round count')
+    if not sizing and rounds % 2:
+        raise ValueError(f'paired decisive ordering requires an even frozen round count; protocol selected {rounds}; no rounding applied')
 
 
 def run(command, **kwargs):
@@ -272,6 +290,9 @@ def main():
         construction_identity(build)
         entry_dispatch_proof(build)
     entry_evidence = dict(calibration={}, sizing=[], decisive=[])
+    inspection = {}
+    def checked_inspection():
+        return validate_inspection(build, build / 'inspection.json', identity['revision'], manifest, arms_for_run)
     def entry_sample(width, calls, order):
         completed = run(pin(width, [str(build / "entry-dispatch"), str(width), str(calls), str(order)]),
                         env=dict(env, WF_WORKERS=str(width), WF_PAR_DEMAND="on"), capture_output=True)
@@ -289,7 +310,8 @@ def main():
             entry_evidence["calibration"][str(width)] = dict(calls=calls, pilots=pilots)
         (build / "entry-dispatch-measurements.json").write_text(json.dumps(entry_evidence, indent=2) + "\n")
     path = build / "measurements.tsv"
-    def batch(attempt, selected):
+    def batch(attempt, selected, *, sizing=False):
+        require_paired_rounds(args.rounds, sizing=sizing)
         with path.open("w" if attempt == 1 else "a") as output:
             for round_id in range(args.rounds):
                 if args.experiment == 6 and attempt == 1:
@@ -298,26 +320,18 @@ def main():
                         calls = entry_evidence["calibration"][str(width)]["calls"]
                         entry_evidence[phase].append(dict(entry_sample(width, calls, round_id % 2), round=round_id))
                     (build / "entry-dispatch-measurements.json").write_text(json.dumps(entry_evidence, indent=2) + "\n")
-                names = list(manifest)
-                names = names[round_id % len(names):] + names[:round_id % len(names)]
-                if round_id % 2:
-                    names.reverse()
+                names = balanced_order(manifest, round_id)
                 for name in names:
                     meta = manifest[name]
                     settings = dict(env)
                     if "repetitions" in meta:
                         settings["WFD_REPETITIONS"] = str(meta.get("sizing_repetitions", meta["repetitions"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["repetitions"])
                         settings["WFD_EXTENT"] = str(meta.get("sizing_extent", meta["extent"]) if args.sizing and args.experiment not in (3, 4, "5a", "5c", 6) else meta["extent"])
-                    widths = list(cell_widths(args.experiment, name))
-                    widths = widths[round_id % len(widths):] + widths[:round_id % len(widths)]
+                    widths = balanced_order(cell_widths(args.experiment, name), round_id)
                     for width in widths:
                         if (name, width) not in selected:
                             continue
-                        arms = list(cell_arms(args.experiment, width))
-                        shift = (round_id + widths_for_run.index(width)) % len(arms)
-                        arms = arms[shift:] + arms[:shift]
-                        if round_id % 2:
-                            arms.reverse()
+                        arms = balanced_order(cell_arms(args.experiment, width), round_id, widths_for_run.index(width))
                         for arm in arms:
                             print(f"attempt={attempt} round={round_id} {name} W={width} {arm}", flush=True)
                             run(pin(width, [str(build / arm / name), "measure", arm, str(width), str(round_id), str(attempt)]),
@@ -328,7 +342,7 @@ def main():
     if args.experiment in (3, 4, "5a", "5c", 6):
         args.rounds = 6
         sizing_start = time.monotonic()
-        batch(1, selected)
+        batch(1, selected, sizing=True)
         sizing_seconds = time.monotonic() - sizing_start
         sample = summarize(path, sizing=True, experiment=args.experiment)
         sample_dir = build / f"sizing-e{args.experiment}"
@@ -350,18 +364,21 @@ def main():
         (build / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
         if args.sizing:
             return
+        require_paired_rounds(args.rounds)
+        inspection = checked_inspection()
         if args.experiment in (3, "5a"):
             batch(1, selected)
-            (build / "summary.json").write_text(json.dumps(summarize(path, experiment=args.experiment), indent=2) + "\n")
+            (build / "summary.json").write_text(json.dumps(summarize(path, inspection, experiment=args.experiment), indent=2) + "\n")
             return
-    batch(1, selected)
+    if args.experiment not in (3, 4, "5a", "5c", 6) and not args.sizing:
+        require_paired_rounds(args.rounds)
+        inspection = checked_inspection()
+    batch(1, selected, sizing=args.sizing)
     groups = load(path, args.experiment)
     def decisions(name):
         meta = manifest[name]
         repetitions = meta.get("sizing_repetitions", meta.get("repetitions", 0)) if args.sizing else meta.get("repetitions", 0)
         return meta.get("decisions_per_repetition", 0) * repetitions
-    inspection_path = build / "inspection.json"
-    inspection = json.loads(inspection_path.read_text()) if inspection_path.exists() else {}
     def exceeded(name, width, arms):
         if args.experiment == 6:
             return e6_attempt(name, arms, width)["status"] == "exceeds"
