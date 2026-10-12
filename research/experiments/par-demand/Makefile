@@ -211,15 +211,26 @@ idle-policy-identity: $(BUILD)/native/sched/core.o
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/idle-base/core.c -o $(BUILD)/idle-base-core.o
 	cmp $(BUILD)/idle-base-core.o $(BUILD)/native/sched/core.o
 
-# Compare both unchanged scheduler variants with the pre-ablation revision.
+# Compare the scheduler objects with the pre-ablation revision. The macro-off
+# object must equal the base. The demand object equals it once the startup
+# exposure repair's one call is removed (DESIGN.md, "Startup exposure repair"),
+# so that call is the only change to the demand scheduler; the timed demand
+# object must differ from the base, which shows it carries the repair and that
+# the comparison detects a one-line change. The unrepaired copy is named core.c
+# in its own directory because the object records the source's base name.
+# CI only.
 ABLATION_BASE := fadbc866b7423ab50606177f962724df309bf8e6
 ablation-identity: $(BUILD)/native/sched/core.o $(BUILD)/demand-core.o
-	@mkdir -p $(BUILD)/ablation-base
+	@mkdir -p $(BUILD)/ablation-base/unrepaired
 	git -C "$(ROOT)" show $(ABLATION_BASE):compiler/src/backend/sched/core.c > $(BUILD)/ablation-base/core.c
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -c $(BUILD)/ablation-base/core.c -o $(BUILD)/ablation-base/core.o
 	cmp $(BUILD)/ablation-base/core.o $(BUILD)/native/sched/core.o
 	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/ablation-base/core.c -o $(BUILD)/ablation-base/demand-core.o
-	cmp $(BUILD)/ablation-base/demand-core.o $(BUILD)/demand-core.o
+	n=$$(grep -c -E '^[[:space:]]*wf__par_request_self\(\);$$' $(NATIVE_ROOT)/sched/core.c); test "$$n" = 1 || { echo "ablation-identity: core.c must hold exactly one wf__par_request_self(); call, found $$n" >&2; exit 1; }
+	sed -E '/^[[:space:]]*wf__par_request_self\(\);$$/d' $(NATIVE_ROOT)/sched/core.c > $(BUILD)/ablation-base/unrepaired/core.c
+	$(CLANG) -std=c11 $(NATIVE_OPTIMIZATION_FLAGS) $(NATIVE_COMPILE_FLAGS) -I$(NATIVE_ROOT)/sched -DWF_PAR_DEMAND=1 -c $(BUILD)/ablation-base/unrepaired/core.c -o $(BUILD)/ablation-base/unrepaired/demand-core.o
+	cmp $(BUILD)/ablation-base/demand-core.o $(BUILD)/ablation-base/unrepaired/demand-core.o
+	! cmp -s $(BUILD)/ablation-base/demand-core.o $(BUILD)/demand-core.o || { echo "ablation-identity: the timed demand object equals the base's, so it lacks the startup exposure repair" >&2; exit 1; }
 
 # Counter images reuse timed WF objects. Only the scheduler/clock objects
 # carry counters, and their output never enters measurements.tsv.

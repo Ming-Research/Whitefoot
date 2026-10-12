@@ -316,8 +316,10 @@ a post. Outstanding sleeps at exit are not included; these diagnostics do not
 claim exclusive CPU attribution. Counter images carry a `counter-build`
 marker, and the measurement driver refuses to time them or summarize them.
 
-`ablation-identity` compares both ordinary and macro-off demand `core.o`
-against `fadbc866b7423ab50606177f962724df309bf8e6` with the same flags. CLI
+`ablation-identity` compares the macro-off `core.o` with
+`fadbc866b7423ab50606177f962724df309bf8e6` under the same flags, requires the
+demand `core.o` to equal the base's once the startup exposure repair's single
+call is removed, and requires the timed demand `core.o` to differ from it. CLI
 tests compare explicit `none` with an omitted ablation; backend tests check
 each arm's structure and default emission after compiling the arms. The
 existing pre-prototype `--par` comparison remains wired. All these checks are

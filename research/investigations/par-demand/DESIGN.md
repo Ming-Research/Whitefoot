@@ -4502,3 +4502,12 @@ any local build, test or run; edited Python was only syntax-compiled. All of
 them, the identity check and the measurement await CI. Dispatch
 `compute-bench.yml` with `experiment=par-demand`, `par_demand_experiment=6b`,
 `placement_runner=14900k` and empty `placement_rounds`.
+
+**Construction control, corrected before any timing (2026-10-12).** The first
+hosted construction (run 38318264194 at 0a2e6d465) stopped at experiment 3's
+ablation control, which still required the demand scheduler to equal
+fadbc866b's although the [startup exposure repair](#startup-exposure-repair)
+(a8224b7a8) changed it deliberately, as the arms paragraph states. Nothing was
+timed. The control now requires the macro-off object to equal the base, the
+demand object to equal it once the repair's single call is removed, and the
+timed demand object to differ from it. No criterion, prediction or arm changed.
