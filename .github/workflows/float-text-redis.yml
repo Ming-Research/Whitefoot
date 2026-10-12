@@ -3,16 +3,23 @@
 # doubles. This workflow is removed before the branch is ready; its results
 # are copied into the investigation with the run id, because artifacts expire.
 #
-# It runs on a push to the work branch that touches this file only (touch the
-# file to run it again), and on dispatch once the file is on the default
-# branch. The driver and the models are research/investigations/float-text/
+# The `oracle` job runs on dispatch once the file is on the default branch, and
+# on a push to the work branch whose commit message contains [run-oracle]. The
+# driver and the models are research/investigations/float-text/
 # redis_double_oracle.py, reference.py and fpconv_reconstruction.py.
+#
+# The `witnesses` job is experiment E2: it builds the compiler and compiles and
+# runs the witness programs under research/investigations/float-text/witnesses/,
+# recording accept or reject per witness with the full diagnostic. It runs on
+# every push that touches this file or that directory.
 name: float-text-redis
 
 on:
   push:
     branches: [claude/float-text]
-    paths: [.github/workflows/float-text-redis.yml]
+    paths:
+      - .github/workflows/float-text-redis.yml
+      - research/investigations/float-text/witnesses/**
   workflow_dispatch:
 
 permissions:
@@ -27,6 +34,7 @@ env:
 
 jobs:
   oracle:
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.message, ' '), '[run-oracle]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -122,3 +130,89 @@ jobs:
           name: float-text-redis-7.2.16
           path: ${{ runner.temp }}/out
           retention-days: 30
+
+  witnesses:
+    name: float-text E2 witness programs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Build the compiler
+        run: cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+
+      - name: Check the witnesses against their generator
+        run: python3 -I research/investigations/float-text/witnesses/generate.py --check
+
+      - name: Compile and run every witness
+        run: |
+          # No -e: a refusal is a result, and the next witness still runs.
+          DIR=research/investigations/float-text/witnesses
+          OUT="$RUNNER_TEMP/witnesses"
+          WFC="$PWD/compiler/target/gate/whitefootc"
+          mkdir -p "$OUT"
+          python3 -I "$DIR/generate.py" --expect > "$OUT/expected.tsv"
+          printf 'witness\texpected\tcompile\trun\n' > "$OUT/results.tsv"
+          wrong=0
+          while IFS=$'\t' read -r name expected; do
+            src="$DIR/$name.wf"
+            "$WFC" --diagnostic-format text -o "$OUT/$name.bin" "$src" > "$OUT/$name.diagnostic.txt" 2>&1
+            compile=$?
+            "$WFC" --diagnostic-format json --check "$src" > "$OUT/$name.diagnostic.json" 2>&1
+            run=-
+            if [ "$compile" -eq 0 ]; then
+              compile=accepted
+              timeout 60 "$OUT/$name.bin" > "$OUT/$name.run.txt" 2>&1
+              run=$?
+              if [ "$run" -ne 0 ]; then wrong=1; fi
+            else
+              compile="rejected($compile)"
+            fi
+            printf '%s\t%s\t%s\t%s\n' "$name" "$expected" "$compile" "$run" >> "$OUT/results.tsv"
+          done < "$OUT/expected.tsv"
+          echo "$wrong" > "$OUT/wrong-output.txt"
+          cat "$OUT/results.tsv"
+
+      - name: Summary
+        if: always()
+        run: |
+          OUT="$RUNNER_TEMP/witnesses"
+          {
+            echo '## float-text E2: witness programs'
+            echo
+            echo 'run is the exit status of the compiled program: 0 means every value matched the one computed in Python; 10*n+k names the failing check k of case n.'
+            echo
+            echo '```'
+            cat "$OUT/results.tsv" || true
+            echo '```'
+            for f in "$OUT"/*.diagnostic.txt; do
+              [ -s "$f" ] || continue
+              echo
+              echo "### $(basename "$f" .diagnostic.txt)"
+              echo '```'
+              head -n 60 "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: float-text-witnesses
+          path: ${{ runner.temp }}/witnesses
+          retention-days: 30
+
+      - name: Fail when an accepted witness produced a wrong value
+        run: test "$(cat "$RUNNER_TEMP/witnesses/wrong-output.txt")" = 0
