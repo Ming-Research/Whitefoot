@@ -12,11 +12,11 @@ use crate::{
     SemanticRule,
 };
 
+use super::super::entailment::{EntailmentCallee, finalize_function_entailment};
 use super::super::model::{
     CheckedConst, CheckedGenericRequirement, CheckedNominalKind, CheckedType, IntegerType,
     NominalId,
 };
-use super::super::entailment::{EntailmentCallee, finalize_function_entailment};
 use super::{
     CheckStop, CheckedFunctionInventory, Checker, FunctionSignature, FunctionTemplate, PreludeType,
 };
@@ -1207,6 +1207,7 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
+            contract_reads: None,
             waits: self
                 .types
                 .declarations
@@ -1902,7 +1903,12 @@ impl<'unit> Checker<'_, 'unit> {
         }) else {
             return Ok(());
         };
-        if !self.types.declarations.tree.is_prelude_node(template.node)? {
+        if !self
+            .types
+            .declarations
+            .tree
+            .is_prelude_node(template.node)?
+        {
             return Ok(());
         }
         // Retain the caller parameter's identity at the symbolic instance;
