@@ -133,6 +133,10 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     unit("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
     unit("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+    unit(
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
     unit("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
     unit("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
     unit("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),

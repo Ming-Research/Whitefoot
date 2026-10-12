@@ -442,7 +442,7 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 # includes the keyed tables' unit, and through it the map's source, so that
 # it can drive interleavings through the map's own steps.
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
-	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
+	src/backend/concurrent_map.h src/backend/concurrent_map_layout.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \

@@ -8,6 +8,7 @@
 #if defined(__linux__) && defined(__x86_64__) && defined(__LP64__) && defined(__GLIBC__)
 #include <errno.h>
 #include <stddef.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -306,6 +307,27 @@ static void captured_image_and_control(void) {
     wf_cmap_destroy(map);
 }
 
+/* The supplied entry must preserve preparation refusal as a value and release
+ * its already-prepared descriptors. These use real host refusals, not an
+ * encoder or syscall switch selected by the test. */
+static void preparation_refusals(void) {
+    uint32_t error;
+    wf_snapshot_owner *reserve = wf_snapshot_prepare(UINT64_MAX, 0, &error);
+    CHECK(reserve == NULL && error == 1); /* ReserveUnavailable */
+    struct sigaction original, ignored;
+    CHECK(sigaction(SIGCHLD, NULL, &original) == 0);
+    memset(&ignored, 0, sizeof(ignored));
+    ignored.sa_handler = SIG_IGN;
+    CHECK(sigemptyset(&ignored.sa_mask) == 0);
+    CHECK(sigaction(SIGCHLD, &ignored, NULL) == 0);
+    reserve = wf_snapshot_prepare(65536, 0, &error);
+    CHECK(sigaction(SIGCHLD, &original, NULL) == 0);
+    CHECK(reserve == NULL && error == 2); /* HostRefused: no owned reaper */
+    reserve = wf_snapshot_prepare(65536, 0, &error);
+    CHECK(reserve != NULL && error == 0);
+    wf_snapshot_discard(reserve);
+}
+
 static void exhaustion_and_discard(void) {
     uint32_t error;
     wf_snapshot_owner *reserve = wf_snapshot_prepare(0, 0, &error);
@@ -584,6 +606,7 @@ static void malformed_fixed_length(void) {
 int main(void) {
     wf_test_guard_start(30);
     captured_image_and_control();
+    preparation_refusals();
     exhaustion_and_discard();
     complete_owned_closure();
     malformed_fixed_length();

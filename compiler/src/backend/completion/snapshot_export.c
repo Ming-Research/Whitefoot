@@ -14,6 +14,39 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+/* The whole held map is immutable in the child. Read its private layout
+ * directly in this restricted unit, leaving normal map instrumentation on. */
+#define WF_CMAP_HOST_FIELDS wf_watch_list watch;
+#include "../concurrent_map_layout.h"
+#undef WF_CMAP_HOST_FIELDS
+
+int wf_snapshot_map_next(const void *image, uint64_t *cursor,
+    uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+    const unsigned char **key, uint64_t *length, const void **slot) {
+    const wf_cmap *map = image;
+    const table *t = atomic_load_explicit(&map->current, memory_order_relaxed);
+    while (*cursor < t->capacity) {
+        cell *c = &t->cells[(*cursor)++];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed) & KEY_MASK;
+        if (k == EMPTY || k == REMOVED) continue;
+        const node *n = (const node *)(uintptr_t)
+            (atomic_load_explicit(&c->value, memory_order_relaxed) & ADDRESS_MASK);
+        uint64_t offset = sizeof(node) + n->length;
+        offset = (offset + map->slot_align - 1) / map->slot_align * map->slot_align;
+        const unsigned char *s = (const unsigned char *)n + offset;
+        uint64_t tag = 0;
+        for (uint32_t i = 0; i < tag_width; ++i)
+            tag |= (uint64_t)s[tag_offset + i] << (8u * i);
+        if (tag_width == 1) tag &= 1u;
+        if (tag == none_tag) continue;
+        *key = n->bytes;
+        *length = n->length;
+        *slot = s;
+        return 1;
+    }
+    return 0;
+}
+
 enum { SNAP_SCRATCH = 1, SNAP_OUTPUT, SNAP_LENGTH, SNAP_PIPE, SNAP_SETUP };
 typedef struct snap_frame {
     const wf_snapshot_type *type;

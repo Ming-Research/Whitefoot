@@ -199,6 +199,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("sched/entry.c", crate::SCHED_ENTRY_SOURCE),
         ("completion/floor.c", crate::FLOOR_RUNTIME_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
@@ -698,6 +699,7 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),
         ("wait_windows.c", crate::COMPLETION_WAIT_WINDOWS_SOURCE),

@@ -39,7 +39,14 @@ The survey's runtime observations are historical: the merged
 [`fork_capsule`](../../../compiler/src/backend/completion/fork_capsule.h)
 now supplies the restricted native witness surface, superseding observations
 that no native fork integration exists. The source-callable export amendment
-is still a specification draft; its compiler and runtime path is unimplemented.
+is still a specification draft. This branch implements ordinary held-contract
+checking, typed export lowering, the restricted runtime encoder and linear
+collection/reaping jobs, with a maintained capture/replay witness and its live
+negative control. The qualified research route is Linux x86-64 LP64 with glibc;
+other targets receive an explicit capability diagnostic. Its reserves bound
+scratch, control storage, pipe payload and cumulative output. Copy-on-write
+retention, RSS, capture pause and elapsed cleanup remain quantities to measure
+in experiments, not promised bounds or evidence of production eligibility.
 
 ## Need, evidence and a limit no mechanism removes
 

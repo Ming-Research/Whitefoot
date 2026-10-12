@@ -141,6 +141,10 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
     ("completion/linux_io_uring.c", NATIVE_SOURCE),
     ("concurrent_map.h", CONCURRENT_MAP_HEADER),
+    (
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
     ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     ("keyed_table.c", KEYED_TABLE_SOURCE),
 ];

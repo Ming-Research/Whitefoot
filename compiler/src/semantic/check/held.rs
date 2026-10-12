@@ -6,7 +6,21 @@ use crate::syntax::NodeId;
 use super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature};
 use super::super::model::{CheckedCallSeparation, CheckedHeldProtectionUse, CheckedMode, CheckedNominalKind, CheckedReleaseClass, CheckedShared, CheckedType};
 use super::generics::{GenericArgument, GenericSubstitution};
-use super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations, places_overlap};
+use super::super::places::{CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle, places_overlap};
+
+/// HOLD-1 compares captures from every state in the block, not two places
+/// known live against one length. Keep OWN-7's structural/value separations,
+/// but supply no state-relative WIN-2 separation.
+struct BlockSeparations;
+
+impl SeparationOracle for BlockSeparations {
+    fn indices_distinct(&self, _left: CapturedValue, _right: CapturedValue) -> bool { false }
+    fn ranges_disjoint(&self, _left: CapturedRange, _right: CapturedRange) -> bool { false }
+    fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool { false }
+    fn index_is_live(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool { false }
+    fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool { false }
+    fn window_length_is_shared(&self, _window: &ResolvedPlace) -> bool { false }
+}
 
 pub(super) const REPAIR: &str = "declare one nonempty held group of distinct reference parameters on a nonwaiting callable with a pure or reads row; pass references from one atomic block or the enclosing declared held group, and prove writes disjoint from their protected regions or move those writes outside the block";
 
@@ -249,14 +263,69 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// A source occurrence inside a loop denotes many evaluations. Likewise,
+    /// a mutable offset spelling cannot identify its value at two block states.
+    /// Widen those captures before either structural separation or a proof
+    /// request; unchanged ordinary bindings and value-determined offsets retain
+    /// the existing ENT-6 admission.
+    fn block_place(place: &ResolvedPlace, writes: &[(NodeId, ResolvedPlace)], bindings: &HashMap<DeclarationId, LocalBinding>) -> ResolvedPlace {
+        let stable = |value: CapturedValue| match value.term {
+            CapturedTerm::Literal(_) | CapturedTerm::Const(_) => value,
+            CapturedTerm::Binding(binding) => {
+                let local = bindings.values().find(|local| local.binding == binding);
+                if local.is_some_and(|local| local.loop_depth == 0 && !local.compiler_updated)
+                    && !writes.iter().any(|(_, write)| places_overlap(&BlockSeparations, &ResolvedPlace::binding(binding), write))
+                { value } else { CapturedValue::unknown() }
+            }
+            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => CapturedValue::unknown(),
+        };
+        let mut result = place.clone();
+        // A Descendant identity denotes a current target within one state,
+        // not the same node at every loop iteration. Across the complete
+        // block only its containing owned cover is stable: suffix fields
+        // below two generations cannot establish sibling separation.
+        if let Some(depth) = result.path.iter().position(|step| matches!(step, PlaceStep::Descendant(_))) {
+            result.path.truncate(depth);
+        }
+        for step in &mut result.path {
+            *step = match *step {
+                PlaceStep::Index(value) => PlaceStep::Index(stable(value)),
+                PlaceStep::Page(value) => PlaceStep::Page(stable(value)),
+                PlaceStep::Range(range) => PlaceStep::Range(CapturedRange { start: stable(range.start), end: stable(range.end) }),
+                other => other,
+            };
+        }
+        result
+    }
+
+    /// Descriptor mutation can retarget a projection without writing its old
+    /// logical index (a Ring head shift is one example). Element/descriptor
+    /// separation remains correct for one state; it cannot establish stability
+    /// of an address selected through that descriptor across this block.
+    fn writes_selection_support(region: &ResolvedPlace, write: &ResolvedPlace) -> bool {
+        for (depth, step) in region.path.iter().enumerate() {
+            if !matches!(step, PlaceStep::Index(_) | PlaceStep::Page(_) | PlaceStep::Range(_) | PlaceStep::Part(_)) { continue; }
+            for measure in [super::super::model::CheckedMeasure::Length, super::super::model::CheckedMeasure::Capacity, super::super::model::CheckedMeasure::Head] {
+                let mut support = region.clone();
+                support.path.truncate(depth);
+                support.path.push(PlaceStep::Measure(measure));
+                if places_overlap(&BlockSeparations, &support, write) { return true; }
+            }
+        }
+        false
+    }
+
     pub(super) fn check_held_protection(&mut self, writes: &[(NodeId, ResolvedPlace)], bindings: &HashMap<DeclarationId, LocalBinding>, calls: &[(NodeId, Vec<ResolvedPlace>)]) -> Result<(), CheckStop> {
         for (node, protected) in calls {
             let site = self.types.declarations.tree.path(*node)?.clone();
             let requirement = self.body.checked_held_calls.iter().find(|call| call.site == site).map(|call| call.requirement.clone()).ok_or(SemanticCompilerFailure::InvalidResolution)?;
             for (write_node, write) in writes {
                 for region in protected {
-                    if !places_overlap(&UnprovedSeparations, region, write) { continue; }
-                    if let Some((positions, window)) = Self::separable_by_position(region, write) {
+                    let compared_region = Self::block_place(region, writes, bindings);
+                    let compared_write = Self::block_place(write, writes, bindings);
+                    let selection_changed = Self::writes_selection_support(&compared_region, &compared_write);
+                    if !selection_changed && !places_overlap(&BlockSeparations, &compared_region, &compared_write) { continue; }
+                    if let Some((positions, None)) = (!selection_changed).then(|| Self::separable_by_position(&compared_region, &compared_write)).flatten() {
                         let proof_site = if self.types.declarations.tree.coordinate(*write_node)?.start().value() > self.types.declarations.tree.coordinate(*node)?.start().value() { *write_node } else { *node };
                         self.body.call_separations.push(CheckedCallSeparation {
                             site: self.types.declarations.tree.path(proof_site)?.clone(),
@@ -264,7 +333,7 @@ impl Checker<'_, '_> {
                             reference_use: None,
                             held_use: Some(CheckedHeldProtectionUse { site: site.clone(), requirement: requirement.clone() }),
                             positions,
-                            window,
+                            window: None,
                             left_spelling: self.types.render_resolved_place(region, bindings)?,
                             right_spelling: self.types.render_resolved_place(write, bindings)?,
                             one_argument: false,

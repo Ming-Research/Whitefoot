@@ -88,6 +88,8 @@ pub const SCHED_ENTRY_SOURCE: &str = include_str!("sched/entry.c");
 /// unit that compiles it in as keyed tables and key sets over the completion
 /// runtime [SHARE-1].
 pub const CONCURRENT_MAP_HEADER: &str = include_str!("concurrent_map.h");
+/// The map's private layout, shared with the restricted image walker.
+pub const CONCURRENT_MAP_LAYOUT_HEADER: &str = include_str!("concurrent_map_layout.h");
 /// The concurrent map's implementation, which `keyed_table.c` includes.
 pub const CONCURRENT_MAP_SOURCE: &str = include_str!("concurrent_map.c");
 /// `keyed_table.c`, the emitted module's `wf__keyed_table_*`, `wf__table_*`,
@@ -195,6 +197,7 @@ mod tests {
             ("windows_runtime.h", WINDOWS_RUNTIME_HEADER),
             ("windows_runtime.c", WINDOWS_RUNTIME_SOURCE),
             ("concurrent_map.h", CONCURRENT_MAP_HEADER),
+            ("concurrent_map_layout.h", CONCURRENT_MAP_LAYOUT_HEADER),
             ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
             ("keyed_table.c", KEYED_TABLE_SOURCE),
             ("wf_floor.c", super::super::emitter::FLOOR_RUNTIME_SOURCE),

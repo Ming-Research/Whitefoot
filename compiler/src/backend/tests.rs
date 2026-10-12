@@ -436,6 +436,7 @@ fn append_runtime_units_with_library_defines(
             COMPLETION_LINUX_IO_URING_SOURCE,
         ),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
