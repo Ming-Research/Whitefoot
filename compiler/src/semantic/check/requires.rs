@@ -333,6 +333,7 @@ impl ExpandedClauseExpression {
                 declaration,
                 projections,
                 ty,
+                admission: Default::default(),
             })),
             Self::Datum(ExpandedClauseDatum::Literal { value, .. }) => {
                 Some(GoalExpression::Datum(GoalDatum::Literal(value)))

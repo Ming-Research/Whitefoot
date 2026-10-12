@@ -2256,6 +2256,7 @@ mod tests {
                 root: BindingId(0),
                 projections: vec![GoalProjection::Page(offset)],
                 ty,
+                admission: Default::default(),
             })
         };
         assert_ne!(goal(literal(0, 0)), goal(literal(1, 0)));

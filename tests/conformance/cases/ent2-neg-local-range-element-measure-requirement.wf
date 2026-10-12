@@ -1,0 +1,18 @@
+fn exactly_seven(word: &u64) -> result: u64 reads(word) contract {
+  requires word^ == 7_u64;
+} {
+  return word^;
+}
+
+fn observe_local(rows: &[Array<Array<u8, 7>, 4>]) -> result: u64 reads(rows) contract {
+  requires 0_u64 < rows^.len;
+} {
+  doc "FN-8, MSR-1, REF-1, REF-4: forming and copying a local range reference preserves its range kind and element type. Its selected element has length four, so borrowing that length cannot establish seven.";
+  let part = &rows^[0_u64..rows^.len];
+  let copied = part;
+  return exactly_seven(word: &copied^[0_u64].len);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

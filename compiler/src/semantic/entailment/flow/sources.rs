@@ -300,6 +300,7 @@ impl Judging<'_, '_, '_> {
         state.establish_goal(
             goal,
             super::super::state::GoalSign::Positive,
+            &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
             event,
         );
@@ -1001,16 +1002,19 @@ impl Reasoning<'_, '_, '_> {
         state: &mut FactState,
     ) {
         let target = bound_place(binding);
-        self.establish_measure_datums(node_path, target, rebind, state);
+        self.establish_measure_datums(node_path, target, None, rebind, state);
     }
 
     /// [MSR-3] the second half of every placement: after the statement's own
     /// kills, the destination place's measures equal the datums minted before
-    /// them.
+    /// them. Integer endpoints require [ENT-2] admission at the written set
+    /// target plus the constructor and carried projections. A fresh binder
+    /// has no written subscript and needs no set-target check.
     pub(super) fn establish_measure_datums(
         &mut self,
         node_path: &crate::NodePath,
         destination: ResolvedPlace,
+        written: Option<(&CheckedSetTarget, &[PlaceStep])>,
         carry: &MeasureCarry,
         state: &mut FactState,
     ) {
@@ -1039,6 +1043,16 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         for value in &carry.values {
+            if let Some((target, prefix)) = written {
+                let projections = prefix
+                    .iter()
+                    .chain(&value.path)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if !self.input.set_integer_place_admitted(target, &projections) {
+                    continue;
+                }
+            }
             let mut place = destination.clone();
             place.path.extend(value.path.iter().copied());
             let left = self
@@ -2560,7 +2574,7 @@ impl Reasoning<'_, '_, '_> {
             let parent = state
                 .facts
                 .opaque_proofs
-                .get(&(goal, sign))
+                .get(&(self.vocabulary.goals.canonical(goal), sign))
                 .copied()
                 .expect("every S4 decomposition member is established");
             let parent = self.vocabulary.derivations.intern(
@@ -2711,14 +2725,16 @@ impl Reasoning<'_, '_, '_> {
         &mut self,
         node_path: &crate::NodePath,
         base: &ResolvedPlace,
+        target: Option<&CheckedSetTarget>,
         carried: &[(PlaceStep, MeasureCarry)],
         state: &mut FactState,
     ) {
         for (step, carry) in carried {
             let mut destination = base.clone();
             destination.path.push(*step);
-            let destination = destination;
-            self.establish_measure_datums(node_path, destination, carry, state);
+            let prefix = [*step];
+            let written = target.map(|target| (target, prefix.as_slice()));
+            self.establish_measure_datums(node_path, destination, written, carry, state);
         }
     }
 
