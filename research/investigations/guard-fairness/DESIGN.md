@@ -1206,3 +1206,103 @@ cross-object disjunctions.
   frame becomes buckets and a larger watch.
 
 Nothing approved in `design/language/waiting` is contradicted.
+
+### 7. Implementation
+
+Built on top of `8c2ed0ff2` after the owner selected design A. Nothing below
+has been compiled or run yet: every build, test and measurement belongs to
+CI, and the workflow below is the registered experiment's construction.
+
+**Compiler.**
+
+- `compiler/src/lowering/builder/wake.rs` derives each object target's
+  test from the checked guard: `bnot` is pushed down to the comparisons,
+  `band`/`bor` become conjunctions and disjunctions, and a comparison
+  (`IntegerOperation` orderings or `ValueEquality`) is kept when one side is
+  a read `p^.f.g` of the target through fields alone, of an integer of 8 to
+  64 bits, `Bool` or tag-only enum, and the other side is a literal or named
+  constant, a fieldless enum constructor, a local whose binding holds the
+  scalar itself, or another such read of the same target. A bare `Bool`
+  field is "not false". Everything else becomes true; at most four atoms
+  are kept, later conjuncts dropped, an oversized disjunction true.
+- `compiler/src/ir.rs` carries the test on `SharedWatch` and `WatchObject`
+  (`IrWakeTest`: the state's address, each scalar's address and captured
+  operands as IR values, atoms naming them by position, a postfix program),
+  and `SharedUnlock` carries `wrote`, which `atomic.rs` sets from the
+  checker's per-target `reads` flag, and to false on the false-guard path.
+- `compiler/src/backend/emitter/wake.rs` fills a 104-byte `wf_wake_test` in
+  the frame (an entry-block `alloca`, one per watch) just before the
+  registration call: constant header and atom tails, offsets computed as
+  the distance of each scalar's address from the state's, captured values
+  sign- or zero-extended to 64 bits. A read-only release calls the new
+  `wf__shared_unlock_unwritten`; the hold kind stays `write = 1`, since the
+  runtime's holder count depends on it.
+
+**Runtime** (`compiler/src/backend/completion/bridge.c`, `WF_GUARD_MODE=3`,
+now the default; modes 0 to 2 remain as arms). Object links sit in buckets
+of byte-identical tests (section 1); a write evaluates each bucket's test
+once and notifies the oldest watch whose test holds, reserving it past the
+threshold; a false retry or a success that wrote nothing forwards the
+notification inside the write's cutoff; a successful write sweeps again; a
+write while another context owns the notification marks a rescan only when
+an eligible bucket has a watch behind the owner or beyond the cutoff.
+`WF_GUARD_WAKE_ELIGIBLE=1` is A1. Counters add `guard_wake_tests`
+(evaluations, wakes avoided) and `guard_handoff` (hand-offs installed and
+sampled installation-to-acquisition latency).
+
+**Deviations from the study.**
+
+- The test bytes stay in the watching frame and each link points to them,
+  instead of a copy in the watch: copying 104 bytes into every link would
+  grow each link far beyond the study's estimate. `WF_WATCH_SIZE` grows from
+  152 to 248 bytes (three pointers per link), against the estimated 72.
+- No anchor: a forwarded notification searches each eligible bucket from
+  its oldest link, O(position) rather than the ordered queue's direct
+  successor.
+- Only field steps are kept; fixed-size array steps and enum payloads give
+  true.
+- A context's key is sampled before its round's first link only, so a key
+  never changes while its links sit in ordered buckets (mode 2 re-aged
+  them instead).
+- Atomic-group releases still pass the write flag 1 for every member: the
+  group record has no per-target flag.
+
+**Premises checked.** A guard writes no path ([SHARE-2], and the checker's
+`guard_writes` refuses a call whose row writes), so it cannot call `now`,
+which writes its clock; a spawn takes value parameters only ([WAIT-3]).
+The study's inference that a false guard becomes true only after a target
+is written does not hold for every admitted guard:
+`std::time::unix_nanoseconds(clock: &WallClock)` only reads its clock, so
+
+```
+atomic g = &state when std::time::unix_nanoseconds(clock: &wall) >= deadline {
+  set g^.n = 1_u64;
+}
+```
+
+is admitted and can become true with no write, after which no mode ever
+wakes it. Design A is unaffected: the call gives the test true, and a test
+false in a state still implies the guard false there. The gap is the
+specification's and every mode's, not the candidate's.
+
+**Tests.** Lowering (`compiler/src/lowering/tests/wake.rs`): each kept
+comparison kind, each dropped kind, `band`/`bor`/`bnot`, the four-atom
+bound, a cross-object conjunction and disjunction, and the write flag.
+Backend (`compiler/src/backend/tests/wake.rs`): the emitted bytes, a guard
+with no test, the unwritten release and the header's codes.
+`shared_object_test.c` adds `wake` and `wake-aged`: a false test is not
+woken, a true one is, equal tests are evaluated once, a release that wrote
+nothing evaluates nothing, read-only success and false retries forward,
+and past the threshold the turn goes to the oldest watch whose test holds.
+`cancel_test.c` follows a firing through both watchers' retries in mode 3,
+and checks that a false test on the other unit does not hide the firing.
+
+**Workflow** (`.github/workflows/tmp-guard-fairness.yml`). The hosted job
+builds the compiler, smoke-runs every arm with and without counters, runs
+every mode's runtime tests, requires the other modes and six mutants of the
+candidate (no forwarding, no reservation clearing, skipping the oldest
+eligible watch, ignoring tests, one bucket per watch, young reservations)
+to fail with their own assertions, and runs the candidate under
+ThreadSanitizer. "Frozen foreign atoms" is a compiler variant, guarded by
+the lowering test of a cross-object conjunction. The 14900K job runs the
+registered comparison with diagnostics by default.

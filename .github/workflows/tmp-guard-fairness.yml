@@ -1,14 +1,15 @@
 # Temporary claude/guard-fairness research workflow; remove before ready.
-# Counters explain costs but judge nothing; uninstrumented paired arms apply
-# the criteria registered in research/investigations/guard-fairness/DESIGN.md.
+# Counters explain costs and read the registered prediction but judge no
+# acceptance; uninstrumented paired arms apply the criteria registered in
+# research/investigations/guard-fairness/DESIGN.md ("Registered experiment").
 name: tmp-guard-fairness
 on:
   workflow_dispatch:
     inputs:
       path_diagnostics:
-        description: Interleave separate path counters and sampled return waits with timing
+        description: Interleave separate counters (the registered prediction's readout) with timing
         type: boolean
-        default: false
+        default: true
   push:
     branches: [claude/guard-fairness]
     paths: [.github/workflows/tmp-guard-fairness.yml]
@@ -23,7 +24,7 @@ jobs:
       - name: Install host sanitizer toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-rt-18-dev
+          sudo apt-get install -y --no-install-recommends clang lld libclang-rt-18-dev
       - name: Build compiler and validate measurement decisions
         run: |
           cargo fetch --locked --manifest-path compiler/Cargo.toml
@@ -37,38 +38,70 @@ jobs:
         with:
           name: wfc
           path: ${{ runner.temp }}/wfc.tar.gz
+      - name: Hosted smoke of every probe arm
+        run: |
+          # Validates construction and records on the hosted runner; no
+          # timing here judges anything.
+          for counters in 0 1; do
+            out="$RUNNER_TEMP/gf-smoke-$counters"
+            WFC="$PWD/compiler/target/gate/whitefootc" OUT="$out" COUNTERS="$counters" \
+              sh research/experiments/guard-fairness/build.sh > "$out-build.txt"
+            cat "$out-build.txt"
+            python3 research/experiments/guard-fairness/summarize.py init "$out" "$counters"
+            mkdir -p "$out/raw"
+            for arm in baseline candidate a1 oldest twin; do
+              if [ "$counters" = 1 ] && [ "$arm" = twin ]; then continue; fi
+              record="$out/raw/smoke-$arm"
+              WF_DRIVERS=2 timeout 120s "$out/$arm" 8 100 > "$record.stdout" 2> "$record.stderr"
+              cat "$record.stdout" "$record.stderr"
+              python3 research/experiments/guard-fairness/summarize.py record \
+                "$record" pilot1 "$arm" 8 100 "$counters" "$out"
+            done
+          done
       - name: Guard test sensitivity controls
         run: |
           ulimit -c 0
           flags='-std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_TEST_HOOKS=1'
-          for variant in candidate baseline age threshold-zero; do
+          for variant in candidate a1 oldest baseline age threshold-zero; do
             scratch="$RUNNER_TEMP/guard-control-$variant"
             case "$variant" in
-              candidate) defines='-DWF_GUARD_MODE=2' ;;
+              candidate) defines='-DWF_GUARD_MODE=3' ;;
+              a1) defines='-DWF_GUARD_MODE=3 -DWF_GUARD_WAKE_ELIGIBLE=1' ;;
+              oldest) defines='-DWF_GUARD_MODE=2' ;;
               baseline) defines='-DWF_GUARD_MODE=0' ;;
               age) defines='-DWF_GUARD_MODE=1' ;;
-              threshold-zero) defines='-DWF_GUARD_MODE=2 -DWF_GUARD_TURN_AGE_NS=0' ;;
+              threshold-zero) defines='-DWF_GUARD_MODE=3 -DWF_GUARD_TURN_AGE_NS=0' ;;
             esac
-            make -C compiler "$scratch/shared-object-test" COMPLETION_TMP="$scratch" \
+            make -C compiler "$scratch/shared-object-test" "$scratch/cancel-test" COMPLETION_TMP="$scratch" \
               COMPLETION_BASE_CFLAGS="$flags $defines"
           done
-          for selection in handoff newcomer age cancel cross-unit; do
-            SHARED_OBJECT_TEST_CASE="$selection" "$RUNNER_TEMP/guard-control-candidate/shared-object-test"
+          candidate="$RUNNER_TEMP/guard-control-candidate"
+          "$candidate/shared-object-test"
+          for selection in handoff newcomer age cancel cross-unit wake wake-aged; do
+            SHARED_OBJECT_TEST_CASE="$selection" "$candidate/shared-object-test"
           done
-          scratch="$RUNNER_TEMP/guard-control-candidate"
-          make -C compiler "$scratch/cancel-test" COMPLETION_TMP="$scratch" \
-            COMPLETION_BASE_CFLAGS="$flags -DWF_GUARD_MODE=2"
-          CANCEL_TEST_CASE=ordered "$scratch/cancel-test"
-          for variant in baseline age threshold-zero; do
-            case "$variant" in
-              baseline) selection=newcomer; expected='R overtook a woken guard' ;;
-              age) selection=handoff; expected='an aged write did not wake only the oldest guard' ;;
-              threshold-zero) selection=age; expected='a young, boundary, or fresh-statement watch blocked R' ;;
+          "$candidate/cancel-test"
+          oldest="$RUNNER_TEMP/guard-control-oldest"
+          for selection in handoff newcomer age cancel cross-unit; do
+            SHARED_OBJECT_TEST_CASE="$selection" "$oldest/shared-object-test"
+          done
+          "$oldest/cancel-test"
+          CANCEL_TEST_CASE=ordered "$oldest/cancel-test"
+          for control in baseline:newcomer age:handoff threshold-zero:age baseline:wake oldest:wake a1:wake \
+                         oldest:wake-aged; do
+            variant=${control%%:*}
+            selection=${control#*:}
+            case "$control" in
+              baseline:newcomer) expected='R overtook a woken guard' ;;
+              age:handoff) expected='an aged write did not wake only the oldest guard' ;;
+              threshold-zero:age) expected='a young, boundary, or fresh-statement watch blocked R' ;;
+              *:wake) expected='a write woke other than the one oldest watch whose test holds' ;;
+              oldest:wake-aged) expected='a write did not evaluate each distinct test once' ;;
             esac
-            record="$RUNNER_TEMP/guard-control-$variant/negative.txt"
+            record="$RUNNER_TEMP/guard-control-$variant/negative-$selection.txt"
             if SHARED_OBJECT_TEST_CASE="$selection" "$RUNNER_TEMP/guard-control-$variant/shared-object-test" > "$record" 2>&1; then
               cat "$record"
-              printf 'negative control unexpectedly passed: %s\n' "$variant" >&2
+              printf 'negative control unexpectedly passed: %s\n' "$control" >&2
               exit 1
             fi
             cat "$record"
@@ -76,51 +109,63 @@ jobs:
             # or unrelated earlier failure. The child's status was read above.
             grep -F -- "$expected" "$record"
           done
-      - name: False-pass and cancellation cleanup sensitivity
+      - name: Candidate runtime mutants
         run: |
           ulimit -c 0
           bridge=compiler/src/backend/completion/bridge.c
-          backup="$RUNNER_TEMP/guard-release-original.c"
+          backup="$RUNNER_TEMP/guard-bridge-original.c"
           cp "$bridge" "$backup"
           # A failed construction also restores checkout source. Mutants
           # exist only in scratch executables, never in the compiler artifact.
           trap 'cp "$backup" "$bridge"' EXIT
-          flags='-std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_MODE=2 -DWF_GUARD_TEST_HOOKS=1'
-          for variant in no-false-pass no-success-clear; do
+          flags='-std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_MODE=3 -DWF_GUARD_TEST_HOOKS=1'
+          for variant in no-forward no-success-clear skip-eligible ignore-tests bucket-per-watch young-reserves; do
             python3 - "$bridge" "$backup" "$variant" <<'PY'
           import sys
           from pathlib import Path
           bridge, backup, variant = sys.argv[1:]
           text = Path(backup).read_text()
-          signature = "static unsigned wf_guard_release_locked("
-          assert text.count(signature) == 1, "release helper must be unique"
-          start = text.index(signature)
-          end = text.index("\n}\n#endif", start) + len("\n}")
-          region = text[start:end]
-          if variant == "no-false-pass":
-              old = "wf_watch *next = wf_guard_oldest(shared->watching, self, self->guard_cutoff);"
-              new = "wf_watch *next = NULL;"
-          elif variant == "no-success-clear":
-              old = "if (shared->reservation == NULL || shared->reservation != self) return 0u;"
-              new = old + "\n    if (wrote && !wf_watch_quiet()) return 0u;"
-          else:
-              raise ValueError("unknown release mutant")
-          assert region.count(old) == 1, "mutation anchor changed"
-          changed = region.replace(old, new, 1)
-          Path(bridge).write_text(text[:start] + changed + text[end:])
+          mutants = {
+              # A false retry or read-only success passes the notification to no one.
+              "no-forward": ("wf_watch_link *next = wf_wake_select(shared, self, self->guard_cutoff);",
+                             "wf_watch_link *next = NULL;"),
+              # A successful write leaves its reservation in place.
+              "no-success-clear": ("if (shared->reservation == NULL || shared->reservation != self) return 0u;",
+                                   "if (shared->reservation == NULL || shared->reservation != self) return 0u;\n"
+                                   "    if (wrote && !wf_watch_quiet()) return 0u;"),
+              # A write skips the oldest watch whose test holds for the next one.
+              "skip-eligible": ("if (wf_wake_holds(newest->test, shared)) oldest = link;",
+                                "if (wf_wake_holds(newest->test, shared)) oldest = link == newest ? NULL : link->next;"),
+              # Every test holds: the runtime wakes as if no guard had one.
+              "ignore-tests": ("    if (test->length == 0u) return 1;", "    return 1;"),
+              # Equal tests no longer share a bucket and its one evaluation.
+              "bucket-per-watch": ("while (newest != NULL && !wf_wake_same(newest->test, test)) newest = newest->bucket_next;",
+                                   "while (newest != NULL && (!wf_wake_same(newest->test, test) || newest != NULL))"
+                                   " newest = newest->bucket_next;"),
+              # A young notification refuses newcomers as an aged one does.
+              "young-reserves": ("return started != 0u && now >= started && now - started > WF_GUARD_TURN_AGE_NS",
+                                 "return started != 0u && now >= started && now - started > 0u"),
+          }
+          old, new = mutants[variant]
+          assert text.count(old) == 1, "mutation anchor changed: " + variant
+          Path(bridge).write_text(text.replace(old, new, 1))
           PY
             scratch="$RUNNER_TEMP/guard-control-$variant"
             make -C compiler "$scratch/shared-object-test" COMPLETION_TMP="$scratch" \
               COMPLETION_BASE_CFLAGS="$flags"
             cp "$backup" "$bridge"
             case "$variant" in
-              no-false-pass) selection=handoff; expected='a false guard did not pass its reservation' ;;
+              no-forward) selection=handoff; expected='a false guard did not pass its reservation' ;;
               no-success-clear) selection=cancel; expected='a context finished with a shared hold or a guard turn' ;;
+              skip-eligible) selection=wake; expected='the young notification stalled' ;;
+              ignore-tests) selection=wake; expected='a watch whose test was false retried' ;;
+              bucket-per-watch) selection=wake; expected='a write did not evaluate each distinct test once' ;;
+              young-reserves) selection=wake; expected="a young watch's notification refused a newcomer" ;;
             esac
-            record="$scratch/negative.txt"
+            record="$scratch/negative-$selection.txt"
             if SHARED_OBJECT_TEST_CASE="$selection" "$scratch/shared-object-test" > "$record" 2>&1; then
               cat "$record"
-              printf 'release mutant unexpectedly passed: %s\n' "$variant" >&2
+              printf 'runtime mutant unexpectedly passed: %s\n' "$variant" >&2
               exit 1
             fi
             cat "$record"
@@ -131,15 +176,23 @@ jobs:
         if: always()
         with:
           name: guard-fairness-negative-controls
-          path: ${{ runner.temp }}/guard-control-*/negative.txt
-      - name: Guard handoff ThreadSanitizer checks
+          path: |
+            ${{ runner.temp }}/guard-control-*/negative-*.txt
+            ${{ runner.temp }}/gf-smoke-*/raw/
+            ${{ runner.temp }}/gf-smoke-*-build.txt
+      - name: Guard ThreadSanitizer checks
         run: |
+          tsan='-std=c11 -O1 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_COUNTERS=1 -DWF_GUARD_TEST_HOOKS=1 -fsanitize=thread -fno-omit-frame-pointer'
           scratch="$RUNNER_TEMP/guard-control-tsan"
           make -C compiler "$scratch/shared-object-test" "$scratch/cancel-test" COMPLETION_TMP="$scratch" CC=/usr/bin/clang \
-            COMPLETION_BASE_CFLAGS='-std=c11 -O1 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_MODE=2 -DWF_GUARD_COUNTERS=1 -DWF_GUARD_TEST_HOOKS=1 -fsanitize=thread -fno-omit-frame-pointer'
-          for selection in handoff newcomer age cancel cross-unit; do
+            COMPLETION_BASE_CFLAGS="$tsan -DWF_GUARD_MODE=3"
+          for selection in handoff newcomer age cancel cross-unit wake wake-aged; do
             TSAN_OPTIONS=halt_on_error=1 SHARED_OBJECT_TEST_CASE="$selection" "$scratch/shared-object-test"
           done
+          TSAN_OPTIONS=halt_on_error=1 "$scratch/cancel-test"
+          scratch="$RUNNER_TEMP/guard-control-tsan-oldest"
+          make -C compiler "$scratch/cancel-test" COMPLETION_TMP="$scratch" CC=/usr/bin/clang \
+            COMPLETION_BASE_CFLAGS="$tsan -DWF_GUARD_MODE=2"
           TSAN_OPTIONS=halt_on_error=1 CANCEL_TEST_CASE=ordered "$scratch/cancel-test"
   run:
     # The 14900K is shared: time only when dispatched in its queue.

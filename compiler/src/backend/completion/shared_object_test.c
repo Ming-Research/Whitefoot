@@ -50,6 +50,18 @@
  * age retained over retries, and age reset for the next statement. No wall
  * clock selects any of these interleavings.
  *
+ * Last, under wake tests (WF_GUARD_MODE 3), three watchers register tests
+ * over a two-word state: the oldest that the first word is 2, the other two
+ * equal copies of a test that it is 1, the youngest's guard also needing
+ * the second word to be 5. A release that wrote nothing evaluates no test;
+ * a write of 1 evaluates the two distinct tests once each and wakes only
+ * the middle watcher, never the older one whose test is false; its
+ * read-only success passes the notification to the youngest, whose false
+ * retry passes it to none; a later write of the second word wakes the
+ * youngest, whose write of 2 wakes the oldest. Below the threshold the
+ * writer's next statement is admitted at once; past it, the writer waits
+ * until the notification has passed through every watch whose test held.
+ *
  * Prints the first failure and exits 1, or exits 0.
  */
 #if defined(__linux__)
@@ -380,7 +392,7 @@ typedef struct guard_frame {
 } guard_frame;
 
 static void *guard_table, *guard_map_object, *guard_object;
-static _Atomic uint64_t watch_written, watch_early, watch_ready;
+static _Atomic uint64_t watch_written, watch_early, watch_ready, watch_tested;
 static _Atomic int w_released, g_wrote;
 static uint64_t w_evaluations, w_parks, w_seen;
 static int root_phase;
@@ -395,6 +407,8 @@ void wf__watch_seen(unsigned moment) {
         atomic_fetch_add(&watch_early, 1);
     else if (moment == WF_WATCH_READY)
         atomic_fetch_add(&watch_ready, 1);
+    else if (moment == WF_WATCH_TESTED)
+        atomic_fetch_add(&watch_tested, 1);
 }
 
 static uint64_t *state_of(void *shared) { return (uint64_t *)((char *)shared + WF_SHARED_STATE_OFFSET); }
@@ -451,7 +465,7 @@ static void w_step(test_frame *frame) {
             return;
         }
         wf__watch_begin(f->watch);
-        wf__watch_object(f->watch, guard_object);
+        wf__watch_object(f->watch, guard_object, NULL);
         wf__watch_table(f->watch, guard_table);
         wf__table_unlock_entry(entry, 0);
         wf__shared_unlock(guard_object, 1);
@@ -627,13 +641,13 @@ static void turn_w_step(test_frame *f) {
     int parked;
     if (turn_case == TURN_TABLE) {
         wf__watch_begin(g->watch);
-        wf__watch_object(g->watch, turn_object);
+        wf__watch_object(g->watch, turn_object, NULL);
         wf__watch_table(g->watch, turn_table);
         wf__shared_unlock(turn_object, 1);
         wf__table_unlock_entry(entry, present);
         parked = wf__watch_park(g->watch, f);
     } else {
-        parked = wf__shared_watch(turn_object, 1, f);
+        parked = wf__shared_watch(turn_object, 1, f, NULL);
     }
     if (!parked)
         fail("a guard with no intervening writer did not park (parks, case)", turn_parks, turn_case);
@@ -764,7 +778,7 @@ static void age_w_step(test_frame *f) {
     /* Use the general watch path as well as the shared_watch path exercised
      * by TURN_PLAIN: watch_begin must not restart an execution's age. */
     wf__watch_begin(g->watch);
-    wf__watch_object(g->watch, age_object);
+    wf__watch_object(g->watch, age_object, NULL);
     wf__shared_unlock(age_object, 1);
     if (!wf__watch_park(g->watch, f))
         fail("age watcher did not park (parks)", age_parks, 0);
@@ -847,8 +861,8 @@ static void cancel_w_step(test_frame *f) {
     if (f->statements != 0)
         fail("a cancellation watcher retried without observing the firing (attempts)", f->statements, 0);
     wf__watch_begin(g->watch);
-    wf__watch_object(g->watch, cancel_object);
-    wf__watch_object(g->watch, cancel_state);
+    wf__watch_object(g->watch, cancel_object, NULL);
+    wf__watch_object(g->watch, cancel_state, NULL);
     wf__shared_unlock(cancel_object, 1u);
     wf__shared_unlock(cancel_state, 1u);
     f->statements = 1;
@@ -953,8 +967,8 @@ static void cross_w_step(test_frame *f) {
             return;
         }
         wf__watch_begin(g->watch);
-        wf__watch_object(g->watch, cross_a);
-        wf__watch_object(g->watch, cross_b);
+        wf__watch_object(g->watch, cross_a, NULL);
+        wf__watch_object(g->watch, cross_b, NULL);
         wf__shared_unlock(cross_b, 1u);
         if (f->statements++ != 0u) {
             unsigned spins = 0u;
@@ -991,7 +1005,7 @@ static void cross_b_step(test_frame *f) {
     atomic_store(&guard_now, 2u);
     ++f->statements;
     ++cross_parked;
-    if (!wf__shared_watch(cross_b, 1u, f))
+    if (!wf__shared_watch(cross_b, 1u, f, NULL))
         fail("B-only guard did not initially park (parked)", cross_parked, 2u);
 }
 
@@ -1038,6 +1052,163 @@ static void cross_fresh_step(test_frame *f) {
     f->done = 1;
 }
 
+/* Wake tests: watchers 1, 2 and 3 register at supplied times 1, 2 and 3
+ * with the tests word0 == 2, word0 == 1 and an equal copy of word0 == 1;
+ * watcher 3's guard also needs word1 == 5. R writes at time 10, below the
+ * threshold, or past it in the aged case. */
+enum { WAKE_WATCHERS = 3, WAKE_PASSES = 1000 };
+static void *wake_object;
+static wf_wake_test wake_two, wake_one, wake_one_copy;
+static int wake_aged;
+static unsigned wake_registered, wake_parks, wake_done;
+static unsigned wake_evaluations[WAKE_WATCHERS + 1], wake_order[WAKE_WATCHERS];
+
+static void wake_equal(wf_wake_test *test, uint64_t value) {
+    memset(test, 0, sizeof(*test));
+    test->length = 1u;
+    test->program[0] = 1u;
+    test->atoms[0].offset = 0u;
+    test->atoms[0].value = value;
+    test->atoms[0].width = 8u;
+    test->atoms[0].comparison = WF_WAKE_EQUAL;
+}
+
+static void wake_w_step(test_frame *f) {
+    if (!f->begun) {
+        f->begun = (int)++wake_registered;
+        atomic_store(&guard_now, (uint64_t)f->begun);
+    }
+    unsigned id = (unsigned)f->begun;
+    if (wf__shared_acquire(wake_object, 1u, f))
+        return;
+    uint64_t *state = state_of(wake_object);
+    int holds = id == 1u ? state[0] == 2u : (state[0] == 1u && (id == 2u || state[1] == 5u));
+    wake_evaluations[id] += 1u;
+    if (holds) {
+        wake_order[wake_done++] = id;
+        if (id == 3u) {
+            state[0] = 2u;
+            wf__shared_unlock(wake_object, 1u);
+        } else {
+            wf__shared_unlock_unwritten(wake_object, 1u);
+        }
+        f->done = 1;
+        return;
+    }
+    wake_parks += 1u;
+    const wf_wake_test *test = id == 1u ? &wake_two : (id == 2u ? &wake_one : &wake_one_copy);
+    if (!wf__shared_watch(wake_object, 1u, f, test))
+        fail("a watch no write followed did not park (watcher, parks)", id, wake_parks);
+}
+
+static void wake_r_step(test_frame *f) {
+    uint64_t *state = state_of(wake_object);
+    if (f->begun == 0) {
+        if (wake_parks != WAKE_WATCHERS)
+            fail("the watchers had not parked before R ran (parks, watchers)", wake_parks, WAKE_WATCHERS);
+        atomic_store(&guard_now, wake_aged ? TURN_AGE_NS + 10u : 10u);
+        if (wf__shared_acquire(wake_object, 1u, f))
+            fail("an uncontended statement suspended (aged)", (unsigned long long)wake_aged, 0);
+        uint64_t written = atomic_load(&watch_written);
+        uint64_t ready = atomic_load(&watch_ready);
+        uint64_t tested = atomic_load(&watch_tested);
+        wf__shared_unlock_unwritten(wake_object, 1u);
+        if (atomic_load(&watch_written) != written || atomic_load(&watch_ready) != ready
+            || atomic_load(&watch_tested) != tested)
+            fail("a release that wrote nothing entered the wake (woken, evaluations)",
+                 atomic_load(&watch_ready) - ready, atomic_load(&watch_tested) - tested);
+        if (wf__shared_acquire(wake_object, 1u, f))
+            fail("an uncontended statement suspended (aged)", (unsigned long long)wake_aged, 0);
+        state[0] = 1u;
+        ready = atomic_load(&watch_ready);
+        tested = atomic_load(&watch_tested);
+        wf__shared_unlock(wake_object, 1u);
+        if (atomic_load(&watch_ready) - ready != 1u)
+            fail("a write woke other than the one oldest watch whose test holds (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 1);
+        if (atomic_load(&watch_tested) - tested != 2u)
+            fail("a write did not evaluate each distinct test once (evaluations, distinct tests)",
+                 atomic_load(&watch_tested) - tested, 2);
+        f->begun = 1;
+        int parked = wf__shared_acquire(wake_object, 1u, f);
+        if (wake_aged) {
+            if (!parked)
+                fail("a newcomer overtook an aged watch whose test holds (done, evaluations)", wake_done,
+                     wake_evaluations[2]);
+            return;
+        }
+        if (parked)
+            fail("a young watch's notification refused a newcomer (done, parks)", wake_done, wake_parks);
+        ready = atomic_load(&watch_ready);
+        wf__shared_unlock_unwritten(wake_object, 1u);
+        if (atomic_load(&watch_ready) != ready)
+            fail("a newcomer's release passed on a notification it did not own (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 0);
+    }
+    if (f->begun == 1) {
+        if (wake_aged) {
+            /* Admitted only once the aged notification has ended. */
+            if (wf__shared_acquire(wake_object, 1u, f))
+                return;
+        } else {
+            while (wake_done != 1u || wake_parks != WAKE_WATCHERS + 1u) {
+                if (++f->statements > WAKE_PASSES)
+                    fail("the young notification stalled (done, parks)", wake_done, wake_parks);
+                if (wf__context_pass(f))
+                    return;
+            }
+            if (wf__shared_acquire(wake_object, 1u, f))
+                fail("a newcomer waited behind young watches (done, parks)", wake_done, wake_parks);
+        }
+        /* Watcher 2's read-only success passed the notification to watcher
+         * 3, whose false retry passed it to none; watcher 1 never ran. */
+        if (wake_done != 1u || wake_order[0] != 2u || wake_parks != WAKE_WATCHERS + 1u)
+            fail("the notification did not pass from the woken watch to the next whose test holds (done, parks)",
+                 wake_done, wake_parks);
+        if (wake_evaluations[1] != 1u || wake_evaluations[2] != 2u || wake_evaluations[3] != 2u)
+            fail("a watch whose test was false retried (oldest's evaluations, youngest's)",
+                 wake_evaluations[1], wake_evaluations[3]);
+        state[1] = 5u;
+        uint64_t ready = atomic_load(&watch_ready);
+        wf__shared_unlock(wake_object, 1u);
+        if (atomic_load(&watch_ready) - ready != 1u)
+            fail("the second write woke other than the youngest watch (woken, expected)",
+                 atomic_load(&watch_ready) - ready, 1);
+        f->begun = 2;
+    }
+    f->done = 1;
+}
+
+static void wake_phase_begin(test_frame *root, int aged) {
+    atomic_store(&guard_now, 1u);
+    wake_aged = aged;
+    wake_registered = wake_parks = wake_done = 0u;
+    memset(wake_evaluations, 0, sizeof(wake_evaluations));
+    memset(wake_order, 0, sizeof(wake_order));
+    wake_equal(&wake_two, 2u);
+    wake_equal(&wake_one, 1u);
+    wake_equal(&wake_one_copy, 1u);
+    wake_object = wf__shared_new(2u * sizeof(uint64_t));
+    state_of(wake_object)[0] = state_of(wake_object)[1] = 0u;
+    for (unsigned i = 0u; i < WAKE_WATCHERS; i++)
+        launch_guard(root, wake_w_step);
+    launch(root, wake_r_step);
+}
+
+static void wake_phase_end(void) {
+    if (wake_done != WAKE_WATCHERS || wake_order[0] != 2u || wake_order[1] != 3u || wake_order[2] != 1u)
+        fail("the watches did not complete in the order their tests allow (done, first)", wake_done,
+             wake_order[0]);
+    if (wake_evaluations[1] != 2u || wake_evaluations[2] != 2u || wake_evaluations[3] != 3u)
+        fail("a watch retried more often than a write let its test hold (oldest's evaluations, youngest's)",
+             wake_evaluations[1], wake_evaluations[3]);
+    if (state_of(wake_object)[0] != 2u || state_of(wake_object)[1] != 5u)
+        fail("the wake case's writes were not kept (word0, word1)", state_of(wake_object)[0],
+             state_of(wake_object)[1]);
+    if (wf__shared_release(wake_object))
+        wf__shared_free(wake_object);
+}
+
 /* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
@@ -1047,7 +1218,9 @@ static void root_step(test_frame *f) {
          * reservation dropped at acquire; age catches an unconditional
          * reservation or any age reset on false retry; cancel catches a
          * successful retry that leaves its reservation after release/exit;
-         * newcomer catches baseline barging with just one selected watch. */
+         * newcomer catches baseline barging with just one selected watch;
+         * wake and wake-aged catch a write that ignores wake tests, below
+         * and past the threshold. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1062,6 +1235,9 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "cross-unit")) {
                 root_phase = 7;
                 cross_phase_begin(f);
+            } else if (!strcmp(selected_case, "wake") || !strcmp(selected_case, "wake-aged")) {
+                root_phase = !strcmp(selected_case, "wake") ? 9 : 10;
+                wake_phase_begin(f, root_phase == 10);
             } else {
                 fail("unknown SHARED_OBJECT_TEST_CASE", 0, 0);
             }
@@ -1125,6 +1301,28 @@ static void root_step(test_frame *f) {
     if (root_phase == 8) {
         if (wf__shared_release(cross_a)) wf__shared_free(cross_a);
         if (wf__shared_release(cross_b)) wf__shared_free(cross_b);
+        /* The wake cases need the wake tests of mode 3; CI selects them in
+         * the other modes as negative controls. */
+        if (selected_case != NULL || WF_GUARD_MODE != 3) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 9;
+        wake_phase_begin(f, 0);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 9) {
+        wake_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 10;
+        wake_phase_begin(f, 1);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 10) {
+        wake_phase_end();
         f->done = 1;
         return;
     }

@@ -372,14 +372,20 @@ void wf__shared_free(void *object);
  * when the running context now holds the object, for writing when `write` is
  * nonzero and for reading otherwise, and nonzero when it waits, after which
  * the frame suspends and resumes holding it.  `wf__shared_unlock` ends the
- * hold.  `wf__shared_watch`, called holding the object after a guard read
- * false, ends the hold and waits until a statement that writes the object
- * ends: it returns zero when one has ended since it registered the wait, and
- * otherwise nonzero, after which the frame suspends; either way the statement
- * then acquires the object again and re-reads its guard. */
+ * hold of a statement that may have written the object, which wakes the
+ * object's watches; `wf__shared_unlock_unwritten` ends the hold of one whose
+ * block writes nothing through it, which wakes none.  `write` is the hold's
+ * kind in both, as the acquire asked for it.  `wf__shared_watch`, called
+ * holding the object after a guard read false, ends the hold and waits until
+ * a statement that writes the object ends, leaving it in a state where
+ * `test` (a `wf_wake_test` below, or NULL for none) may hold: it returns
+ * zero when one has ended since it registered the wait, and otherwise
+ * nonzero, after which the frame suspends; either way the statement then
+ * acquires the object again and re-reads its guard. */
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
-int wf__shared_watch(void *object, uint32_t write, void *frame);
+void wf__shared_unlock_unwritten(void *object, uint32_t write);
+int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test);
 /* The acquire of a statement that already holds a keyed table's entries,
  * which keeps its driver and never suspends: it returns once the running
  * context holds the object. */
@@ -495,11 +501,13 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
  * the context parks, the frame suspends, and once such a statement ends
  * the context resumes and the statement takes its units again.  Either way
  * the watch is then registered nowhere.  A release that follows the
- * statement's own false guard writes nothing and wakes no one. */
-#define WF_WATCH_SIZE 152u
+ * statement's own false guard writes nothing and wakes no one.  The test
+ * `wf__watch_object` and `wf__shared_watch` take stays in the statement's
+ * frame, unchanged, until the watch is registered nowhere. */
+#define WF_WATCH_SIZE 248u
 #define WF_WATCH_ALIGN 8u
 void wf__watch_begin(void *watch);
-void wf__watch_object(void *watch, void *object);
+void wf__watch_object(void *watch, void *object, const void *test);
 void wf__watch_table(void *watch, void *table);
 int wf__watch_park(void *watch, void *frame);
 
@@ -519,15 +527,59 @@ typedef struct wf_watch_list {
 } wf_watch_list;
 void wf__watch_unit(void *watch, wf_watch_list *list);
 void wf__watch_written(wf_watch_list *list);
-enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY, WF_WATCH_READY };
+enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY, WF_WATCH_READY, WF_WATCH_TESTED };
 void wf__watch_seen(unsigned moment);
+
+/* A wake test [SHARE-3]: a condition over one object's state that the
+ * watching statement's guard implies, so a statement that leaves the object
+ * in a state where the test is false need not wake the watch.  `program` is
+ * the test's first `length` codes in postfix order: code i in 1..4 is the
+ * value of atom i - 1, WF_WAKE_AND and WF_WAKE_OR combine the two values
+ * before them, and the one value left is the test's; length 0 is a test
+ * that always holds.  An atom compares the scalar of `width` bytes (1, 2, 4
+ * or 8) at `offset` in the state, read as signed under WF_WAKE_SIGNED and
+ * as its low bit alone under WF_WAKE_BIT, with the scalar of the same form
+ * at `other` under WF_WAKE_FIELD and otherwise with `value`, which holds
+ * the operand extended to 64 bits as the scalar is.  Unused bytes are zero,
+ * so two waiters' tests of one condition are equal byte for byte through
+ * their last used atom. */
+#define WF_WAKE_ATOMS 4u
+#define WF_WAKE_PROGRAM 7u
+#define WF_WAKE_TEST_SIZE 104u
+enum { WF_WAKE_AND = 8, WF_WAKE_OR = 9 };
+enum { WF_WAKE_EQUAL, WF_WAKE_NOT_EQUAL, WF_WAKE_LESS, WF_WAKE_LESS_EQUAL,
+       WF_WAKE_GREATER, WF_WAKE_GREATER_EQUAL };
+enum { WF_WAKE_SIGNED = 1, WF_WAKE_BIT = 2, WF_WAKE_FIELD = 4 };
+typedef struct wf_wake_atom {
+    uint32_t offset;
+    uint32_t other;
+    uint64_t value;
+    uint8_t width;
+    uint8_t flags;
+    uint8_t comparison;
+    uint8_t unused[5];
+} wf_wake_atom;
+typedef struct wf_wake_test {
+    uint8_t length;
+    uint8_t program[WF_WAKE_PROGRAM];
+    wf_wake_atom atoms[WF_WAKE_ATOMS];
+} wf_wake_test;
+
 /* Research arms share the same runtime sources: baseline (0), rejected
- * age-bounded bulk turns (1), and proposed oldest-only handoff (2). */
+ * age-bounded bulk turns (1), rejected oldest-only handoff (2), and
+ * proposed wake tests (3), whose variant WF_GUARD_WAKE_ELIGIBLE wakes every
+ * watch whose test holds below the age threshold instead of the oldest. */
 #ifndef WF_GUARD_MODE
-#define WF_GUARD_MODE 2
+#define WF_GUARD_MODE 3
 #endif
-#if WF_GUARD_MODE < 0 || WF_GUARD_MODE > 2
-#error "WF_GUARD_MODE must be 0, 1 or 2"
+#if WF_GUARD_MODE < 0 || WF_GUARD_MODE > 3
+#error "WF_GUARD_MODE must be 0, 1, 2 or 3"
+#endif
+#ifndef WF_GUARD_WAKE_ELIGIBLE
+#define WF_GUARD_WAKE_ELIGIBLE 0
+#endif
+#if WF_GUARD_WAKE_ELIGIBLE && WF_GUARD_MODE != 3
+#error "WF_GUARD_WAKE_ELIGIBLE is a variant of WF_GUARD_MODE 3"
 #endif
 #ifndef WF_GUARD_COUNTERS
 #define WF_GUARD_COUNTERS 0

@@ -18,6 +18,7 @@ mod runs;
 mod split;
 mod storage;
 mod targets;
+mod wake;
 mod work;
 
 use crate::CheckedProgram;

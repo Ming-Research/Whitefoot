@@ -19,7 +19,7 @@ lscpu
 for cpu in $(printf '%s' "$CPUS" | tr ',' ' '); do
     printf 'cpu,%s,siblings,%s\n' "$cpu" "$(cat /sys/devices/system/cpu/cpu$cpu/topology/thread_siblings_list)"
 done
-sha256sum "$OUT/baseline" "$OUT/age" "$OUT/oldest" "$OUT/twin"
+sha256sum "$OUT/baseline" "$OUT/candidate" "$OUT/a1" "$OUT/oldest" "$OUT/twin"
 python3 "$ROOT/research/experiments/guard-fairness/summarize.py" init "$OUT" 0
 printf 'path_diagnostics,%s\n' "$PATH_DIAGNOSTICS"
 if [ "$PATH_DIAGNOSTICS" = 1 ]; then
@@ -27,7 +27,8 @@ if [ "$PATH_DIAGNOSTICS" = 1 ]; then
     mkdir -p "$DIAGNOSTIC_OUT/raw"
     # Both constructions start with exactly the original emitted probe.
     cmp "$OUT/probe.ll" "$DIAGNOSTIC_OUT/probe.ll"
-    sha256sum "$DIAGNOSTIC_OUT/baseline" "$DIAGNOSTIC_OUT/age" "$DIAGNOSTIC_OUT/oldest" "$DIAGNOSTIC_OUT/probe-diagnostic.ll"
+    sha256sum "$DIAGNOSTIC_OUT/baseline" "$DIAGNOSTIC_OUT/candidate" "$DIAGNOSTIC_OUT/a1" "$DIAGNOSTIC_OUT/oldest" \
+        "$DIAGNOSTIC_OUT/probe-diagnostic.ll"
     python3 "$ROOT/research/experiments/guard-fairness/summarize.py" init "$DIAGNOSTIC_OUT" 1
 fi
 
@@ -50,7 +51,7 @@ run_one() (
 
 # Two smallest useful pilots expose spread before the fixed scale. Retain
 # their timings, but exclude them from the registered acceptance decision.
-for arm in oldest baseline age twin; do
+for arm in candidate baseline a1 oldest twin; do
     run_one pilot1 "$arm" 2 100
     run_one pilot2 "$arm" 2 100
     if [ "$PATH_DIAGNOSTICS" = 1 ] && [ "$arm" != twin ]; then
@@ -59,7 +60,7 @@ for arm in oldest baseline age twin; do
     fi
 done
 for n in 2 8 50; do
-    for arm in oldest baseline age twin; do
+    for arm in candidate baseline a1 oldest twin; do
         run_one 1 "$arm" "$n" "$K"
         # A distinct counter-enabled process follows each matching timing
         # cell. Deleting diagnostic executions recovers the original order.
@@ -69,7 +70,7 @@ for n in 2 8 50; do
     done
 done
 for n in 50 8 2; do
-    for arm in twin age baseline oldest; do run_one 2 "$arm" "$n" "$K"; done
+    for arm in twin oldest a1 baseline candidate; do run_one 2 "$arm" "$n" "$K"; done
 done
 python3 "$ROOT/research/experiments/guard-fairness/summarize.py" judge "$OUT/measurements.csv" "$K" > "$OUT/verdict.txt"
 cat "$OUT/verdict.txt"

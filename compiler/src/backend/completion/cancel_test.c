@@ -8,7 +8,10 @@
 /* These races observe broadcast wake deduplication, rather than age-based
  * selection. Keep them below the age threshold regardless of host speed;
  * shared_object_test.c supplies the clock and separately covers an aged,
- * reserved guard completing through its cancellation alternative. */
+ * reserved guard completing through its cancellation alternative. Under
+ * wake tests (WF_GUARD_MODE 3) a write below the threshold wakes only the
+ * oldest watch whose test holds, and its retry passes the notification on,
+ * so the two-context firing is followed through both retries. */
 #define WF_GUARD_TURN_AGE_NS UINT64_MAX
 #include "bridge.c"
 #include "../ordinary_values.c"
@@ -46,7 +49,7 @@ static void recovered_guard_age(void) {
         wf_context_current = &contexts[i];
         wf__watch_begin(&watches[i]);
         for (unsigned unit = 0u; unit < 5u; ++unit)
-            wf__watch_object(&watches[i], objects[unit]);
+            wf__watch_object(&watches[i], objects[unit], NULL);
         wf__watch_unit(&watches[i], &table);
     }
     wf_spin_lock(&wf_watch_lock);
@@ -59,7 +62,7 @@ static void recovered_guard_age(void) {
     wf_spin_unlock(&wf_watch_lock);
     wf_context_current = &contexts[0];
     contexts[0].shared_holds = 1u;
-    wf__watch_object(&watches[0], objects[5]);
+    wf__watch_object(&watches[0], objects[5], NULL);
     contexts[0].shared_holds = 0u;
     wf_spin_lock(&wf_watch_lock);
     CHECK(contexts[0].guard_started > 20u);
@@ -121,8 +124,8 @@ static void ordered_guard_queue(void) {
         unsigned i = registration[slot];
         wf_context_current = &contexts[i];
         wf__watch_begin(&watches[i]);
-        wf__watch_object(&watches[i], ordinary);
-        if (i == 1u) wf__watch_object(&watches[i], other);
+        wf__watch_object(&watches[i], ordinary, NULL);
+        if (i == 1u) wf__watch_object(&watches[i], other, NULL);
     }
     wf_spin_lock(&ordinary->lock);
     wf_spin_lock(&wf_watch_lock);
@@ -154,7 +157,7 @@ static void ordered_guard_queue(void) {
 
     wf_context_current = &contexts[0];
     wf__watch_begin(&watches[0]);
-    wf__watch_object(&watches[0], ordinary);
+    wf__watch_object(&watches[0], ordinary, NULL);
     wf_spin_lock(&ordinary->lock);
     CHECK(wf_guard_release_locked(ordinary, 0, &dead, &ready) == 0u);
     CHECK(ready == NULL && ordinary->reservation == &contexts[2]);
@@ -163,7 +166,7 @@ static void ordered_guard_queue(void) {
 
     wf_context_current = &contexts[2];
     wf__watch_begin(&watches[2]);
-    wf__watch_object(&watches[2], ordinary);
+    wf__watch_object(&watches[2], ordinary, NULL);
     wf_spin_lock(&ordinary->lock);
     CHECK(wf_guard_release_locked(ordinary, 0, &dead, &ready) == 0u);
     CHECK(ordinary->reservation == NULL && contexts[2].shared_turn == NULL);
@@ -304,8 +307,8 @@ static void guard_races(void) {
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(view->visible_fired == 0u);
     wf__watch_begin(&guard);
-    wf__watch_object(&guard, view);
-    wf__watch_object(&guard, view);
+    wf__watch_object(&guard, view, NULL);
+    wf__watch_object(&guard, view, NULL);
     CHECK(guard.used == 1u && view->shared.watched == 1u);
     wf__shared_unlock(view, 1u);
     fire_elsewhere(&source);
@@ -332,6 +335,11 @@ static void guard_races(void) {
     wf__body_cancel_watch(&watch, &source);
     view = wf__body_cancel_state(&watch);
     void *ordinary = wf__shared_new(1u);
+#if WF_GUARD_MODE == 3
+    /* Fixed keys make the root's watch the older one whatever the clock. */
+    wf_context_root.guard_started = 1u;
+    other.guard_started = 2u;
+#endif
     for (unsigned index = 0; index < 2; ++index) {
         wf_watch *current = index ? &other_guard : &guard;
         wf_context_current = index ? &other : &wf_context_root;
@@ -340,8 +348,8 @@ static void guard_races(void) {
         CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
         CHECK(view->visible_fired == 0u);
         wf__watch_begin(current);
-        wf__watch_object(current, view);
-        wf__watch_object(current, ordinary);
+        wf__watch_object(current, view, NULL);
+        wf__watch_object(current, ordinary, NULL);
         wf__shared_unlock(ordinary, 1u);
         wf__shared_unlock(view, 1u);
         CHECK(wf__watch_park(current, &frame) == 1);
@@ -351,8 +359,33 @@ static void guard_races(void) {
     fire_elsewhere(&source);
     CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
+#if WF_GUARD_MODE == 3
+    /* The older watch holds the firing's notification; its retry, which
+     * writes neither unit, passes it to the other, whose retry ends it. */
+    CHECK(wf_run_take(&firing_driver) == NULL);
+    CHECK(guard.used == 0u && other_guard.used == 2u);
+    CHECK(view->shared.reservation == &wf_context_root);
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    CHECK(view->visible_fired == 1u);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    wf__shared_unlock_unwritten(view, 1u);
+    CHECK(view->shared.reservation == &other);
     CHECK(wf_run_take(&firing_driver) == &other);
     CHECK(wf_run_take(&firing_driver) == NULL);
+    wf_context_current = &other;
+    wf_driver_self = &firing_driver;
+    CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    wf__shared_unlock_unwritten(view, 1u);
+    CHECK(view->shared.reservation == NULL && other.shared_turn == NULL);
+    wf_context_current = &wf_context_root;
+    wf_driver_self = &wf_driver_root;
+#else
+    CHECK(wf_run_take(&firing_driver) == &other);
+    CHECK(wf_run_take(&firing_driver) == NULL);
+#endif
     CHECK(guard.used == 0u && other_guard.used == 0u);
     CHECK(view->shared.watching == NULL && view->shared.watched == 0u);
     CHECK(((wf_shared *)ordinary)->watching == NULL);
@@ -380,8 +413,8 @@ static void guard_races(void) {
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
     wf__watch_begin(&guard);
-    wf__watch_object(&guard, view);
-    wf__watch_object(&guard, ordinary);
+    wf__watch_object(&guard, view, NULL);
+    wf__watch_object(&guard, ordinary, NULL);
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
     CHECK(wf__watch_park(&guard, &frame) == 1);
@@ -413,6 +446,63 @@ static void guard_races(void) {
     wf__shared_free(view);
     CHECK(wf__shared_release(ordinary));
     wf__shared_free(ordinary);
+
+#if WF_GUARD_MODE == 3
+    wf_test_guard_phase("cancellation guard: a false wake test on the other unit");
+    {
+        /* The ordinary unit's test, that its word is 1, stays false: a write
+         * that leaves it false wakes nothing, and the firing still wakes the
+         * watch through the cancellation state, which has no test. */
+        wf_wake_test word_is_one;
+        wf_context writer = {0};
+        memset(&word_is_one, 0, sizeof(word_is_one));
+        word_is_one.length = 1u;
+        word_is_one.program[0] = 1u;
+        word_is_one.atoms[0].value = 1u;
+        word_is_one.atoms[0].width = 8u;
+        word_is_one.atoms[0].comparison = WF_WAKE_EQUAL;
+        writer.driver = &firing_driver;
+        wf__body_cancel_source(&source);
+        wf__body_cancel_watch(&watch, &source);
+        view = wf__body_cancel_state(&watch);
+        ordinary = wf__shared_new(sizeof(uint64_t));
+        *(uint64_t *)((char *)ordinary + WF_SHARED_STATE_OFFSET) = 0u;
+        CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+        CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+        wf__watch_begin(&guard);
+        wf__watch_object(&guard, view, NULL);
+        wf__watch_object(&guard, ordinary, &word_is_one);
+        wf__shared_unlock_unwritten(ordinary, 1u);
+        wf__shared_unlock_unwritten(view, 1u);
+        CHECK(wf__watch_park(&guard, &frame) == 1);
+        wf_context_current = &writer;
+        wf_driver_self = &firing_driver;
+        CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+        *(uint64_t *)((char *)ordinary + WF_SHARED_STATE_OFFSET) = 2u;
+        wf__shared_unlock(ordinary, 1u);
+        wf_context_current = &wf_context_root;
+        wf_driver_self = &wf_driver_root;
+        CHECK(wf_run_take(&wf_driver_root) == NULL);
+        CHECK(guard.used == 2u && ((wf_shared *)ordinary)->reservation == NULL);
+        fire_elsewhere(&source);
+        CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+        CHECK(wf_run_take(&wf_driver_root) == NULL);
+        CHECK(guard.used == 0u && view->shared.watched == 0u);
+        CHECK(((wf_shared *)ordinary)->watched == 0u);
+        CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
+        CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+        CHECK(view->visible_fired == 1u);
+        wf__shared_unlock_unwritten(ordinary, 1u);
+        wf__shared_unlock_unwritten(view, 1u);
+        CHECK(view->shared.reservation == NULL && wf_context_root.shared_turn == NULL);
+        wf__body_close_cancel_watch(&watch);
+        wf__body_close_cancel_source(&source);
+        CHECK(wf__shared_release(view));
+        wf__shared_free(view);
+        CHECK(wf__shared_release(ordinary));
+        wf__shared_free(ordinary);
+    }
+#endif
 
     wf_test_guard_phase("cancellation fire: parked acquisition and retry");
     wf_context firing = {0};

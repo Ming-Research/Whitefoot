@@ -44,4 +44,7 @@ pub(crate) const TABLE_HOLD_SIZE: u64 = 304;
 
 /// Bytes of the record a guard's watch keeps in the frame; equals
 /// `WF_WATCH_SIZE` in `completion/bridge.h`.
-pub(crate) const WATCH_SIZE: u64 = 152;
+pub(crate) const WATCH_SIZE: u64 = 248;
+/// `WF_WAKE_TEST_SIZE` in `completion/bridge.h`: the bytes of one guard's
+/// wake test, which the frame keeps beside its watch.
+pub(crate) const WAKE_TEST_SIZE: u64 = 104;

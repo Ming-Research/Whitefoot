@@ -853,6 +853,61 @@ pub enum IrWorkEstimate {
     Quotient(Box<Self>, u64),
 }
 
+/// [SHARE-3] A wake test: a condition over one object target's state that
+/// the statement's guard implies, which the runtime evaluates for the watch
+/// after a statement writes the object (compiler/waiting-contexts/state-locks).
+///
+/// `values[0]` is the address of the target's state; every other value is a
+/// scalar's address in that state or an operand the registration captures,
+/// which atoms name by position. `program` combines the atoms in postfix
+/// order. A guard that implies nothing checkable has no test.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrWakeTest {
+    pub(crate) values: Vec<IrValueId>,
+    pub(crate) atoms: Vec<IrWakeAtom>,
+    pub(crate) program: Vec<IrWakeCode>,
+}
+
+/// One comparison of a wake test: the scalar at `field`'s address against
+/// `operand`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrWakeAtom {
+    pub(crate) field: usize,
+    pub(crate) comparison: IrWakeComparison,
+    pub(crate) operand: IrWakeOperand,
+}
+
+/// The right side of a wake atom, by position in [`IrWakeTest`]'s values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeOperand {
+    /// A value of the scalar's type, captured when the watch registers.
+    Value(usize),
+    /// The address of another scalar of the same type in the same state.
+    Field(usize),
+}
+
+/// A wake atom's comparison, with the scalar on the left.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeComparison {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+/// One postfix code of a wake test's program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeCode {
+    /// The value of the atom at this position.
+    Atom(u8),
+    /// Both of the two values before.
+    And,
+    /// Either of the two values before.
+    Or,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrOperation {
     Constant(IrConstant),
@@ -1222,14 +1277,18 @@ pub enum IrOperation {
         object: IrValueId,
     },
     /// [SHARE-3] a guard read false: gives up the hold and waits until a
-    /// statement that writes the object ends. Defines `Unit`.
+    /// statement that writes the object ends, leaving `test`, when there is
+    /// one, possibly true. Defines `Unit`.
     SharedWatch {
         object: IrValueId,
+        test: Option<IrWakeTest>,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
-    /// have written the object. Defines `Unit`.
+    /// have written the object when `wrote`, and otherwise after one whose
+    /// block writes nothing through it. Defines `Unit`.
     SharedUnlock {
         object: IrValueId,
+        wrote: bool,
     },
     /// [SHARE-1] a new shared map object of `nominal`, whose entries are
     /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
@@ -1408,10 +1467,12 @@ pub enum IrOperation {
         record: IrRecord,
     },
     /// Watches the object `object` names for a statement that writes its
-    /// state outside its tables. Defines `Unit`.
+    /// state outside its tables and leaves `test`, when there is one,
+    /// possibly true. Defines `Unit`.
     WatchObject {
         record: IrRecord,
         object: IrValueId,
+        test: Option<IrWakeTest>,
     },
     /// Watches the table `table` for a statement that writes an entry of it
     /// or holds it whole. Defines `Unit`.

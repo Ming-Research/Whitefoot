@@ -3,6 +3,7 @@
 #![allow(clippy::panic)]
 
 mod overlap_storage;
+mod wake;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
 use crate::{

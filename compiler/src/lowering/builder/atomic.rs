@@ -24,9 +24,15 @@ pub(super) struct AtomicRegion {
 }
 #[derive(Clone)]
 struct TargetRegion {
+    binding: BindingId,
     object: IrValueId,
     nominal: IrNominalId,
+    /// The address of the object's state.
+    state: IrValueId,
     owned: bool,
+    /// Whether the statement's block or guard may write the state, so that
+    /// leaving the block releases it as written [SHARE-3].
+    wrote: bool,
     lock: Lock,
 }
 #[derive(Clone)]
@@ -226,9 +232,12 @@ impl IrBuilder<'_> {
                     .insert(target.binding, region.targets.len());
                 members.push(region.targets.len());
                 region.targets.push(TargetRegion {
+                    binding: target.binding,
                     object,
                     nominal,
+                    state: field,
                     owned: !target.borrowed,
+                    wrote: !target.reads,
                     lock,
                 });
             }
@@ -563,7 +572,14 @@ impl IrBuilder<'_> {
     fn atomic_binding_target(&self, region: &AtomicRegion, binding: BindingId) -> Option<usize> {
         region.target_bindings.get(&binding).copied()
     }
-    fn release_groups(&mut self, region: &AtomicRegion) -> Result<(), LoweringFailure> {
+    /// Gives up every group, last first. After a false guard, `watched`, the
+    /// statement wrote nothing; on leaving its block it releases an object
+    /// as written when the block or guard may write it.
+    fn release_groups(
+        &mut self,
+        region: &AtomicRegion,
+        watched: bool,
+    ) -> Result<(), LoweringFailure> {
         for group in region.groups.iter().rev() {
             let done = group
                 .flag
@@ -586,6 +602,7 @@ impl IrBuilder<'_> {
                             IrType::Unit,
                             IrOperation::SharedUnlock {
                                 object: target.object,
+                                wrote: target.wrote && !watched,
                             },
                         )?;
                     }
@@ -673,11 +690,19 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(watch);
+        let targets = region
+            .targets
+            .iter()
+            .map(|target| target.binding)
+            .collect::<Vec<_>>();
         if region.targets.len() == 1 && matches!(region.targets[0].lock, Lock::Object) {
+            let target = &region.targets[0];
+            let test = self.wake_test(guard, target.binding, target.state, &targets)?;
             self.define(
                 IrType::Unit,
                 IrOperation::SharedWatch {
-                    object: region.targets[0].object,
+                    object: target.object,
+                    test,
                 },
             )?;
         } else {
@@ -688,11 +713,14 @@ impl IrBuilder<'_> {
                     let target = &region.targets[*member];
                     match &target.lock {
                         Lock::Object => {
+                            let test =
+                                self.wake_test(guard, target.binding, target.state, &targets)?;
                             self.define(
                                 IrType::Unit,
                                 IrOperation::WatchObject {
                                     record,
                                     object: target.object,
+                                    test,
                                 },
                             )?;
                         }
@@ -708,7 +736,7 @@ impl IrBuilder<'_> {
                     }
                 }
             }
-            self.release_groups(region)?;
+            self.release_groups(region, true)?;
             self.define(IrType::Unit, IrOperation::WatchPark { record })?;
         }
         self.terminate(IrTerminator::Jump {
@@ -786,7 +814,7 @@ impl IrBuilder<'_> {
         Ok(())
     }
     fn leave_atomic(&mut self, region: &AtomicRegion) -> Result<(), LoweringFailure> {
-        self.release_groups(region)?;
+        self.release_groups(region, false)?;
         self.append_drops(
             region
                 .targets
