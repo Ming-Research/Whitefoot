@@ -39,7 +39,9 @@ on:
       experiment:
         description: The compute scoreboard, code placement, or the par-suite baseline
         type: choice
-        options: [scoreboard, placement, par-suite]
+        # v2h-perf is temporary, for the loop { match } line's third phase, and
+        # is removed before claude/v2h-attribution-1012 is ready.
+        options: [scoreboard, placement, par-suite, v2h-perf]
         default: scoreboard
       placement_runner:
         description: Where placement or par-suite runs, GitHub or the owner's i9-14900K runner
@@ -432,3 +434,61 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: where v2h's and wasmi's CoreMark time goes, per handler, by
+  # cpu-clock sampling (no hardware counters needed). Runs on the 14900K only.
+  v2h-perf:
+    if: inputs.experiment == 'v2h-perf'
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the profiler and toolchain
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"; fi
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          perf --version
+          cat /proc/sys/kernel/perf_event_paranoid
+          for tool in /usr/bin/clang cargo make perl python3 git; do command -v "$tool" > /dev/null || { echo "missing $tool"; exit 1; }; done
+
+      - name: Build
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/v2h-perf"
+          rm -rf "$out"; mkdir -p "$out"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/v2h.wf"
+          python3 "$gen" "$out/names.wf" --names > "$out/names.txt"
+          compiler/target/gate/whitefootc "$out/v2h.wf" -o "$out/v2h" > /dev/null
+          rm -rf "$RUNNER_TEMP/sf"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
+
+      - name: Sample each interpreter
+        run: |
+          out="$RUNNER_TEMP/v2h-perf"
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          for engine in v2h wasmi; do
+            if [ "$engine" = v2h ]; then cmd="$out/v2h"; else cmd="$RUNNER_TEMP/wasmi/bin/wasmi"; fi
+            echo "=== $engine"
+            for round in 1 2 3; do
+              taskset -c 2 perf stat -e cpu-clock,task-clock $cmd coremark.wasm 0x0 0x0 0x66 2000 2>&1 | grep -E "Iterations/Sec|crcfinal|task-clock|seconds time" || true
+            done
+            taskset -c 2 perf record -q -e cpu-clock -F 20000 -o "$out/$engine.data" $cmd coremark.wasm 0x0 0x0 0x66 2000 > /dev/null 2>&1 || { echo "perf record failed"; continue; }
+            perf report -q -i "$out/$engine.data" --stdio --sort symbol --percent-limit 0.3 2>/dev/null | head -80 > "$out/$engine.top"
+            if [ "$engine" = v2h ]; then
+              awk -v names="$out/names.txt" 'BEGIN { while ((getline n < names) > 0) name[i++] = n }
+                { line = $0; if (match(line, /wf_run[.](body[.])?arm[.][0-9]+/)) { a = substr(line, RSTART, RLENGTH); sub(/.*arm[.]/, "", a); line = line "  <" name[a + 0] ">" } print line }' "$out/$engine.top"
+            else
+              cat "$out/$engine.top"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v2h-perf
+          path: ${{ runner.temp }}/v2h-perf/*.top
