@@ -59,6 +59,8 @@ jobs:
             'gh api --method GET --paginate ' 'gh api --method GET '
           check 'a list of pull requests sends its fields in the body' \
             'gh api --method GET --paginate ' 'gh api --paginate '
+          check 'a reopening whose branch has moved skips' \
+            'if [ "$action" = opened ] && [ "$head_repo"' 'if [ "$head_repo"'
           cat results.tsv
           wrong=0
           while IFS=$'\t' read -r name status; do

@@ -13,14 +13,18 @@
 # than twice. The comparison errs only toward checking twice: a run is created
 # after its push, so a pull request it treats as earlier really is.
 #
-# The run of an opening or reopening checks the head it was raised for only
-# while the pull request still has that head. It is created some seconds after
-# the pull request, and a push right after the opening has a run of its own
-# that counts the pull request as earlier and checks the new head, so the
-# opening's run decides run=false once the pull request's head has moved. That
-# run has a concurrency group apart from the pushes' (gate.yml, io-hosts.yml),
-# so it never cancels a push run. A pull request from a fork is not asked: no
-# push to the fork starts a run here, so its opening always runs.
+# The run of an opening checks the head it was raised for only while the pull
+# request still has that head when the run decides. It is created some seconds
+# after the pull request, and a push right after the opening has a run of its
+# own that counts the pull request as earlier and checks the new head, so the
+# opening's run decides run=false once the pull request's head has moved; this
+# assumes every move of the branch is a push that starts a run, which a push
+# made with a workflow's own token would not. The run has a concurrency group
+# apart from the pushes' (gate.yml, io-hosts.yml), so it never cancels a push
+# run. A reopening always runs: a push while the pull request was closed was
+# skipped as having no open pull request, so no other run may check its head.
+# A pull request from a fork is not asked: no push to the fork starts a run
+# here, so its opening always runs.
 #
 # It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER and GITHUB_RUN_ID, as Actions
@@ -54,7 +58,7 @@ case "$GITHUB_EVENT_NAME" in
                 head_sha=$(event .pull_request.head.sha)
                 head_repo=$(event .pull_request.head.repo.full_name)
                 tip=$head_sha
-                if [ "$head_repo" = "$GITHUB_REPOSITORY" ]; then
+                if [ "$action" = opened ] && [ "$head_repo" = "$GITHUB_REPOSITORY" ]; then
                     tip=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .head.sha)
                     case "$tip" in
                         '' | *[!0-9a-f]*)

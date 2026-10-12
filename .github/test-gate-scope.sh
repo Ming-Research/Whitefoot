@@ -141,22 +141,23 @@ decides 'ready opened from a fork' pull_request refs/pull/5/merge "$opened_from_
 expect 'ready opened from a fork' true true 'opened, ready'
 tip=$head_a
 
-# The opening or reopening of a pull request of this repository asks for the
-# pull request's current head and runs while it is the head the run was for.
+# The opening of a pull request of this repository asks for the pull
+# request's current head and runs while it is the head the run was for; a
+# reopening runs without asking, as a push while it was closed was skipped.
 decides 'draft opened' pull_request refs/pull/5/merge "$opened_draft" '[]'
 expect 'draft opened' true false 'opened as a draft'
 grep -q 'repos/org/repo/pulls/5' "$FAKE_GH_LOG" || fail 'draft opened: the pull request was not queried'
 decides 'ready opened' pull_request refs/pull/5/merge "$opened_ready" '[]'
 expect 'ready opened' true true 'opened, ready'
-decides 'draft reopened' pull_request refs/pull/5/merge "$reopened_draft" '[]'
+decides 'draft reopened' pull_request refs/pull/5/merge "$reopened_draft" '[]' refuse
 expect 'draft reopened' true false 'reopened as a draft'
-decides 'ready reopened' pull_request refs/pull/5/merge "$reopened_ready" '[]'
+decides 'ready reopened' pull_request refs/pull/5/merge "$reopened_ready" '[]' refuse
 expect 'ready reopened' true true 'reopened, ready'
 tip=$head_b
 decides 'ready opened, branch moved' pull_request refs/pull/5/merge "$opened_ready" '[]'
 expect 'ready opened, branch moved' false false 'opened at aaaaaaaaaaaa, its branch has moved to bbbbbbbbbbbb, whose push run checks it'
-decides 'draft reopened, branch moved' pull_request refs/pull/5/merge "$reopened_draft" '[]'
-expect 'draft reopened, branch moved' false false 'reopened at aaaaaaaaaaaa, its branch has moved to bbbbbbbbbbbb'
+decides 'draft reopened, branch moved' pull_request refs/pull/5/merge "$reopened_draft" '[]' refuse
+expect 'draft reopened, branch moved' true false 'reopened as a draft'
 tip=null
 refuses 'unreadable head' pull_request refs/pull/5/merge "$opened_ready" '[]'
 grep -q 'unexpected head of pull request 5' "$work/err" || fail 'unreadable head: wrong refusal'
