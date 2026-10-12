@@ -757,7 +757,7 @@ fn main() -> status: std::process::ExitStatus pure {
     });
     for (tag, field) in [(0, "ptr"), (1, "i64")] {
         assert!(
-            llvm.contains(&format!("%wf.t.{choice}.v{tag} = type {{ i32, {field} }}")),
+            llvm.contains(&format!("%wf.t.{choice}.v{tag} = type {{ i8, {field} }}")),
             "both variant views put their word after the same tag: {llvm}"
         );
     }

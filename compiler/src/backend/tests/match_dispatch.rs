@@ -1985,18 +1985,21 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         assert_handler_load(&module, "wf_run", 8, 4);
         assert_handler_load(&module, "wf_other_run", 16, 4);
-        super::layout_transfers::assert_typed_transfer(
-            emitted_body(&module, "copy_cell_into"),
-            &[
-                (0, "i8"),
-                (1, "i8"),
-                (2, "i8"),
-                (3, "i8"),
-                (4, "i32"),
-                (8, "ptr"),
-                (16, "ptr"),
-            ],
-        );
+        // The public result and the private target both carry both handler words.
+        for name in ["copy_cell", "copy_cell_into"] {
+            super::layout_transfers::assert_typed_transfer(
+                emitted_body(&module, name),
+                &[
+                    (0, "i8"),
+                    (1, "i8"),
+                    (2, "i8"),
+                    (3, "i8"),
+                    (4, "i32"),
+                    (8, "ptr"),
+                    (16, "ptr"),
+                ],
+            );
+        }
         let made = emitted_body(&module, "make_add");
         assert!(
             made.contains("store ptr @wf_run.arm.0,")
