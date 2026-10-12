@@ -520,55 +520,6 @@ impl Module {
     }
 }
 
-#[cfg(test)]
-mod declaration_tests {
-    use super::*;
-
-    #[test]
-    fn compatible_declarations_are_idempotent_within_and_across_modules() {
-        let signature = Signature::new("callee", "i32", vec![Parameter::unnamed("ptr")]);
-        let mut module = Module::default();
-        module.declare(signature.clone());
-        module.declare(signature.clone());
-        let mut other = Module::default();
-        other.declare(signature);
-        module.append(other);
-        assert_eq!(
-            module.render().matches("declare i32 @callee(ptr)").count(),
-            1
-        );
-        assert!(module.repeated_declaration().is_none());
-    }
-
-    #[test]
-    fn incompatible_declarations_and_child_conflicts_remain_invalid() {
-        let original = Signature::new("callee", "void", Vec::new());
-        for change in ["result", "parameter", "attribute"] {
-            let mut conflicting = original.clone();
-            match change {
-                "result" => conflicting.result = "i32".into(),
-                "parameter" => conflicting.parameters.push(Parameter::unnamed("ptr")),
-                "attribute" => conflicting.suffix = " noreturn".into(),
-                _ => unreachable!(),
-            }
-            let mut child = Module::default();
-            child.declare(original.clone());
-            child.declare(conflicting.clone());
-            assert_eq!(child.repeated_declaration(), Some("callee"));
-            let mut parent = Module::default();
-            parent.declare(conflicting.clone());
-            parent.append(child);
-            assert_eq!(parent.repeated_declaration(), Some("callee"));
-            let mut parent = Module::default();
-            parent.declare(original.clone());
-            let mut child = Module::default();
-            child.declare(conflicting);
-            parent.append(child);
-            assert_eq!(parent.repeated_declaration(), Some("callee"));
-        }
-    }
-}
-
 impl Write for FunctionBody {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         self.push_str(text);
@@ -796,5 +747,54 @@ impl ModelReader<'_> {
                 .map(|_| self.integer())
                 .collect::<Option<_>>()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    #[test]
+    fn compatible_declarations_are_idempotent_within_and_across_modules() {
+        let signature = Signature::new("callee", "i32", vec![Parameter::unnamed("ptr")]);
+        let mut module = Module::default();
+        module.declare(signature.clone());
+        module.declare(signature.clone());
+        let mut other = Module::default();
+        other.declare(signature);
+        module.append(other);
+        assert_eq!(
+            module.render().matches("declare i32 @callee(ptr)").count(),
+            1
+        );
+        assert!(module.repeated_declaration().is_none());
+    }
+
+    #[test]
+    fn incompatible_declarations_and_child_conflicts_remain_invalid() {
+        let original = Signature::new("callee", "void", Vec::new());
+        for change in ["result", "parameter", "attribute"] {
+            let mut conflicting = original.clone();
+            match change {
+                "result" => conflicting.result = "i32".into(),
+                "parameter" => conflicting.parameters.push(Parameter::unnamed("ptr")),
+                "attribute" => conflicting.suffix = " noreturn".into(),
+                _ => unreachable!(),
+            }
+            let mut child = Module::default();
+            child.declare(original.clone());
+            child.declare(conflicting.clone());
+            assert_eq!(child.repeated_declaration(), Some("callee"));
+            let mut parent = Module::default();
+            parent.declare(conflicting.clone());
+            parent.append(child);
+            assert_eq!(parent.repeated_declaration(), Some("callee"));
+            let mut parent = Module::default();
+            parent.declare(original.clone());
+            let mut child = Module::default();
+            child.declare(conflicting);
+            parent.append(child);
+            assert_eq!(parent.repeated_declaration(), Some("callee"));
+        }
     }
 }
