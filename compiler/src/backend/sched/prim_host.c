@@ -27,6 +27,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
 #endif
@@ -88,35 +91,50 @@ int wf_prim_thread_start(
  * process may use only a few CPUs. EINVAL asks for more space, not a count
  * of the machine's online CPUs. Bound this probe at one million CPU bits
  * (128 KiB); failure within that bound is an unknown answer, not permission
- * to substitute a wider CPU set. Count and performance-level queries share
- * the same reader and release the successful mask after using it. */
+ * to substitute a wider CPU set. The initial 8192 bits live in the caller's
+ * stack; larger masks use host mappings, keeping these queries independent
+ * of the program's allocator. Count and performance-level queries share the
+ * same reader and release a successful mapping after using it. */
+#define WF_PRIM_AFFINITY_INITIAL_CPUS 8192u
 #define WF_PRIM_AFFINITY_CPU_LIMIT (1u << 20)
 typedef struct {
+    _Alignas(cpu_set_t) unsigned long local[WF_PRIM_AFFINITY_INITIAL_CPUS
+                                          / (CHAR_BIT * sizeof(unsigned long))];
     cpu_set_t *cpus;
     size_t bytes;
     unsigned width;
+    int mapped;
 } wf_prim_affinity;
+
+static void wf_prim_release_affinity(wf_prim_affinity *affinity) {
+    if (affinity->mapped) {
+        (void)munmap(affinity->cpus, affinity->bytes);
+        affinity->mapped = 0;
+    }
+}
 
 /* 1 supplies a mask, 0 means affinity is unavailable, -1 means this probe
  * could not read it. Only unavailable affinity admits the sysconf route. */
 static int wf_prim_read_affinity(wf_prim_affinity *affinity) {
-    unsigned width = CPU_SETSIZE;
-    while (width <= WF_PRIM_AFFINITY_CPU_LIMIT) {
-        size_t bytes = CPU_ALLOC_SIZE(width);
-        cpu_set_t *cpus = CPU_ALLOC(width);
-        if (cpus == NULL) return -1;
-        CPU_ZERO_S(bytes, cpus);
-        if (sched_getaffinity(0, bytes, cpus) == 0) {
-            *affinity = (wf_prim_affinity){cpus, bytes, width};
-            return 1;
-        }
+    affinity->cpus = (cpu_set_t *)(void *)affinity->local;
+    affinity->bytes = sizeof(affinity->local);
+    affinity->width = WF_PRIM_AFFINITY_INITIAL_CPUS;
+    affinity->mapped = 0;
+    for (;;) {
+        CPU_ZERO_S(affinity->bytes, affinity->cpus);
+        if (sched_getaffinity(0, affinity->bytes, affinity->cpus) == 0) return 1;
         int error = errno;
-        CPU_FREE(cpus);
+        wf_prim_release_affinity(affinity);
         if (error == ENOSYS || error == ENOTSUP) return 0;
-        if (error != EINVAL || width > WF_PRIM_AFFINITY_CPU_LIMIT / 2u) return -1;
-        width *= 2u;
+        if (error != EINVAL || affinity->width > WF_PRIM_AFFINITY_CPU_LIMIT / 2u) return -1;
+        affinity->width *= 2u;
+        affinity->bytes = CPU_ALLOC_SIZE(affinity->width);
+        void *cpus = mmap(NULL, affinity->bytes, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (cpus == MAP_FAILED) return -1;
+        affinity->cpus = cpus;
+        affinity->mapped = 1;
     }
-    return -1;
 }
 #endif
 
@@ -132,7 +150,7 @@ unsigned wf_prim_online_cpus(void) {
     int state = wf_prim_read_affinity(&affinity);
     if (state > 0) {
         int permitted = CPU_COUNT_S(affinity.bytes, affinity.cpus);
-        CPU_FREE(affinity.cpus);
+        wf_prim_release_affinity(&affinity);
         return permitted > 0 ? (unsigned)permitted : 0u;
     }
     if (state < 0) return 0u;
@@ -246,7 +264,7 @@ unsigned wf_prim_cpu_levels(void) {
             continue;
         }
         if (!wf_prim_cpu_capacity(cpu, &capacity)) {
-            CPU_FREE(affinity.cpus);
+            wf_prim_release_affinity(&affinity);
             return 1u;
         }
         for (index = 0; index < levels; index += 1u) {
@@ -258,13 +276,13 @@ unsigned wf_prim_cpu_levels(void) {
             continue;
         }
         if (levels == WF_PRIM_CPU_LEVEL_CEILING) {
-            CPU_FREE(affinity.cpus);
+            wf_prim_release_affinity(&affinity);
             return WF_PRIM_CPU_LEVEL_CEILING;
         }
         seen[levels] = capacity;
         levels += 1u;
     }
-    CPU_FREE(affinity.cpus);
+    wf_prim_release_affinity(&affinity);
     return levels > 0u ? levels : 1u;
 #else
     return 1u;

@@ -391,13 +391,26 @@ sched-policy-test: sched-split-policy-cases $(COMPLETION_TMP)/sched-policy $(COM
 	done
 
 # The Linux affinity probe shares the ordinary scheduler entry/core objects;
-# only its included host primitive substitutes the kernel/allocator answers.
+# only its included host primitive substitutes the kernel/mapping answers.
 ifeq ($(shell uname -s),Linux)
 $(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o: $(SCHED_DIR)/prim_host.c
 $(COMPLETION_TMP)/cpu-affinity-probe: $(SCHED_PROBE_OBJECT_DIR)/entry.o $(SCHED_PROBE_OBJECT_DIR)/core.o $(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 .PHONY: cpu-affinity-test
-cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe
+cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe $(SCHED_PROBE_OBJECT_DIR)/prim_host.o
+	nm -u "$(SCHED_PROBE_OBJECT_DIR)/prim_host.o" > "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"
+	@pattern='[[:space:]](malloc|free|calloc|realloc|aligned_alloc|posix_memalign|__sched_cpualloc|__sched_cpufree)(@.*)?$$'; \
+		for symbol in malloc free calloc realloc aligned_alloc posix_memalign __sched_cpualloc __sched_cpufree 'malloc@GLIBC_2.2.5'; do \
+			printf '%s\n' " U $$symbol" > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \
+			grep -Eq "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt" || exit 1; \
+		done; \
+		printf '%s\n' ' U mmap' > "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; \
+		if grep -Eq "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbol-control.txt"; then \
+			echo 'cpu-affinity-test: allocator import check refused mmap' >&2; exit 1; \
+		else status=$$?; test $$status = 1 || exit $$status; fi; \
+		if grep -E "$$pattern" "$(COMPLETION_TMP)/cpu-affinity-symbols.txt"; then \
+			echo 'cpu-affinity-test: production CPU queries import the program allocator' >&2; exit 1; \
+		else status=$$?; test $$status = 1 || exit $$status; fi
 	"$(COMPLETION_TMP)/cpu-affinity-probe"
 sched-policy-test: cpu-affinity-test
 endif

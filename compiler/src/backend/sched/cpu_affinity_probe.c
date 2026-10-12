@@ -1,7 +1,9 @@
-/* Linux host-query regression: the supplied kernel needs a wider affinity
- * mask than cpu_set_t and permits exactly three CPUs, two above CPU_SETSIZE.
- * The old primitive reports the unrelated online count and cannot inspect
- * those CPUs' performance levels. Failure fixtures guard against replacing
+/* Linux host-query regression: the supplied kernel permits exactly three
+ * CPUs, including CPUs above CPU_SETSIZE, in either the initial stack mask
+ * or a mask reached by two mapped growth steps. The old fixed-mask primitive
+ * reports the unrelated online count and cannot inspect those CPUs' levels;
+ * the heap-mask replacement unnecessarily depends on the program allocator.
+ * Failure fixtures guard against replacing
  * an unreadable restricted set with that online count. This image includes
  * the production primitive with local host-call substitutions; no shipping
  * branch selects a fixture. Keep beside the scheduler policy probes while
@@ -16,35 +18,54 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #define CHECK(test) do { if (!(test)) { \
     fprintf(stderr, "cpu-affinity-probe:%d: %s\n", __LINE__, #test); exit(1); \
 } } while (0)
 
-enum { GROW, UNAVAILABLE, UNSUPPORTED, DENIED, FORBIDDEN, EMPTY, TOO_WIDE,
-       ALLOCATION_REFUSED, GROWTH_ALLOCATION_REFUSED };
+enum { FIT, GROW, UNAVAILABLE, UNSUPPORTED, DENIED, FORBIDDEN, EMPTY, TOO_WIDE,
+       MAPPING_REFUSED, GROWTH_MAPPING_REFUSED };
 static unsigned fixture;
-static unsigned attempts, allocations, frees, online_reads, capacity_reads;
-static size_t previous_bytes;
-static unsigned fixture_cpus[3] = {5u, CPU_SETSIZE + 17u, 3u * CPU_SETSIZE + 19u};
-static cpu_set_t *probe_cpu_alloc(unsigned width) {
-    ++allocations;
-    if ((fixture == ALLOCATION_REFUSED && allocations == 1u)
-        || (fixture == GROWTH_ALLOCATION_REFUSED && allocations == 2u)) return NULL;
-    return malloc(CPU_ALLOC_SIZE(width));
+static unsigned attempts, mappings, unmaps, online_reads, capacity_reads;
+static size_t previous_bytes, required_bytes, mapped_bytes;
+static void *mapped_mask;
+static unsigned fixture_cpus[3];
+static void *probe_mask_map(void *address, size_t bytes, int protections,
+                            int flags, int file, off_t offset) {
+    CHECK(address == NULL && mapped_mask == NULL);
+    CHECK(protections == (PROT_READ | PROT_WRITE));
+    CHECK(flags == (MAP_PRIVATE | MAP_ANONYMOUS) && file == -1 && offset == 0);
+    ++mappings;
+    if ((fixture == MAPPING_REFUSED && mappings == 1u)
+        || (fixture == GROWTH_MAPPING_REFUSED && mappings == 2u)) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+    }
+    mapped_mask = mmap(address, bytes, protections, flags, file, offset);
+    CHECK(mapped_mask != MAP_FAILED);
+    mapped_bytes = bytes;
+    return mapped_mask;
 }
-static void probe_cpu_free(cpu_set_t *cpus) { ++frees; free(cpus); }
+static int probe_mask_unmap(void *mask, size_t bytes) {
+    CHECK(mask == mapped_mask && bytes == mapped_bytes);
+    CHECK(munmap(mask, bytes) == 0);
+    ++unmaps;
+    mapped_mask = NULL;
+    mapped_bytes = 0u;
+    return 0;
+}
 
 static int probe_getaffinity(pid_t process, size_t bytes, cpu_set_t *cpus) {
     CHECK(process == 0);
-    CHECK(bytes == (previous_bytes == 0u ? CPU_ALLOC_SIZE(CPU_SETSIZE) : 2u * previous_bytes));
+    CHECK(bytes == (previous_bytes == 0u ? 1024u : 2u * previous_bytes));
     previous_bytes = bytes;
     ++attempts;
     if (fixture == UNAVAILABLE) { errno = ENOSYS; return -1; }
     if (fixture == UNSUPPORTED) { errno = ENOTSUP; return -1; }
     if (fixture == DENIED) { errno = EACCES; return -1; }
     if (fixture == FORBIDDEN) { errno = EPERM; return -1; }
-    if (fixture == TOO_WIDE || bytes < CPU_ALLOC_SIZE(4u * CPU_SETSIZE)) {
+    if (fixture == TOO_WIDE || bytes < required_bytes) {
         errno = EINVAL;
         return -1;
     }
@@ -85,45 +106,56 @@ static int probe_capacity_close(int file) { CHECK(file >= 100 && file <= 102); r
 #define open probe_capacity_open
 #define read probe_capacity_read
 #define close probe_capacity_close
-#undef CPU_ALLOC
-#define CPU_ALLOC(width) probe_cpu_alloc(width)
-#undef CPU_FREE
-#define CPU_FREE(cpus) probe_cpu_free(cpus)
+#define mmap probe_mask_map
+#define munmap probe_mask_unmap
 #include "prim_host.c"
 #undef sched_getaffinity
 #undef sysconf
 #undef open
 #undef read
 #undef close
-#undef CPU_ALLOC
-#undef CPU_FREE
+#undef mmap
+#undef munmap
 
 static void reset(unsigned mode) {
+    CHECK(mapped_mask == NULL);
     fixture = mode;
-    attempts = allocations = frees = online_reads = capacity_reads = 0u;
+    attempts = mappings = unmaps = online_reads = capacity_reads = 0u;
     previous_bytes = 0u;
+    int grow = mode == GROW || mode == TOO_WIDE
+        || mode == MAPPING_REFUSED || mode == GROWTH_MAPPING_REFUSED;
+    unsigned width = grow ? 8192u : CPU_SETSIZE;
+    fixture_cpus[0] = 5u;
+    fixture_cpus[1] = width + 17u;
+    fixture_cpus[2] = 3u * width + 19u;
+    required_bytes = grow ? 4096u : 1024u;
 }
 
 int main(void) {
-    reset(GROW);
-    CHECK(wf_prim_online_cpus() == 3u);
-    CHECK(attempts == 3u && allocations == 3u && frees == 3u && online_reads == 0u);
-    reset(GROW);
-    CHECK(wf_prim_cpu_levels() == 2u);
-    CHECK(attempts == 3u && frees == 3u && capacity_reads == 3u && online_reads == 0u);
-    for (unsigned mode = UNAVAILABLE; mode <= GROWTH_ALLOCATION_REFUSED; ++mode) {
+    for (unsigned mode = FIT; mode <= GROW; ++mode) {
+        reset(mode);
+        CHECK(wf_prim_online_cpus() == 3u);
+        CHECK(attempts == (mode == FIT ? 1u : 3u));
+        CHECK(mappings == (mode == FIT ? 0u : 2u) && unmaps == mappings && online_reads == 0u);
+        reset(mode);
+        CHECK(wf_prim_cpu_levels() == 2u);
+        CHECK(attempts == (mode == FIT ? 1u : 3u));
+        CHECK(mappings == (mode == FIT ? 0u : 2u) && unmaps == mappings);
+        CHECK(capacity_reads == 3u && online_reads == 0u);
+    }
+    for (unsigned mode = UNAVAILABLE; mode <= GROWTH_MAPPING_REFUSED; ++mode) {
         reset(mode);
         int unavailable = mode == UNAVAILABLE || mode == UNSUPPORTED;
         CHECK(wf_prim_online_cpus() == (unavailable ? 8192u : 0u));
         CHECK(online_reads == (unavailable ? 1u : 0u));
-        CHECK(frees == allocations - (mode == ALLOCATION_REFUSED || mode == GROWTH_ALLOCATION_REFUSED));
+        CHECK(unmaps == mappings - (mode == MAPPING_REFUSED || mode == GROWTH_MAPPING_REFUSED));
         if (mode == TOO_WIDE) {
             CHECK(previous_bytes == CPU_ALLOC_SIZE(WF_PRIM_AFFINITY_CPU_LIMIT));
             CHECK(attempts > 3u);
         }
         reset(mode);
         CHECK(wf_prim_cpu_levels() == 1u && online_reads == 0u);
-        CHECK(frees == allocations - (mode == ALLOCATION_REFUSED || mode == GROWTH_ALLOCATION_REFUSED));
+        CHECK(unmaps == mappings - (mode == MAPPING_REFUSED || mode == GROWTH_MAPPING_REFUSED));
     }
     /* The default worker query calls this same primitive, not a separate
      * topology path. Its ordinary entry configuration sees three lanes. */
@@ -132,6 +164,6 @@ int main(void) {
     CHECK(unsetenv("WF_SCHED_REPORT") == 0);
     CHECK(unsetenv("WF_SPLIT_WORK") == 0);
     CHECK(wf__sched_lanes() == 3);
-    CHECK(attempts == 3u && frees == 3u && online_reads == 0u);
+    CHECK(attempts == 3u && unmaps == mappings && mappings == 2u && online_reads == 0u);
     return 0;
 }
