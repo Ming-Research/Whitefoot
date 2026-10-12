@@ -19,7 +19,7 @@ jobs:
       - name: Run the test against each wrong decision
         shell: bash
         run: |
-          set -u
+          set -u +e
           check() {
             name=$1 from=$2 to=$3
             dir=$(mktemp -d)
