@@ -199,6 +199,7 @@ impl Checker<'_, '_> {
                             left_spelling: self.types.render_resolved_place(a, &block_bindings)?,
                             right_spelling: self.types.render_resolved_place(b, &block_bindings)?,
                             one_argument: false,
+                            contract_indices: Vec::new(),
                         });
                     }
                 }
