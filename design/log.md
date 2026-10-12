@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Cursor transport through mixed joins
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve these three design tree changes" (translated), on the card lm-b1-design, "approve Whitefoot#371 (head 4ef89a503)'s change to the design tree node on match dispatch lowering, cursor transport at joins (B1)?" (translated), after choosing option B, "merge B1 as an exception" (translated), on the card lm-b1-adopt.
+
+Summary: The element-address decision now moves the received address through joins whose incoming values are all the received index plus the same constant, where it required every incoming value to be the index. A new decision carries the address through a join that merges a constant step with an index from elsewhere and only tests that index below a bound: the test moves onto each incoming path, the stepping path moves the received address and the others form it from the run, merged by a pointer join, instead of forming the address from the run on every path or before the test. On the 14900K it raised the stage-3 wasm interpreter's CoreMark score 1.3% with Halo unchanged, below the 2% criterion; the owner kept it as an ordinary optimization. The ledger decision also prints how many joins carry the address.
+
 ## 2026-10-12 Bool range guards, operation relations and `take_back` images
 
 Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
