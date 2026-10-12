@@ -977,3 +977,232 @@ diagnostic and timing rows, instrumentation perturbation also remains
 unquantified here. The result supports cheaper passing and short sampled
 return waits while leaving the total runtime cost and the candidate's
 rejection intact.
+
+## Wake only guards that may hold: design study
+
+The owner selected option A after the ordered-queue rejection: a guard
+known to be still false stays registered, neither woken nor handed the
+reservation. This is a study at revision `2859dec3e`; nothing is implemented
+or measured. **[code]** marks a reading of this checkout, **[data]** the
+tables above, **[inf]** this study's inference.
+
+**What a guard depends on.** [code] The guard is lowered inline in the
+waiting frame and re-evaluated by the waiter after each wake
+(`compiler/src/lowering/builder/atomic.rs:633-718`). A watch holds only
+links (`bridge.c:1220-1226`). The guard writes no path and calls no waiting
+function (`spec/kernel-spec.md:2308`), so it cannot call `now`, which writes
+its clock (`spec/kernel-spec.md:2586`). A spawn takes only value parameters
+(`spec/kernel-spec.md:2260`). [inf] A guard is therefore a function of its
+targets' states and of locals that stay fixed while it waits. A guard that
+read false under the hold becomes true only after a write to a target, never
+through time.
+
+### 1. Mechanism
+
+**Design A: registered wake tests.**
+
+*Registration.* For each target X, lowering derives a wake test T_X: a
+condition over X's state that the guard implies. It puts the guard in
+negation normal form through `band`, `bor` and `bnot`, a finite structural
+walk like [ENT-3]'s signed decomposition (`spec/kernel-spec.md:3344`).
+
+- An atom is kept when it compares an integer, `Bool` or enum-tag scalar at
+  a fixed offset in X's state (field selections and fixed-size array steps)
+  with one of: a constant, a value computed from locals at registration, or
+  another such scalar of X.
+- Every other atom becomes `true`. Since the formula is monotone, guard ⇒ T_X.
+- A test holds at most four atoms. Larger guards are weakened
+  deterministically: conjuncts are dropped, and an oversized disjunction
+  becomes `true`.
+- Lowering runs per monomorphized instance (`compiler/src/driver.rs:457`),
+  so offsets are constants in generic code too.
+
+Each descriptor (offset, width and signedness, operator, operand value) is
+stored by value in the watch before it is linked. `T_X = true` means always
+eligible, which is today's behavior. The probe's test is `out == 0` at a
+fixed offset.
+
+*Release.* The releaser evaluates the tests on the new state, under the
+object lock and `wf_watch_lock` as today's sweep is
+(`bridge.c:3056-3125`). Watches with byte-identical tests share a *bucket*,
+an intrusive age-ordered list that needs no allocation. Each bucket costs one
+evaluation, and the oldest eligible watch is the oldest head among the
+eligible buckets.
+
+- **Above T (1 ms):** reserve the oldest eligible watch
+  (`bridge.c:3016-3054`).
+- **Below T:** wake the oldest eligible watch only, with a *soft
+  notification*. Newcomers may still overtake, so these are not the rejected
+  strict turns. A false retry, or a success that wrote nothing, forwards the
+  notification to the next eligible watch inside the cutoff, as the reserved
+  pass does (`bridge.c:3636-3672`).
+- **A successful write** restarts its object's sweep from the oldest
+  eligible watch.
+
+*Invariant [inf].* A registered watch outside every active sweep's untried
+remainder has a false guard in the current state. Registration establishes
+this. A skipped watch keeps it, because a false T_X makes its guard false.
+Writes to the watch's other targets are judged by its links there.
+
+A guard that becomes persistently true therefore lies in the sweep after
+the last write before that point. Sweeps are finite (bounded by the cutoff)
+and age-ordered, and each older eligible watch that succeeds leaves. So the
+waiter gets an attempt after finitely many writes [WAIT-2]. The derivation
+is syntax-directed, and the runtime reads descriptors only: nothing names a
+field, value or program.
+
+**Alternative B: the releaser runs the guard.** The guard is outlined as a
+function over the states and a record of the locals it reads, copied at
+registration. The releaser calls it for each waiter whose targets it holds.
+
+- **Sound.** The releaser holds exclusive access, and the guard writes
+  nothing. The number of evaluations is unobservable
+  (`spec/kernel-spec.md:2318`), and which waiter goes first is an execution
+  input (`spec/kernel-spec.md:2252`).
+- **Exact** for single-object guards.
+- **Cost [inf].** It makes N indirect calls on cold records per write, under
+  the lock, on the critical path: about 2.5–7.5 µs at N = 50 at 50–150 ns
+  each, with two writes per take. That is the size of the cost being removed.
+  Opaque guards cannot share an evaluation.
+- **Limits.** A guard over an object the releaser does not hold must wake,
+  because the lock order forbids taking it (state-locks, second decision).
+  Cost, allocation and divergence move to a context that did not write the
+  guard.
+
+**Alternative C: field dependencies only.** This is cheap, but it gains
+nothing on the probe: both statements write `out` (step D).
+
+**Variant A1:** A that wakes every eligible watch below T. The sweep after
+`out = 1` empties, and the herd after `out = 0` stays.
+
+### 2. Hard cases
+
+- **Several objects.** A foreign atom becomes `true`: conjunctions still
+  filter, while `bor(q^.ready, c^.fired)` gives `T_Q = true`. Freezing
+  foreign atoms at their registration values loses wakes. Take `band(a, b)`
+  with both false: setting b is skipped, because T_B uses a frozen false a;
+  setting a is then skipped too. Caching foreign truth bits that each writer
+  updates is sound, and is deferred until cancellable waits show a cost.
+- **Cancellation and deadlines.** Firing writes the cancellation state,
+  whose link tests `fired`. A deadline is a host-wait outcome, never a guard
+  input ("Reservation lifetime" above).
+- **Waiter lifetime.** Test values are copied, not referenced. They are read
+  only while linked under `wf_watch_lock`, and unlinked under it before the
+  owner reinitializes its watch (`bridge.c:1198-1201`, `2950-2976`). Nothing
+  abandons a parked retry.
+- **Unbounded dependencies.** Helper calls (user results have no [ENT-3]
+  origin, `spec/kernel-spec.md:3325`), contents of `Box`/`Slots`, entries
+  under computed keys and floats give `true`: today's behavior, still in age
+  order. Map watches keep waking the whole map. The callee's verified
+  relations [FN-9] could serve helper guards; that is deferred.
+- **Fairness.** FIFO by age, then identity, among eligible watches.
+  Ineligible watches keep their place.
+- **Queue and reservation.** The ordered queue moves into the buckets, with
+  the anchor in the reserved watch's bucket. A pass after an exact test cannot
+  be white. An exempt write marks a rescan only for an eligible watch
+  outside the cursor.
+
+**Found along the way [code].** Every object unlock passes `write = 1`
+(`compiler/src/backend/emitter/shared.rs:958`). Every release, read-only
+blocks included, therefore starts a sweep, and the read-only forwarding
+(`bridge.c:3645-3650`) runs only after false guards. A per-target write flag
+from the block's footprint is small and belongs in the candidate.
+
+### 3. Specification impact
+
+None. Evaluating a consequence of the guard is covered by
+`spec/kernel-spec.md:2318`. A skipped statement waits on a false guard as
+[SHARE-3] requires (`2316-2317`). Choosing which eligible waiter attempts
+first chooses the atomic order, which is a [WAIT-2] input (`2252`). Progress
+(`2254`) follows from the invariant. B needs no change either. Strong
+fairness stays rejected (language/waiting/shared-objects).
+
+### 4. Cost estimate
+
+- **Compiler [inf]:** derivation and operand classification (about 300
+  lines), one IR operation, the emitter, and the write flag.
+- **Runtime [inf]:** buckets, evaluation and soft notification (about 400
+  lines of C). `WF_WATCH_SIZE` (152, `bridge.h:499`) grows by about 72 bytes.
+  Tests cover:
+  - cross-object conjunction in both orders;
+  - cancellation disjunction;
+  - a captured operand (`busy_contexts.wf`, one bucket per waiter);
+  - a helper guard;
+  - read-only forwarding;
+  - TSan.
+- **Per release [inf]:** O(buckets) evaluations of at most four loads on the
+  line just written, about 5–30 ns at one bucket. Distinct equality operands
+  give O(N) buckets; a value index would make that O(1), and is deferred.
+
+**What it can remove.** [data] At N = 50, oldest-only took 0.865/0.872 s
+against the baseline's 0.538/0.540 s: about 17.4 against 10.8 µs per take.
+Mean hold rose from 6.61 to 11.56/11.72 µs with the work unchanged. The
+ordered queue kept 1.63× with 48.6 notifications per take against 25.4.
+
+[inf] The hold window contains the holder's unlock after `out = 1`, whose
+sweep A empties. If the hold growth is that sweep, about 5 of the 6.6 µs
+excess (75%) goes, which predicts 1.10–1.15. Cutting the herd after
+`out = 0` to one wake could go lower.
+
+**Risk.** With few contexts ready, the other driver may sleep, and a
+reserved hand-off there pays a cross-driver notification
+(`bridge.c:1713-1724`), which no run has measured.
+
+### 5. Registered experiment
+
+- **Question.** Do wake tests with a single eligible notification meet the
+  criteria?
+- **Arms.** Unchanged `probe.wf` and same-source runtime modes: baseline, its
+  byte-identical twin, candidate A (mode 3), and two non-voting references,
+  A1 and mode 2.
+- **Protocol.** Native 14900K, `WF_DRIVERS=2` on CPUs 2 and 4, K = 1,000,
+  N = 2, 8 and 50, two passes with N and arm orders reversed, pilots first.
+  Five broken variants must fail, including "skip an eligible watch" and
+  "frozen foreign atoms".
+- **Diagnostics.** Existing counters, test evaluations per write, and the
+  hand-off latency from installing a reservation to its owner's acquisition,
+  sampled at the first and every 64th.
+- **Acceptance (unchanged).** Twin/base in [0.95, 1.05] in every cell;
+  N = 50 maximum wait at most 3.3 ms in both passes; candidate/base at most
+  1.10 at every N in both passes.
+- **Prediction.** At N = 50: candidate notifications (wakes plus handed
+  reservations) at most 3 per take, against 48.6; white hand-offs at most 0.1
+  per take; mean hold within 10% of baseline; acceptance met. A1 keeps at
+  least 15 wakes per take.
+- **Rejection.**
+  - Any failing cell rejects the candidate.
+  - More than 3 notifications per take at N = 50 refutes the mechanism,
+    whatever the runtime.
+  - At most 3 notifications with an N = 50 ratio of at least 1.25 in both
+    orders refutes wakeups as the main remaining cost. The hand-off samples
+    then point to reservation transfer, and the trade between fairness and
+    throughput returns to the owner.
+- **Time.** About 5 minutes of 14900K time (step D estimated 3 minutes for
+  four arms), excluding the hosted build and queueing. Firn's engine is
+  measured only after a probe pass.
+
+### 6. Recommendation
+
+**Design A** with soft single notification below T and the per-target
+write flag, keeping the reservation, its threshold and the ordered queue
+(per bucket). It removes both remaining sources on the probe at O(buckets)
+per write. B is exact but costs O(N) opaque calls under the lock, and C
+cannot see values.
+
+**Confidence 3/5.** The counts follow from the code. The runtime prediction
+rests on attributing the hold growth to the sweep after `out = 1`, which no
+measurement has separated. It would be overturned by a large hand-off
+latency, or by consumers whose guards are mostly helper calls or
+cross-object disjunctions.
+
+**Design tree.** Adoption replaces three decisions in
+`design/compiler/waiting-contexts/state-locks.md`:
+
+- the guard-watch decision (line 9): object writes would wake only eligible
+  watches, with tables unchanged;
+- proposed step B (line 11): "below the threshold writes retain the
+  baseline wake-all behavior" no longer holds;
+- the proposed ordered queue (line 13): one list with an unchanged watch
+  frame becomes buckets and a larger watch.
+
+Nothing approved in `design/language/waiting` is contradicted.
