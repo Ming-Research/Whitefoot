@@ -550,16 +550,12 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     super::super::super::contract_reads::ContractReadStep::Captured(step) =>
                         suffix.push(*step),
-                    super::super::super::contract_reads::ContractReadStep::Computed(term) => {
-                        if super::super::super::contract_reads::has_result(term) {
-                            suffix.push(PlaceStep::Index(CapturedValue::unknown()));
-                            continue;
-                        }
+                    super::super::super::contract_reads::ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
                         let call_id = u32::try_from(node.index())
                             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                         match super::super::super::contract_reads::range_term_goal(term, signature,
-                            call_id, &mut contract_position, &mut pending) {
+                            definitions, call_id, &mut contract_position, &mut pending) {
                             Some(goal) => {
                                 for (capture, template) in pending {
                                     let image = self.instantiate_goal_expression(check_context,

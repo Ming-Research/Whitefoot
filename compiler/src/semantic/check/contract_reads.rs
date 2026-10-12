@@ -23,8 +23,9 @@ pub(super) enum ContractReadStep {
     Row(CheckedEffectStep),
     /// Literal and const positions already have a captured value.
     Captured(PlaceStep),
-    /// A finite typed range position, kept intact until caller substitution.
-    Computed(CheckedRangeTerm),
+    /// A finite typed range position and the erased definition images its
+    /// local roots can name, kept intact until caller substitution.
+    Computed(CheckedRangeTerm, Vec<(BindingId, GoalExpression)>),
 }
 
 impl Checker<'_, '_> {
@@ -110,10 +111,10 @@ impl Checker<'_, '_> {
             for requirement in checked.requirements {
                 collect_goal(&requirement.template.root, signature, &mut reads);
             }
-            for clause in checked.range { collect_range_clause(&clause, signature, &mut reads); }
+            for clause in checked.range { collect_range_clause(&clause, signature, &checked.definitions, &mut reads); }
             let selectors = self.postcondition_selectors_for_signature(signature)?;
             for postcondition in self.check_range_postconditions(context, &selectors, &bindings)? {
-                collect_range_clause(&postcondition.clause, signature, &mut reads);
+                collect_range_clause(&postcondition.clause, signature, &[], &mut reads);
             }
             for selector in self.types.declarations.relation_postcondition_selectors(selectors)? {
                 let expression = self.expand_postcondition_clause(
@@ -129,10 +130,10 @@ impl Checker<'_, '_> {
         }
         self.append_range_type_invariant_contracts(&check_context, signature, &parameters)?;
         for clause in &self.body.range_facts.requirements {
-            collect_range_clause(clause, signature, &mut reads);
+            collect_range_clause(clause, signature, &[], &mut reads);
         }
         for postcondition in &self.body.range_facts.postconditions {
-            collect_range_clause(&postcondition.clause, signature, &mut reads);
+            collect_range_clause(&postcondition.clause, signature, &[], &mut reads);
         }
         Ok(reads)
     }
@@ -148,16 +149,22 @@ fn add_read(signature: &FunctionSignature, ordinal: u32, steps: Vec<ContractRead
 
 fn ordinary_read(signature: &FunctionSignature, ordinal: u32, projections: &[GoalProjection],
     reads: &mut Vec<ContractReadPath>) {
-    let Some(parameter) = signature.parameters.get(ordinal as usize)
-        .filter(|parameter| parameter.mode.is_reference()) else { return; };
+    if let Some(steps) = ordinary_steps(signature, ordinal, projections) {
+        add_read(signature, ordinal, steps, reads);
+    }
+}
+
+fn ordinary_steps(signature: &FunctionSignature, ordinal: u32,
+    projections: &[GoalProjection]) -> Option<Vec<ContractReadStep>> {
+    signature.parameters.get(ordinal as usize)
+        .filter(|parameter| parameter.mode.is_reference())?;
     // The formal's first caret denotes the referent the actual already
     // names; further Deref projections denote owned Box contents.
     let projections = if matches!(projections.first(), Some(GoalProjection::Deref)) {
         &projections[1..]
     } else {
         // A bare reference holder supplies no observation of its referent.
-        let _ = parameter;
-        return;
+        return None;
     };
     let steps = projections.iter().map(|projection| match *projection {
         GoalProjection::Deref => ContractReadStep::Row(CheckedEffectStep::Deref),
@@ -171,7 +178,7 @@ fn ordinary_read(signature: &FunctionSignature, ordinal: u32, projections: &[Goa
             CheckedEffectStep::Page(signature.parameters[ordinal as usize].declaration)),
         projection => ContractReadStep::Captured(projection.place_step()),
     }).collect();
-    add_read(signature, ordinal, steps, reads);
+    Some(steps)
 }
 
 fn collect_goal(expression: &GoalExpression, signature: &FunctionSignature,
@@ -179,7 +186,19 @@ fn collect_goal(expression: &GoalExpression, signature: &FunctionSignature,
     match expression {
         GoalExpression::Datum(GoalDatum::Parameter { ordinal, projections, .. }) =>
             ordinary_read(signature, *ordinal, projections, reads),
-        GoalExpression::Operation { arguments, .. } => {
+        GoalExpression::Operation { row, arguments, .. } => {
+            // A measure operation observes one descriptor word of its
+            // operand. Recursing into the operand datum instead would
+            // record the whole referent and lose the MSR-2 separation from
+            // its elements. Preserve every field and offset of that datum.
+            if let Some(measure) = operation_measure(*row)
+                && let [GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal, projections, ..
+                })] = arguments.as_slice()
+            {
+                ordinary_measure_read(signature, *ordinal, projections, measure, reads);
+                return;
+            }
             for argument in arguments { collect_goal(argument, signature, reads); }
         }
         _ => {}
@@ -191,36 +210,74 @@ fn collect_expanded(expression: &ExpandedClauseExpression, signature: &FunctionS
     match expression {
         ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter { ordinal, projections, .. }) =>
             ordinary_read(signature, *ordinal, projections, reads),
-        ExpandedClauseExpression::Operation { arguments, .. } => {
+        ExpandedClauseExpression::Operation { row, arguments, .. } => {
+            if let Some(measure) = operation_measure(*row)
+                && let [ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+                    ordinal, projections, ..
+                })] = arguments.as_slice()
+            {
+                ordinary_measure_read(signature, *ordinal, projections, measure, reads);
+                return;
+            }
             for argument in arguments { collect_expanded(argument, signature, reads); }
         }
         _ => {}
     }
 }
 
-fn collect_range_clause(clause: &CheckedRangeClause, signature: &FunctionSignature,
-    reads: &mut Vec<ContractReadPath>) {
-    for read in &clause.contract_reads {
-        collect_range_term(read, signature, reads);
-    }
-    for binder in &clause.binders {
-        collect_range_term(&binder.start, signature, reads);
-        collect_range_term(&binder.end, signature, reads);
-    }
-    for relation in clause.guards.iter().chain(&clause.conclusions) {
-        collect_range_term(&relation.left, signature, reads);
-        collect_range_term(&relation.right, signature, reads);
+fn operation_measure(row: GoalOperation) -> Option<CheckedMeasure> {
+    match row {
+        GoalOperation::ArrayMeasure { measure, .. }
+        | GoalOperation::BufferMeasure { measure, .. }
+        | GoalOperation::ContainerMeasure { measure, .. } => Some(measure),
+        _ => None,
     }
 }
 
-fn range_base(place: &CheckedRangePlace) -> Option<(u32, Vec<ContractReadStep>)> {
+fn ordinary_measure_read(signature: &FunctionSignature, ordinal: u32,
+    projections: &[GoalProjection], measure: CheckedMeasure,
+    reads: &mut Vec<ContractReadPath>) {
+    let mut projections = projections.to_vec();
+    projections.push(GoalProjection::Measure(measure));
+    ordinary_read(signature, ordinal, &projections, reads);
+}
+
+fn collect_range_clause(clause: &CheckedRangeClause, signature: &FunctionSignature,
+    definitions: &[(BindingId, GoalExpression)], reads: &mut Vec<ContractReadPath>) {
+    for read in &clause.contract_reads {
+        collect_range_term(read, signature, definitions, reads);
+    }
+    for binder in &clause.binders {
+        collect_range_term(&binder.start, signature, definitions, reads);
+        collect_range_term(&binder.end, signature, definitions, reads);
+    }
+    for relation in clause.guards.iter().chain(&clause.conclusions) {
+        collect_range_term(&relation.left, signature, definitions, reads);
+        collect_range_term(&relation.right, signature, definitions, reads);
+    }
+}
+
+fn range_base(place: &CheckedRangePlace, signature: &FunctionSignature,
+    definitions: &[(BindingId, GoalExpression)]) -> Option<(u32, Vec<ContractReadStep>)> {
     let CheckedRangeRoot::Binding(binding) = place.root else { return None; };
-    let steps = place.path.iter().filter_map(|step| match step {
+    let (ordinal, mut steps) = if let Some((_, expression)) =
+        definitions.iter().find(|(id, _)| *id == binding)
+    {
+        // A copy definition is erased, so a projection of that definition
+        // observes the projected original place, not the complete copied
+        // aggregate. Its expanded datum already carries the formal caret.
+        let GoalExpression::Datum(GoalDatum::Parameter { ordinal, projections, .. }) = expression
+            else { return None; };
+        (*ordinal, ordinary_steps(signature, *ordinal, projections)?)
+    } else {
+        (binding.0, Vec::new())
+    };
+    steps.extend(place.path.iter().filter_map(|step| match step {
         CheckedRangeStep::Referent => None,
         CheckedRangeStep::Field(field) => Some(ContractReadStep::Row(CheckedEffectStep::Field(*field))),
         CheckedRangeStep::BoxContent => Some(ContractReadStep::Row(CheckedEffectStep::Deref)),
-    }).collect();
-    Some((binding.0, steps))
+    }));
+    Some((ordinal, steps))
 }
 
 fn has_bound(term: &CheckedRangeTerm) -> bool {
@@ -234,7 +291,8 @@ fn has_bound(term: &CheckedRangeTerm) -> bool {
     }
 }
 
-fn range_position(term: &CheckedRangeTerm, signature: &FunctionSignature) -> ContractReadStep {
+fn range_position(term: &CheckedRangeTerm, signature: &FunctionSignature,
+    definitions: &[(BindingId, GoalExpression)]) -> ContractReadStep {
     let captured = match term {
         CheckedRangeTerm::Constant(value) => u64::try_from(*value).ok()
             .map(CapturedTerm::Literal),
@@ -250,70 +308,85 @@ fn range_position(term: &CheckedRangeTerm, signature: &FunctionSignature) -> Con
     match captured {
         Some(term) => ContractReadStep::Captured(PlaceStep::Index(
             CapturedValue::new(CaptureId::ValueDetermined, term))),
-        None => ContractReadStep::Computed(term.clone()),
+        None => ContractReadStep::Computed(term.clone(), definitions.to_vec()),
     }
 }
 
 fn collect_range_term(term: &CheckedRangeTerm, signature: &FunctionSignature,
-    reads: &mut Vec<ContractReadPath>) {
+    definitions: &[(BindingId, GoalExpression)], reads: &mut Vec<ContractReadPath>) {
     match term {
+        CheckedRangeTerm::Value(CheckedRangeRoot::Binding(binding)) => {
+            if let Some((_, expression)) = definitions.iter().find(|(id, _)| id == binding) {
+                collect_goal(expression, signature, reads);
+            }
+        }
         CheckedRangeTerm::Sum { terms, .. } => {
-            for (_, term) in terms { collect_range_term(term, signature, reads); }
+            for (_, term) in terms { collect_range_term(term, signature, definitions, reads); }
         }
         CheckedRangeTerm::Measure { place, measure, .. } => {
-            if let Some((ordinal, mut steps)) = range_base(place) {
+            if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
                 steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(*measure)));
                 add_read(signature, ordinal, steps, reads);
             }
         }
         CheckedRangeTerm::SegmentLength { place, segment } => {
-            collect_range_term(segment, signature, reads);
-            if let Some((ordinal, mut steps)) = range_base(place) {
-                if !has_bound(segment) {
-                    steps.push(range_position(segment, signature));
+            collect_range_term(segment, signature, definitions, reads);
+            if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
+                if !has_bound(segment) && !has_result(segment) {
+                    steps.push(range_position(segment, signature, definitions));
                     steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(CheckedMeasure::Length)));
                 }
                 add_read(signature, ordinal, steps, reads);
             }
         }
         CheckedRangeTerm::Read { place, indices, projection, .. } => {
-            for index in indices { collect_range_term(index, signature, reads); }
-            if let Some((ordinal, mut steps)) = range_base(place) {
-                let mut widened = false;
-                // A run has one outer index; Segments has two. Remaining
-                // indices occur in the owned projection below that element.
-                let nested = projection.iter().filter(|p| matches!(p, CheckedRangeProjection::Index(_))).count();
-                for index in indices.iter().take(indices.len().saturating_sub(nested)) {
-                    if has_bound(index) { widened = true; break; }
-                    steps.push(range_position(index, signature));
-                }
-                if !widened {
-                    for projection in projection {
-                        match *projection {
-                            CheckedRangeProjection::Index(index) => {
-                                let term = &indices[index as usize];
-                                if has_bound(term) { break; }
-                                steps.push(range_position(term, signature));
-                            }
-                            CheckedRangeProjection::Field(field) => steps.push(ContractReadStep::Row(CheckedEffectStep::Field(field))),
-                            CheckedRangeProjection::BoxContent => steps.push(ContractReadStep::Row(CheckedEffectStep::Deref)),
-                            CheckedRangeProjection::Measure(measure) => steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(measure))),
-                            CheckedRangeProjection::Payload { variant, field, .. } => steps.push(ContractReadStep::Row(CheckedEffectStep::Payload { variant, field })),
-                            CheckedRangeProjection::Tag(_) => break,
-                        }
-                    }
-                }
-                add_read(signature, ordinal, steps, reads);
-            }
+            collect_range_projection(place, indices, projection, signature, definitions, reads);
+        }
+        CheckedRangeTerm::ValueProjection { root, indices, projection, .. } => {
+            let place = CheckedRangePlace { root: *root, path: Vec::new(), fixed_length: None };
+            collect_range_projection(&place, indices, projection, signature, definitions, reads);
         }
         _ => {}
+    }
+}
+
+fn collect_range_projection(place: &CheckedRangePlace, indices: &[CheckedRangeTerm],
+    projection: &[CheckedRangeProjection], signature: &FunctionSignature,
+    definitions: &[(BindingId, GoalExpression)], reads: &mut Vec<ContractReadPath>) {
+    for index in indices { collect_range_term(index, signature, definitions, reads); }
+    if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
+        let mut widened = false;
+        // A run has one outer index; Segments has two. Remaining
+        // indices occur in the owned projection below that element.
+        let nested = projection.iter().filter(|p| matches!(p, CheckedRangeProjection::Index(_))).count();
+        for index in indices.iter().take(indices.len().saturating_sub(nested)) {
+            if has_bound(index) || has_result(index) { widened = true; break; }
+            steps.push(range_position(index, signature, definitions));
+        }
+        if !widened {
+            for projection in projection {
+                match *projection {
+                    CheckedRangeProjection::Index(index) => {
+                        let term = &indices[index as usize];
+                        if has_bound(term) || has_result(term) { break; }
+                        steps.push(range_position(term, signature, definitions));
+                    }
+                    CheckedRangeProjection::Field(field) => steps.push(ContractReadStep::Row(CheckedEffectStep::Field(field))),
+                    CheckedRangeProjection::BoxContent => steps.push(ContractReadStep::Row(CheckedEffectStep::Deref)),
+                    CheckedRangeProjection::Measure(measure) => steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(measure))),
+                    CheckedRangeProjection::Payload { variant, field, .. } => steps.push(ContractReadStep::Row(CheckedEffectStep::Payload { variant, field })),
+                    CheckedRangeProjection::Tag(_) => break,
+                }
+            }
+        }
+        add_read(signature, ordinal, steps, reads);
     }
 }
 
 /// The fixed arithmetic image of an erased range position, retaining the
 /// existing goal identities. This is proof data, never an evaluated operand.
 pub(super) fn range_term_goal(term: &CheckedRangeTerm, signature: &FunctionSignature,
-    call: u32, position: &mut u32, pending: &mut Vec<(CapturedValue, GoalExpression)>)
+    definitions: &[(BindingId, GoalExpression)], call: u32, position: &mut u32, pending: &mut Vec<(CapturedValue, GoalExpression)>)
     -> Option<GoalExpression> {
     use crate::semantic::model::{CheckedIntegerOperation as Op, IntegerType};
     let integer = CheckedType::Integer(IntegerType::U64);
@@ -323,6 +396,13 @@ pub(super) fn range_term_goal(term: &CheckedRangeTerm, signature: &FunctionSigna
     };
     let datum = |root: CheckedRangeRoot, mut projections: Vec<GoalProjection>, ty| {
         let CheckedRangeRoot::Binding(binding) = root else { return None; };
+        if let Some((_, expression)) = definitions.iter().find(|(id, _)| *id == binding) {
+            let mut image = expression.clone();
+            for projection in projections {
+                image = image.with_projection(projection, ty)?;
+            }
+            return Some(image);
+        }
         let parameter = signature.parameters.get(binding.0 as usize)?;
         if parameter.mode.is_reference()
             && !matches!(projections.first(), Some(GoalProjection::Deref)) {
@@ -338,15 +418,18 @@ pub(super) fn range_term_goal(term: &CheckedRangeTerm, signature: &FunctionSigna
             GoalDatum::Literal(CheckedValue::ConstGeneric { declaration: *declaration, ty: *ty }))),
         CheckedRangeTerm::Value(root) => {
             let CheckedRangeRoot::Binding(binding) = root else { return None; };
+            if let Some((_, expression)) = definitions.iter().find(|(id, _)| id == binding) {
+                return Some(expression.clone());
+            }
             datum(*root, Vec::new(), signature.parameters.get(binding.0 as usize)?.ty)
         }
         CheckedRangeTerm::ValueProjection { root, indices, projection: suffix, element } => {
             let mut path = Vec::new();
             let nested = suffix.iter().filter(|p| matches!(p, CheckedRangeProjection::Index(_))).count();
             for index in indices.iter().take(indices.len().checked_sub(nested)?) {
-                path.push(range_index_projection(index, signature, call, position, pending)?);
+                path.push(range_index_projection(index, signature, definitions, call, position, pending)?);
             }
-            for step in suffix { path.push(range_owned_projection(step, indices, signature, call, position, pending)?); }
+            for step in suffix { path.push(range_owned_projection(step, indices, signature, definitions, call, position, pending)?); }
             datum(*root, path, CheckedType::Integer(*element))
         }
         CheckedRangeTerm::Measure { place, measure, .. } => {
@@ -356,7 +439,7 @@ pub(super) fn range_term_goal(term: &CheckedRangeTerm, signature: &FunctionSigna
         }
         CheckedRangeTerm::SegmentLength { place, segment } => {
             let mut path = range_goal_path(place);
-            path.push(range_index_projection(segment, signature, call, position, pending)?);
+            path.push(range_index_projection(segment, signature, definitions, call, position, pending)?);
             path.push(GoalProjection::Measure(CheckedMeasure::Length));
             datum(place.root, path, integer)
         }
@@ -364,15 +447,15 @@ pub(super) fn range_term_goal(term: &CheckedRangeTerm, signature: &FunctionSigna
             let mut path = range_goal_path(place);
             let nested = suffix.iter().filter(|p| matches!(p, CheckedRangeProjection::Index(_))).count();
             for index in indices.iter().take(indices.len().checked_sub(nested)?) {
-                path.push(range_index_projection(index, signature, call, position, pending)?);
+                path.push(range_index_projection(index, signature, definitions, call, position, pending)?);
             }
-            for step in suffix { path.push(range_owned_projection(step, indices, signature, call, position, pending)?); }
+            for step in suffix { path.push(range_owned_projection(step, indices, signature, definitions, call, position, pending)?); }
             datum(place.root, path, CheckedType::Integer(*element))
         }
         CheckedRangeTerm::Sum { terms, constant: offset } => {
             let mut value = range_constant_goal(*offset);
             for (coefficient, term) in terms {
-                let term = range_term_goal(term, signature, call, position, pending)?;
+                let term = range_term_goal(term, signature, definitions, call, position, pending)?;
                 let weighted = if *coefficient == 1 { term }
                     else { operation(Op::MultiplyExact, vec![range_constant_goal(*coefficient), term]) };
                 value = operation(Op::AddExact, vec![value, weighted]);
@@ -391,10 +474,11 @@ fn range_goal_path(place: &CheckedRangePlace) -> Vec<GoalProjection> {
 }
 
 fn range_index_projection(term: &CheckedRangeTerm, signature: &FunctionSignature,
-    call: u32, position: &mut u32, pending: &mut Vec<(CapturedValue, GoalExpression)>)
+    definitions: &[(BindingId, GoalExpression)], call: u32, position: &mut u32, pending: &mut Vec<(CapturedValue, GoalExpression)>)
     -> Option<GoalProjection> {
     Some(match term {
-        CheckedRangeTerm::Value(CheckedRangeRoot::Binding(binding)) =>
+        CheckedRangeTerm::Value(CheckedRangeRoot::Binding(binding))
+            if signature.parameters.get(binding.0 as usize).is_some() =>
             GoalProjection::FormalSubscript { ordinal: binding.0 },
         CheckedRangeTerm::Constant(value) if u64::try_from(*value).is_ok() =>
             GoalProjection::Subscript(CapturedValue::new(CaptureId::ValueDetermined,
@@ -402,7 +486,7 @@ fn range_index_projection(term: &CheckedRangeTerm, signature: &FunctionSignature
         CheckedRangeTerm::ConstGeneric { declaration, .. } => GoalProjection::Subscript(
             CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Const(*declaration))),
         other => {
-            let goal = range_term_goal(other, signature, call, position, pending)?;
+            let goal = range_term_goal(other, signature, definitions, call, position, pending)?;
             let captured = CapturedValue::new(CaptureId::ContractRead {
                 call, position: *position,
             }, CapturedTerm::Opaque);
@@ -414,7 +498,7 @@ fn range_index_projection(term: &CheckedRangeTerm, signature: &FunctionSignature
 }
 
 fn range_owned_projection(step: &CheckedRangeProjection, indices: &[CheckedRangeTerm],
-    signature: &FunctionSignature, call: u32, position: &mut u32,
+    signature: &FunctionSignature, definitions: &[(BindingId, GoalExpression)], call: u32, position: &mut u32,
     pending: &mut Vec<(CapturedValue, GoalExpression)>) -> Option<GoalProjection> {
     Some(match *step {
         CheckedRangeProjection::Field(field) => GoalProjection::Field(field),
@@ -423,7 +507,7 @@ fn range_owned_projection(step: &CheckedRangeProjection, indices: &[CheckedRange
         CheckedRangeProjection::Payload { variant, field, .. } =>
             GoalProjection::Payload { variant, field },
         CheckedRangeProjection::Index(index) => range_index_projection(
-            &indices[index as usize], signature, call, position, pending)?,
+            &indices[index as usize], signature, definitions, call, position, pending)?,
         CheckedRangeProjection::Tag(_) => return None,
     })
 }
@@ -457,9 +541,8 @@ fn range_constant_goal(value: i128) -> GoalExpression {
     } else { positive }
 }
 
-/// A result has no actual or established fact at the call's entry. Keep such
-/// a position as an opaque index; the ordinary overlap judgment still proves
-/// structural separation and asks no fabricated result fact.
+/// A result has no actual or established fact at the call's entry. Such a
+/// position widens to its containing run, just like a clause-bound position.
 pub(super) fn has_result(term: &CheckedRangeTerm) -> bool {
     match term {
         CheckedRangeTerm::Value(root) | CheckedRangeTerm::ValueProjection { root, .. }
