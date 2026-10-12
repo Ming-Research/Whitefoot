@@ -2624,6 +2624,7 @@ impl<'unit> TypeContext<'unit> {
                     event: event.phrase(),
                 }),
                 positions,
+                contract_indices: Vec::new(),
                 window,
                 left_spelling: self.render_resolved_place(written, bindings)?,
                 right_spelling: self.render_resolved_place(&path, bindings)?,

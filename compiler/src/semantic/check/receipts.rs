@@ -173,6 +173,22 @@ impl StableText {
                     index += 1;
                 }
                 let word = rendering.get(start..index)?;
+                // Contract-read captures use a source call's node identity
+                // plus a call-local position. Canonicalize that node just as
+                // an ordinary source capture; only the position is local.
+                if word == "ContractRead"
+                    && let Some(rest) = rendering.get(index..)?.strip_prefix(" { call: ")
+                    && let Some(end) = rest.find(',')
+                    && let Ok(call) = rest[..end].parse::<u32>()
+                {
+                    self.push(
+                        &format!("ContractRead {{ call: Source({call})"),
+                        spell,
+                        item,
+                    )?;
+                    index += " { call: ".len() + end;
+                    continue;
+                }
                 // A source coordinate locates a diagnostic and decides
                 // nothing an accepted analysis concludes; its byte offsets
                 // move with every edit earlier in its file.
@@ -937,7 +953,9 @@ mod tests {
         let mut text = StableText::default();
         text.push(
             "Origin { coordinate: SyntaxCoordinate { source: SourceId(3), start: ByteOffset(120), \
-             end: ByteOffset(125) }, capture: Source(88), constructor: Source(DeclarationId(4)) }",
+             end: ByteOffset(125) }, capture: Source(88), \
+             erased: ContractRead { call: 88, position: 2 }, \
+             constructor: Source(DeclarationId(4)) }",
             &mut |kind, value| match kind {
                 IdKind::Node => Some(Spelling::Stable(format!("node{value}"))),
                 IdKind::Declaration => Some(Spelling::Stable(format!("decl{value}"))),
@@ -948,7 +966,8 @@ mod tests {
         .expect("every identity is spelled");
         assert_eq!(
             text.into_text(),
-            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), constructor: \
+            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), \
+             erased: ContractRead { call: Source(node88), position: 2 }, constructor: \
              Source(DeclarationId(decl4)) }"
         );
     }

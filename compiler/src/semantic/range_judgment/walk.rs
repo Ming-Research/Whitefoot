@@ -3532,6 +3532,7 @@ impl<'program> Walker<'program> {
         // A certificate argument names the loop's own state: form it in a
         // frame over the entry state, its iterations bound.
         let clause = CheckedRangeClause {
+            contract_reads: Vec::new(),
             declaration: synthetic_declaration(),
             name: String::new(),
             node: empty_path(),

@@ -1318,7 +1318,9 @@ impl Reasoning<'_, '_, '_> {
             _ => self.captured_index_term(index),
         }?;
         let affine_offset = match index.capture {
-            CaptureId::Source(_) => states.affine.indices.get(&index.capture).cloned(),
+            CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
+                states.affine.indices.get(&index.capture).cloned()
+            }
             _ => None,
         }
         .or_else(|| self.vocabulary.affine_term_value(offset, &states.affine));

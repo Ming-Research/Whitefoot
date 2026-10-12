@@ -36,6 +36,7 @@ impl Checker<'_, '_> {
             result_list: None,
             effects_node: invariant,
             declared_effects: EffectSet::default(),
+            contract_reads: None,
             waits: false,
             formal_parameter: None,
             substitution: GenericSubstitution::default(),

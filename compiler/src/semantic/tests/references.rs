@@ -511,6 +511,39 @@ fn two_overlapping_substituted_writes_are_refused() {
     });
 }
 
+/// [EFF-5, DIAG-1] a substituted contract read meets another argument's
+/// write at the complete call, carrying both caller-spelled paths and the
+/// repair that separates the arguments.
+#[test]
+fn a_contract_read_alias_reports_the_complete_call_and_both_paths() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/eff5-neg-contract-field-alias.wf");
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a contract-read EFF-5 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Eff5);
+        let coordinate = issue.location().coordinate();
+        let start = usize::try_from(coordinate.start().value()).unwrap();
+        let end = usize::try_from(coordinate.end().value()).unwrap();
+        assert_eq!(&source[start..end], "helper(frame: f, other: f)");
+        let SemanticIssueKind::OverlappingCallEffects {
+            first,
+            second,
+            mechanical_fix,
+        } = issue.kind()
+        else {
+            panic!("unexpected contract-read diagnostic {:?}", issue.kind());
+        };
+        assert_eq!(first, "f^.value");
+        assert_eq!(second, "f^.value");
+        assert_eq!(
+            *mechanical_fix,
+            "pass places that do not overlap, or pass the shared place through one argument only"
+        );
+    });
+}
+
 /// A pair-writing helper whose row is `ROW`, called once on a local pair.
 const PAIR_ACT: &str = r#"struct Pair {
   first: u8;

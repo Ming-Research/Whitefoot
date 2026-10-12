@@ -1207,6 +1207,7 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
+            contract_reads: None,
             waits: self
                 .types
                 .declarations

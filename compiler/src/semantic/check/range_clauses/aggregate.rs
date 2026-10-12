@@ -21,6 +21,10 @@ impl From<CheckedRangeTerm> for RangeOperand {
 }
 
 impl RangeOperand {
+    pub(super) fn term(&self) -> &CheckedRangeTerm {
+        &self.term
+    }
+
     pub(super) fn typed(term: CheckedRangeTerm, ty: CheckedType, names: &RangeNames) -> Self {
         Self {
             term,

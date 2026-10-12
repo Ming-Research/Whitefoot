@@ -44,6 +44,11 @@ use super::model::{
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CaptureId {
     Source(u32),
+    /// An erased contract position instantiated at one call boundary.
+    ContractRead {
+        call: u32,
+        position: u32,
+    },
     LoopHeader {
         loop_id: CheckedLoopId,
         holder: BindingId,
