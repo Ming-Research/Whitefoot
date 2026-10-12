@@ -678,6 +678,47 @@ impl Vocabulary {
         };
         Some(self.new_affine_atom(ty))
     }
+
+    /// [ENT-6] the power atom of one nonconstant shift-amount image at one
+    /// unsigned shift type of width K: the atom standing for `2^amount`,
+    /// minted on the first demand with the interval `[1, 2^(K - 1)]` and
+    /// returned to every later demand for the same image and type, so a left
+    /// shift of one and a right shift by that amount name one value. Only an
+    /// exact shift of that type whose `amount <= K - 1` obligation is proved
+    /// demands it, and the amount is one immutable value, so the interval
+    /// holds wherever the atom is named. A constant amount and a signed type
+    /// have no power atom.
+    pub(super) fn power_atom(&mut self, amount: &AffineForm, ty: IntegerType) -> Option<AffineForm> {
+        if amount.terms().is_empty() || ty.signed() {
+            return None;
+        }
+        let key = (amount.clone(), ty);
+        if let Some(power) = self.power_atoms.get(&key) {
+            return Some(power.clone());
+        }
+        let maximum = 1_i128 << (u32::from(ty.width()) - 1);
+        let power = self.new_affine_atom_with_interval(ty, 1, maximum, false);
+        self.power_atoms.insert(key, power.clone());
+        Some(power)
+    }
+
+    /// [ENT-6] the power divisor of one shift-amount image at a shift of
+    /// type `ty`: the constant `2^c` for a constant amount `c` the type's
+    /// width admits, the power atom otherwise.
+    pub(super) fn power_divisor(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
+        if amount.terms().is_empty() {
+            let exponent = u32::try_from(amount.constant_value()).ok()?;
+            if exponent >= u32::from(ty.width()) {
+                return None;
+            }
+            return Some(AffineForm::constant(1_i128 << exponent));
+        }
+        self.power_atom(amount, ty)
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -877,24 +918,40 @@ impl Reasoning<'_, '_, '_> {
         self.affine_pure_expression_form(expression, state)
     }
 
-    /// The operand value images of one admitted S7 unsigned division, read
-    /// where it was evaluated. A `set` commit reads both before its target
-    /// kill, since an operand naming that place has a new image afterwards.
+    /// The dividend and divisor images of one captured S7 division, read
+    /// where it was evaluated: a division's two operands, or a right shift's
+    /// value and the power divisor of its amount [ENT-6]. A `set` commit
+    /// reads them before its target kill, since an operand naming that place
+    /// has a new image afterwards.
     pub(super) fn unsigned_division_operand_forms(
         &mut self,
         value: &CheckedExpression,
         state: &mut AffineFlowState,
     ) -> Option<(AffineForm, AffineForm)> {
-        let CheckedExpression::IntegerOperation { arguments, .. } = value else {
+        let CheckedExpression::IntegerOperation {
+            operation,
+            operand_type,
+            arguments,
+            ..
+        } = value
+        else {
             return None;
         };
         let [dividend, divisor] = arguments.as_slice() else {
             return None;
         };
-        Some((
-            self.affine_pre_domain_form(dividend, state)?,
-            self.affine_pre_domain_form(divisor, state)?,
-        ))
+        let dividend = self.affine_pre_domain_form(dividend, state)?;
+        let divisor = self.affine_pre_domain_form(divisor, state)?;
+        match (operation, operand_type) {
+            (CheckedIntegerOperation::DivideExact, _) => Some((dividend, divisor)),
+            (CheckedIntegerOperation::ShiftRightExact, CheckedType::Integer(ty))
+                if !ty.signed() =>
+            {
+                let divisor = self.vocabulary.power_divisor(&divisor, *ty)?;
+                Some((dividend, divisor))
+            }
+            _ => None,
+        }
     }
 
     /// The atom a multiplication's operand contributes to the fold: the
@@ -969,7 +1026,7 @@ impl Reasoning<'_, '_, '_> {
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
-                result: CheckedType::Integer(_),
+                result: CheckedType::Integer(result),
                 ..
             } => {
                 let [left, right] = arguments.as_slice() else {
@@ -996,12 +1053,31 @@ impl Reasoning<'_, '_, '_> {
                             None
                         }
                     }
+                    CheckedIntegerOperation::ShiftLeftExact => {
+                        self.shifted_one_image(*result, &left, &right)
+                    }
                     _ => None,
                 }
             }
             _ => None,
         };
         formed.or_else(|| self.vocabulary.affine_unknown_integer(expression.ty()))
+    }
+
+    /// [ENT-6] the image of an exact unsigned `ishl` whose value operand is
+    /// the constant one and whose amount image is not a constant: the power
+    /// atom of that amount, the divisor an `ishr` by the same amount reads
+    /// [ENT-3.S7]. Every other left shift has no listed image.
+    pub(super) fn shifted_one_image(
+        &mut self,
+        ty: IntegerType,
+        value: &AffineForm,
+        amount: &AffineForm,
+    ) -> Option<AffineForm> {
+        if ty.signed() || *value != AffineForm::constant(1) {
+            return None;
+        }
+        self.vocabulary.power_atom(amount, ty)
     }
 }
 

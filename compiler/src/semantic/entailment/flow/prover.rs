@@ -480,7 +480,7 @@ impl Reasoning<'_, '_, '_> {
     fn prove_prepared(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
         match goal {
             ProofGoal::Affine { inequality, right } => {
-                self.prove_affine(context, inequality, right)
+                self.prove_affine(context, inequality, Some(right))
             }
             ProofGoal::AutomaticAffine { inequality } => {
                 self.prove_affine(context, inequality, None)
@@ -501,11 +501,14 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
+    /// One affine target. `disposition` carries the right operand of a target
+    /// submitted to MSR-4's complete disposition, whose affine steps run
+    /// through Step 7; `None` is a PRF-1 query, which AUTO alone answers.
     pub(super) fn prove_affine(
         &mut self,
         context: ProofContext<'_>,
         inequality: &AffineInequality,
-        right: Option<TermId>,
+        disposition: Option<Option<TermId>>,
     ) -> ProofResult {
         let closed = context.close(
             &self.vocabulary.terms,
@@ -520,7 +523,14 @@ impl Reasoning<'_, '_, '_> {
                 product_interval: None,
             };
         }
-        let Some(proof) = self.numeric_affine_proof(inequality, right, context) else {
+        let proof = match disposition {
+            Some(right) => self.numeric_affine_proof(inequality, right, context),
+            None => {
+                let assumptions = affine_facts(context.affine);
+                self.affine_target_proof(inequality, &assumptions, context)
+            }
+        };
+        let Some(proof) = proof else {
             return ProofResult {
                 disposition: ProofDisposition::Unknown,
                 route: None,
@@ -1254,6 +1264,7 @@ impl Reasoning<'_, '_, '_> {
                     request.bound,
                     context.affine,
                     context.facts,
+                    false,
                 )
             }) {
                 let derivation = self.vocabulary.goal_numeric_derivation(
@@ -1291,6 +1302,55 @@ impl Reasoning<'_, '_, '_> {
                     product_interval: None,
                 };
             }
+        }
+
+        // [MSR-4] Step 7 over each proposition the consumer submitted: the
+        // relation's own target, then a fixed array's `offset <= N - 1`
+        // composed with its length bridge.
+        if let Some(target) = goal.direct_affine
+            && let Some(proof) = self.quotient_bound_proof(target, context)
+        {
+            let parent = self
+                .vocabulary
+                .derivations
+                .intern(DerivationNode::AffineConsequence {
+                    relation: relation.clone().map(Box::new),
+                    premises: proof.premises.into_boxed_slice(),
+                    parents: proof.parents,
+                });
+            let derivation =
+                self.vocabulary
+                    .goal_numeric_derivation(canonical, relation.as_ref(), parent);
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(ProofRoute::Affine),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
+        }
+        if let Some(request) = goal.request
+            && let Some(left) = request.left
+            && let Some(derivation) = goal.fixed_affine_bridge.and_then(|bridge| {
+                self.fixed_affine_bound_derivation(
+                    bridge,
+                    left,
+                    request.right,
+                    request.bound,
+                    context.affine,
+                    context.facts,
+                    true,
+                )
+            })
+        {
+            let derivation =
+                self.vocabulary
+                    .goal_numeric_derivation(canonical, relation.as_ref(), derivation);
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(ProofRoute::Affine),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
         }
 
         ProofResult {
@@ -1352,6 +1412,9 @@ impl Reasoning<'_, '_, '_> {
         )
     }
 
+    /// The fixed first step `bridge.target` composed with the closed bound
+    /// from its middle term to `right`. The first step is proved by AUTO, or,
+    /// for `quotient_bound`, by MSR-4's Step 7.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn fixed_affine_bound_derivation(
         &mut self,
@@ -1361,6 +1424,7 @@ impl Reasoning<'_, '_, '_> {
         requested: i128,
         affine: &AffineFlowState,
         facts: &FactState,
+        quotient_bound: bool,
     ) -> Option<DerivationId> {
         let remaining = requested.checked_sub(bridge.left_to_middle_bound)?;
         let first_relation = Relation::Bound {
@@ -1368,8 +1432,19 @@ impl Reasoning<'_, '_, '_> {
             right: bridge.middle,
             bound: bridge.left_to_middle_bound,
         };
-        let first =
-            self.affine_consequence_derivation(bridge.target, Some(first_relation), affine, facts)?;
+        let first = if quotient_bound {
+            let proof =
+                self.quotient_bound_proof(bridge.target, ProofContext::new(facts, affine))?;
+            self.vocabulary
+                .derivations
+                .intern(DerivationNode::AffineConsequence {
+                    relation: Some(Box::new(first_relation)),
+                    premises: proof.premises.into_boxed_slice(),
+                    parents: proof.parents,
+                })
+        } else {
+            self.affine_consequence_derivation(bridge.target, Some(first_relation), affine, facts)?
+        };
         let closed = close(
             facts,
             &self.vocabulary.terms,
@@ -1456,6 +1531,7 @@ impl Reasoning<'_, '_, '_> {
     /// it fails, Step 6 subtracts exactly one closed `m-r <= c` image and
     /// submits exactly that residual to AUTO. The normalization supplies r;
     /// a normalized coefficient vector never chooses a new right operand.
+    /// Step 7 then reads a quotient's upper bound from its captured division.
     pub(super) fn numeric_affine_proof(
         &mut self,
         target: &AffineInequality,
@@ -1466,7 +1542,64 @@ impl Reasoning<'_, '_, '_> {
         if let Some(proof) = self.affine_target_proof(target, &assumptions, context) {
             return Some(proof);
         }
-        let right = right?;
+        if let Some(right) = right
+            && let Some(proof) =
+                self.affine_right_bridge_proof(target, right, &assumptions, context)
+        {
+            return Some(proof);
+        }
+        self.quotient_bound_proof(target, context)
+    }
+
+    /// [MSR-4] step 7, the quotient bound. A target `q <= k` over the
+    /// quotient image of a captured division [ENT-3.S7], whose dividend `a`
+    /// and divisor `d >= 1` satisfy `d * q <= a`, holds when
+    /// `a <= (k + 1) * d - 1`. The constant `k` keeps that one target affine,
+    /// and it goes to AUTO as written: no product term, premise or
+    /// certificate step is formed, and nothing about the division is
+    /// published. Each division binds a fresh quotient atom, so at most one
+    /// captured division matches; the proof also cites that division's
+    /// quotient-by-dividend fact.
+    pub(super) fn quotient_bound_proof(
+        &mut self,
+        target: &AffineInequality,
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        let [quotient] = target.terms() else {
+            return None;
+        };
+        if quotient.coefficient() != 1 {
+            return None;
+        }
+        let division = self
+            .vocabulary
+            .unsigned_divisions
+            .iter()
+            .find(|division| division.quotient.unit_term() == Some(quotient.term()))?
+            .clone();
+        let mut check = AffineCheckState::new();
+        let multiple = target.upper().checked_add(1)?;
+        let scaled_divisor = division.divisor.scale(multiple, &mut check).ok()?;
+        let rewritten =
+            AffineInequality::from_bounded_forms(&division.dividend, &scaled_divisor, -1, &mut check)
+                .ok()?;
+        let assumptions = affine_facts(context.affine);
+        let mut proof = self.affine_target_proof(&rewritten, &assumptions, context)?;
+        proof.parents.push(division.parent);
+        proof.parents.sort_unstable_by_key(|parent| parent.0);
+        proof.parents.dedup();
+        Some(proof)
+    }
+
+    /// [MSR-4] step 6, the affine-left / L0-right bridge over every live
+    /// measure term, measure datum and imaged own integer binding.
+    fn affine_right_bridge_proof(
+        &mut self,
+        target: &AffineInequality,
+        right: TermId,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
         let right_value = self.vocabulary.affine_term_value(right, context.affine)?;
         let candidates = self.affine_right_bridge_candidates(context.affine);
         let closed = context.close(
@@ -1490,7 +1623,7 @@ impl Reasoning<'_, '_, '_> {
             let Ok(residual) = AffineInequality::residual_after(target, &image, &mut check) else {
                 continue;
             };
-            let Some(mut proof) = self.affine_target_proof(&residual, &assumptions, context) else {
+            let Some(mut proof) = self.affine_target_proof(&residual, assumptions, context) else {
                 continue;
             };
             let Some(bridge) = closed.bound_proof(
@@ -2738,9 +2871,17 @@ impl Reasoning<'_, '_, '_> {
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
-                result: CheckedType::Integer(_),
+                result: CheckedType::Integer(result),
                 ..
             } => match operation {
+                CheckedIntegerOperation::ShiftLeftExact => {
+                    let [value, amount] = arguments.as_slice() else {
+                        return None;
+                    };
+                    let value = self.affine_pre_domain_form(value, state)?;
+                    let amount = self.affine_pre_domain_form(amount, state)?;
+                    self.shifted_one_image(*result, &value, &amount)
+                }
                 CheckedIntegerOperation::AddExact | CheckedIntegerOperation::AddDefined => {
                     let [left, right] = arguments.as_slice() else {
                         return None;

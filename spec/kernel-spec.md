@@ -1,4 +1,4 @@
-# Kernel Specification v0.135
+# Kernel Specification v0.136
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2111,7 +2111,7 @@ An implementation may choose its private Rust layout, but it may not create anot
 A callee summary is referenced by checked-program-private `(concrete callee instance, postcondition occurrence)` identity; a caller never imports a callee's local node identity.
 
 Each [ENT-3.S7] result bound, order relation, and offset relation is one `OperationFact` node carrying the selected row, the value it was established on, the relation, and the source event. Its parents are the closed operand bounds the row read, or, for a `*` row over the interval-product rule's intervals, that multiplication's discharged IntegerDomain derivation; a literal or named-const operand and an operand read at its type's interval contribute no parent. Like every other source fact, an `OperationFact` is retained exactly when a required root reaches it.
-The literal scaled division image of [ENT-3.S7] cites the `OperationFact` bounding the quotient by its dividend — the order relation `q <= a`, or the quotient's upper result bound when a is a literal or named-const value — together with the exact q and a value images rather than creating an independent source fact. `UnsignedDivisionProduct` roots that source's product consequence and carries the exact multiplication source with that `OperationFact` and that multiplication's discharged IntegerDomain root as parents.
+The literal scaled division image of [ENT-3.S7] cites the `OperationFact` bounding the quotient by its dividend — the order relation `q <= a`, or the quotient's upper result bound when a is a literal or named-const value — together with the exact q and a value images rather than creating an independent source fact. An [MSR-4] step 7 success is the affine consequence proving the target that step submits, with that same `OperationFact` of the captured division it read among its parents. `UnsignedDivisionProduct` roots that source's product consequence and carries the exact multiplication source with that `OperationFact` and that multiplication's discharged IntegerDomain root as parents.
 Each `RequirementAffineImage` roots one S4 affine ordering image and retains its exact goal, truth sign, established-goal parent, requirement ordinal, and root-or-decomposition-member ordinal. It is affine-premise evidence, not an L0 relation or an independent assumption.
 These are ordinary nodes in the same DAG, not trusted optimizer facts.
 
@@ -3554,11 +3554,11 @@ These facts have the ordinary [ENT-5] support of their terms.
 | `reinterpret` between integer types | the destination is signed and a0 is greater than its maximum | [a0 - 2^K, a1 - 2^K] | none |
 
 Each corner hull above is exact for its expression, which is monotone in each operand while the others are fixed, so its extremes over an interval box lie at corners; each bit row's bounds hold for nonnegative operands, whose two's-complement bits are their binary digits.
-For an unsigned exact division `q = a / d` established as above, when a and d are admitted [ENT-2] terms or constants, S7 also captures the exact immutable value images of q, a, and d. When d is a positive written integer literal k, it additionally retains the separate affine value image `k*q <= a`.
+A captured division is one of two rows established as above: an unsigned exact division `q = a / d` whose a and d are admitted [ENT-2] terms or constants, and an unsigned exact right shift `q = ishr(a, b)` whose a and amount b are admitted terms or constants, which is the division of a by the power divisor d of b's current image at the shift's type [ENT-6]. For each captured division S7 also captures the exact immutable value images of q, a, and d. When d is a positive written integer literal k, it additionally retains the separate affine value image `k*q <= a`.
 At a later direct ordinary exact-multiplication binding, after its own IntegerDomain obligation succeeds over affine operand images, compare those two operand images with the captured q and d images in operand order and then reversed order. Exact identity with one such division establishes `product <= a` over the bound product image and the captured dividend image. Among matching divisions use source-establishment order; one matching division suffices. An unavailable operand image establishes nothing. This finite value-image comparison neither expands a nonlinear proposition nor proves the multiplication's own domain.
-The quotient's S7 facts are ordinary L0 facts; the literal scaled relation and matched product relation are specification-fixed members of [ENT-6]'s automatic affine-premise list and are not copied into L0.
+The quotient's S7 facts are ordinary L0 facts; the literal scaled relation and matched product relation are specification-fixed members of [ENT-6]'s automatic affine-premise list and are not copied into L0. The captured images themselves establish nothing else; [MSR-4]'s step 7 reads them to bound the quotient.
 Replacing q, a, or d creates a new value image and cannot retarget a captured relation to the replacement; a still-live alias of an old value may continue to use the old relation under [ENT-5].
-A signed division, a nonterm operand, a conditional success payload, and every other division form capture no image.
+A signed division or right shift, a wrapping right shift, a nonterm operand, a conditional success payload, and every other division form capture no image.
 [ENT-3.S9]
 - S9 (const-array element ranges).
 For `let x = c[i];` where c is the bare IDENT of a named const of type `Array<T, N>` [CONST-2] and T a fragment type, with vlo and vhi the minimum and maximum of its N declared element values, vlo <= x and x <= vhi are established at the binding.
@@ -3870,9 +3870,14 @@ Image formation is exactly the following structural transfer.
 An own integer parameter and any integer result whose listed form below is unavailable receive one fresh atom with that type's complete interval.
 A typed integer literal or named integer const has its mathematical constant image; reading or ordinarily copying a live own integer binding reads its current image; and an integer-to-integer `cvt` keeps the operand image after its ConversionDomain obligation succeeds.
 A successful measure observation [MSR-1] reads its current measure image, including a standing constant or the captured range image where those rules fix it. Binding or copying that integer preserves the observed value's image; a later kill of the measured place does not retarget the copied value.
-After its ordinary IntegerDomain obligation has succeeded, an exact integer addition or subtraction has the sum or difference of its operand images, and an exact integer multiplication has the scaled image when either complete operand image is a mathematical constant; every other integer-producing operation receives a fresh atom.
+After its ordinary IntegerDomain obligation has succeeded, an exact integer addition or subtraction has the sum or difference of its operand images, an exact integer multiplication has the scaled image when either complete operand image is a mathematical constant, and an exact `ishl` over an unsigned type T whose value operand image is the constant 1 and whose amount image s is not a constant has the power atom of s at T; every other integer-producing operation receives a fresh atom.
 An expression that may write or consume a place before producing its result receives a fresh result atom rather than an image reconstructed across that effect.
 A range reference's `len` image from its formation [REF-4, ENT-3.S6] is the difference of the captured endpoint images [MSR-1].
+
+The power atom of a nonconstant amount image s at an unsigned type T of width K denotes 2^s and is one atom per function body, canonical s and T: the first demand mints it with the interval [1, 2^(K - 1)], and every later demand for an identical s and T in that body returns the same atom.
+Only an exact shift over T demands it, after that shift's IntegerDomain obligation `s <= K - 1` has succeeded, and s denotes one immutable value, so on every path reaching a value that names the atom s lies in [0, K - 1] and the interval holds.
+The power divisor of an amount image s at T is the constant 2^c when s is a constant c and the power atom of s at T otherwise.
+A writer names the power atom through a binding of `ishl(1, s)`: after `let multiplier = ishl(1_u64, shift);` and `let mask = multiplier - 1_u64;`, the relation `remainder <= mask` is over the same value a `u64` `ishr` by `shift` divides by [ENT-3.S7].
 
 An ordinary `let` installs the initializer image at its new binding after the initializer's effects.
 A whole-binding `set` first forms the right-hand-side image from the entering values, performs the ordinary target kill, then makes the target denote that image; a projected or indexed set does not replace the root binding's scalar image.
@@ -3950,10 +3955,13 @@ Every step reads the origin-transport query view formed by [ENT-4.OT].
      and final-L0-image families with their two integer tightenings             [ENT-6]
 6  the affine-left / L0-right bridge, for every live measure term, every
      measure datum, and every live own integer binding having a current image   [ENT-6]
+7  the quotient bound, for an upper bound on a captured quotient                [ENT-3.S7]
 ```
 
 Step 2 applies exactly when the submitted goal has an exact signed identity in [ENT-2]'s finite universe; a normalized affine relation with no opaque goal skips it.
 Step 6 visits its candidates in compiler-owned source-allocation order, measure terms before own integer bindings; when closed L0 has the tightest bound `m - r <= c` relating a candidate m to the goal's right-hand term r, it submits the one exact residual target to `AUTO` and composes a success transitively with that L0 bridge.
+Step 7 applies exactly when the normalized affine target is `q <= k`, with one atom q of coefficient one and a constant k, and q is the quotient image of a captured division [ENT-3.S7], which is unique because each division's result is a fresh atom [ENT-6]; with that division's captured dividend image a and divisor image d, it submits the one target `a - (k + 1)*d <= -1`, formed in checked `i128` arithmetic, to `AUTO`.
+The step is sound because the captured values satisfy `d >= 1`, the division's own domain having proved `d != 0` over an unsigned type and a power divisor being a power of two, and `d*q <= a`, so `a <= (k + 1)*d - 1` gives `d*q < (k + 1)*d` and therefore `q <= k`; since k is a constant the submitted target is affine, and the step adds no product term, premise, or certificate step.
 An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved and is rejected by its owning rule.
 
 The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.

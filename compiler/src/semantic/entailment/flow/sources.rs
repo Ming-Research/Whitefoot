@@ -1411,9 +1411,9 @@ impl Analyzer<'_, '_> {
     /// with the one complete term reader, so a measure operand is a term here
     /// exactly as it is in a copy [ENT-2].
     ///
-    /// An unsigned exact division bound at a binding or commit also returns
-    /// the fact bounding the quotient by its dividend, which the caller's
-    /// affine division images cite.
+    /// A captured division bound at a binding or commit, an unsigned exact
+    /// division or right shift, also returns the fact bounding the quotient
+    /// by its dividend, which the caller's affine division images cite.
     fn establish_operation_facts(
         &mut self,
         node_path: &crate::NodePath,
@@ -1487,9 +1487,10 @@ impl Analyzer<'_, '_> {
                     .establish_operation_fact(state, term, result, low, event, &parents);
             }
         }
-        // [ENT-3.S7] an unsigned exact division at a binding or commit also
-        // captures its value images; a conditional payload captures none.
-        if shape.row != Row::Divide
+        // [ENT-3.S7] an unsigned exact division or right shift at a binding
+        // or commit also captures its value images; a conditional payload
+        // captures none.
+        if !matches!(shape.row, Row::Divide | Row::ShiftRight { wrap: false })
             || shape.operand.signed()
             || matches!(destination, ValueImage::ResultPayload(_))
             || shape
@@ -1499,9 +1500,11 @@ impl Analyzer<'_, '_> {
         {
             return None;
         }
+        // A right shift's second operand is its amount, never a written
+        // divisor, so only a division retains the literal scaled image.
         let literal_divisor = match &shape.operands[1] {
             CheckedExpression::Constant(CheckedValue::Integer { ty, bits })
-                if *ty == shape.operand =>
+                if shape.row == Row::Divide && *ty == shape.operand =>
             {
                 let value = integer_value(*ty, *bits);
                 (value > 0).then_some(value)

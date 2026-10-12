@@ -561,7 +561,7 @@ enum ProofGoal<'a> {
     },
     /// PRF-1 admits written relation premises and judges certificate
     /// redundancy through AUTO alone. Neither query may borrow MSR-4's
-    /// Step 6 route, which a blockless INV-1 target may use.
+    /// Step 6 or Step 7 route, which a blockless INV-1 target may use.
     AutomaticAffine { inequality: &'a AffineInequality },
     Signed {
         expression: &'a GoalExpression,
@@ -677,8 +677,10 @@ struct ActiveAffineFact {
     evidence: AffineFactEvidence,
 }
 
-/// Captured values of one admitted unsigned division. These identities are
-/// immutable, like product atoms: a replacement binding gets a fresh image.
+/// Captured values of one admitted unsigned division, or of one unsigned
+/// exact right shift read as the division by its power divisor [ENT-3.S7].
+/// These identities are immutable, like product atoms: a replacement binding
+/// gets a fresh image.
 #[derive(Clone, Debug)]
 struct CapturedUnsignedDivision {
     quotient: AffineForm,
@@ -1361,6 +1363,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 handle_images: HashMap::new(),
                 invariant_targets: HashMap::new(),
                 unsigned_divisions: Vec::new(),
+                power_atoms: HashMap::new(),
                 encountered_counted: 0,
                 completed_counted_roots: 0,
                 s12_roots: 0,
@@ -1784,6 +1787,13 @@ struct Vocabulary {
     /// Source-establishment order is the specified tie-break for matching
     /// a product against more than one captured division.
     unsigned_divisions: Vec<CapturedUnsignedDivision>,
+    /// [ENT-6] the one power atom, standing for `2^s`, of each nonconstant
+    /// shift-amount image `s` and unsigned shift type this function has
+    /// demanded. Keys and values are immutable value identities, so like
+    /// `product_atoms` this needs no kill and no join: a left shift of one and
+    /// a right shift by the same amount image at one type name the same atom
+    /// wherever either occurs.
+    power_atoms: HashMap<(AffineForm, IntegerType), AffineForm>,
     encountered_counted: u32,
     completed_counted_roots: u32,
     s12_roots: u32,
