@@ -1358,7 +1358,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     }
 #endif
     if (tcp) {
-        wf_test_guard_phase("ordinary TCP crossed halves/concurrent close/credits");
+        wf_test_guard_phase("ordinary TCP crossed halves/addresses/concurrent close/credits");
         assert(wf_prim_wait_init(&half_close.wait) == 0);
         atomic_store(&half_close_initialized, 1);
         tcp_probe(&inputs);
@@ -1367,7 +1367,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         concurrent_half_close_probe(&inputs, 0);
         atomic_store(&half_close_initialized, 0);
         wf_prim_wait_destroy(&half_close.wait);
-        puts("ordinary TCP crossed halves/concurrent close/credits: PASS");
+        puts("ordinary TCP crossed halves/addresses/concurrent close/credits: PASS");
     }
     wf__body_close_directory_write(&closed, &inputs.handles, &inputs.cwd_write);
     check_close(&closed);

@@ -37,7 +37,7 @@ public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u
 
 public fn socket_address_ip(address: &SocketAddress) -> result: IpAddress reads(address) doc "Returns the family and the address of address: Ipv4 with its four octets, or Ipv6 with its eight groups, each in written order [PRE-2].";
 
-public fn socket_address_port(address: &SocketAddress) -> result: u16 reads(address) doc "Returns the port of address.";
+public fn socket_address_port(address: &SocketAddress) -> result: u16 reads(address) doc "Returns the port of address [PRE-2].";
 
 public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
 
