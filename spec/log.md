@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.136: a condition the checker decides is redundant source
+
+Rules: changed OP-5, GRAM-6, ENT-6, MSR-4
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-r1-spec-v0136, "approve this group of specification and design-tree changes: a condition test whose result the checker can already derive is rejected as an error, and the diagnostic gives the deletion? (Whitefoot#393, head commit 5f2abebc7a58)" (translated), and asked that an article in the first-release series explain the rule before the first release.
+
+Summary: OP-5 adds a source redundancy judgment for the condition of every `if` and `value_if`, `else if` links included, queried after the condition's own evaluation and before its branch-entry facts. In a noncontradictory entering state the condition is decided True when every fact the then-block's entry would establish is already derivable (each goal origin through the Signed Goal query, the comparison origin in the closed L0 state), and False when the same holds for the else side; a decided condition is a hard error with residual `RedundantCondition` and a repair that deletes the test and its dead branch, so the deletion removes no fact a later goal could use. A generic body is judged once at the symbolic instance of its own parameters, and a contradictory entering state admits the condition, leaving reachability to FN-1. GRAM-6 points a condition's redundancy to OP-5, ENT-6 names OP-5 as a Signed Goal consumer, and MSR-4 lists OP-5 among the numeric disposition's consumers and lets OP-5 state its own result judgment. Selection ground: executable source should contain only the tests its run needs, since a decided test costs run time and tells a reader, often an agent, that an excluded case is still possible.
+
 ## 2026-10-12 v0.135: a call separates the places a callee's contract reads
 
 Rules: changed EFF-2, EFF-5
