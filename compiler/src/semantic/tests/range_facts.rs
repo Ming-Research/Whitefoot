@@ -2291,11 +2291,16 @@ fn reference_match_payload_writes_reach_the_container() {
     }
 }
 
+/// A conformance case's source and its expected verdict: `None` accepts, and
+/// `Some((rule, at))` rejects under `rule` with the diagnostic starting at the
+/// source text `at`.
+type PinnedCase<'a> = (&'a [u8], Option<(SemanticRule, &'a str)>);
+
 /// Checks each conformance case's verdict and pins each rejection to the
 /// source its diagnostic starts at, so a negative fails for its intended
 /// reason rather than an earlier type, effect or reference error. The corpus
 /// owns the verdicts.
-fn pinned_case_verdicts(cases: &[(&[u8], Option<(SemanticRule, &str)>)]) {
+fn pinned_case_verdicts(cases: &[PinnedCase<'_>]) {
     for &(source, expected) in cases {
         with_semantics(source, |outcome| match (expected, outcome) {
             (None, SemanticOutcome::Complete(_)) => {}
