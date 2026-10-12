@@ -1584,7 +1584,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let right = &detail.right;
                 let parent = detail.parent;
                 let term_for = |captured: &crate::semantic::places::CapturedValue| {
-                    use crate::semantic::places::CapturedTerm;
+                    use crate::semantic::places::{CaptureId, CapturedTerm};
                     summary
                         .inventory
                         .terms
@@ -1601,7 +1601,16 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),
-                            CapturedTerm::Opaque => false,
+                            // An erased contract position has no source datum:
+                            // its call-entry capture term is the identity the
+                            // caller's instantiated image was equated with.
+                            CapturedTerm::Opaque => {
+                                matches!(captured.capture, CaptureId::ContractRead { .. })
+                                    && matches!(
+                                        term,
+                                        TermKind::IndexCapture { capture } if *capture == captured.capture
+                                    )
+                            }
                         })
                         .map(|term| TermId(u32::try_from(term).expect("term index fits u32")))
                         .expect("an indexed-separation capture has a retained datum term")
@@ -5819,7 +5828,14 @@ fn main() -> status: std::process::ExitStatus pure {
                 DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
                 _ => return true,
             };
-            !matches!(relation, Relation::Bound { right: ZERO, bound: 255, .. })
+            !matches!(
+                relation,
+                Relation::Bound {
+                    right: ZERO,
+                    bound: 255,
+                    ..
+                }
+            )
         }),
         "the directly established type bound needs no delivery root"
     );

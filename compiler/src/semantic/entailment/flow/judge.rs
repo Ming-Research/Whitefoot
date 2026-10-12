@@ -115,6 +115,38 @@ impl Reasoning<'_, '_, '_> {
             event,
         );
     }
+
+    /// Instantiates erased positions in an isolated copy of the call's entry
+    /// context. The ordinary relation and affine projections give the shared
+    /// separation families their images without evaluating contract syntax.
+    fn establish_contract_indices(
+        &mut self,
+        separation: &super::super::super::model::CheckedCallSeparation,
+        state: &mut ProofFlowState,
+    ) {
+        for (captured, expression) in &separation.contract_indices {
+            let datum = self.vocabulary.terms.intern(TermKind::IndexCapture {
+                capture: captured.capture,
+            });
+            if let Some(image) = self.affine_goal_value(expression, &state.affine) {
+                state.affine.indices.insert(captured.capture, image);
+            }
+            if let Some((source, difference)) = self.goal_side(expression) {
+                let event = self
+                    .vocabulary
+                    .proof_event(FlowEventKind::S13, Some(&separation.site));
+                state.facts.establish(
+                    &Relation::Equal {
+                        left: datum,
+                        right: source,
+                        difference,
+                    },
+                    &mut self.vocabulary.derivations,
+                    event,
+                );
+            }
+        }
+    }
 }
 
 impl Judging<'_, '_, '_> {
@@ -197,7 +229,17 @@ impl Judging<'_, '_, '_> {
         let mut all_discharged = true;
         for (query, separation) in pending {
             self.output.judged_separations.insert(query);
-            let discharged = self.judge_one_separation(query, &separation, state);
+            let discharged = if separation.contract_indices.is_empty() {
+                self.judge_one_separation(query, &separation, state)
+            } else {
+                // Contract positions carry proof data only. In particular,
+                // their captured equalities and affine images do not become
+                // caller facts or scheduling evidence after this comparison.
+                let mut contract_state = state.clone();
+                self.reasoning()
+                    .establish_contract_indices(&separation, &mut contract_state);
+                self.judge_one_separation(query, &separation, &mut contract_state)
+            };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
             all_discharged &= discharged || separation.reference_use.is_some();
