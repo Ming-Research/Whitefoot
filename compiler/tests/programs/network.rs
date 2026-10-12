@@ -221,6 +221,45 @@ fn a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes() {
     }
 }
 
+/// [PRE-2] An accepted connection reports its peer and its own end:
+/// `tcp_addresses.wf` reads the peer `tcp_accept` returned and the local
+/// address `local_address` reports, spells both as Redis's CLIENT LIST spells
+/// `addr` and `laddr`, and sends that line back. This side's own view of the
+/// same connection is the independent oracle: its local address is the
+/// program's peer, and its peer address is the program's own end, the port
+/// the harness chose.
+#[test]
+fn an_accepted_connection_reports_its_peer_and_its_own_end_on_both_routes() {
+    let llvm = compile_program("tcp_addresses.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut stream = connect_when_ready(port);
+        let local = stream.local_addr().expect("this side's own address");
+        let peer = stream.peer_addr().expect("the program's address");
+        let mut reported = String::new();
+        stream
+            .read_to_string(&mut reported)
+            .expect("read the reported endpoints");
+        drop(stream);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(
+            peer,
+            SocketAddr::from(([127, 0, 0, 1], port)),
+            "native ring: {native_ring}"
+        );
+        assert_ne!(local.port(), port, "native ring: {native_ring}");
+        assert_eq!(
+            reported,
+            format!("addr={local} laddr={peer}\n"),
+            "native ring: {native_ring}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes() {

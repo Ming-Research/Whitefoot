@@ -431,6 +431,32 @@ entry:
   ret void
 }
 
+declare void @wf__body_socket_address_ip(ptr, ptr)
+
+; `IpAddress` is a union-laid-out enum, which is memory-only and returns
+; through its destination (design/compiler/payload-enum-layout.md).
+define void @wf_std.net.socket_address_ip(ptr %result, ptr %address) align 64 {
+entry:
+  tail call void @wf__body_socket_address_ip(ptr %result, ptr %address)
+  ret void
+}
+
+declare zeroext i16 @wf__body_socket_address_port(ptr)
+
+define i16 @wf_std.net.socket_address_port(ptr %address) align 64 {
+entry:
+  %port = tail call zeroext i16 @wf__body_socket_address_port(ptr %address)
+  ret i16 %port
+}
+
+declare void @wf__body_local_address(ptr, ptr)
+
+define void @wf_std.net.local_address(ptr %result, ptr %receive) align 64 {
+entry:
+  tail call void @wf__body_local_address(ptr %result, ptr %receive)
+  ret void
+}
+
 declare i32 @wf__body_tcp_listen_start(ptr, ptr, ptr, ptr)
 
 define i32 @wf_std.net.tcp_listen.start(ptr %result, ptr %factory, ptr %address, ptr %operation) align 64 {
