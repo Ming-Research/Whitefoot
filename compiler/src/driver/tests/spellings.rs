@@ -29,6 +29,26 @@ fn relative_to_working_directory(path: &std::path::Path) -> std::path::PathBuf {
     relative
 }
 
+/// A fresh source tree for one test, removed by the returned guard.
+struct SourceTree(std::path::PathBuf);
+
+impl SourceTree {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "whitefoot-driver-spellings-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        Self(path)
+    }
+}
+
+impl Drop for SourceTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The record `logical` names, spelled as the invocation reads it.
 fn display_of(sources: &[crate::ModuleSourceFile], logical: &str) -> String {
     sources
@@ -45,11 +65,8 @@ fn display_of(sources: &[crate::ModuleSourceFile], logical: &str) -> String {
 /// analysis, while an edit to a record or to the graph still prevents reuse.
 #[test]
 fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
-    let root = std::env::temp_dir().join(format!(
-        "whitefoot-driver-spellings-{}-build",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let tree = SourceTree::new("build");
+    let root = tree.0.clone();
     let directory = CacheDirectory::new("spellings-build");
     let cache = directory.open();
     let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).expect("text");
@@ -73,7 +90,7 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
         absolute.clone(),
         root.join("app/../app/modules.wfg"),
     ];
-    let build = |graph_path: &std::path::Path| {
+    let build = |graph_path: &std::path::Path, cache: Option<&driver::BuildCache>| {
         let (graph, sources) = spelled_program(graph_path);
         let inputs = sources
             .iter()
@@ -92,7 +109,7 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
             driver::ModuleEntry::Named("app"),
             CompilerLimits::default(),
             OverlapLowering::Off,
-            Some(&cache),
+            cache,
         )
         .map(|(module, reused)| (module.encode(), reused))
     };
@@ -101,30 +118,36 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
         .map(|graph_path| display_of(&spelled_program(graph_path).1, "base/half.wf"))
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(displays.len(), 3, "each spelling names the record alone");
-    let (first, reused) = build(&spellings[0]).expect("the entry builds");
+    let cold = |graph_path: &std::path::Path| {
+        let (module, reused) = build(graph_path, None).expect("the cold entry builds");
+        assert!(!reused, "a build without a cache reuses nothing");
+        module
+    };
+    let (first, reused) = build(&spellings[0], Some(&cache)).expect("the entry builds");
     assert!(!reused);
+    assert_eq!(first, cold(&spellings[0]));
     let counts = cache.receipt_counts();
     for spelling in &spellings[1..] {
-        assert_eq!(
-            build(spelling).expect("the entry builds"),
-            (first.clone(), true)
-        );
+        let (reused_module, reused) = build(spelling, Some(&cache)).expect("the entry builds");
+        assert!(reused, "{spelling:?}");
+        assert_eq!(reused_module, first, "{spelling:?}");
+        assert_eq!(reused_module, cold(spelling), "{spelling:?}");
     }
     assert_eq!(cache.receipt_counts(), counts, "no front end ran again");
     let body = "fn half(value: u8) -> result: u8 pure contract {\n  requires value > 1_u8;\n} {\n  let result = value / 4_u8;\n  return result;\n}\n";
     write_tree(&root, &[("app/base/half.wf", body)]);
-    let (edited, reused) = build(&spellings[2]).expect("the edited entry builds");
+    let (edited, reused) = build(&spellings[2], Some(&cache)).expect("the edited entry builds");
     assert!(!reused, "an edited record is a different input");
     assert_ne!(edited, first);
-    assert_eq!(
-        build(&spellings[0]).expect("the entry builds"),
-        (edited, true)
-    );
+    let (again, reused) = build(&spellings[0], Some(&cache)).expect("the entry builds");
+    assert!(reused);
+    assert_eq!(again, edited);
+    assert_eq!(again, cold(&spellings[0]));
     let without_edge = "pkg::base: [];\npkg::user: [];\npkg::tool: [];\npkg: [pkg::base, pkg::user, std::fs, std::io, std::process, std::text];\n\nentry app = pkg::main;\n";
     write_tree(&root, &[("app/modules.wfg", without_edge)]);
-    let refused = build(&spellings[1]).expect_err("the edited graph is checked, not reused");
+    let refused = build(&spellings[1], Some(&cache))
+        .expect_err("the edited graph is checked, not reused");
     assert_eq!(refused.kind(), driver::CompilationFailureKind::Source);
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// [MOD-8, DIAG-1] a rejection prints the paths the invocation names its
@@ -135,11 +158,8 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
 /// composition alike.
 #[test]
 fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
-    let root = std::env::temp_dir().join(format!(
-        "whitefoot-driver-spellings-{}-reject",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let tree = SourceTree::new("reject");
+    let root = tree.0.clone();
     let directory = CacheDirectory::new("spellings-reject");
     let cache = directory.open();
     let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).expect("text");
@@ -225,5 +245,4 @@ fn a_rejection_prints_the_paths_of_the_invocation_that_reads_it() {
             seen.push(display);
         }
     }
-    let _ = std::fs::remove_dir_all(&root);
 }
