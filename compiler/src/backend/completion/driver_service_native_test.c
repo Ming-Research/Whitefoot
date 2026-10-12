@@ -224,6 +224,21 @@ static uint64_t ring_token(void) {
     return atomic_load(&wf_driver_root.service_token);
 }
 
+/* The role's holder reaps the parked read's completion and makes its context
+ * ready; nothing is left in the ring afterwards. */
+static void ring_serve_reader(void) {
+    wf_completion_record *record = (wf_completion_record *)ring_reader.operation.bytes;
+    while (wf_bridge_record_state(record) != WF_COMPLETION_DONE) {
+        (void)wf_bridge_progress();
+    }
+    CHECK(record->result.kind == WF_FILE_READ && record->result.error_code == 0);
+    CHECK(record->result.value == (int64_t)sizeof(payload));
+    CHECK(memcmp(ring_bytes, payload, sizeof(payload)) == 0);
+    CHECK(wf_run_take(&wf_driver_root) == &ring_reader);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(wf_executor_index == 1u && ring_reader.driver == &wf_driver_root);
+}
+
 /* The spare acquires the reserved role and serves its ring: the reader's
  * completion is published there and the reader is ready on the role. */
 static void ring_replacement_serves(void) {
@@ -236,16 +251,7 @@ static void ring_replacement_serves(void) {
     wf_driver_acquire_reserved(&wf_driver_root);
     CHECK(wf_driver_service == &wf_driver_root && !atomic_load(&wf_drivers_moving));
     CHECK(wf_bridge_linux_current() == &wf_bridge_linux_adapter);
-    wf_completion_record *record = (wf_completion_record *)ring_reader.operation.bytes;
-    while (wf_bridge_record_state(record) != WF_COMPLETION_DONE) {
-        (void)wf_bridge_progress();
-    }
-    CHECK(record->result.kind == WF_FILE_READ && record->result.error_code == 0);
-    CHECK(record->result.value == (int64_t)sizeof(payload));
-    CHECK(memcmp(ring_bytes, payload, sizeof(payload)) == 0);
-    CHECK(wf_run_take(&wf_driver_root) == &ring_reader);
-    CHECK(wf_run_take(&wf_driver_root) == NULL);
-    CHECK(wf_executor_index == 1u && ring_reader.driver == &wf_driver_root);
+    ring_serve_reader();
 }
 
 /* T1: a completion waits in the ring of a role that stays in one context
@@ -340,11 +346,26 @@ static void ring_claim_is_exclusive(void) {
     EXPECT(atomic_load(&wf_driver_stats[0].ring_reassignments) == 1u,
         "a borrow reset the stale run's sighting");
     ring_replacement_serves();
-    uint64_t later = wf_driver_leave_service(&wf_driver_root);
-    EXPECT(!wf_driver_ring_claim(&wf_driver_root, outside) && ring_token() == later,
+    /* The replacement leaves for a new run with a second read staged in its
+     * ring, a spare is free, and the earlier run's word is stale: the claim
+     * reaches its compare-and-swap with work waiting, so a claim that took
+     * any word but the sighted one would hand the role off. */
+    memset(ring_bytes, 0, sizeof(ring_bytes));
+    uint64_t later = ring_park_read(0);
+    CHECK(later != outside);
+    CHECK(wf_linux_io_uring_pending(&wf_bridge_linux_adapter));
+    wf_executors[0].available = 1u;
+    uint64_t misses = atomic_load(&wf_driver_stats[0].reserve_misses);
+    int claimed = wf_driver_ring_claim(&wf_driver_root, outside);
+    wf_executors[0].available = 0u;
+    EXPECT(!claimed && ring_token() == later
+            && atomic_load(&wf_driver_stats[0].reserve_misses) == misses
+            && !atomic_load(&wf_drivers_moving),
         "the ring path claimed from an earlier run's word");
-    CHECK(wf_driver_return_service(&wf_driver_root, later));
     CHECK(atomic_load(&wf_driver_stats[0].ring_reassignments) == 1u);
+    CHECK(write(ring_pipe[1], payload, sizeof(payload)) == (ssize_t)sizeof(payload));
+    CHECK(wf_driver_return_service(&wf_driver_root, later));
+    ring_serve_reader();
     ring_fixture_end();
 }
 

@@ -108,6 +108,10 @@ jobs:
           mutate "$bridge" M8b 's/(    if \(!spare\) \{\n)/$1        atomic_store_explicit(&driver->service_token, (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE, memory_order_release);\n/ or die'
           expect_fail M8b run_ring "a ring reassignment without a spare leaked its claim"
           git checkout -- "$bridge"
+          # M9: the claim compares against the OUTSIDE word read afresh from the token, not the sighted one.
+          mutate "$bridge" M9 's/(static int wf_driver_ring_claim\(wf_driver \*driver, uint64_t outside\) \{\n)/$1    uint64_t fresh = atomic_load_explicit(&driver->service_token, memory_order_acquire);\n    if ((fresh & WF_DRIVER_PHASE_MASK) == WF_DRIVER_OUTSIDE) outside = fresh;\n/ or die'
+          expect_fail M9 run_ring "the ring path claimed from an earlier run's word"
+          git checkout -- "$bridge"
           exit $status
 
   witness:

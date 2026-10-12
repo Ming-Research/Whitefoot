@@ -1588,6 +1588,10 @@ typedef struct wf_driver_statistics {
      * because one context run left ring work unserved (bounded waits). */
     _Atomic uint64_t reassignments;
     _Atomic uint64_t ingress_commits;
+    /* Attempts, not distinct runs: each monitor scan that finds a trigger
+     * ready and no spare counts one, up to two per scan when the deadline and
+     * ring triggers both miss, about 1,000 a second through a long
+     * computation with no spare. */
     _Atomic uint64_t reserve_misses;
     _Atomic uint64_t ring_reassignments;
 } wf_driver_statistics;

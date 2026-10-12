@@ -2,12 +2,17 @@
 
 ## Status and question
 
-**This is a draft proposal. Sub-step 1 of section 5 is implemented on the
-work branch with the tests of section 7, while the owner has not chosen
-among the candidates; nothing has been measured for it, and it promises no
-latency.** It is a read-only design study
-of `main` at `51c5f4263` (2026-10-12). No code changed, and no compiler, build
-or test was run to write it. The runtime evidence comes from two places: the
+**This is a draft proposal. The owner ruled for candidate (c), extending
+the monitor's whole-role reassignment, and sub-step 1 of section 5 is
+implemented on the work branch with the tests of section 7. The hosted
+gate, `io-hosts` and the mutants workflow pass. The formal program test's
+hosted runs (4 CPUs) kept every echo inside 100 ms. The registered
+experiment of section 6.1 (1 and 2 CPUs, base controls, 3 then 30 runs per
+arm) and the 14900K cost comparison of section 6.2 have not run, so the
+latency and ordinary-I/O results are still unmeasured and nothing here
+promises a latency.** The study itself was read-only, of `main` at
+`51c5f4263` (2026-10-12): no code changed, and no compiler, build or test
+was run to write it. The runtime evidence comes from two places: the
 earlier driver-handoff measurements
 ([driver-handoff](../driver-handoff/DESIGN.md)) and one Firn witness run
 (section 1.2). Line numbers name files under
@@ -450,9 +455,9 @@ The bound has two limits:
 millisecond. The monitor adds about four shared-word loads per driver per
 scan. The CQ tail and head lines are written by the kernel and the owner, so
 this is at most about one coherence miss per driver per millisecond.
-Ordinary I/O context runs last microseconds. A token therefore never survives
-two scans, and the trigger should not fire. Section 6 checks this with a
-counter.
+Ordinary I/O context runs last microseconds, so a token is expected not
+to survive two scans and the trigger is expected not to fire. This is not yet
+measured; section 6.2 checks it with a counter and the cost comparison.
 
 **Interaction.**
 
@@ -608,14 +613,15 @@ Each run's placement is read from its report, not assumed:
 `stolen_contexts ≥ 1` on driver 1 means split; `ring_reassignments ≥ 1` means
 the same-driver case was served by the new trigger.
 
-Amendment, after the first hosted mutants run and before any latency
-result was read against the criterion: the two clauses overlap, since a
+Amendment, after the first hosted mutants run and before the registered
+experiment of this section ran: the two clauses overlap, since a
 handoff makes the echo's context ready on driver 0's role and driver 1 may
 then steal it. A run with both counts is classed same-driver, served by the
 trigger: split means `stolen_contexts ≥ 1` on driver 1 and
-`ring_reassignments = 0` on driver 0. The first hosted run (4 CPUs) placed
-all three same-driver attempts as split under the original rule, each with
-its echo inside the bound; the latency criterion below is unchanged.
+`ring_reassignments = 0` on driver 0. The formal test's first hosted run (4 CPUs), which
+the amendment observed, placed all three same-driver attempts as split under
+the original rule, each with its echo inside the bound; that test is not this
+experiment, and the latency criterion below is unchanged.
 
 **Configurations.** Hosted ubuntu-24.04, with one confirming run on the
 14900K. Arms: `WF_DRIVERS=2` on 2 CPUs; `WF_DRIVERS=2` on 1 CPU; a
