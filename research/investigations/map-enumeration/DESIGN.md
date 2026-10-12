@@ -276,11 +276,15 @@ meaning met it by removing the thread-local spare, whose kept allocations had
 stayed in the heap reading after release, and returning every release's
 storage to the runtime pool.
 
-That removal cost firn a quarter of its two-core `MSET` throughput: each
-statement builds a set, and without the spare every build and release took
-the runtime pool's one free-list lock on every driver (depth 16, two server
-CPUs on the i9-14900K, about 1.15 million requests a second against 1.55
-million before the upgrade). The spare is restored with the release still
+That removal cost firn a quarter of its two-core `MSET` throughput: depth
+16, two server CPUs on the i9-14900K, 1.14 and 1.18 million requests a second
+against 1.57 and 1.52 million before the upgrade
+([Firn-wf run 38210016742](https://github.com/Ming-Research/Firn-wf/actions/runs/38210016742),
+[run 38209182739](https://github.com/Ming-Research/Firn-wf/actions/runs/38209182739)).
+Each statement builds a set, and without the spare every build and release
+takes the runtime pool's one free-list lock on every driver; that the lock is
+what costs the throughput is an inference, since restoring the spare removes
+the loss but no run separated the lock from the rest of the pool's work. The spare is restored with the release still
 lowering the reading by the reported holding: the heap holding [PRE-2]
 excludes released blocks an allocator retains, so the spare's granted bytes
 are recorded as released when it is kept and as taken when a set reuses it,
@@ -289,8 +293,9 @@ keys with an arena of at most 64 KiB is kept; larger ones return to the
 pool, so one thread retains at most one bounded spare.
 
 The restored spare was compared on the same machine against firn on the
-release before the upgrade: firn at its pre-upgrade revision with only its
-pin moved to the experiment release of the fix, two server CPUs, `MSET` at
+release before the upgrade: firn at its pre-upgrade revision with its pin
+moved to the experiment release of the fix and one line binding the drivers
+field that release adds to the program's inputs, two server CPUs, `MSET` at
 pipeline depths 16 and 1, both sides with a twin, eight interleaved passes
 ([Firn-wf run 38221198675](https://github.com/Ming-Research/Firn-wf/actions/runs/38221198675)).
 Medians, million requests a second:
@@ -302,8 +307,9 @@ Medians, million requests a second:
 
 Each gap from the pre-upgrade build is smaller than that build's gap from its
 own twin (0.9911 at depth 16, 0.9919 at depth 1), so the regression is gone
-within this run's noise; eight passes do not resolve a cost below about one
-percent.
+within this run's noise. The restored build's own twin differs by 0.984 at
+depth 16 and 0.998 at depth 1, so this run does not resolve a cost below
+about 1.6 percent at depth 16.
 
 ## The runtime step under a whole hold
 

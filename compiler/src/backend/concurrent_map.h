@@ -106,9 +106,11 @@ const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, 
 /* Gives all the set's grants back, leaving it empty; or gives back the
  * memory of a set whose `store` alone is at hand, NULL for none. When the
  * includer keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as
- * the calling thread's spare instead, for its next set, until
- * wf_cmap_key_set_drop_spare gives it back; the heap reading records either
- * as the same release of the set's granted bytes. */
+ * the calling thread's spare instead, for its next set; the heap reading
+ * records either as the same release of the set's granted bytes. Only tests
+ * give a spare back (wf_cmap_key_set_drop_spare): a runtime thread keeps its
+ * one bounded spare until the process ends, and one that exits leaves it
+ * unreturned, already outside the reading. */
 void wf_cmap_key_set_release(wf_key_set *set);
 void wf_cmap_key_set_free_store(void *store);
 void wf_cmap_key_set_drop_spare(void);
