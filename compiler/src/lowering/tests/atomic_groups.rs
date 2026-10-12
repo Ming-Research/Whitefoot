@@ -2,9 +2,8 @@
 //! type (compiler/waiting-contexts/state-locks): its first group holds
 //! nothing before it, so it waits as a first object's acquire does and a
 //! guard's reservation can refuse it; a later group is taken by a holder of
-//! an earlier object, which a reservation admits. Each target of a group's
-//! record says whether the statement may write it, so the group's release
-//! gives up an object it only reads without a sweep [SHARE-3].
+//! an earlier object, which a reservation admits. The record's write flags
+//! are checked where the emitter stores them (backend/tests/wake.rs).
 
 use super::*;
 use crate::{IrRecord, IrRecordKind};
@@ -86,63 +85,5 @@ fn the_first_group_parks_and_a_later_group_does_not() {
     });
     with_ir(grouped(true).as_bytes(), |program| {
         assert_eq!(group_takes(program), [(true, 2), (false, 3)]);
-    });
-}
-
-/// The write flag of each target of the two-target group in `main`, by its
-/// position in the record, each site of the statement's paths once.
-fn group_write_flags(program: &IrProgram) -> Vec<(u32, bool)> {
-    let mut flags = function(program, "main")
-        .blocks()
-        .iter()
-        .flat_map(|block| block.instructions())
-        .filter_map(|instruction| match instruction {
-            IrInstruction::Define {
-                operation:
-                    IrOperation::AtomicGroupTarget {
-                        index, wrote, ..
-                    },
-                ..
-            } => Some((*index, *wrote)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    flags.sort_unstable();
-    flags.dedup();
-    flags
-}
-
-/// A statement over two `Alpha` objects whose block is `block`.
-fn two_alphas(block: &str) -> String {
-    format!(
-        r#"struct Alpha {{
-  n: u64;
-}}
-
-fn main() -> status: std::process::ExitStatus pure waits {{
-  let a0 = Alpha(n: 0_u64);
-  let a1 = Alpha(n: 1_u64);
-  let first = shared_new::<Alpha>(value: a0);
-  let second = shared_new::<Alpha>(value: a1);
-  let seen = 0_u64;
-  atomic p = &first, q = &second {{
-    {block}
-  }}
-  return std::process::exit_status(code: 0_u8);
-}}
-"#
-    )
-}
-
-#[test]
-fn a_group_target_says_whether_the_statement_may_write_it() {
-    // Reading both: neither is released as written.
-    with_ir(two_alphas("set seen = p^.n +wrap q^.n;").as_bytes(), |program| {
-        assert_eq!(group_write_flags(program), [(0, false), (1, false)]);
-    });
-    // Writing p: two handles of one type may name one object, so the
-    // checker counts a write through p as a possible write of q's object.
-    with_ir(two_alphas("set p^.n = q^.n;").as_bytes(), |program| {
-        assert_eq!(group_write_flags(program), [(0, true), (1, true)]);
     });
 }

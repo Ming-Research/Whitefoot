@@ -1431,8 +1431,9 @@ static void group_w_step(test_frame *f) {
     }
     if (group_r_parks != 1u)
         fail("the reserved watch ran before the group asked for its object (parks, expected)", group_r_parks, 1);
-    /* Y is free while R's group is parked: an acquire of a held Y would
-     * spin a bounded time and park, which answers nonzero. */
+    /* Y is free while R's group is parked. A context holding Y would be
+     * exempt from X's reservation and take X at once, which the check above
+     * refuses first, so this only confirms that no path parks holding Y. */
     if (wf__shared_acquire(group_y, 1u, f))
         fail("a parked first group held a later member (parks, done)", group_r_parks, group_w_done);
     wf__shared_unlock_unwritten(group_y, 1u);
@@ -1563,8 +1564,11 @@ static void release_phase_begin(test_frame *root) {
     atomic_store(&guard_now, 1u);
     release_w_evaluations = release_w_done = 0u;
     wake_equal(&release_test, 1u);
-    release_x = wf__shared_new(2u * sizeof(uint64_t));
-    release_y = wf__shared_new(sizeof(uint64_t));
+    /* X takes the lower identity, so the record's order {Y, X} must be
+     * sorted and each write flag must move with its target. */
+    void *a = wf__shared_new(2u * sizeof(uint64_t)), *b = wf__shared_new(2u * sizeof(uint64_t));
+    release_x = (uintptr_t)a < (uintptr_t)b ? a : b;
+    release_y = release_x == a ? b : a;
     state_of(release_x)[0] = 1u;
     state_of(release_x)[1] = 0u;
     state_of(release_y)[0] = 0u;
@@ -1834,7 +1838,7 @@ static void root_step(test_frame *f) {
          * notification that loses the wake of an older watch behind the
          * sweep's cursor or of one registered past its cutoff; group-turn
          * catches a statement's first type group taking an object a live
-         * reservation keeps, or parking with a later member held;
+         * reservation keeps;
          * group-release catches a group release that gives up a member no
          * target may write as written; rescan-borrowed catches a borrowed
          * hold's release that drops the rescan a write during its
