@@ -895,9 +895,11 @@ some captures independently; this experiment addresses copies that remain.
 
 The original rule below records the approved experiment. The later
 [producer-sensitive selection](#producer-sensitive-transfer-selection) narrowed
-its application and failed downstream acceptance; the current
-[bounded-inlining proposal](#restoring-granules-with-bounded-inlining) restores
-this layout rule and treats inline cost separately.
+its application and failed downstream acceptance. The retained rule applies
+this layout rule to every source; the
+[bounded-inlining proposal](#restoring-granules-with-bounded-inlining) that
+first restored it treated inline cost separately and was
+[withdrawn](#bounded-inlining-measured-outcome-and-withdrawal).
 
 Target layout owns transfer planning alongside variant and aggregate layout.
 Structs recursively transfer scalar leaves with their original LLVM types and
@@ -2596,3 +2598,8 @@ No stock LLVM 22 spelling was found that has memcpy's inline cost and a
 field-width lowering contract. The next steps are a gather/scatter
 feasibility experiment on LLVM 22 and, failing that, an LLVM-side transfer
 operation that expands after inlining; both belong to a separate item.
+
+Whether #357 merges with the Snowghost cells left at main's level and the
+accessor inlining split into its own item, or waits for that item, is the
+owner's open choice on card `lm-357-accept-split`; nothing in this record
+presumes the answer.
