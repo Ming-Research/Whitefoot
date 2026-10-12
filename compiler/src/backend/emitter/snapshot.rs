@@ -298,18 +298,20 @@ impl Descriptors<'_> {
 }
 
 /// The body builder records every link dependency when writing a native call.
-struct Wrapper {
+struct Wrapper<'a> {
     body: FunctionBody,
     declarations: Module,
+    intrinsics: &'a mut BTreeSet<IntrinsicDeclaration>,
     temporary: usize,
 }
-impl Wrapper {
-    fn new() -> Self {
+impl<'a> Wrapper<'a> {
+    fn new(intrinsics: &'a mut BTreeSet<IntrinsicDeclaration>) -> Self {
         let mut body = FunctionBody::default();
         body.open_block("entry".into());
         Self {
             body,
             declarations: Module::default(),
+            intrinsics,
             temporary: 0,
         }
     }
@@ -323,12 +325,15 @@ impl Wrapper {
         self.body.push('\n');
     }
     fn call(&mut self, name: &str, result: &str, args: &[(&str, String)]) -> String {
-        self.body.symbol(name);
         self.declarations.declare(Signature::new(
             name,
             result,
             args.iter().map(|(ty, _)| Parameter::unnamed(*ty)).collect(),
         ));
+        self.call_body(name, result, args)
+    }
+    fn call_body(&mut self, name: &str, result: &str, args: &[(&str, String)]) -> String {
+        self.body.symbol(name);
         let arguments = args
             .iter()
             .map(|(ty, arg)| format!("{ty} {arg}"))
@@ -369,7 +374,8 @@ impl Wrapper {
         program: &IrProgram,
         ty: IrType,
     ) -> Result<(), BackendFailure> {
-        self.call(
+        self.intrinsics.insert(IntrinsicDeclaration::MemorySet);
+        self.call_body(
             "llvm.memset.p0.i64",
             "void",
             &[
@@ -428,6 +434,7 @@ fn capture(
     program: &IrProgram,
     target: TargetLayout,
     function: &IrFunction,
+    intrinsics: &mut BTreeSet<IntrinsicDeclaration>,
 ) -> Result<Module, BackendFailure> {
     let Some((_, IrType::Address(IrAddressed::Nominal(map)))) = function.parameters().get(1) else {
         return Err(BackendFailure::InvalidIr);
@@ -454,7 +461,7 @@ fn capture(
         module: Module::default(),
     };
     let descriptor = descriptors.descriptor(*value)?;
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     w.body.symbol(&descriptor);
     let owner = w.load("%p0", 0, "ptr");
     let table = w.load("%p1", 0, "ptr");
@@ -496,8 +503,9 @@ fn immediate(
     target: TargetLayout,
     function: &IrFunction,
     name: &str,
+    intrinsics: &mut BTreeSet<IntrinsicDeclaration>,
 ) -> Result<Module, BackendFailure> {
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     w.zero(target, program, function.result())?;
     if name == "prepare" {
         w.line("  %error = alloca i32, align 4");
@@ -538,7 +546,7 @@ fn immediate(
         "i32",
         params.clone(),
     )?;
-    let mut finish = Wrapper::new();
+    let mut finish = Wrapper::new(intrinsics);
     finish.line("  ret void");
     module = finish.emit(
         module,
@@ -580,8 +588,9 @@ fn read(
     program: &IrProgram,
     target: TargetLayout,
     function: &IrFunction,
+    intrinsics: &mut BTreeSet<IntrinsicDeclaration>,
 ) -> Result<Module, BackendFailure> {
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     w.line("  %compact = alloca { i64, i32 }, align 8");
     let owner = w.load("%p0", 0, "ptr");
     let cancel = w.load("%p3", 0, "ptr");
@@ -637,7 +646,7 @@ fn read(
         "i32",
         params.clone(),
     )?;
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     w.line("  %compact = alloca { i64, i32 }, align 8");
     let owner = w.load("%p0", 0, "ptr");
     w.call(
@@ -665,8 +674,9 @@ fn finish(
     target: TargetLayout,
     function: &IrFunction,
     abort: bool,
+    intrinsics: &mut BTreeSet<IntrinsicDeclaration>,
 ) -> Result<Module, BackendFailure> {
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     let owner = w.load("%p0", 0, "ptr");
     let state = w.call(
         "wf__completion_snapshot_finish_submit",
@@ -685,7 +695,7 @@ fn finish(
         "i32",
         params.clone(),
     )?;
-    let mut w = Wrapper::new();
+    let mut w = Wrapper::new(intrinsics);
     w.line("  %compact = alloca { i64, i64, i64, i64, i32, i32, i32, i32 }, align 8");
     w.line("  %transferred = alloca i64, align 8");
     w.line("  %native.error = alloca i32, align 4");
@@ -780,6 +790,7 @@ pub(super) fn definition(
     program: &IrProgram,
     target: TargetLayout,
     function: &IrFunction,
+    intrinsics: &mut BTreeSet<IntrinsicDeclaration>,
 ) -> Result<Option<Module>, BackendFailure> {
     if !function.blocks().is_empty() {
         return Ok(None);
@@ -788,12 +799,12 @@ pub(super) fn definition(
         return Ok(None);
     };
     let module = if name.starts_with("capture_export.typed.") {
-        capture(program, target, function)?
+        capture(program, target, function, intrinsics)?
     } else {
         match name {
-            "prepare" | "discard" => immediate(program, target, function, name)?,
-            "read" => read(program, target, function)?,
-            "finish" | "abort" => finish(program, target, function, name == "abort")?,
+            "prepare" | "discard" => immediate(program, target, function, name, intrinsics)?,
+            "read" => read(program, target, function, intrinsics)?,
+            "finish" | "abort" => finish(program, target, function, name == "abort", intrinsics)?,
             _ => return Err(BackendFailure::InvalidIr),
         }
     };

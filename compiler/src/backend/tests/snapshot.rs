@@ -1,5 +1,6 @@
 //! Target qualification and the supplied-definition ABI, after source checking.
 use super::system::with_ir_layout;
+use crate::backend::emission::{FunctionBody, Module, Parameter, Signature};
 use crate::backend::emitter::emit_llvm_with_layout;
 use crate::target::TargetLayout;
 use crate::{BackendFailure, OverlapLowering};
@@ -10,6 +11,77 @@ const FORWARD: &str = r#"fn forward(reserve: std::snapshot::Reserve, map: &Concu
   return std::snapshot::capture_export::<u64>(reserve: move reserve, map: map, cut: cut);
 }
 "#;
+
+/// Capture, preparation, read translation, finish and abort all need zeroed
+/// result storage. Their independently emitted bodies must share declarations
+/// with each other and with ordinary emission and frame/runtime declarations.
+#[test]
+fn snapshot_and_ordinary_bodies_share_each_link_declaration_once() {
+    let source = format!(
+        "{}\n{FORWARD}",
+        include_str!("../../../../tests/conformance/cases/snapshot-pos-job-lifecycle.wf")
+    );
+    let target = TargetLayout::for_triple("x86_64-unknown-linux-gnu").expect("qualified target");
+    with_ir_layout(source.as_bytes(), OverlapLowering::Off, target, |program| {
+        let mut llvm = emit_llvm_with_layout(program, target).expect("snapshot definitions emit");
+        // The source's ordinary array_filled zero initialization currently
+        // lowers to stores. Exercise an independently constructed ordinary
+        // memset body too, without inventing a new source lowering path.
+        let mut ordinary = Module::default();
+        ordinary.declare(Signature::new(
+            "llvm.memset.p0.i64",
+            "void",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i8"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i1 immarg"),
+            ],
+        ));
+        let mut body = FunctionBody::default();
+        body.open_block("entry".into());
+        body.instructions(
+            "  call void @llvm.memset.p0.i64(ptr %buffer, i8 0, i64 8, i1 false)\n  ret void\n",
+            &["llvm.memset.p0.i64"],
+        );
+        ordinary.define(
+            Signature::new(
+                "wf.ordinary.zero_storage",
+                "void",
+                vec![Parameter::named("ptr", "%buffer")],
+            )
+            .define(body, "")
+            .expect("ordinary zeroing body"),
+        );
+        llvm.model.append(ordinary);
+        let rendered = llvm.model.render();
+        let mut declarations = std::collections::BTreeSet::new();
+        for line in rendered.lines().filter(|line| line.starts_with("declare ")) {
+            let symbol = line
+                .split_once('@')
+                .expect("named declaration")
+                .1
+                .split_once('(')
+                .expect("function declaration")
+                .0;
+            assert!(declarations.insert(symbol), "duplicate declaration: {line}");
+        }
+        for symbol in [
+            "llvm.memset.p0.i64",
+            "wf_snapshot_prepare",
+            "wf_snapshot_discard",
+            "wf_snapshot_capture",
+            "wf_snapshot_read_start",
+            "wf_snapshot_read_finish",
+            "wf__completion_snapshot_finish_submit",
+            "wf__completion_file_join",
+            "wf_snapshot_take_outcome",
+        ] {
+            assert!(declarations.contains(symbol), "missing declaration: {symbol}");
+        }
+        assert!(llvm.model.repeated_declaration().is_none());
+    });
+}
 
 #[test]
 fn accepted_snapshot_source_has_an_explicit_target_capability_boundary() {

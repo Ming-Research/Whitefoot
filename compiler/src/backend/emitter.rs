@@ -522,6 +522,16 @@ fn emit_module(
                     "i1 immarg".to_owned(),
                 ],
             ),
+            IntrinsicDeclaration::MemorySet => (
+                "llvm.memset.p0.i64".to_owned(),
+                "void".to_owned(),
+                vec![
+                    "ptr".to_owned(),
+                    "i8".to_owned(),
+                    "i64".to_owned(),
+                    "i1 immarg".to_owned(),
+                ],
+            ),
             IntrinsicDeclaration::Overflow { name, ty } => {
                 (name, format!("{{ {ty}, i1 }}"), vec![ty.clone(), ty])
             }
@@ -650,6 +660,9 @@ fn emit_module(
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
+    if text.repeated_declaration().is_some() {
+        return Err(BackendFailure::InvalidIr);
+    }
     Ok(LlvmModule {
         text: text.render(),
         model: text,
@@ -1104,6 +1117,7 @@ enum IntrinsicDeclaration {
     Assume,
     MemoryCopy,
     MemoryMove,
+    MemorySet,
     Overflow {
         name: String,
         ty: String,
@@ -2039,7 +2053,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(self.program, self.target, self.function)? {
+        if let Some(module) = snapshot::definition(
+            self.program,
+            self.target,
+            self.function,
+            self.intrinsics,
+        )? {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();

@@ -981,7 +981,7 @@ mod tests {
         let mut duplicate = base.clone();
         duplicate.entities.push(duplicate.entities[0].clone());
         let mut duplicate_declaration = base.clone();
-        duplicate_declaration.declare(Signature::new("abort", "void", Vec::new()));
+        duplicate_declaration.declare(Signature::new("abort", "i32", Vec::new()));
         for (name, edited) in [
             ("symbol", missing_symbol),
             ("transitive type", missing_type),

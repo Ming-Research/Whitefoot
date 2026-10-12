@@ -347,14 +347,20 @@ impl Module {
         self.entities.push(entity);
     }
     pub(crate) fn declare(&mut self, signature: Signature) {
-        self.parts
-            .push(ModulePart::Declaration(signature.name.clone()));
-        self.declarations
-            .insert(signature.name.clone(), signature.declaration());
+        self.register_declaration(signature.name.clone(), signature.declaration());
+    }
+    /// Independently emitted bodies may name the same linked function. Keep
+    /// one compatible declaration, including its attributes and dependencies;
+    /// conflicting records remain repeated for the module integrity check.
+    fn register_declaration(&mut self, name: String, declaration: Declaration) {
+        if self.declarations.get(&name) == Some(&declaration) {
+            return;
+        }
+        self.parts.push(ModulePart::Declaration(name.clone()));
+        self.declarations.insert(name, declaration);
     }
     pub(crate) fn declare_global(&mut self, name: String, ty: &str, align: u64) {
-        self.parts.push(ModulePart::Declaration(name.clone()));
-        self.declarations.insert(
+        self.register_declaration(
             name.clone(),
             Declaration {
                 text: format!("@{name} = external constant {ty}, align {align}"),
@@ -373,9 +379,7 @@ impl Module {
             "declare {} @{}({parameters}){}",
             signature.result, signature.name, signature.suffix
         );
-        self.parts
-            .push(ModulePart::Declaration(signature.name.clone()));
-        self.declarations.insert(
+        self.register_declaration(
             signature.name,
             Declaration {
                 text,
@@ -455,10 +459,29 @@ impl Module {
                 *index += offset;
             }
         }
-        self.parts.extend(other.parts);
+        // A conflict already recorded in a child module must survive merging,
+        // even if its final map entry happens to match this module's entry.
+        let mut seen = BTreeSet::new();
+        let conflicts = other
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                ModulePart::Declaration(name) if !seen.insert(name.clone()) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for part in other.parts {
+            if let ModulePart::Declaration(name) = &part {
+                let declaration = &other.declarations[name];
+                if !conflicts.contains(name) && self.declarations.get(name) == Some(declaration) {
+                    continue;
+                }
+                self.declarations.insert(name.clone(), declaration.clone());
+            }
+            self.parts.push(part);
+        }
         self.header.extend(other.header);
         self.types.extend(other.types);
-        self.declarations.extend(other.declarations);
         self.entities.extend(other.entities);
         self.attributes.extend(other.attributes);
     }
@@ -494,6 +517,55 @@ impl Module {
             }
         }
         text
+    }
+}
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    #[test]
+    fn compatible_declarations_are_idempotent_within_and_across_modules() {
+        let signature = Signature::new("callee", "i32", vec![Parameter::unnamed("ptr")]);
+        let mut module = Module::default();
+        module.declare(signature.clone());
+        module.declare(signature.clone());
+        let mut other = Module::default();
+        other.declare(signature);
+        module.append(other);
+        assert_eq!(
+            module.render().matches("declare i32 @callee(ptr)").count(),
+            1
+        );
+        assert!(module.repeated_declaration().is_none());
+    }
+
+    #[test]
+    fn incompatible_declarations_and_child_conflicts_remain_invalid() {
+        let original = Signature::new("callee", "void", Vec::new());
+        for change in ["result", "parameter", "attribute"] {
+            let mut conflicting = original.clone();
+            match change {
+                "result" => conflicting.result = "i32".into(),
+                "parameter" => conflicting.parameters.push(Parameter::unnamed("ptr")),
+                "attribute" => conflicting.suffix = " noreturn".into(),
+                _ => unreachable!(),
+            }
+            let mut child = Module::default();
+            child.declare(original.clone());
+            child.declare(conflicting.clone());
+            assert_eq!(child.repeated_declaration(), Some("callee"));
+            let mut parent = Module::default();
+            parent.declare(conflicting.clone());
+            parent.append(child);
+            assert_eq!(parent.repeated_declaration(), Some("callee"));
+            let mut parent = Module::default();
+            parent.declare(original.clone());
+            let mut child = Module::default();
+            child.declare(conflicting);
+            parent.append(child);
+            assert_eq!(parent.repeated_declaration(), Some("callee"));
+        }
     }
 }
 
