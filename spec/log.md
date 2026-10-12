@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-12 v0.132: an IoError's host description
+
+Rules: changed PRE-2
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#362 (head commit f38c25590) changing the specification and the design tree so that std::io can copy the host's description of an IoError into a window the caller supplies?" (translated), whose background listed the PRE-2 addition of error_copy_description, its text-selection rules, the code and origin meanings per host, the one design decision in system-interface.md, and that merging without the musl run planned on card gran-io-error-text-shape is accepted. The direction was the owner's choice of A on card gran-io-error-text-shape on 2026-10-11.
+
+Summary: Firn must reply with the host's text for an I/O error as Redis does (`-MISCONF Errors writing to the AOF file: <strerror(errno)>`), and std had no operation that reaches it. PRE-2's std::io adds `error_copy_description(error: &IoError, destination: &[u8], start: u64, end: u64) -> Result<u64, DescriptionError> reads(error), writes(destination)`, nonwaiting, with `host_copy_bytes`'s window contract: it copies the whole description without truncation or NUL, reports the required length and leaves the destination unchanged when the window is too small, and has a distinct unavailable result. POSIX text is the host C library's message for the code in the C locale, chosen without changing the process or thread locale the program observes; Windows text is the FormatMessageW system message in US English, as UTF-8, without its trailing CR/LF; DeadlinePassed, Cancelled and code-zero variants have fixed texts. PRE-2 also states what `code` and `origin` hold on each host. Selection ground: the caller keeps storage ownership as with `host_copy_bytes`, and the C locale matches Redis's own messages while ambient locale cannot select the bytes; an allocated string, truncation, a process-locale change and class-only text were rejected.
+
 ## 2026-10-11 v0.127: struct destructuring of copy values, and the prelude's `release`
 
 Rules: changed GRAM-4, PROV-6, PRE-1, FORM-2, CALL-4, MOD-5, MSR-3
