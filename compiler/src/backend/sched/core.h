@@ -23,7 +23,8 @@ int wf__par_pool_active(void);
 /* This thread's demand request word, nonzero while an idle thief asks it for
  * work. A --par-demand module polls it with one thread-local load; the
  * accessor returns the same word for native probes. World selection
- * (wf__par_pool_active) starts the pool and registers the word. */
+ * (wf__par_pool_active) starts the pool, registers the word and posts the
+ * owner's own first request on it. */
 #if defined(WF_PAR_DEMAND)
 #if defined(_WIN32)
 extern _Thread_local uint64_t wf__par_demand_word;

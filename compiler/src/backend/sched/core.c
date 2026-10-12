@@ -190,6 +190,17 @@
  * the enumerating probes reach wf__par_find, wf__par_steal and their hooks on
  * exactly the rounds they always did.
  *
+ * The startup exposure probe (startup_probe.c) is the one scheduler test that
+ * needs the window open, because what it asserts is that an owner registering
+ * after every helper has stopped scanning is still asked for work, and only
+ * the window stops a helper scanning while it is still hot. It therefore
+ * compiles this file with WF_SCHED_STARTUP_TEST instead of WF_SCHED_TEST:
+ * its hooks choose the pool's window, hold the owner before it registers its
+ * request word, hold helpers before their first scan, and observe each
+ * helper's entry into the window and its park. They only choose the window
+ * and delay or record lanes; none performs a deque, request or wake
+ * operation, and an ordinary build compiles none of them.
+ *
  * This selects how an already admitted program waits. It is not a timeout, a
  * fuel bound or a proof-work budget; no acceptance path reads it, it cannot
  * reject a program, and with the window at zero the loops behave as they did
@@ -203,6 +214,16 @@
 #endif
 #ifndef WF_PAR_IDLE_WINDOW_US
 #define WF_PAR_IDLE_WINDOW_US 1000
+#endif
+#if defined(WF_SCHED_STARTUP_TEST)
+/* Defined by startup_probe.c after it includes this file. `lane` is the
+ * calling lane's index; the window hook returns the window the pool runs with
+ * in place of the one wf__par_start selected. */
+static uint64_t wf_sched_startup_test_window_us(uint64_t selected);
+static void wf_sched_startup_test_helper_ready(unsigned lane);
+static void wf_sched_startup_test_window_entered(unsigned lane);
+static void wf_sched_startup_test_before_park(unsigned lane);
+static void wf_sched_startup_test_before_register(void);
 #endif
 /* Yields are cheap next to a park and the sweep gave no reason to move them. */
 #ifndef WF_PAR_YIELD_ROUNDS
@@ -477,6 +498,24 @@ static void wf__par_request(struct wf__par_lane *victim) {
         WF_DEMAND_COUNT(WF_COUNT_POST, 1);
     }
     __atomic_fetch_sub(&victim->request_users, 1u, __ATOMIC_RELEASE);
+}
+/* The owner's own first request, posted when it registers its word. Helpers
+ * scan every round only for their first spin bound; inside the idle window
+ * they scan only when the publish epoch moves, then once more before they
+ * park, and each failed scan asks one victim chosen by the lane's fixed seed.
+ * An owner that registers after every helper has stopped scanning can then go
+ * unasked for good: nothing moves the epoch or wakes a parked helper until
+ * something is published, and no remaining scan need choose lane 0 (the
+ * startup exposure results in research/investigations/par-demand/DESIGN.md
+ * replay those seeds). Asking itself makes the owner's first request-gated
+ * poll publish, and wf__par_publish both bumps the epoch, through its push,
+ * and wakes a parked lane, so every helper sees the offer whatever state it
+ * is in. The word is this thread's own: no thief writes it here, so
+ * request_users and withdrawal are untouched, and a pool whose requests are
+ * off posts nothing. */
+static void wf__par_request_self(void) {
+    if (!atomic_load_explicit(&wf__par_demand_posts, memory_order_relaxed)) return;
+    __atomic_store_n(&wf__par_demand_word, (uint64_t)1, __ATOMIC_RELAXED);
 }
 
 #endif
@@ -1364,6 +1403,10 @@ static int wf__par_stay_hot(struct wf__par_idling *idling) {
         if (now != 0) {
             if (idling->entered == 0) {
                 idling->entered = now;
+#if defined(WF_SCHED_STARTUP_TEST)
+                wf_sched_startup_test_window_entered(
+                    wf__par_self == NULL ? 0u : (unsigned)(wf__par_self - wf__par_lanes));
+#endif
             }
             if (now - idling->entered < wf__par_idle_window_us) {
                 idling->rounds = 0;
@@ -1509,6 +1552,9 @@ static void wf__par_worker_main(void *opaque) {
 
     WF_DIAGNOSTIC_EVENT("helper-ready", lane, 0);
     __atomic_add_fetch(&wf__par_ready, 1u, __ATOMIC_RELEASE);
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_helper_ready((unsigned)(lane - wf__par_lanes));
+#endif
 
     for (;;) {
         struct wf__par_slot *slot;
@@ -1548,6 +1594,11 @@ static void wf__par_worker_main(void *opaque) {
         if (!lane->posted) {
 #if defined(WF_PAR_TRACE)
             wf__par_trace_put(lane, WF_PAR_TRACE_PARK, (int64_t)idling.rounds);
+#endif
+#if defined(WF_SCHED_STARTUP_TEST)
+            /* Under the station lock, so a signal sent after the probe sees
+             * this arrival reaches a lane already inside its sleep. */
+            wf_sched_startup_test_before_park((unsigned)(lane - wf__par_lanes));
 #endif
             wf_prim_wait_sleep(&lane->wait);
 #if defined(WF_PAR_TRACE)
@@ -1628,6 +1679,9 @@ static void wf__par_start(void) {
         (cpus != 0u && (unsigned)requested <= cpus && levels <= 1u)
             ? (uint64_t)WF_PAR_IDLE_WINDOW_US
             : 0u;
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf__par_idle_window_us = wf_sched_startup_test_window_us(wf__par_idle_window_us);
+#endif
     WF_DIAGNOSTIC_EVENT("idle-window-selected", &wf__par_lanes[0], wf__par_idle_window_us);
     /* Prepare every deque before publishing a scan bound. Initialize the
      * owner's wait before any worker exists; preserve started workers on
@@ -1683,7 +1737,11 @@ static struct wf__par_lane *wf__par_attach(void) {
     }
     wf__par_self = &wf__par_lanes[0];
 #if defined(WF_PAR_DEMAND)
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_before_register();
+#endif
     wf__par_register_word(wf__par_self);
+    wf__par_request_self();
 #endif
     return wf__par_self;
 }
@@ -1826,8 +1884,10 @@ int wf__par_pool_active(void) {
     /* A demand poll is a plain load of this thread's word, so nothing on the
      * no-request path starts the pool or registers this thread's word. World
      * selection does both: request-gated call groups and loop slices need
-     * running thieves and a registered owner before they can offer work.
-     * Budgeted recursion offers immediately through acquire_lane instead.
+     * running thieves and a registered owner before they can offer work, and
+     * registration asks the owner once (wf__par_request_self), so the first
+     * of them offers whether or not a helper is still scanning. Budgeted
+     * recursion offers immediately through acquire_lane instead.
      * Idempotent, and a thread that already attached pays one
      * thread-local test. */
     if (active && !wf__par_attached) {

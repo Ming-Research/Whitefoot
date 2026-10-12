@@ -232,7 +232,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-demand-test sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-demand-test sched-startup-test sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -319,6 +319,19 @@ sched-demand-test: $(COMPLETION_TMP)/sched-demand
 	WF_PAR_DEMAND=on "$(COMPLETION_TMP)/sched-demand"
 	WF_PAR_DEMAND=off-never-request "$(COMPLETION_TMP)/sched-demand"
 .PHONY: sched-demand-test
+# Startup exposure: the owner registers its request word after every helper has
+# stopped scanning (late-spinning: in its window; late-parked: parked) and must
+# still be asked; registered-first is the control and requests-off checks that
+# a pool with requests off never asks. Each case is a fresh pool.
+$(eval $(call scheduler-image,sched-startup,startup_probe,,$(SCHED_PROBE_OBJECT_DIR)/entry-demand.o $(SCHED_PROBE_OBJECT_DIR)/prim_host.o))
+sched-startup-test: $(COMPLETION_TMP)/sched-startup
+	@set -e; for lanes in 4 8; do \
+		for mode in late-spinning late-parked registered-first; do \
+			$(NO_CORE_DUMPS) WF_PAR_DEMAND=on WF_WORKERS=$$lanes "$(COMPLETION_TMP)/sched-startup" $$mode; \
+		done; \
+		$(NO_CORE_DUMPS) WF_PAR_DEMAND=off-never-request WF_WORKERS=$$lanes "$(COMPLETION_TMP)/sched-startup" requests-off; \
+	done
+.PHONY: sched-startup-test
 $(SCHED_PROBE_OBJECT_DIR)/entry-deque.o: $(SCHED_DIR)/entry.c $(COMPLETION_HEADERS) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_SCHED_LANE_SLOTS=8u -c "$<" -o "$@"
@@ -462,6 +475,7 @@ shared-object-test: $(COMPLETION_TMP)/shared-object-test
 # cases measure contention and must not share the processors.
 COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-probe \
 	$(COMPLETION_TMP)/bridge-default-probe $(COMPLETION_TMP)/sched-smoke \
+	$(COMPLETION_TMP)/sched-startup \
 	$(COMPLETION_TMP)/sched-deque-probe $(COMPLETION_TMP)/sched-deque-probe-no-stats \
 	$(SCHED_POLICY_EXE) $(COMPLETION_TMP)/sched-policy-asymmetric \
 	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \

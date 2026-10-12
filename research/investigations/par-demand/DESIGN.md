@@ -4311,3 +4311,59 @@ costs about 5% against legacy par, and an owner-approved general change to the
 canonical loop's lowering. Reassociation and contraction are excluded as
 before. Any further timing should either use the narrower void rule above or
 pre-register why one excluded twin voids every comparison in its treatment.
+
+#### Startup exposure repair
+
+**Implemented on the work branch; not yet run.** This applies the
+self-request candidate from the repair table in the twin and startup results
+above. It changes `--par-demand`'s runtime only; ordinary `--par` does not
+compile the demand section of `compiler/src/backend/sched/core.c`.
+
+- **Change.** `wf__par_attach`, after the owner registers lane 0's request
+  word, calls the new `wf__par_request_self`, which stores 1 into the owner's
+  own thread-local word when the pool's requests are on
+  (`WF_PAR_DEMAND=off-never-request` posts nothing). The owner's first
+  request-gated poll therefore publishes. Every publication pushes, and the
+  push bumps the publish epoch, so a helper spinning in its window rescans;
+  when any lane has announced itself idle, the publication also wakes one
+  through `wf__par_wake_one` and `wf__par_signal`, which bumps the epoch again
+  under the station lock. A helper between its idle announcement and its
+  sleep either sees the item in its pre-park scan or is woken, by the existing
+  announce-before-final-scan protocol. Workers' own registrations are
+  unchanged. Only the owner thread writes its word here, so request-user
+  counting, word withdrawal at thread exit and partial startup are untouched;
+  registration happens once per process, right after the pool starts.
+- **Test.** `compiler/src/backend/sched/startup_probe.c`, built as
+  `sched-startup` and run by `make -C compiler sched-startup-test` inside
+  `completion-test` at four and eight lanes. It compiles the core with
+  `WF_SCHED_STARTUP_TEST`, whose hooks choose the window, hold the owner just
+  before registration, hold helpers before their first scan, and record each
+  helper's window entry and park; none exists in a shipped build. The root
+  polls its word until asked, or until every helper has parked, after which
+  no scan can happen before a publication; it then publishes one offer and
+  waits for a helper to run it before joining.
+  - `late-spinning`: a ten-second window, owner held until every helper has
+    entered it; the case checks that no helper had parked at registration.
+    Before the repair each helper's one remaining scan is its 1,026th, whose
+    victim the seed replay gives as lanes 2, 1, 1 at four lanes and 5, 1, 5,
+    1, 6, 2, 6 at eight, never lane 0, so the owner is never asked and the
+    case fails when the windows close. A wake-only repair also fails here,
+    since nothing is parked.
+  - `late-parked`: a 1,000 us window, owner held until every helper has
+    parked. Before the repair no lane scans again, so the case fails at its
+    first poll. A wake-only repair passes this case.
+  - `registered-first`, the control: a zero window, helpers held before their
+    first scan until the owner has registered. Each helper asks lane 0 within
+    its first nine scans by the same replay, so the case passes before and
+    after the repair. The control holds the helpers rather than the owner
+    because a zero window does not keep helpers scanning: each parks after
+    1,042 scans, and an owner held until then is never asked either.
+  - `requests-off`: the `late-parked` schedule under
+    `WF_PAR_DEMAND=off-never-request`; the owner must never be asked and no
+    steal may occur.
+- **Limits.** The before-repair failures are argued from the code and the
+  seed replay, not observed: this branch carries the repair. A spurious
+  return from a helper's condition wait would add scans the replay does not
+  count, which could let the old runtime pass by chance; it cannot make the
+  repaired runtime fail. Whether the repair removes the near-seq calls in
+  timed runs is a separate measurement.
