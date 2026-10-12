@@ -507,7 +507,7 @@ jobs:
               ;;
           esac
           rm -f "$data"/*.unverified
-          echo "pages:"; (cd "$data" && sha256sum ecma262* html5.html apollo11* 2>/dev/null)
+          echo "pages:"; (cd "$data" && sha256sum ecma262* html5.html $(ls apollo11* 2>/dev/null))
           if [ "$RUNNER_CHOICE" = github ]; then
             font_root=
           else
