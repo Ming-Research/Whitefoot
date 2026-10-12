@@ -1,0 +1,35 @@
+fn pour(shards: &Array<Shared<u64>, 4>, from: u64, into: u64) -> result: unit reads(shards) waits contract {
+  requires from < 4_u64;
+  requires into < 4_u64;
+  requires from != into;
+} {
+  atomic source = &shards^[from], target = &shards^[into] {
+    set target^ = target^ +wrap source^;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u64>(value: 1_u64);
+  let second = shared_new::<u64>(value: 30_u64);
+  let third = shared_new::<u64>(value: 4_u64);
+  let fourth = shared_share::<u64>(shared: &second);
+  let slots = slots_new::<Shared<u64>, 4>();
+  place_back(window: &slots, value: move first);
+  place_back(window: &slots, value: move second);
+  place_back(window: &slots, value: move third);
+  place_back(window: &slots, value: move fourth);
+  let shards = slots_into_array::<Shared<u64>, 4>(values: move slots);
+  pour(shards: &shards, from: 0_u64, into: 2_u64);
+  atomic left = &shards[1_u64], right = &shards[3_u64], step = &shards[2_u64] {
+    set left^ = left^ +wrap step^;
+    set right^ = right^ +wrap step^;
+    set step^ = step^ +wrap 2_u64;
+  }
+  let total = 0_u64;
+  atomic shared = &shards[3_u64], step = &shards[2_u64] {
+    set total = shared^ +wrap step^;
+  }
+  let code = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: code);
+}

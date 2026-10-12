@@ -522,6 +522,16 @@ macOS to 425 s, on the status board on 2026-10-12 (card
 coord-ci-budget-1012), and asked whether macOS speed also depends on the
 host assigned, to lower the budget or split it by host once known.
 
+**`check/runtime` on ubuntu, raised to 30 s.** The same main code ran the
+stage in 12.1 s on an AMD EPYC 9V45 host (run 38303779039), 14.6 s on an
+AMD EPYC 9V74 (run 38306929562) and 19.1 and 19.3 s on AMD EPYC 7763 hosts
+(runs 38310976155 and 38314210000), with only a budget-file change merged
+between the 14.6-s and 19.1-s runs; three pull requests that do not touch
+the runtime, Whitefoot#383 and #399 twice, took 20.6, 20.0 and 20.1 s on
+EPYC 7763 hosts against 20 s on 2026-10-12. The stage is its group's only
+labeled stage. The owner approved a raise of 10 s, to 30 s, on the status
+board on 2026-10-12 (card ci-runtime-budget-raise).
+
 **The candidate's images, back to 10 s.** `performance-candidate-images`
 builds the five formal kernels with the candidate compiler right after the
 two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
