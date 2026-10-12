@@ -125,14 +125,14 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     set slot^ = Some<u64>(value: 22_u64);
   }
   let prepared = std::snapshot::prepare(scratch_bytes: 65536_u64, output_bytes: 4096_u64);
-  match prepared {
+  match move prepared {
     Ok(value: reserve) => {
       let captured = capture(reserve: move reserve, table: &table, journal: &journal);
       atomic slot = &table[key_a], sequence = &journal {
         set slot^ = Some<u64>(value: 99_u64);
         set sequence^ = 8_u64;
       }
-      match captured {
+      match move captured {
         Ok(value: job) => {
           let publish = argument_count == 1_u64;
           let result = collect(job: move job, factory: &factory, output: &output, publish: publish);
@@ -152,10 +152,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if live_control {
     let replay_cut = shared_new::<u64>(value: 7_u64);
     let live_prepared = std::snapshot::prepare(scratch_bytes: 65536_u64, output_bytes: 4096_u64);
-    match live_prepared {
+    match move live_prepared {
       Ok(value: reserve) => {
         let captured = capture(reserve: move reserve, table: &table, journal: &replay_cut);
-        match captured {
+        match move captured {
           Ok(value: job) => {
             let publish = True();
             let result = collect(job: move job, factory: &factory, output: &output, publish: publish);
