@@ -16,8 +16,8 @@ use crate::{
 use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
-    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId, IntegerType,
+    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedRangeRoot, CheckedSegmentSelect,
+    CheckedSegmentSource, CheckedStatement, CheckedType, CheckedValue, FunctionId, IntegerType,
 };
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
@@ -98,10 +98,15 @@ fn place_denotation(
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => (
             Some(place.root.binding),
-            std::iter::once(&place.obligation)
+            formation_suffixes(&place.root)
+                .into_iter()
+                .chain(std::iter::once(&place.obligation))
                 .chain(subscript_suffixes(&place.path))
                 .collect(),
         ),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            (Some(root.binding), formation_suffixes(root))
+        }
         _ => return PlaceDenotation::Return,
     };
     let Some(binding) = binding else {
@@ -124,6 +129,35 @@ fn place_denotation(
     } else {
         PlaceDenotation::Return
     }
+}
+
+/// The psuffix node of each subscript a page or segment selection in the
+/// clause evaluates: the container's, or the range element's, then the
+/// selector's.
+fn formation_suffixes(root: &CheckedRangeRoot) -> Vec<&crate::NodePath> {
+    let Some(CheckedExpression::BorrowSegment {
+        root: source,
+        segment,
+        ..
+    }) = root.formation.as_deref()
+    else {
+        return Vec::new();
+    };
+    let mut suffixes = match source {
+        CheckedSegmentSource::Storage(container) => {
+            subscript_suffixes(&container.path).collect::<Vec<_>>()
+        }
+        CheckedSegmentSource::Element(element) => {
+            let mut suffixes = formation_suffixes(&element.root);
+            suffixes.push(&element.obligation);
+            suffixes.extend(subscript_suffixes(&element.path));
+            suffixes
+        }
+    };
+    if let CheckedSegmentSelect::One(index) | CheckedSegmentSelect::Page(index) = segment {
+        suffixes.push(&index.obligation);
+    }
+    suffixes
 }
 
 /// The psuffix node of each subscript in one place path.

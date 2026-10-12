@@ -368,4 +368,43 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         ],
     },
+    RepairPair {
+        // A page selected in the clause from an entry image is bounded by
+        // the page count at entry, so a selector equal to that count is
+        // refuted at the return however the body changes the window, and
+        // the repair names the return and the value meant.
+        name: "bounds-of-a-page-selector-in-an-entry-image-place.wf",
+        rejected: br#"fn f(p: &Paged<Slots<u8, 8>>, k: u64, i: u64) -> r: u64 writes(p) contract {
+  requires k == p^.pages.len;
+  requires p^.len > 0_u64;
+  ensures r <= entry(p)^.pages[k][i].len;
+} {
+  let last = take_back(window: p);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: k < entry(p)^.pages.len\n  disposition: Refuted\n",
+            "\n  mechanical_fix: `k < entry(p)^.pages.len` is false at the `return` on line 7, which selects this postcondition, with `p^.pages.len` at its function-entry value: index within the storage, or change the statements or requirements that fix the index\n",
+        ],
+        repaired: &[br#"fn f(p: &Paged<Slots<u8, 8>>, k: u64, i: u64) -> r: u64 writes(p) contract {
+  requires k + 1_u64 == p^.pages.len;
+  requires i + 1_u64 == p^.pages[k].len;
+  requires p^.len > 0_u64;
+  ensures r <= entry(p)^.pages[k][i].len;
+} {
+  let last = take_back(window: p);
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];

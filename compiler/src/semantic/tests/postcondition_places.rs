@@ -299,3 +299,38 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_rule_at(source("other").as_bytes(), SemanticRule::Op4, "[i]");
     assert_complete(source("rows").as_bytes());
 }
+
+/// [FN-9, ENT-2, OP-4] a page selected in a clause place owes its
+/// selector's bound at the selected returns, over the state the place
+/// denotes: an entry image's page count at entry. A selector one below that
+/// count is discharged after the removal kills the count's facts, and one
+/// equal to it is refuted. Before, the selector was judged on the count at
+/// the return and the first program was refused.
+#[test]
+fn a_page_selector_in_an_entry_image_place_is_judged_against_the_entry_page_count() {
+    let source = |requirement: &str| {
+        format!(
+            r#"fn f(p: &Paged<Slots<u8, 8>>, k: u64, i: u64) -> r: u64 writes(p) contract {{
+{requirement}  requires p^.len > 0_u64;
+  ensures r <= entry(p)^.pages[k][i].len;
+}} {{
+  let last = take_back(window: p);
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    assert_complete(
+        source("  requires k + 1_u64 == p^.pages.len;\n  requires i + 1_u64 == p^.pages[k].len;\n")
+            .as_bytes(),
+    );
+    assert_rule_at(
+        source("  requires k == p^.pages.len;\n").as_bytes(),
+        SemanticRule::Op4,
+        "[k]",
+    );
+}
