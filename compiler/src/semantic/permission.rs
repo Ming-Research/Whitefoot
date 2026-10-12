@@ -97,8 +97,9 @@ use super::model::{
     CheckedStatement, FunctionId, expression_children,
 };
 use super::places::{
-    CaptureId, CapturedRange, CapturedValue, NamingForm, PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace,
-    SeparationOracle, UnprovedSeparations, named_place, places_overlap, range_separation_candidate,
+    CaptureId, CapturedRange, CapturedValue, NamingForm, PlaceMap, PlaceRoot, PlaceStep,
+    ResolvedPlace, SeparationOracle, UnprovedSeparations, named_place, places_overlap,
+    range_separation_candidate,
 };
 use crate::NodePath;
 
@@ -604,6 +605,7 @@ fn unconditional_argument(value: &CheckedExpression) -> bool {
                 step,
                 super::model::CheckedPlaceStep::Field(_)
                     | super::model::CheckedPlaceStep::BoxReferent(_)
+                    | super::model::CheckedPlaceStep::Measure(_)
             )
         }),
         _ => false,

@@ -2,7 +2,7 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form. Older entries also record refused amendments,
+the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
 ## 2026-10-12 A KeySet reports its retained heap bytes and a scan bounds their growth
@@ -12,6 +12,93 @@ Nodes: compiler/proof-query-context, compiler/waiting-contexts/concurrent-map, l
 Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#361 (head commit 5ea2664eb) changing the specification and the design tree so that a KeySet reports its retained heap bytes and a caller can use 'a scan grows them by at most limit' in proofs?" (translated), whose background listed the rule-by-rule table for the specification change, SHARE-1's cross-reference-only change, the one existing conformance verdict that changes (the MSR-5 case, from Reject(FN-9) to Run(42)), and the five design-tree nodes with their proposed decisions. The directions were the owner's choice of B on card gran-scan-retained-shape and of A on card gran-scan-retained-proof, both on 2026-10-11.
 
 Summary: `key_set_bytes` is a read-only operation reporting a key set's heap holding, including unused capacity and exactly what release returns, with `map_scan_within` declaring unconditional monotonicity and an entry-plus-limit bound over it, because firn must prove its reservation accounting after temporary allocations end, instead of estimating storage from key lengths or changing `ScanStep`. A normal-return relation may add one own integer parameter with coefficient one to one side, because callers then prove both subtractions of the reservation account through an ordinary contract that user functions also use, instead of an operation-specific fact or a runtime check; the runtime keeping the account and a runtime check in firn are rejected. The window-transfer contract keeps its exact-length guarantees and does not admit a second entry measure on one side, because the chosen extension adds a scalar parameter, not a measure, and a caller reads the destination's exact length after the call. The sum is an internal term in the existing relation and proof path, with operand support union, affine expansion and immutable bound images, instead of a second publication domain or a scan-specific rule. `key_set_bytes` sums the host-granted capacities of the item/index store and the byte arena and every release returns both to the runtime pool, instead of counting only occupied bytes or caching a set's allocations in a thread-local spare; the cost of removing that cache is unmeasured.
+## 2026-10-12 Bool range guards, operation relations and `take_back` images
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-v0128-approve, "approve the specification amendment v0.131 and the added design tree decisions in Ming-Research/Whitefoot#366 (head 4f881b446)?" (translated), whose background summarized every added and changed decision and the refused alternatives.
+
+Summary: range-facts adds three decisions: a range guard may be one Bool datum, because writers guard on the same field and its tag is already a versioned integer read; an S7 operation the walk does not name exactly carries its S7 row's relations, because both judgments share one table and v2h's jump-table index needs it; `take_back` hands over the removed element's image, because moving a prepared element must keep its proved facts. range-judgment adds that ordinary entailment records the operand intervals S7 read at each operation in the proof receipt (proof-receipt 3), which the walk uses to build those relations, instead of the walk computing its own intervals, receiving derived relations or rerunning entailment; its first decision now says the walk retains only those intervals beyond the ordinary evidence.
+
+## 2026-10-12 Paged shares the empty header and grows a small first page
+
+Nodes: compiler/storage-representation, language/data-model/storage-shapes
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card paged-small-design-approve, "approve Whitefoot#363 (head 6127336ed)'s design-tree changes: Paged shares the empty header, page 0 grows step by step, and the two rejected approaches are recorded?" (translated); the direction was the owner's choice of B on the card paged-small-owners on 2026-10-11.
+
+Summary: The shared read-only empty header extends to Paged, and a positive-capacity Paged allocates page 0 at the least power-of-two element count covering its capacity, capped at B, replacing and copying it only while growth exceeds that count before B, because Snowghost's many empty and tiny Paged owners paid 89,038 extra header allocations and 100,466 extra full pages while shift-and-mask addressing stays unchanged and all replacements together copy at most B - 1 elements. Paged growth may therefore relocate only page 0 before it reaches B, with full pages kept in place, and a future page-adoption operation would adopt only full pages. A fixed smaller page 0 with non-uniform indexing (a compare and branch on every element address) and full first pages with per-owner headers (leaving Snowghost to route around the gap) are rejected. The storage-shapes decision on whole-storage effect entries now states overlap only and leaves fact survival to the relocation classification approved for Whitefoot#352.
+## 2026-10-12 Storage-role facts, in-place looping consumers and source-independent transfers
+
+Nodes: compiler/backend-facts, compiler/checker-facts, compiler/payload-enum-layout, compiler/storage-placement
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card lm-357-design-approve, "approve Whitefoot#357 (head 4c9a3e47f)'s design-tree changes: alias facts, looping callees reading parameters in place, field-wise transfers from every source (with #351's tag prefix), and the two rejected approaches?" (translated), and option A, "merge #357 and split the remaining slowdown into its own item" (translated), on the card lm-357-accept-split.
+
+Summary: Whitefoot#344 and #345 slowed Halo's concat and Snowghost's edits. Compiler-owned window length, capacity and head words, Paged directory entries, Box owners and explicit source scalar writes receive storage-role TBAA, and reads through a read-only reference parameter whose effect row covers its whole state receive alias scopes that a whole-state writer's header writes exclude, so LLVM keeps window metadata in registers across element writes; lowering records declared whole-state reads and the absence of writes for those scopes without changing any judgment. A body that is only one window placement primitive is expanded at a caller holding a read-only owner scope. A looping callee reads an immutable indirect own parameter in place, because Halo's node_find materialized its key only because the consumer check excluded loops. Structs and enums of at most 128 bytes and 16 granules are transferred field by field from every source, unions after replacing the tag with #351's common tag-and-padding prefix, because limiting granules to values the same function had just stored restored wide loads across separately stored caller fields (Halo concat 1.174, string-key 1.300). Whitefoot's own IR-budget forced inlining is rejected: it forced 44% of Halo's functions inline, grew text by 25.7% and still missed the target. Snowghost's word and sentence edits remain 6-11% slower than before #345 because small accessors returning records by value are no longer inlined; that remainder is a separate item.
+## 2026-10-12 A range reference's referent is a run, not a value
+
+Nodes: language/ownership/range-reference
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-referent-approve, "approve the TYPE-7 amendment and the added design tree decision in Ming-Research/Whitefoot#369 (head 3cd31ceb8)?" (translated), whose background summarized the added decision and its refused alternatives.
+
+Summary: The referent `r^` of a range reference names the run and is admitted only as the base of an element subscript, a range step and its `len` measure, so `&r^` and every other use are refused with a repair, because the complete-run borrow was typed as one element while it named the run and let two places of different types share one proof term. Forming a second range reference from `&r^` and giving the borrow the first element were refused: the first duplicates `let q = r;` and nothing in the spelling selects the second.
+
+## 2026-10-11 Payload enum tags sized by variant count
+
+Nodes: compiler/payload-enum-layout, compiler/storage-placement, compiler/tag-only-lowering
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card wfbl-06-01-351-approve, "approve Whitefoot#351 (head 80c1d9b06)'s enum tag width design changes: two added and four changed decisions?" (translated), whose background quoted every added and changed decision verbatim.
+
+Summary: Payload enums and tag-only enums of more than two variants use the smallest of 8, 16 and 32 bits that represents their variant ordinals, keeping the tag first and fields in declaration order, because count-sized tags reduce stored size within OP-9's unchanged ceilings; Halo's instruction Cell shrinks from 12 to 8 bytes. A union's carrier, initialization and bounded transfer combine the tag with the leading padding common to every variant into one 1-, 2- or 4-byte prefix, because exposing that gap as a separate three-byte interval slowed Halo by 5-11%, instead of widening the physical tag or moving the padding separately; with the prefix the 14900K retest ratios were 0.983-1.016. Union layout, memory-only transfer and the bounded struct transfer follow the count-sized tag and the prefix, their other content unchanged.
+## 2026-10-11 Growth keeps length and filled-element facts
+
+Nodes: compiler/checker-facts, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose option A, "approve" (translated), on the card paged-grow-352-approve, "approve Whitefoot#352 (head 174c2cd36)'s specification and design tree changes: keep facts on length and filled elements across growth (grow, grow_paged)?" (translated), whose background quoted every added and changed decision and Rejected item verbatim.
+
+Summary: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements while capacity and invalidated-reference support die and the whole-cell row stays, because growth moves storage without changing those values; per-element equality postconditions, a capacity-only effect row and re-proving facts in a loop were rejected. The checker marks canonical growth calls' proof write events as relocations, keeping their full resolved write places, and one support classifier applies the mark to every fact component and range version. The range walk places growth by that classification next to `place_back` and `take_back`.
+## 2026-10-11 The gate runs macOS where it decides a merge
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card wf-gate-368-approve, which asked "approve the design-tree change in Whitefoot #368 (head f6d7da395) recording that the gate's macOS jobs run only for ready pull requests, main and manual runs?" (translated); the direction was the owner's choice of A on the card coord-gate-macos-queue the same day.
+
+Summary: The hosted gate runs every group on Linux for each push and adds macOS for a push to a ready pull request, the ready event, main and a manual run, and a final job passes only when the revision's latest check runs show every group green on both platforms, because macOS jobs waited far longer than Linux jobs for hosted runners in busy hours while a macOS-only fault must still be caught before the main line ([macOS runner queue](../research/investigations/test-economy/time-budgets.md#macos-runner-queue)). Both platforms on every push with sessions asked to push less was rejected because nothing enforces fewer pushes.
+
+## 2026-10-11 Goal data admit integer terms by the place as written
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#358 (head 11fa213a5) adding this decision to the design tree node compiler/checker-facts?" (translated).
+
+Summary: The checker admitted writable fields below a subscript as ENT-2 terms when a constructor or call result was placed into indexed storage, accepting eight programs the specification rejects. Carried values are now published only when their target place as written is admissible, and a goal datum carries its written place as an admission annotation outside its typed identity: one canonical goal per identity keeps whole-goal truth, so a `+defined` guard or Boolean fact still crosses spellings, while integer projection and normalization belong to one admission view per spelling, so a numeric relation admitted through one spelling cannot reach an inadmissible one. Refusing the goal datum of an inadmissible indexed field was rejected because it removes the value identity that a guard on a writable indexed field and a readonly field reached by struct-equality projection need.
+## 2026-10-11 Freeing moved map tables once their statements end
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Owner-approved: On the shared status board on 2026-10-11, the owner chose A ("approve") on the card gran-reserve-reclaim-approval, which asked, written in Chinese, "approve Whitefoot#355's changes to the design tree design/compiler/waiting-contexts/concurrent-map.md?" (translated) and quoted the added publication-lifetime decision, the two added rejections and the replaced reserve-release decision verbatim at head 5a4a19657.
+
+Summary: An executor's map user kept its table publication after its statements ended and only a table switch reclaimed moved tables, so a moved table could stay pinned and firn's reserve release kept answering zero while over its memory limit. Users now keep their publication as an address token, and reclamation protects a retired table only while a matching entry-map user is active or the whole-map gate is closed, word maps keeping publication-only protection; a reserve release also detaches and frees the retired tables no statement uses. Releasing only the spare, which never advanced reclamation, and clearing the publication at every statement exit, which added two locked operations per x86-64 statement, were rejected; single-thread entry reads were unchanged within 0.1% on the 14900K ([measurement](../research/investigations/concurrent-map/DESIGN.md#freeing-moved-tables-once-their-statements-end)).
+## 2026-10-11 Recursive effect-row repairs widen by argument suffixes
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it, and notify firn after the merge and release" (translated), on the card "approve Ming-Research/Whitefoot#346 (head 12f9482b5) changing the design tree node compiler/rejection-payloads?" (translated).
+
+Summary: For a function recursing along a Frozen or Box tree, EFF-2's suggested row grew by one level each round and never converged. Acyclic repairs keep their covered-entry removal and their separate uncovered entries, now stated as a decision of their own. For a recursive component identified by source declarations, a growing parameter-cycle edge adds the complete argument path it supplies, such as `writes(root.inner.next.Some.value)`, instead of merging growing paths at their longest common prefix, because the merged `writes(root.inner)` makes EFF-5 refuse a recursive call that passes a sibling path as a separate read. The proposed component rows are checked by the ordinary checker before any repair is printed, and a failed validation omits the repair as DIAG-1 permits; firn's recursive lookup compiles with the suggested `reads(root.inner)`. The rejected merge is now stated for acyclic entries.
+## 2026-10-11 References to compile-time measures point at shared constants
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve; I then write design/log.md, mark the PR ready and ask the coordinator to queue it" (translated), on the card "approve Ming-Research/Whitefoot#359 (head f03ba8de1) adding this decision to the design tree node compiler/storage-representation?" (translated).
+
+Summary: The specification admits a readonly reference to a prelude-declared measure such as `&source^.inner.len`, but a constant-capacity container keeps its compile-time measures out of memory, so the reference had no address. Such a reference now lowers to a private unnamed_addr read-only constant holding the u64 value, one per distinct value in each emitted module, because the measure never changes for the owner's lifetime and the language observes no reference address. Adding the word to every constant-capacity header was rejected because it enlarges every fixed container, which matters most on weak embedded targets, and refusing the borrow would narrow what the specification admits.
+## 2026-10-11 Joins at implicit bounds record implicit evidence; delivery tests derivability
+
+Nodes: compiler/checker-facts, compiler/incremental-closure
+
+Owner-approved: On the shared status board on 2026-10-11, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-c3-353-approve, which asked "approve Whitefoot #353 (head 640014c4c) and its three design decisions: the join shortcut, the conditions for sharing a proof, and delivery judging redundancy by derivability?" (translated) and quoted the three decisions verbatim.
+
+Summary: At a branch join the checker built, for every pair, a proof whose parents were all N predecessors, so doubling the arms multiplied checking time about tenfold. A join now first reuses a shared explicit proof every non-contradictory predecessor independently selects, and otherwise stops at the first contributing input that reaches the pair's implicit-only closed bound and records an implicit derivation, because every closed state already entails the implicit facts and their closure, so ENT-5's weakest common bound cannot exceed it. Bounded relation delivery judges a candidate redundant by exact derivability from implicit facts instead of by the ancestry of its chosen proofs. No program's verdict changes; on the 14900K the synthetic 640-arm sequence checks about 69 times faster, v2h is unchanged and Halo about 2% faster.
 
 ## 2026-10-11 Copy struct destructuring and the prelude's release
 

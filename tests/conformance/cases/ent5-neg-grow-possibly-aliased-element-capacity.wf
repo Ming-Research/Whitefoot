@@ -1,0 +1,14 @@
+fn reserve(rows: &Slots<Box<Slots<u64>>, 2>, selected: u64, observed: u64, n: u64, capacity: u64) -> result: unit writes(rows[selected]) contract {
+  requires selected < rows^.len;
+  requires observed < rows^.len;
+  requires rows^[observed].inner.cap == n;
+  requires capacity >= rows^[selected].inner.cap;
+} {
+  grow(cell: &rows^[selected], capacity: capacity);
+  invariant unchanged: rows^[observed].inner.cap == n;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

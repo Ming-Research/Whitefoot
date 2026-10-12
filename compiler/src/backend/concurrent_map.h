@@ -247,10 +247,14 @@ void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64
 wf_cmap *wf_cmap_take_cleared(wf_cmap *map);
 void wf_cmap_release_cleared(wf_cmap *cleared);
 
-/* Frees the cells the map keeps as its reserve for the next move of their
- * size and returns their bytes; 0 when it keeps none, or when another thread
- * holds the map's own lock, a mover or a reclaim, which this does not wait
- * for. It changes no entry, and any thread may call it without a user. */
+/* Tries the map's short lock, detaches its spare cells and unprotected
+ * retired tables, then frees them after unlocking and returns their
+ * counted heap bytes, including table headers. A closed whole-map gate
+ * protects all retired tables; otherwise a matching publication protects
+ * while its entry user is active, or unconditionally for a word-map user.
+ * Returns 0 at once when the lock is busy, or when nothing is reclaimable.
+ * It changes no entry, waits for no holder, helps no move, and needs
+ * neither a user nor a whole hold. */
 uint64_t wf_cmap_release_reserve(wf_cmap *map);
 
 /* With no users left: the slot of an entry not yet drained, whose value the

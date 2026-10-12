@@ -830,6 +830,7 @@ fn retained_origin_expansion(
                 root,
                 projections,
                 ty,
+                ..
             }) => {
                 let Some(definition) = definitions.get(root) else {
                     return expression.clone();
@@ -5717,6 +5718,108 @@ fn main() -> status: std::process::ExitStatus pure {
                 if matches!(detail.relation, Relation::Bound { bound: 127, .. })
         )),
         "all delivering arms prove the weaker upper bound"
+    );
+}
+
+/// A capacity's implicit component keeps its const parameter's narrower
+/// type. Equal explicit witnesses before give must not create a redundant
+/// delivery root, and the receiving invariant still sees the closed fact.
+#[test]
+fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
+    let source = br#"fn probe<const n: u8>(values: &Slots<u8, n>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.cap) {
+  let picked = if a {
+    let capacity = values^.cap;
+    let d = x;
+    if b {
+      invariant one: values^.cap <= d + 255_u64;
+    } else {
+      invariant two: values^.cap <= d + 255_u64;
+    }
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: values^.cap <= picked + 255_u64;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let received = summary
+        .source_proofs
+        .iter()
+        .find(|proof| proof.name == "received")
+        .expect("the receiver has its own invariant judgment");
+    assert!(
+        received.check.discharged(),
+        "implicit omission preserves the receiving judgment: {received:?}"
+    );
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(
+                relation,
+                Relation::Bound { left, bound: 255, .. }
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Capacity, _))
+            )
+        }),
+        "the capacity's implicit upper bound needs no delivery root"
+    );
+}
+
+/// S16 directly establishes the carrier's exact type upper bound. Its source
+/// proof wins the implicit witness before give, without an intervening join.
+#[test]
+fn delivery_implicit_omission_does_not_need_a_prior_join() {
+    let source = br#"fn probe(x: u8, side: Bool) -> result: u8 pure {
+  let picked = if side {
+    let d = x;
+    invariant upper: d <= 255_u8;
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: picked <= 255_u8;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    for name in ["upper", "received"] {
+        let proof = summary
+            .source_proofs
+            .iter()
+            .find(|proof| proof.name == name)
+            .expect("each written invariant has its own judgment");
+        assert!(proof.check.discharged(), "{name}: {proof:?}");
+    }
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: 0, .. })
+    )));
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(relation, Relation::Bound { right: ZERO, bound: 255, .. })
+        }),
+        "the directly established type bound needs no delivery root"
     );
 }
 
@@ -12338,4 +12441,60 @@ fn main() -> status: std::process::ExitStatus pure {
                 && mechanical_fix.contains("guard the access with `if offset < b.len`")
         )
     });
+}
+
+#[test]
+fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+    let source = br#"struct Cell {
+  len: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit reads(cells) {
+  if cells^[0_u64].len +defined 254_u8 {
+    let value = cells^[0_u64].len + 254_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    let domain = summary
+        .derivations
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            DerivationNode::IntegerDomain {
+                goal: Some(goal),
+                parents,
+            } if matches!(
+                &summary.inventory.goals[goal.0 as usize].expression,
+                GoalExpression::Operation {
+                    row: GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::AddDefined,
+                        ..
+                    },
+                    ..
+                }
+            ) =>
+            {
+                Some(parents)
+            }
+            _ => None,
+        })
+        .expect("the addition retains its exact domain goal");
+    assert_eq!(domain.len(), 1);
+    assert!(matches!(
+        summary.derivations.nodes[domain[0].0 as usize],
+        DerivationNode::SourceGoal {
+            sign: GoalSign::Positive,
+            ..
+        }
+    ));
+    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+        TermKind::Place(place, IntegerType::U8)
+            if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
+                && matches!(place.path.last(), Some(PlaceStep::Field(_))))));
 }

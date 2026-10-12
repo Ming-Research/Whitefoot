@@ -653,10 +653,18 @@ impl Reasoning<'_, '_, '_> {
                 | KillEvent::EntryImageHolderConsume {
                     binding: source, ..
                 } => binding == source,
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => self
+                KillEvent::Write {
+                    place: written,
+                    relocation,
+                    ..
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place: written,
+                    relocation,
+                    ..
+                } => self
                     .input
-                    .resolved_places_overlap(&state.separations, &place, written),
+                    .write_kills_support(&state.separations, &place, written, *relocation),
             }) {
                 return false;
             }

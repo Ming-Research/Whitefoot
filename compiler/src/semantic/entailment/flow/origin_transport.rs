@@ -22,6 +22,7 @@ enum OriginNode {
 struct Expansion {
     key: usize,
     origins: Vec<DerivationId>,
+    datum: Option<GoalDatum>,
 }
 
 #[derive(Default)]
@@ -29,7 +30,7 @@ struct OriginKeys {
     definitions: HashMap<BindingId, (GoalExpression, DerivationId)>,
     nodes: Vec<OriginNode>,
     ids: HashMap<OriginNode, usize>,
-    memo: HashMap<GoalExpression, Expansion>,
+    memo: HashMap<GoalExpression, Vec<(GoalExpression, Expansion)>>,
     following: HashSet<BindingId>,
 }
 
@@ -45,16 +46,22 @@ impl OriginKeys {
     }
 
     fn expansion(&mut self, expression: &GoalExpression) -> Expansion {
-        if let Some(expansion) = self.memo.get(expression) {
+        if let Some((_, expansion)) = self.memo.get(expression).and_then(|views| {
+            views
+                .iter()
+                .find(|(view, _)| view.same_admission_view(expression))
+        }) {
             return expansion.clone();
         }
         let mut origins = Vec::new();
+        let mut expanded_datum = None;
         let key = match expression {
             GoalExpression::Datum(
                 datum @ GoalDatum::Place {
                     root,
                     projections,
                     ty,
+                    ..
                 },
             ) => {
                 if let Some((definition, proof)) = self.definitions.get(root).cloned() {
@@ -65,8 +72,8 @@ impl OriginKeys {
                     let expanded = self.expansion(&definition);
                     self.following.remove(root);
                     let projected = if projections.is_empty() {
-                        Some(expanded.key)
-                    } else if let OriginNode::Datum(datum) = self.nodes[expanded.key].clone() {
+                        Some((expanded.key, expanded.datum.clone()))
+                    } else if let Some(datum) = expanded.datum.clone() {
                         let mut projected = Some(GoalExpression::Datum(datum));
                         for projection in projections {
                             projected =
@@ -76,23 +83,29 @@ impl OriginKeys {
                             let GoalExpression::Datum(datum) = value else {
                                 unreachable!()
                             };
-                            self.intern(OriginNode::Datum(datum))
+                            (self.intern(OriginNode::Datum(datum.clone())), Some(datum))
                         })
                     } else {
                         None
                     };
-                    if let Some(key) = projected {
+                    if let Some((key, datum)) = projected {
                         origins = expanded.origins;
                         origins.push(proof);
+                        expanded_datum = datum;
                         key
                     } else {
+                        expanded_datum = Some(datum.clone());
                         self.intern(OriginNode::Datum(datum.clone()))
                     }
                 } else {
+                    expanded_datum = Some(datum.clone());
                     self.intern(OriginNode::Datum(datum.clone()))
                 }
             }
-            GoalExpression::Datum(datum) => self.intern(OriginNode::Datum(datum.clone())),
+            GoalExpression::Datum(datum) => {
+                expanded_datum = Some(datum.clone());
+                self.intern(OriginNode::Datum(datum.clone()))
+            }
             GoalExpression::Operation {
                 row,
                 type_arguments,
@@ -119,8 +132,15 @@ impl OriginKeys {
         };
         origins.sort_unstable();
         origins.dedup();
-        let expansion = Expansion { key, origins };
-        self.memo.insert(expression.clone(), expansion.clone());
+        let expansion = Expansion {
+            key,
+            origins,
+            datum: expanded_datum,
+        };
+        self.memo
+            .entry(expression.clone())
+            .or_default()
+            .push((expression.clone(), expansion.clone()));
         expansion
     }
 
@@ -129,8 +149,11 @@ impl OriginKeys {
         expression: &GoalExpression,
         representatives: &HashMap<usize, GoalExpression>,
     ) -> GoalExpression {
+        // [ENT-4.OT] exact duplicate trees do not supply a second spelling's
+        // admission; a genuine ordinary-let expansion still replaces a tree.
         if fragment_type(expression.ty()).is_some()
             && let Some(representative) = representatives.get(&self.expansion(expression).key)
+            && (expression != representative || expression.same_admission_view(representative))
         {
             return representative.clone();
         }
@@ -159,11 +182,16 @@ impl OriginKeys {
 fn collect(
     expression: GoalExpression,
     expressions: &mut Vec<GoalExpression>,
-    seen: &mut HashSet<GoalExpression>,
+    seen: &mut HashMap<GoalExpression, Vec<GoalExpression>>,
 ) {
-    if !seen.insert(expression.clone()) {
+    let views = seen.entry(expression.clone()).or_default();
+    if views
+        .iter()
+        .any(|view| view.same_admission_view(&expression))
+    {
         return;
     }
+    views.push(expression.clone());
     expressions.push(expression.clone());
     if let GoalExpression::Operation { arguments, .. } = expression {
         for argument in arguments {
@@ -193,10 +221,14 @@ impl Reasoning<'_, '_, '_> {
         parent: DerivationId,
         expansions: &HashMap<GoalId, Expansion>,
     ) -> DerivationId {
-        if from == goal {
+        if self.vocabulary.goals.canonical(from) == self.vocabulary.goals.canonical(goal) {
             return parent;
         }
         let origins = definition_parents(&expansions[&from], &expansions[&goal]);
+        assert!(
+            !origins.is_empty(),
+            "different origin trees need a live ordinary-let introduction"
+        );
         self.vocabulary
             .derivations
             .intern(DerivationNode::OriginTransport {
@@ -215,7 +247,7 @@ impl Reasoning<'_, '_, '_> {
     ) -> FactState {
         let mut keys = OriginKeys::default();
         let mut expressions = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = HashMap::new();
         let mut definitions = context.facts.goal_origins.iter().collect::<Vec<_>>();
         definitions.sort_by_key(|(binding, _)| binding.0);
         for (binding, origin) in definitions {
@@ -229,16 +261,42 @@ impl Reasoning<'_, '_, '_> {
             );
             collect(definition, &mut expressions, &mut seen);
         }
-        let mut entering = context.facts.opaque.iter().copied().collect::<Vec<_>>();
-        entering.sort_by_key(|(goal, sign)| (goal.0, *sign == GoalSign::Negative));
-        for (goal, _) in &entering {
-            collect(
-                self.vocabulary.goals.expression(*goal).clone(),
-                &mut expressions,
-                &mut seen,
-            );
+        let mut numeric_views = seen.clone();
+        let mut entering = context
+            .facts
+            .opaque_sources
+            .iter()
+            .flat_map(|((_, sign), views)| {
+                views
+                    .iter()
+                    .map(|(goal, proof)| (*goal, *sign, *proof, true))
+            })
+            .collect::<Vec<_>>();
+        for (goal, sign) in &context.facts.opaque {
+            if context
+                .facts
+                .opaque_sources
+                .get(&(*goal, *sign))
+                .is_none_or(|views| views.is_empty())
+            {
+                entering.push((
+                    *goal,
+                    *sign,
+                    context.facts.opaque_proofs[&(*goal, *sign)],
+                    false,
+                ));
+            }
+        }
+        entering.sort_by_key(|(goal, sign, _, _)| (goal.0, *sign == GoalSign::Negative));
+        for (goal, _, _, numeric) in &entering {
+            let expression = self.vocabulary.goals.expression(*goal).clone();
+            if *numeric {
+                collect(expression.clone(), &mut Vec::new(), &mut numeric_views);
+            }
+            collect(expression, &mut expressions, &mut seen);
         }
         if let Some(submitted) = submitted {
+            collect(submitted.clone(), &mut Vec::new(), &mut numeric_views);
             collect(submitted.clone(), &mut expressions, &mut seen);
         }
 
@@ -252,6 +310,11 @@ impl Reasoning<'_, '_, '_> {
             let expansion = keys.expansion(expression);
             let goal = self.intern_goal_expression(expression.clone());
             if fragment_type(expression.ty()).is_some()
+                && numeric_views.get(expression).is_some_and(|views| {
+                    views
+                        .iter()
+                        .any(|view| view.same_admission_view(expression))
+                })
                 && let Some((term, offset)) = self.goal_side(expression)
             {
                 representatives
@@ -328,12 +391,11 @@ impl Reasoning<'_, '_, '_> {
 
         // Only entering sources supply projected relations. A derived sign
         // below never becomes another numeric/AUTO premise.
-        for (from, sign) in entering {
-            let parent = context.facts.opaque_proofs[&(from, sign)];
+        for (from, sign, parent, _) in entering {
             for &goal in &classes[&expansions[&from].key] {
                 let proof = self.transport_origin_sign(from, goal, sign, parent, &expansions);
-                view.establish_derived_goal(goal, sign, proof);
-                if from != goal
+                view.establish_derived_goal(goal, sign, proof, &self.vocabulary.goals);
+                if self.vocabulary.goals.canonical(from) != self.vocabulary.goals.canonical(goal)
                     && let Some(relation) = self.vocabulary.goals.projection(goal).cloned()
                 {
                     let relation = if sign == GoalSign::Positive {
@@ -371,10 +433,10 @@ impl Reasoning<'_, '_, '_> {
             for members in classes.values() {
                 for &from in members {
                     for sign in [GoalSign::Positive, GoalSign::Negative] {
-                        if members
-                            .iter()
-                            .all(|goal| view.opaque.contains(&(*goal, sign)))
-                        {
+                        if members.iter().all(|goal| {
+                            view.opaque
+                                .contains(&(self.vocabulary.goals.canonical(*goal), sign))
+                        }) {
                             continue;
                         }
                         let mut parent = closed.goal_proof(
@@ -404,7 +466,10 @@ impl Reasoning<'_, '_, '_> {
                         }
                         if let Some(parent) = parent {
                             for &goal in members {
-                                if !view.opaque.contains(&(goal, sign)) {
+                                if !view
+                                    .opaque
+                                    .contains(&(self.vocabulary.goals.canonical(goal), sign))
+                                {
                                     let proof = self.transport_origin_sign(
                                         from,
                                         goal,
@@ -423,8 +488,11 @@ impl Reasoning<'_, '_, '_> {
                 return view;
             }
             for (goal, sign, proof) in additions {
-                if !view.opaque.contains(&(goal, sign)) {
-                    view.establish_derived_goal(goal, sign, proof);
+                if !view
+                    .opaque
+                    .contains(&(self.vocabulary.goals.canonical(goal), sign))
+                {
+                    view.establish_derived_goal(goal, sign, proof, &self.vocabulary.goals);
                 }
             }
         }

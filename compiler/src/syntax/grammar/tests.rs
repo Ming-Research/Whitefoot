@@ -124,7 +124,8 @@ fn complete_inventory_is_pinned() {
     // v0.84's range facts add `apart_clause` [GRAM-4] and `range_clause`,
     // `range_binder` and `range_relation` [GRAM-5]: four productions.
     // v0.90's package bindings add `package_decl` [GRAM-2, MOD-11].
-    assert_eq!(productions().len(), 100);
+    // v0.128 adds `range_guard` [GRAM-5, RANGE-1].
+    assert_eq!(productions().len(), 101);
     // v0.72's standard library qualifier [MOD-10] adds a `"pkg" | "std"`
     // alternation to `alias_decl`, `module_path` and `callee`, three
     // decisions, and extends `type_path`'s existing root alternation.
@@ -157,7 +158,8 @@ fn complete_inventory_is_pinned() {
     // `type_invariant`: IDENT "(" and "(" IDENT are disjoint.
     // v0.128 admits projections inside `entry` [GRAM-5, MSR-3]:
     // `pbase` gains one `psuffix*` repeat.
-    assert_eq!(DECISIONS.len(), 179);
+    // v0.128's range guard optional comparison adds one decision.
+    assert_eq!(DECISIONS.len(), 180);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -171,7 +173,12 @@ fn complete_inventory_is_pinned() {
     // The entry repeat has 12 entry rows and 80 exit rows. Its closing
     // parenthesis also adds one continuation row each at `place`'s suffix
     // repeat, `psuffix`'s choice and its optional range tail: 95 rows.
-    assert_eq!(SELECT_ROWS.len(), 8_027);
+    // v0.128's optional guard comparison has six operator starts followed
+    // by thirteen affine-expression entry origins, and two guard-list
+    // continuations each followed by those thirteen origins: 104 rows.
+    // Together the projected entry former and the guard comparison add
+    // 95 + 104 rows to the 7,932-row v0.127 inventory.
+    assert_eq!(SELECT_ROWS.len(), 8_131);
     assert_eq!(diagnostic_terminal_order().len(), 115);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -204,12 +211,13 @@ fn complete_inventory_is_pinned() {
     assert_eq!(productions()[88], Production::RangeTail);
     assert_eq!(productions()[89], Production::RangeClause);
     assert_eq!(productions()[90], Production::RangeBinder);
-    assert_eq!(productions()[91], Production::RangeRelation);
-    assert_eq!(productions()[95], Production::Effect);
-    assert_eq!(productions()[96], Production::EffectPath);
-    assert_eq!(productions()[97], Production::Epbase);
-    assert_eq!(productions()[98], Production::Epsuffix);
-    assert_eq!(productions()[99], Production::Erange);
+    assert_eq!(productions()[91], Production::RangeGuard);
+    assert_eq!(productions()[92], Production::RangeRelation);
+    assert_eq!(productions()[96], Production::Effect);
+    assert_eq!(productions()[97], Production::EffectPath);
+    assert_eq!(productions()[98], Production::Epbase);
+    assert_eq!(productions()[99], Production::Epsuffix);
+    assert_eq!(productions()[100], Production::Erange);
     assert_eq!(Production::ForStmt.index(), 63);
     assert_eq!(Production::ForBinding.index(), 64);
     assert_eq!(Production::HeaderInvariant.index(), 65);
@@ -244,6 +252,7 @@ fn complete_inventory_is_pinned() {
     assert_eq!(Production::CalleePath.index(), 92);
     assert_eq!(Production::TypeInvariant.index(), 94);
     assert_eq!(Production::PackageDecl.index(), 99);
+    assert_eq!(Production::RangeGuard.index(), 100);
     // Index 2 is `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2], so
     // every decision after `item` follows that optional before
     // that modifier entered the grammar.
@@ -369,11 +378,14 @@ fn complete_inventory_is_pinned() {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
+    // v0.128 [GRAM-5, RANGE-1] the guard's optional comparison.
+    assert_eq!(DECISIONS[163].production(), Production::RangeGuard);
+    assert_eq!(DECISIONS[163].kind(), DecisionKind::Optional);
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[177].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[177].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[178].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[178].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[178].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[179].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[179].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -503,14 +515,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 179 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 180 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 179);
+    assert_eq!(decisions, 180);
 }
 
 #[test]
@@ -567,7 +579,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 179);
+    assert_eq!(DECISIONS.len(), 180);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -613,6 +625,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_027);
+    assert_eq!(total_rows, 8_131);
     assert!(saw_atom_only);
 }

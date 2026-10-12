@@ -167,16 +167,18 @@ typedef struct chunk {
     struct chunk *older;
 } chunk;
 
-/* One thread's use of the map: the table it is in; the cells it claimed and
- * the keys it added less those it removed, summed only when a claim may cross
- * the threshold; whether it is inside a keyed statement, which a statement
- * over the whole map waits out; how long its keyed statement has waited for
- * cells and may wait before it holds the map; and its entries' free memory.
+/* One thread's use of the map: its published table address, an integer
+ * token that may outlive the allocation and is never dereferenced; the
+ * cells it claimed and the keys it added less those it removed, summed only
+ * when a claim may cross the threshold; whether it is inside a keyed
+ * statement, which a statement over the whole map waits out; how long its
+ * keyed statement has waited for cells and may wait before it holds the
+ * map; and its entries' free memory.
  * Then whether it holds the whole map; the hold whose cells it is locking,
  * which a probe of one of its keys may meet; and the memory of an earlier
  * hold's keys, kept for the next. */
 struct wf_cmap_user {
-    _Alignas(64) _Atomic(table *) in;
+    _Alignas(64) _Atomic uintptr_t in;
     _Atomic int64_t used;
     _Atomic int64_t live;
     _Atomic int active;
@@ -424,38 +426,91 @@ static void totals(wf_cmap *map, int64_t *used, int64_t *live) {
     *live = l;
 }
 
-/* Frees the moved tables no user is in, keeping the cells of the newest
- * when they are the current table's size: a map whose size holds steady
- * moves to a table of the same size, which those cells then serve, while a
- * table that grew past them, or shrank below them, would only reach their
- * size again by moving back, so they are freed instead of held idle.
- * A table is retired after the map's current table has changed, and a user
- * publishes its table before it checks that the table is still current, all
- * sequentially consistent: either this scan sees the user in the table, or
- * the user sees that the table is no longer current. The current table read
- * here can change under the scan; a spare kept or freed on a stale size
- * costs one allocation or one idle array, never a wrong table. */
+/* Detaches unprotected retired tables, newest first, under map->lock.
+ * Entry users keep their publication between statements, so a matching
+ * publication protects a table only while the user is active. Read the
+ * publication before active: a different publication follows the user's
+ * last access to this table, and the publication/recheck handshake makes
+ * a user publishing it after this scan observe its retirement.
+ *
+ * For a matching publication, let A be the keyed user's SC active=1 store,
+ * C its SC current-table read (use_current's fast path or switch_table's
+ * recheck), R the SC store that replaces this table as current, and S this
+ * scan's SC active load. A user able to access the old table has A<C<R<S.
+ * Thus S cannot read the inactive value preceding A: it sees an active
+ * value, or a later active=0 release store after the last table access and
+ * any move the statement finishes. Reusing a cached publication therefore
+ * needs the SC current read even when no new publication store is needed.
+ * If S sees inactivity and the next statement's A follows S, R<S<A<C:
+ * that statement's SC current read cannot return the retired table.
+ *
+ * A whole hold has no active mark. Snapshot the gate once, SC: if closed,
+ * retain every retired table. Every retirement considered here precedes
+ * that snapshot under map->lock. A hold closing the gate afterward can
+ * only begin with the newer current table; a hold the snapshot misses
+ * because it already reopened the gate has finished its table accesses.
+ * Reads under outer ownership or shared-state exclusion, including scans,
+ * may take no map gate or user publication: that exclusion keeps their
+ * current table stable, and this scan detaches only retired tables.
+ * Word-map users have no statement activity protocol: their matching
+ * publications always protect until switch_table or wf_cmap_leave, using
+ * the original SC publication/current-recheck handshake alone. slot_size
+ * is immutable after construction, zero for word maps and nonzero for
+ * entry maps, so this distinction needs no separate atomic flag. */
+static table *detach_retired_locked(wf_cmap *map) {
+    if (atomic_load_explicit(&map->gate, memory_order_seq_cst) != 0)
+        return NULL;
+    int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
+    table *kept = NULL, **tail = &kept;
+    table *ready = NULL, **ready_tail = &ready;
+    for (table *r = atomic_load_explicit(&map->retired, memory_order_relaxed), *older; r != NULL; r = older) {
+        older = r->older;
+        int in_use = 0;
+        for (int i = 0; i < n && !in_use; i++) {
+            wf_cmap_user *u = &map->users[i];
+            if (atomic_load_explicit(&u->in, memory_order_seq_cst) != (uintptr_t)r)
+                continue;
+#ifdef WF_CMAP_IGNORE_ACTIVITY
+            /* The negative reserve test restores the idle executor pin. */
+            in_use = 1;
+#else
+            in_use = map->slot_size == 0 || atomic_load_explicit(&u->active, memory_order_seq_cst) != 0;
+#endif
+        }
+        if (in_use) {
+            *tail = r;
+            tail = &r->older;
+        } else {
+            *ready_tail = r;
+            ready_tail = &r->older;
+        }
+    }
+    *tail = NULL;
+    *ready_tail = NULL;
+    atomic_store_explicit(&map->retired, kept, memory_order_relaxed);
+    return ready;
+}
+
+/* Frees the detached tables, keeping the cells of the newest when they
+ * are the current table's size: a map whose size holds steady moves to a
+ * table of the same size, which those cells then serve. Other sizes would
+ * only serve a move back, so they are freed instead of held idle.
+ * The current table read can change under the scan; a spare kept or freed
+ * on a stale size costs one allocation or one idle array, never a wrong
+ * table. */
 static void reclaim(wf_cmap *map) {
     if (atomic_load_explicit(&map->lock, memory_order_relaxed) ||
         atomic_exchange_explicit(&map->lock, 1, memory_order_acquire))
         return;
-    int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
     uint64_t size = atomic_load_explicit(&map->current, memory_order_acquire)->capacity;
     if (map->spare != NULL && map->spare_capacity != size) {
         free_cells(map->spare, map->spare_capacity);
         map->spare = NULL;
     }
-    table *kept = NULL, **tail = &kept;
     int spared = 0;
-    for (table *r = atomic_load_explicit(&map->retired, memory_order_relaxed), *older; r != NULL; r = older) {
+    for (table *r = detach_retired_locked(map), *older; r != NULL; r = older) {
         older = r->older;
-        int in_use = 0;
-        for (int i = 0; i < n && !in_use; i++)
-            in_use = atomic_load_explicit(&map->users[i].in, memory_order_seq_cst) == r;
-        if (in_use) {
-            *tail = r;
-            tail = &r->older;
-        } else if (spared || r->capacity != size) {
+        if (spared || r->capacity != size) {
             free_table(r);
         } else {
             if (map->spare != NULL)
@@ -469,8 +524,6 @@ static void reclaim(wf_cmap *map) {
             spared = 1;
         }
     }
-    *tail = NULL;
-    atomic_store_explicit(&map->retired, kept, memory_order_relaxed);
     unlock_map(map);
 }
 
@@ -479,7 +532,7 @@ static table *switch_table(wf_cmap_user *u) {
     wf_cmap *map = u->map;
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
     for (;;) {
-        atomic_store_explicit(&u->in, t, memory_order_seq_cst);
+        atomic_store_explicit(&u->in, (uintptr_t)t, memory_order_seq_cst);
         table *now = atomic_load_explicit(&map->current, memory_order_seq_cst);
         if (now == t)
             break;
@@ -491,8 +544,8 @@ static table *switch_table(wf_cmap_user *u) {
 }
 
 static inline table *use_current(wf_cmap_user *u) {
-    table *t = atomic_load_explicit(&u->map->current, memory_order_acquire);
-    if (__builtin_expect(atomic_load_explicit(&u->in, memory_order_relaxed) == t, 1))
+    table *t = atomic_load_explicit(&u->map->current, memory_order_seq_cst);
+    if (__builtin_expect(atomic_load_explicit(&u->in, memory_order_relaxed) == (uintptr_t)t, 1))
         return t;
     return switch_table(u);
 }
@@ -2414,7 +2467,10 @@ static void fold_users(wf_cmap *map) {
         u->cursor = NULL;
         u->room = 0;
         memset(u->free, 0, sizeof u->free);
-        atomic_store_explicit(&u->in, NULL, memory_order_relaxed);
+        /* Release: the whole holder running this acquired u's active=0,
+         * which follows u's last table access, so a reserve scan that reads
+         * this zero and skips u's activity still frees after that access. */
+        atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_release);
     }
 }
 
@@ -2854,11 +2910,11 @@ static uint64_t cells_counted(uint64_t count) {
     return bytes < HUGE_BYTES ? (uint64_t)WF_CMAP_GRANTED(bytes) : bytes;
 }
 
-/* The reserve is map->spare, which a mover takes, reclaim replaces and a
- * swap exchanges only under the map's lock, so taking it under that lock
- * leaves it to this call alone. The lock is only tried: a holder is a
- * mover, a reclaim or a swap, and the caller asks again later rather than
- * waiting. The answer is what the heap reading counted for the reserve. */
+/* Collect the spare and retired tables no user still protects. Detaching
+ * under the short lock leaves these allocations to this call alone, even
+ * beside a mover, reclaim or swap. Free after unlocking and count every
+ * allocation as the heap reading does. A busy lock answers zero at once;
+ * this neither takes the whole-map gate nor waits for users or a move. */
 uint64_t wf_cmap_release_reserve(wf_cmap *map) {
     if (atomic_load_explicit(&map->lock, memory_order_relaxed) ||
         atomic_exchange_explicit(&map->lock, 1, memory_order_acquire))
@@ -2866,11 +2922,18 @@ uint64_t wf_cmap_release_reserve(wf_cmap *map) {
     cell *cells = map->spare;
     uint64_t capacity = map->spare_capacity;
     map->spare = NULL;
+    table *retired = detach_retired_locked(map);
     unlock_map(map);
-    if (cells == NULL)
-        return 0;
-    uint64_t counted = cells_counted(capacity);
-    free_cells(cells, capacity);
+    uint64_t counted = 0;
+    if (cells != NULL) {
+        counted = cells_counted(capacity);
+        free_cells(cells, capacity);
+    }
+    for (table *r = retired, *older; r != NULL; r = older) {
+        older = r->older;
+        counted += cells_counted(r->capacity) + (uint64_t)WF_CMAP_GRANTED(sizeof *r);
+        free_table(r);
+    }
     return counted;
 }
 
@@ -2984,7 +3047,7 @@ void wf_cmap_leave(wf_cmap_user *u) {
                               memory_order_relaxed);
     atomic_store_explicit(&u->used, 0, memory_order_relaxed);
     atomic_store_explicit(&u->live, 0, memory_order_relaxed);
-    atomic_store_explicit(&u->in, NULL, memory_order_release);
+    atomic_store_explicit(&u->in, (uintptr_t)0, memory_order_release);
     atomic_store(&u->busy, 0);
 }
 

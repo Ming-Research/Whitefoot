@@ -28,7 +28,9 @@
 //! scalar count bound — keep their live subject rule and belong with the other
 //! subscript tests, not with the retired view apparatus.
 
-use crate::{CallRequirementDisposition, SemanticIssueKind, SemanticOutcome, SemanticRule};
+use crate::{
+    CallRequirementDisposition, SemanticIssueKind, SemanticLocation, SemanticOutcome, SemanticRule,
+};
 
 use super::{assert_accepts, assert_rule_kind, with_semantics};
 
@@ -55,6 +57,43 @@ fn a_range_reference_forms_and_reslices() {
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/ref4-pos-range-reference-and-reslice.wf"
     ));
+}
+
+/// [TYPE-7, DIAG-1] refusals cite the complete place (excluding the borrow
+/// marker) and retain all three prescribed restructuring choices.
+#[test]
+fn range_referent_diagnostics_cite_complete_places_and_offer_repairs() {
+    for (source, cited) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/type7-neg-range-referent-borrow-parameter.wf"
+            )
+            .as_slice(),
+            "r^",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/type7-neg-range-referent-field.wf")
+                .as_slice(),
+            "r^.field",
+        ),
+    ] {
+        with_semantics(source, |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected TYPE-7 at {cited:?}, got {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Type7);
+            let SemanticIssueKind::RangeReferentUse { mechanical_fix } = issue.kind() else {
+                panic!("expected a range-referent repair, got {issue:?}");
+            };
+            for repair in ["let q = r;", "&r^[i]", "&r^[a..b]"] {
+                assert!(mechanical_fix.contains(repair), "missing repair {repair:?}");
+            }
+            let SemanticLocation::SourceNode(_, coordinate) = issue.location();
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
+            assert_eq!(&source[start..end], cited.as_bytes());
+        });
+    }
 }
 
 /// [REF-4] a range reference over a `Ring` is a hard error: a wrapped window is
@@ -1298,17 +1337,13 @@ fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
     );
 }
 
-/// The whole-cell write of grow_paged reaches the same direct length support
-/// as a write to p.inner.len, even though its contract preserves total len.
+/// [ENT-5, MSR-2] grow_paged preserves initialized-length support, including
+/// a direct page length derived from that length and an unchanged page offset.
 #[test]
-fn direct_page_length_fact_dies_after_grow_paged() {
-    assert_call_goal(
-        include_bytes!(
-            "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-grow.wf"
-        ),
-        CallRequirementDisposition::Unproved,
-        "p^.inner.pages[0].len == 1_u64",
-    );
+fn direct_page_length_fact_survives_grow_paged() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/msr2-pos-direct-page-length-after-grow.wf"
+    ));
 }
 
 /// [MSR-2] removal reaches direct length support through take_back's len

@@ -79,8 +79,12 @@ pub(super) fn with_ir_layout<R>(
         SemanticOutcome::Complete(checked) => checked,
         other => panic!("ordinary ABI test source must check: {other:?}"),
     };
-    let mut ir = lower_checked_with_layout(*checked, overlap, target)
-        .expect("checked program must lower for the selected target");
+    let mut ir = lower_checked_with_layout(*checked, overlap, target).unwrap_or_else(|failure| {
+        panic!(
+            "checked program must lower for the selected target: {failure:?}\n{}",
+            String::from_utf8_lossy(source)
+        )
+    });
     run(&mut ir)
 }
 

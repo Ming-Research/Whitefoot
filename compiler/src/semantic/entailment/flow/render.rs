@@ -644,6 +644,11 @@ impl Input<'_, '_> {
                 GoalProjection::Deref => {
                     self.render_content_step(&mut rendered, &mut ty);
                 }
+                GoalProjection::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    ty = Some(CheckedType::Integer(IntegerType::U64));
+                }
                 GoalProjection::Field(field) => {
                     match ty
                         .and_then(|current| self.field_name(current, *field))
@@ -754,6 +759,11 @@ impl Input<'_, '_> {
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     rendered.push_str(".inner");
                     ty = self.deref_type(CheckedType::Nominal(*nominal));
+                }
+                CheckedPlaceStep::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    ty = Some(CheckedType::Integer(IntegerType::U64));
                 }
                 CheckedPlaceStep::Subscript(index) => {
                     rendered.push_str(&format!("[{}]", self.render_expression(&index.offset)));
