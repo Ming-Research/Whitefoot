@@ -86,6 +86,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldKeys { record, .. }
             | IrOperation::AtomicGroupTarget { record, .. }
             | IrOperation::AtomicGroupTake { record }
+            | IrOperation::AtomicGroupAcquire { record }
             | IrOperation::AtomicGroupRelease { record, .. }
             | IrOperation::TableHoldRead { record }
             | IrOperation::TableHoldWhole { record }
@@ -1028,6 +1029,36 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let retries = entry == "wf__shared_acquire";
+        let arguments = format!("ptr {}, i32 1, ptr {HANDLE}{extra}", self.value_name(object));
+        self.emit_parking_call(result, entry, &arguments, prefix, retries)
+    }
+
+    /// A statement's first group: the runtime answers as an acquire does,
+    /// 1 when it has parked the frame on the group's first object, holding
+    /// nothing, and the resumed frame asks again.
+    pub(super) fn emit_atomic_group_acquire(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+    ) -> Result<(), BackendFailure> {
+        let IrRecordKind::AtomicGroup { count } = record.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let arguments = format!("ptr {}, i64 {count}, ptr {HANDLE}", record_name(record));
+        self.emit_parking_call(result, "wf__atomic_group_acquire", &arguments, "group", true)
+    }
+
+    /// A call of `entry` that answers 1 when it has parked the frame, which
+    /// then suspends, and 0 otherwise; the resumed frame calls again when
+    /// `retries`, and otherwise continues.
+    fn emit_parking_call(
+        &mut self,
+        result: IrValueId,
+        entry: &'static str,
+        arguments: &str,
+        prefix: &str,
+        retries: bool,
+    ) -> Result<(), BackendFailure> {
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
         writeln!(
@@ -1035,11 +1066,10 @@ impl FunctionEmitter<'_, '_> {
             "  br label %{prefix}.try\n\
              {prefix}.try:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @{entry}(ptr {}, i32 1, ptr {HANDLE}{extra})\n  \
+             %{prefix}.parked = call i32 @{entry}({arguments})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
-             {prefix}.suspend:",
-            self.value_name(object)
+             {prefix}.suspend:"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let resumed = if retries {

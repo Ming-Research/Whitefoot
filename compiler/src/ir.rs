@@ -1354,7 +1354,17 @@ pub enum IrOperation {
         object: IrValueId,
         hold: Option<IrRecord>,
     },
+    /// [SHARE-2, SHARE-3] takes every target of a type group, as
+    /// `SharedTake` does, for a statement already holding an earlier group.
+    /// Defines `Unit`.
     AtomicGroupTake {
+        record: IrRecord,
+    },
+    /// [SHARE-2, SHARE-3] takes every target of the statement's first type
+    /// group: waits, as `SharedAcquire` does, until this context holds the
+    /// group's first object, suspending with nothing held, and then takes
+    /// the others. Defines `Unit`.
+    AtomicGroupAcquire {
         record: IrRecord,
     },
     AtomicGroupRelease {

@@ -1,6 +1,8 @@
 //! [SHARE-3] The wake test a guard's watch registers and the write flag a
 //! release passes, as the backend emits them for the completion bridge's
-//! `wf_wake_test` (compiler/waiting-contexts/state-locks).
+//! `wf_wake_test`, and the parking take of a statement's first type group,
+//! which a guard's reservation can refuse
+//! (compiler/waiting-contexts/state-locks).
 
 use super::{compile, emitted_function};
 
@@ -251,6 +253,56 @@ fn an_and_or_an_or_of_two_atoms_is_one_postfix_program() {
             "{guard}: two Bool atoms: {main}"
         );
     }
+}
+
+#[test]
+fn a_first_group_parks_and_asks_again_as_an_acquire_does() {
+    let llvm = compile(
+        br#"struct Alpha {
+  n: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let a0 = Alpha(n: 0_u64);
+  let a1 = Alpha(n: 1_u64);
+  let first = shared_new::<Alpha>(value: a0);
+  let second = shared_new::<Alpha>(value: a1);
+  atomic p = &first, q = &second {
+    set p^.n = q^.n;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let main = emitted_function(&llvm, "main");
+    let call = call_line(main, "wf__atomic_group_acquire");
+    let Some((parked, arguments)) = call.trim().split_once(" = call i32 @wf__atomic_group_acquire(")
+    else {
+        panic!("the take answers whether it parked: {call}");
+    };
+    assert!(
+        arguments.contains(", i64 2, ptr %wf.coro.handle)"),
+        "the group's two targets and the frame: {call}"
+    );
+    let prefix = parked
+        .strip_suffix(".parked")
+        .unwrap_or_else(|| panic!("{call}"));
+    // As an acquire: a nonzero answer suspends, and the resumed frame asks
+    // again rather than continuing, since it holds nothing yet.
+    assert!(
+        main.contains(&format!("icmp ne i32 {parked}, 0")),
+        "{main}"
+    );
+    assert!(
+        main.contains(&format!("[ i8 0, label {prefix}.try ")),
+        "a resumed frame retries the take: {main}"
+    );
+    assert!(!main.contains("@wf__atomic_group_take("), "{main}");
+    assert!(
+        llvm.lines().any(|line| line.starts_with("declare")
+            && line.contains("@wf__atomic_group_acquire(ptr")),
+        "the entry is declared: {llvm}"
+    );
 }
 
 #[test]

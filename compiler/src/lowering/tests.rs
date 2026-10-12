@@ -2,6 +2,7 @@
 
 #![allow(clippy::panic)]
 
+mod atomic_groups;
 mod overlap_storage;
 mod wake;
 

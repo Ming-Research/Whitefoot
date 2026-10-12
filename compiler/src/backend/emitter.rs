@@ -2747,6 +2747,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::AtomicGroupTake { record } => {
                 self.emit_atomic_group_call(result, *record, None, true)
             }
+            IrOperation::AtomicGroupAcquire { record } => {
+                self.emit_atomic_group_acquire(result, *record)
+            }
             IrOperation::AtomicGroupRelease { record, nominal } => {
                 self.emit_atomic_group_call(result, *record, *nominal, false)
             }

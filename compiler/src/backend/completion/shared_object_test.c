@@ -67,6 +67,10 @@
  * cursor, or of a watch registered after the notifying write's cutoff: the
  * owner's release must sweep again and wake it, with no later write.
  *
+ * Last, a statement's first type group asks for an object an aged watch's
+ * notification reserves: it parks holding none of its members until that
+ * watch's attempt has completed.
+ *
  * Prints the first failure and exits 1, or exits 0.
  */
 #if defined(__linux__)
@@ -1397,6 +1401,97 @@ static void rescan_phase_end(void) {
         wf__shared_free(rescan_object);
 }
 
+/* A statement's first type group under a guard's reservation: watcher W
+ * registers on X at time 1, testing word0 == 1; R writes word0 = 1 past the
+ * threshold, so W's notification reserves X, and at once asks for the group
+ * {X, Y}, X first in identity order. The group's acquire must refuse X and
+ * park holding nothing, Y included, which W, holding X, then takes and gives
+ * back; once W's attempt has completed, R's resumed acquire takes both. A
+ * group take that ignores the reservation, as one that took every member as
+ * an earlier object's holder did, takes X at once. */
+typedef struct group_target { void *object; void *hold; } group_target;
+static void *group_x, *group_y;
+static wf_wake_test group_test;
+static group_target group_record[2];
+static unsigned group_w_evaluations, group_w_done, group_r_parks, group_r_done;
+
+static void group_w_step(test_frame *f) {
+    if (wf__shared_acquire(group_x, 1u, f))
+        return;
+    group_w_evaluations += 1u;
+    if (state_of(group_x)[0] != 1u) {
+        if (!wf__shared_watch(group_x, 1u, f, &group_test))
+            fail("the group case's watch parked at once (evaluations, expected)", group_w_evaluations, 1);
+        return;
+    }
+    if (group_r_parks != 1u)
+        fail("the reserved watch ran before the group asked for its object (parks, expected)", group_r_parks, 1);
+    /* A group that parked with Y held would keep this take spinning; the
+     * test's alarm then ends the run. */
+    wf__shared_take(group_y, 1u);
+    wf__shared_unlock_unwritten(group_y, 1u);
+    group_w_done = 1u;
+    wf__shared_unlock_unwritten(group_x, 1u);
+    f->done = 1;
+}
+
+static void group_r_step(test_frame *f) {
+    if (f->begun == 0) {
+        if (group_w_evaluations != 1u)
+            fail("the group case's watch had not parked before R ran (evaluations, expected)",
+                 group_w_evaluations, 1);
+        atomic_store(&guard_now, TURN_AGE_NS + 10u);
+        if (wf__shared_acquire(group_x, 1u, f))
+            fail("an uncontended statement suspended (group, parks)", 0, group_r_parks);
+        state_of(group_x)[0] = 1u;
+        wf__shared_unlock(group_x, 1u);
+        f->begun = 1;
+    }
+    group_record[0] = (group_target){group_y, NULL};
+    group_record[1] = (group_target){group_x, NULL};
+    if (wf__atomic_group_acquire(group_record, 2u, f)) {
+        group_r_parks += 1u;
+        if (group_w_done)
+            fail("a first group parked after the reserved attempt had completed (parks, done)", group_r_parks,
+                 group_w_done);
+        return;
+    }
+    if (group_r_parks == 0u || !group_w_done)
+        fail("a first group took an object a live reservation keeps (parks, reserved attempt done)",
+             group_r_parks, group_w_done);
+    if (group_record[0].object != group_x || group_record[1].object != group_y)
+        fail("the group was not taken in identity order (first is X, second is Y)",
+             group_record[0].object == group_x, group_record[1].object == group_y);
+    state_of(group_y)[0] = 2u;
+    wf__atomic_group_release(group_record, 2u, 0u, 0u, 0u);
+    group_r_done = 1u;
+    f->done = 1;
+}
+
+static void group_phase_begin(test_frame *root) {
+    atomic_store(&guard_now, 1u);
+    group_w_evaluations = group_w_done = group_r_parks = group_r_done = 0u;
+    wake_equal(&group_test, 1u);
+    void *a = wf__shared_new(sizeof(uint64_t)), *b = wf__shared_new(sizeof(uint64_t));
+    group_x = (uintptr_t)a < (uintptr_t)b ? a : b;
+    group_y = group_x == a ? b : a;
+    state_of(group_x)[0] = state_of(group_y)[0] = 0u;
+    launch_guard(root, group_w_step);
+    launch(root, group_r_step);
+}
+
+static void group_phase_end(void) {
+    if (!group_w_done || !group_r_done || group_r_parks != 1u || group_w_evaluations != 2u)
+        fail("the group case did not finish as expected (parks, watch evaluations)", group_r_parks,
+             group_w_evaluations);
+    if (state_of(group_x)[0] != 1u || state_of(group_y)[0] != 2u)
+        fail("the group case's writes were not kept (X, Y)", state_of(group_x)[0], state_of(group_y)[0]);
+    if (wf__shared_release(group_x))
+        wf__shared_free(group_x);
+    if (wf__shared_release(group_y))
+        wf__shared_free(group_y);
+}
+
 /* The object phase's contexts and threads, then the guard and turn phases, each
  * joined before its checks; a resumed root starts here again. */
 static void root_step(test_frame *f) {
@@ -1413,7 +1508,9 @@ static void root_step(test_frame *f) {
          * reserves for a young watch, below and past the threshold; rescan
          * and rescan-late catch a write during another context's
          * notification that loses the wake of an older watch behind the
-         * sweep's cursor or of one registered past its cutoff. */
+         * sweep's cursor or of one registered past its cutoff; group-turn
+         * catches a statement's first type group taking an object a live
+         * reservation keeps, or parking with a member held. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1434,6 +1531,9 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "rescan") || !strcmp(selected_case, "rescan-late")) {
                 root_phase = !strcmp(selected_case, "rescan") ? 11 : 12;
                 rescan_phase_begin(f, root_phase == 12);
+            } else if (!strcmp(selected_case, "group-turn")) {
+                root_phase = 13;
+                group_phase_begin(f);
             } else {
                 fail("unknown SHARED_OBJECT_TEST_CASE", 0, 0);
             }
@@ -1537,6 +1637,16 @@ static void root_step(test_frame *f) {
     }
     if (root_phase == 12) {
         rescan_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 13;
+        group_phase_begin(f);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 13) {
+        group_phase_end();
         f->done = 1;
         return;
     }

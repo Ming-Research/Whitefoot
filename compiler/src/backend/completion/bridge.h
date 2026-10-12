@@ -502,6 +502,11 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
 void wf__atomic_group_take(void *record, uint64_t count);
+/* The same take for a statement's first group, which holds nothing yet: it
+ * acquires the group's first object as `wf__shared_acquire` does, answering
+ * nonzero, with nothing held, when the frame must suspend and call again,
+ * and zero once it holds every target. */
+int wf__atomic_group_acquire(void *record, uint64_t count, void *frame);
 /* Each group has one entry layout; object-only groups consume no metadata. */
 void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
                               uint32_t tag_width, uint64_t none_tag);

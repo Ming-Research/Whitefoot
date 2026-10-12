@@ -169,6 +169,9 @@ static _Atomic uint64_t written_calls;
 /* The standalone map harness does not run ordinary object holds. */
 void *wf__shared_new(uint64_t bytes) { return test_take(WF_SHARED_STATE_OFFSET + bytes); }
 void wf__shared_take(void *object, uint32_t write) { (void)object; (void)write; abort(); }
+int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+    (void)object; (void)write; (void)frame; abort();
+}
 void wf__shared_unlock(void *object, uint32_t write) { (void)object; (void)write; abort(); }
 
 unsigned wf__driver_index(void) { return test_driver; }
@@ -3231,7 +3234,9 @@ static void shared_map_groups(void) {
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 
     /* Only the first byte is the tag; dirty following bytes must not turn
-     * None into Some. A fixed four-byte release read fails the first round. */
+     * None into Some. A fixed four-byte release read fails the first round.
+     * The group is a statement's first, which a map group takes without
+     * parking, so its acquire needs no frame and answers 0. */
     object = wf__shared_map_new(4, 1, 2);
     map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     group[0].object = object; group[1].object = object;
@@ -3239,7 +3244,8 @@ static void shared_map_groups(void) {
         wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
         wf__table_hold_key(&first, (const unsigned char *)"k", 1);
         wf__table_hold_key(&second, (const unsigned char *)"k", 1);
-        wf__atomic_group_take(group, 2);
+        if (wf__atomic_group_acquire(group, 2, NULL) != 0)
+            fail("a first map group parked", present, 0);
         unsigned char *slot = wf__table_hold_slot(&first, 0);
         memset(slot, 0xa5, 4);
         slot[0] = (unsigned char)present;

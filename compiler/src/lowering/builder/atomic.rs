@@ -447,7 +447,16 @@ impl IrBuilder<'_> {
                         },
                     )?;
                 }
-                self.define(IrType::Unit, IrOperation::AtomicGroupTake { record })?;
+                // The first group holds nothing before it, so it waits
+                // and suspends as a first object's acquire does.
+                self.define(
+                    IrType::Unit,
+                    if index == 0 {
+                        IrOperation::AtomicGroupAcquire { record }
+                    } else {
+                        IrOperation::AtomicGroupTake { record }
+                    },
+                )?;
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {

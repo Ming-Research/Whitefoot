@@ -105,6 +105,7 @@ macro_rules! operation_operands {
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
             | IrOperation::AtomicGroupTake { .. }
+            | IrOperation::AtomicGroupAcquire { .. }
             | IrOperation::AtomicGroupRelease { .. }
             | IrOperation::TableHoldWhole { .. }
             | IrOperation::TableHoldTake { .. }
