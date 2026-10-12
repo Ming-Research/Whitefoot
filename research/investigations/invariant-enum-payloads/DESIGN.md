@@ -87,7 +87,13 @@ fact about a payload is used where its value was not checked.
 4. **A call argument.** A routed requirement is judged at each call in the
    argument's conditional context for (V, f), the same context a forwarded
    return is judged in. An argument with no evidence has an empty context
-   and proves nothing.
+   and proves nothing. An argument that is not a bare binding, such as a
+   struct's field, carries no context; its goal is taken over that
+   argument's own payload place, or over its occurrence-local value where
+   no place names it, so only ordinary facts already known of that payload
+   place can prove it. Such a fact was formed under a refinement that the
+   value held V [ENT-3.S15], and any write that could change the variant
+   kills it [ENT-5].
 5. **A propagated error exit.** `let x = propagate e;` returns `Err(err)` of
    the enclosing function's type. When that type's `Err` field is an
    invariant struct, the exit is selected by the `Err`-routed postcondition
@@ -119,7 +125,7 @@ unsatisfiable invariant (no value of S exists) would make the entry state
 contradictory and the whole instance uninhabited [FN-8], so a call passing
 another variant would skip every proof in the body. Inside the context, the
 contradiction stays local until V is selected, which [ENT-5] already
-guarantees for success contexts.
+guarantees for success contexts (`type11-neg-enum-payload-contradictory-entry`).
 
 ### Why a vacuous routed postcondition is sound
 
@@ -169,7 +175,8 @@ has already killed or replaced [ENT-5], so the relation is unproved at the
 return and refused. A write through a reference-mode `match` binder into a
 payload still inside its enum overlaps the enum's storage, which removes the
 enum's association with its context [ENT-5]; a later return or call argument
-of that value has an empty context and is refused.
+of that value has an empty context and is refused
+(`type11-neg-enum-payload-borrowed-write`).
 
 ## Consequences
 
@@ -229,7 +236,9 @@ used where the variant is not held.
 
 Observed with a debug build of the branch compiler and of its base, main at
 `51c5f4263`, each program checked with `--check` and the positive ones
-also built and run; each program is the conformance case named.
+also built and run; each program is the conformance case named. The branch
+was later merged with main at `f0df1d258`; the table below was not taken
+again at that base, so its Base column is main at `51c5f4263`.
 
 | Criterion | Case | Base | Branch |
 | --- | --- | --- | --- |
@@ -253,5 +262,31 @@ drop>(item: T) -> result: Option<T>` called at `T = Span`, is accepted by
 the base and refused by the branch with FN-9 at its return, as predicted.
 
 Criterion 4 is shown for a struct field only; a container element was not
-run. Criterion 6, the existing conformance cases and compiler tests, was not
-run locally and is left to CI.
+run.
+
+Criterion 6 was judged by CI on the branch head `84bf61968` (base main at
+`f0df1d258`): every Linux gate group (static checks, compiler unit tests,
+the conformance corpus and the runtime) and the completion jobs passed, so
+every existing conformance case and compiler test kept its verdict there. The
+macOS gate, run by dispatch on the same revision, passed every group except
+one time budget: its conformance-corpus stage took 175.6 s against its 175 s
+budget, where main's runs of that stage take 170 to 173 s. That overrun is a
+time, not a verdict; no case changed its result.
+
+Cases added after these runs, with no observed verdict yet:
+
+- `type11-neg-enum-payload-contradictory-entry`: a struct whose two
+  invariants admit no value, carried in an `Option` parameter whose body
+  performs an unproved subscript and is called with `None`. Entry
+  establishes the invariants only in the parameter's `Some` context, so the
+  subscript stays unproved (OP-4); established as an ordinary fact, the
+  entry state would be contradictory and the program accepted.
+- `type11-neg-enum-payload-borrowed-write`: a write through a
+  reference-mode `match` binder into a payload still inside its enum,
+  after which the enum is returned; the write removes the enum's
+  association with its context, so the routed postcondition fails at the
+  return (FN-9).
+- `type11-pos-enum-payload-field-argument`: an argument that is a struct's
+  field rather than a bare binding is judged over that field's own payload
+  place, so a comparison already made through a reference-mode `match`
+  binder proves the callee's routed requirement.

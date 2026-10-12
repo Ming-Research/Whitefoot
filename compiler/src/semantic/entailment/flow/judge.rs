@@ -724,7 +724,19 @@ impl Analyzer<'_, '_> {
                         goals_ok = false;
                         continue;
                     };
-                    let (goal, facts) = self.routed_requirement_goal(call, argument, requirement, states);
+                    // The argument's admitted pre-transfer image, as an
+                    // ordinary requirement over this parameter reads it.
+                    let image = goal_arguments.get(requirement.subject as usize).map(|captured| {
+                        admitted_call_goal_expression(
+                            captured,
+                            call,
+                            admitted_arguments
+                                .as_deref()
+                                .expect("reached actuals have admitted argument slots"),
+                        )
+                    });
+                    let (goal, facts) =
+                        self.routed_requirement_goal(call, argument, image, requirement, states);
                     let (disposition, derivation) = self.judging().judge_call_goal(
                         *function,
                         call,

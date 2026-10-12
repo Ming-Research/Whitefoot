@@ -576,10 +576,18 @@ impl Analyzer<'_, '_> {
     /// context for the route, each private root term standing for that
     /// place's corresponding term [ENT-5]. An argument with no context for
     /// the route contributes the ordinary facts alone.
+    ///
+    /// A bare binding is the root its context is selected onto. Any other
+    /// argument, a field or element read or a moved field, is rooted where
+    /// the call's ordinary requirements root it: `image`, the argument's
+    /// admitted pre-transfer image [FN-8], or, when that image cannot carry
+    /// the payload step, the argument's own occurrence-local value, which
+    /// no fact names.
     pub(super) fn routed_requirement_goal(
         &mut self,
         call: &crate::NodePath,
         argument: &CheckedExpression,
+        image: Option<GoalExpression>,
         requirement: &crate::semantic::postcondition::CheckedRoutedRequirement,
         state: &ProofFlowState,
     ) -> (ConcreteGoal, FactState) {
@@ -591,11 +599,33 @@ impl Analyzer<'_, '_> {
             variant: requirement.route.tag,
             field: requirement.route.field,
         };
-        let goal = ConcreteGoal::new(payload_goal(
-            &requirement.goal.root,
-            binding.unwrap_or(BindingId(u32::MAX)),
-            step,
-        ));
+        let root = match binding {
+            Some(binding) => PayloadGoalRoot::Binding(binding),
+            None => PayloadGoalRoot::Image(
+                image
+                    .filter(|image| {
+                        matches!(
+                            image,
+                            GoalExpression::Datum(
+                                GoalDatum::Place { .. } | GoalDatum::EvaluatedValue { .. }
+                            )
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        GoalExpression::Datum(GoalDatum::EvaluatedValue {
+                            function: self.input.function.id,
+                            occurrence: EvaluatedValueOccurrence::CallArgument {
+                                call: call.clone(),
+                                argument: requirement.subject,
+                            },
+                            captured_type: argument.ty(),
+                            projections: Vec::new(),
+                            ty: argument.ty(),
+                        })
+                    }),
+            ),
+        };
+        let goal = ConcreteGoal::new(payload_goal(&requirement.goal.root, &root, step));
         let context = self.capture_result(call, argument, state).into_iter().find(|result| {
             result.route.variant == requirement.route.variant
                 && result.route.field == requirement.route.field
@@ -610,22 +640,46 @@ impl Analyzer<'_, '_> {
     }
 }
 
+/// What a routed requirement's payload step is taken below at a call.
+enum PayloadGoalRoot {
+    /// A bare binding argument, the place its context is selected onto.
+    Binding(BindingId),
+    /// Any other argument's admitted image or occurrence-local value: a
+    /// place or an evaluated-value datum.
+    Image(GoalExpression),
+}
+
 /// [TYPE-11] a type invariant's predicate over parameter zero, read over
-/// the place `step` reaches below `binding` instead.
-fn payload_goal(expression: &GoalExpression, binding: BindingId, step: GoalProjection) -> GoalExpression {
+/// the place `step` reaches below `root` instead.
+fn payload_goal(
+    expression: &GoalExpression,
+    root: &PayloadGoalRoot,
+    step: GoalProjection,
+) -> GoalExpression {
     match expression {
         GoalExpression::Datum(GoalDatum::Parameter {
             ordinal: 0,
             projections,
             ty,
-        }) => GoalExpression::Datum(GoalDatum::Place {
-            root: binding,
-            projections: std::iter::once(step)
+        }) => match root {
+            PayloadGoalRoot::Binding(binding) => GoalExpression::Datum(GoalDatum::Place {
+                root: *binding,
+                projections: std::iter::once(step)
+                    .chain(projections.iter().copied())
+                    .collect(),
+                ty: *ty,
+                admission: GoalAdmission::default(),
+            }),
+            // Each step is appended as an ordinary requirement's projection
+            // is appended to its admitted actual [FN-8]; only the last
+            // step's type is the datum's.
+            PayloadGoalRoot::Image(image) => std::iter::once(step)
                 .chain(projections.iter().copied())
-                .collect(),
-            ty: *ty,
-            admission: GoalAdmission::default(),
-        }),
+                .try_fold(image.clone(), |datum, projection| {
+                    datum.with_projection(projection, *ty)
+                })
+                .expect("a place or evaluated value takes every projection"),
+        },
         GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
         GoalExpression::Operation {
             row,
@@ -640,7 +694,7 @@ fn payload_goal(expression: &GoalExpression, binding: BindingId, step: GoalProje
             result: *result,
             arguments: arguments
                 .iter()
-                .map(|argument| payload_goal(argument, binding, step))
+                .map(|argument| payload_goal(argument, root, step))
                 .collect(),
         },
     }

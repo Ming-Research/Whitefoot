@@ -2437,9 +2437,7 @@ pub(crate) enum CheckedExpression {
         requirements: Vec<super::goal::CheckedCallRequirement>,
         /// [TYPE-11] the callee's requirements over its parameters' enum
         /// payloads, each owed in its argument's conditional context for its
-        /// route [ENT-5]; filled with `requirements`, leaving out each whose
-        /// argument is a constant, whose payloads were judged where the
-        /// constant was constructed.
+        /// route [ENT-5]; filled with `requirements`.
         routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:

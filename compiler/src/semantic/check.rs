@@ -2527,19 +2527,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 // [TYPE-11] the routed requirements are the selected actual's
                 // own: a formal's parameter types equal its actual's, so the
                 // two carry the same ones.
-                *call_routed_requirements = callee_routed
-                    .iter()
-                    .filter(|requirement| {
-                        !matches!(
-                            arguments.get(requirement.subject as usize),
-                            Some(
-                                CheckedExpression::Constant(_)
-                                    | CheckedExpression::NamedConstant { .. }
-                            )
-                        )
-                    })
-                    .cloned()
-                    .collect();
+                call_routed_requirements.clone_from(callee_routed);
                 let boundary = match formal_contract {
                     Some(boundary) => boundary.requirements.as_slice(),
                     None => callee_requirements.as_slice(),
