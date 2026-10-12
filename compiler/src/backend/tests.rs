@@ -384,6 +384,7 @@ fn append_runtime_units_with_library_defines(
     command: &mut Command,
     directory: &Path,
     library_defines: &[String],
+    library_fixture: &str,
     needs_heap: bool,
 ) -> Option<Vec<&'static str>> {
     let units = [
@@ -431,8 +432,12 @@ fn append_runtime_units_with_library_defines(
     std::fs::create_dir_all(directory.join("completion")).expect("stage completion directory");
     std::fs::create_dir_all(directory.join("sched")).expect("stage scheduler directory");
     for (name, source) in units {
-        std::fs::write(directory.join(name), source).expect("write ordinary library unit");
+        let fixture_source = (name == "ordinary_values.c" && !library_fixture.is_empty())
+            .then(|| format!("{source}\n{library_fixture}\n"));
+        std::fs::write(directory.join(name), fixture_source.as_deref().unwrap_or(source))
+            .expect("write ordinary library unit");
     }
+    let custom_library = !library_defines.is_empty() || !library_fixture.is_empty();
     let mut artifacts: Vec<_> = units.into_iter().map(|(name, _)| name).collect();
     command
         .arg("-I")
@@ -444,7 +449,7 @@ fn append_runtime_units_with_library_defines(
         if name.ends_with(".h")
             || name == "concurrent_map.c"
             || (name == "heap.c" && !needs_heap)
-            || (name == "ordinary_values.c" && !library_defines.is_empty())
+            || (name == "ordinary_values.c" && custom_library)
         {
             continue;
         }
@@ -453,7 +458,7 @@ fn append_runtime_units_with_library_defines(
             .arg(if name.ends_with(".ll") { "ir" } else { "c" })
             .arg(directory.join(name));
     }
-    if !library_defines.is_empty() {
+    if custom_library {
         // A scripted linked body interposes this library translation unit's
         // private dependencies. The WF module and native engine stay unchanged.
         let mut library = Command::new(crate::clang_executable());
@@ -512,8 +517,28 @@ pub(super) fn build_linked_executable_with_library_defines(
     library_defines: &[String],
     directory: &Path,
 ) -> PathBuf {
+    build_linked_executable_with_library_fixture(llvm, host, defines, library_defines, "", directory)
+}
+
+/// Appends a test-only fixture to the staged ordinary library translation unit,
+/// so its call sites receive exactly the runtime's facility substitutions.
+pub(super) fn build_linked_executable_with_library_fixture(
+    llvm: &str,
+    host: Option<&str>,
+    defines: &[String],
+    library_defines: &[String],
+    library_fixture: &str,
+    directory: &Path,
+) -> PathBuf {
     crate::native_test_support::timed("native-build", || {
-        build_linked_executable_inner(llvm, host, defines, library_defines, directory)
+        build_linked_executable_inner(
+            llvm,
+            host,
+            defines,
+            library_defines,
+            library_fixture,
+            directory,
+        )
     })
 }
 
@@ -522,6 +547,7 @@ fn build_linked_executable_inner(
     host: Option<&str>,
     defines: &[String],
     library_defines: &[String],
+    library_fixture: &str,
     directory: &Path,
 ) -> PathBuf {
     let module = directory.join("program.ll");
@@ -552,13 +578,13 @@ fn build_linked_executable_inner(
     // classification never selects a second linkage or callable ABI.
     let mut staged_units = Vec::new();
     let needs_heap = crate::module_requires_heap_runtime(llvm)
-        || host.is_some_and(|source| {
+        || host.into_iter().chain([library_fixture]).any(|source| {
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")
                 || source.contains("wf__heap_retake(")
                 || source.contains("wf__empty_window")
         });
-    if defines.is_empty() && library_defines.is_empty() {
+    if defines.is_empty() && library_defines.is_empty() && library_fixture.is_empty() {
         // These inputs and options are immutable for this test executable.
         // Keep each program and observer fresh, but compile the ordinary
         // library once. Macro-interposed cases retain their own C build below.
@@ -580,6 +606,7 @@ fn build_linked_executable_inner(
             &mut command,
             directory,
             library_defines,
+            library_fixture,
             needs_heap,
         ) {
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
