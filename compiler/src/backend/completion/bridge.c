@@ -1252,6 +1252,21 @@ _Static_assert(sizeof(wf_wake_test) == WF_WAKE_TEST_SIZE, "WF_WAKE_TEST_SIZE is 
 _Static_assert(offsetof(wf_wake_test, atoms) == 8u, "a wake test's atoms follow its program");
 _Static_assert(offsetof(wf_watch_link, next) == 0u, "a link's back pointer names its predecessor");
 
+/* A statement that cannot park and missed its object keeps this record on
+ * its own stack until it holds the object (wf__shared_take). Links, and
+ * the reservation the queue's tail keeps, change only under the object's
+ * lock; granting publishes the hold with release and is the giver's last
+ * access to the record, which its owner may then leave. */
+typedef struct wf_shared_take_claim wf_shared_take_claim;
+struct wf_shared_take_claim {
+    wf_shared_take_claim *next;
+    /* On the tail alone: the object's reservation, which the header's slot
+     * cannot hold while it names this tail. */
+    wf_context *reservation;
+    uint32_t write;
+    _Atomic unsigned granted;
+};
+
 typedef struct wf_shared {
     _Atomic uint64_t handles;
     atomic_flag lock;
@@ -1260,15 +1275,24 @@ typedef struct wf_shared {
      * for the hold back, which ends the borrowing. */
     _Atomic uint8_t borrowed;
     _Atomic uint8_t claimed;
+    /* Under the lock: set when an unlock handed a parked context the object
+     * while claims waited, so the next free unlock grants the oldest claim;
+     * cleared by every claim's admission. In the header's padding. */
+    uint8_t take_turn;
     uint32_t watched;
     _Atomic uint64_t holders;
     /* Protected by this object's lock, including watch-list selection (which
-     * additionally takes wf_watch_lock). The owner remains live and retains
-     * this object until its saved-target retry releases the hold. No relaxed
-     * hint dereferences this pointer outside the lock. It names the one
-     * context the object's current notification went to, which refuses
-     * newcomers only while that context's guard_reserved is set. */
-    wf_context *reservation;
+     * additionally takes wf_watch_lock), and read only through
+     * wf_shared_reservation and wf_shared_claims. With its low bit clear it
+     * is the reservation: the one context the object's current notification
+     * went to, which refuses newcomers only while that context's
+     * guard_reserved is set; that owner remains live and retains this object
+     * until its saved-target retry releases the hold. With the low bit set
+     * it is the tail of the circular queue of claims (tail->next is the
+     * head), and the tail keeps the reservation. One slot leaves the header
+     * within WF_SHARED_STATE_OFFSET. No relaxed hint reads it outside the
+     * lock. */
+    uintptr_t arbiter;
     /* Circular queue: tail->next is the head. One pointer leaves room for
      * the fairness slot within WF_SHARED_STATE_OFFSET, with constant-time operations. */
     wf_context *waiting_tail;
@@ -1278,6 +1302,44 @@ typedef struct wf_shared {
     _Atomic(wf_context *) granted;
     size_t pool_bytes;
 } wf_shared;
+
+/* The arbiter's low bit tells a claim tail from a reservation. Both are
+ * read and changed under the object's lock. */
+#define WF_SHARED_CLAIMS ((uintptr_t)1u)
+
+/* The tail of the object's claims, NULL when none waits. */
+static wf_shared_take_claim *wf_shared_claims(const wf_shared *shared) {
+    return (shared->arbiter & WF_SHARED_CLAIMS) != 0u
+        ? (wf_shared_take_claim *)(shared->arbiter & ~WF_SHARED_CLAIMS)
+        : NULL;
+}
+
+/* The context the object's notification went to, NULL when none has it. */
+static wf_context *wf_shared_reservation(const wf_shared *shared) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    return tail != NULL ? tail->reservation : (wf_context *)shared->arbiter;
+}
+
+static void wf_shared_set_reservation(wf_shared *shared, wf_context *owner) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    if (tail != NULL) {
+        tail->reservation = owner;
+    } else {
+        shared->arbiter = (uintptr_t)owner;
+    }
+}
+
+/* Makes `tail` the claim queue's tail, or ends the queue when NULL, moving
+ * the reservation to wherever the slot now keeps it. */
+static void wf_shared_set_claims(wf_shared *shared, wf_shared_take_claim *tail) {
+    wf_context *owner = wf_shared_reservation(shared);
+    if (tail != NULL) {
+        tail->reservation = owner;
+        shared->arbiter = (uintptr_t)tail | WF_SHARED_CLAIMS;
+    } else {
+        shared->arbiter = (uintptr_t)owner;
+    }
+}
 
 /* Sources, watches and SharedRead views retain one ordinary shared object.
  * Guard-visible Bool storage is protected by its unit. Host waits observe
@@ -3428,7 +3490,7 @@ static wf_context *wf_wake_notify_locked(wf_shared *shared, wf_watch_link *link,
         wf_context *owner = watch->context;
         int install = owner->shared_turn == NULL;
         if (install) {
-            shared->reservation = owner;
+            wf_shared_set_reservation(shared, owner);
             owner->shared_turn = shared;
             owner->guard_rescan = rescan;
             owner->guard_cutoff = cutoff;
@@ -3477,7 +3539,7 @@ static wf_context *wf_wake_sweep_locked(wf_shared *shared, wf_watch_chunk **dead
  * lies behind that sweep's cursor or past its cutoff; the untried watches
  * between them will see this write when the notification reaches them. */
 static wf_context *wf_wake_written_locked(wf_shared *shared, wf_watch_chunk **dead) {
-    wf_context *owner = shared->reservation;
+    wf_context *owner = wf_shared_reservation(shared);
     if (owner == NULL) return wf_wake_sweep_locked(shared, dead);
     if (owner->guard_rescan) return NULL;
     for (wf_watch_link *newest = shared->watching; newest != NULL; newest = newest->bucket_next) {
@@ -3589,17 +3651,24 @@ int wf__watch_park(void *watch_frame, void *frame) {
  * back to the head of the queue, and once WF_SHARED_HANDOFF unlocks have
  * woken it in vain the next one hands it the object, so a parked statement
  * is overtaken a bounded number of times [WAIT-2].  A statement that holds a
- * keyed table's entries when it takes the object cannot park, and may run on
- * the driver whose queue holds the context an unlock handed the object to,
- * so it borrows that hold and gives it back when it ends
- * (wf__shared_take); the context keeps the object, and
- * once it runs again it waits only for the borrower under way.  The watches
- * of guards that read the object sit on `watching`, `watched` of them (the
- * guard-watch section), until a statement that writes the object ends. */
+ * keyed table's entries, or an earlier object, when it takes the object
+ * cannot park, and may run on the driver whose queue holds the context an
+ * unlock handed the object to, so it borrows that hold and gives it back
+ * when it ends (wf__shared_take); the context keeps the object, and once it
+ * runs again it waits only for the borrower under way.  Such a statement
+ * that misses the object queues a claim, which refuses every newcomer, and
+ * unlocks grant claims in turn with parked contexts' hand-offs, so it too
+ * is overtaken a bounded number of times.  The watches of guards that read
+ * the object sit on `watching`, `watched` of them (the guard-watch
+ * section), until a statement that writes the object ends. */
 
 _Static_assert(
     sizeof(wf_shared) <= WF_SHARED_STATE_OFFSET,
     "a shared object's header must end before its state"
+);
+_Static_assert(
+    _Alignof(wf_context) > 1u && _Alignof(wf_shared_take_claim) > 1u,
+    "a reservation's and a claim's addresses leave the arbiter's low bit clear"
 );
 #define WF_SHARED_WRITER UINT64_MAX
 /* How many times a statement that finds its object held looks again before
@@ -3735,13 +3804,22 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
  * table entries: a retry may need their earlier locks first. The common
  * case adds only the protected fairness-slot read to ordinary admission. */
 static int wf_shared_has_turn(wf_shared *shared) {
-    return shared->reservation != NULL && shared->reservation->guard_reserved;
+    wf_context *owner = wf_shared_reservation(shared);
+    return owner != NULL && owner->guard_reserved;
 }
 static int wf_shared_turn_refuses(wf_shared *shared, wf_context *self, int exempt) {
     return !exempt && wf_shared_has_turn(shared)
         && self->shared_turn != shared && self->shared_holds == 0u;
 }
+/* A waiting claim refuses every statement that parks, readers, the
+ * reservation's owner and the cancellation update included: each holds
+ * nothing a claim's owner needs, which already holds every earlier target,
+ * and parking leaves its driver free (wf__shared_take). The claim check
+ * reads the same slot as the turn's. */
 static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
+    if (wf_shared_claims(shared) != NULL) {
+        return 0;
+    }
     int refused = wf_shared_turn_refuses(shared, self, exempt);
     if (refused) WF_GUARD_COUNT(WF_GUARD_COUNT_REFUSED);
     return !refused && wf_shared_admits(shared, write);
@@ -3974,28 +4052,148 @@ static int wf_shared_lendable(wf_shared *shared, int exact) {
             == (granted->shared_write != 0u ? WF_SHARED_WRITER : 1u);
 }
 
+/* Lends the hold an unlock handed a parked context to the running
+ * statement, alone, until its unlock gives it back.  Under the object's
+ * lock, once wf_shared_lendable has answered exactly. */
+static void wf_shared_lend_locked(wf_shared *shared) {
+    wf__shared_seen(WF_SHARED_LENT);
+    atomic_store_explicit(&shared->borrowed, 1u, memory_order_relaxed);
+    atomic_store_explicit(&shared->holders, WF_SHARED_WRITER, memory_order_relaxed);
+}
+
+/* Queues a missed take's claim at the tail of the object's claims, behind
+ * every claim already waiting.  Under the object's lock. */
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+static void wf_shared_claim_locked(wf_shared *shared, wf_shared_take_claim *claim) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    claim->next = tail != NULL ? tail->next : claim;
+    if (tail != NULL) {
+        tail->next = claim;
+    }
+    wf_shared_set_claims(shared, claim);
+}
+#endif
+
+/* Gives the oldest claim the free object, or, when `borrow`, the hold an
+ * unlock handed a parked context, which wf_shared_lendable has admitted
+ * exactly, and ends the parked contexts' turn.  Under the object's lock. */
+static void wf_shared_grant_locked(wf_shared *shared, int borrow) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    wf_shared_take_claim *claim = tail->next;
+    if (borrow) {
+        wf_shared_lend_locked(shared);
+    } else {
+        wf_shared_hold_locked(shared, claim->write);
+    }
+    if (claim == tail) {
+        wf_shared_set_claims(shared, NULL);
+    } else {
+        tail->next = claim->next;
+    }
+    shared->take_turn = 0u;
+    /* The claim's owner may return and leave its record as soon as it sees
+     * this store; neither the giver nor the queue touches it again. */
+    atomic_store_explicit(&claim->granted, 1u, memory_order_release);
+}
+
+/* The last hold has ended, under the object's lock: the first parked context
+ * is woken to try again, or handed the object, as wf_shared_wake_locked
+ * decides, and the oldest claim is granted the object when that leaves it
+ * free.  Once an unlock has handed a parked context the object while claims
+ * waited, the next one grants the oldest claim without waking anyone, so
+ * neither parked contexts nor claims wait behind the other without bound.
+ * Returns the context to make ready once the lock is released. */
+static wf_context *wf_shared_free_locked(wf_shared *shared) {
+    if (wf_shared_claims(shared) != NULL && shared->take_turn != 0u) {
+        wf_shared_grant_locked(shared, 0);
+        return NULL;
+    }
+    wf_context *woken = wf_shared_wake_locked(shared);
+    if (wf_shared_claims(shared) != NULL) {
+        if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
+            wf_shared_grant_locked(shared, 0);
+        } else {
+            shared->take_turn = 1u;
+        }
+    }
+    return woken;
+}
+
+#ifdef WF_SHARED_TAKE_WITNESS
+/* Private to the witness, which includes this source and defines it: each
+ * failed look of a take, outside the object's lock, with its live claim.
+ * Other builds have neither the hook nor its call. */
+static void wf_shared_take_witness_missed(void *object, wf_shared_take_claim *claim);
+#endif
+
+/* How many misses, each confirmed under the object's lock, a take makes
+ * before it queues its claim.  Provisionally one: a later claim would leave
+ * a take that the host preempts after a miss with no claim on the object,
+ * while any number of statements overtake it; no workload has compared a
+ * larger count. */
+#define WF_SHARED_TAKE_ESCALATE 1u
+
 /* [SHARE-2] The object of a statement that already holds a keyed table's
- * entries, which keeps its driver until it ends, so the statement spins
- * rather than parks.  Every holder of an object is a running
- * context whose block waits for nothing, but for a parked context an unlock
- * handed the object to, which may wait in this very driver's queue: this
- * statement borrows such a hold, alone, and its unlock gives it back. */
+ * entries or an earlier object, which keeps its driver until it ends, so
+ * the statement spins rather than parks.  Every holder of an object is a
+ * running context whose block waits for nothing, but for a parked context
+ * an unlock handed the object to, which may wait in this very driver's
+ * queue: this statement borrows such a hold, alone, and its unlock gives it
+ * back.
+ *
+ * A take that misses the object under its lock queues a claim, which keeps
+ * the statement's place: while claims wait no statement takes the object
+ * but through them, a newcomer that reads included, and the take waits for
+ * an unlock to grant its claim (wf_shared_free_locked) or, as the oldest
+ * claim, borrows a hold handed to a parked context no one borrows or has
+ * claimed.  A later claim never borrows ahead of the oldest, and the
+ * borrow takes the oldest claim's turn, never the parked context's, which
+ * keeps its hold.  Claims ignore a guard's reservation, as the take always
+ * has: the reserved retry may need an entry or object this statement holds.
+ *
+ * With q claims ahead of a take's and h statements holding, or handed, the
+ * object when it queues (a borrower and the context whose hold it borrows
+ * both count), at most h + 2q + 1 statements hold the object before it:
+ * the h, the q, and one hand-off to a parked context before each of the
+ * q + 1 claims.  This assumes, as every hold does, that holders and handed
+ * contexts get to run; no count bounds how long the host takes to run this
+ * statement up to its first look under the lock.  A claim's owner already
+ * holds every target before the object in the lock order, so claims form no
+ * cycle with the holds a later target waits for. */
 void wf__shared_take(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
+    wf_shared_take_claim claim = { .next = NULL, .reservation = NULL, .write = write, .granted = 0u };
+    int queued = 0;
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+    unsigned misses = 0u;
+#endif
     unsigned spins = 0u;
     for (;;) {
-        if (wf_shared_admits(shared, write) || wf_shared_lendable(shared, 0)) {
-            int held = 1;
+        /* Every look takes the lock until the claim is queued, so the first
+         * miss is a confirmed one; a queued claim then needs the lock only
+         * to borrow, which the hint says may be possible. */
+        if (!queued || wf_shared_lendable(shared, 0)) {
+            int held = 0;
             wf_spin_lock(&shared->lock);
-            if (wf_shared_lendable(shared, 1)) {
-                wf__shared_seen(WF_SHARED_LENT);
-                atomic_store_explicit(&shared->borrowed, 1u, memory_order_relaxed);
-                atomic_store_explicit(&shared->holders, WF_SHARED_WRITER, memory_order_relaxed);
-            } else if (wf_shared_admits(shared, write)) {
+            if (queued) {
+                if (atomic_load_explicit(&claim.granted, memory_order_relaxed) == 0u
+                    && wf_shared_claims(shared)->next == &claim && wf_shared_lendable(shared, 1)) {
+                    wf_shared_grant_locked(shared, 1);
+                    held = 1;
+                }
+            } else if (wf_shared_claims(shared) == NULL && wf_shared_lendable(shared, 1)) {
+                wf_shared_lend_locked(shared);
+                held = 1;
+            } else if (wf_shared_claims(shared) == NULL && wf_shared_admits(shared, write)) {
                 wf_shared_hold_locked(shared, write);
-            } else {
-                held = 0;
+                held = 1;
             }
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+            else if (++misses >= WF_SHARED_TAKE_ESCALATE) {
+                wf_shared_claim_locked(shared, &claim);
+                queued = 1;
+            }
+#endif
             if (held) {
                 wf_shared_took_locked(shared, wf_context_current);
             }
@@ -4004,6 +4202,17 @@ void wf__shared_take(void *object, uint32_t write) {
                 return;
             }
         }
+        if (atomic_load_explicit(&claim.granted, memory_order_acquire) != 0u) {
+            /* An unlock granted the hold; this statement counts it, which
+             * the giver cannot do for a running context. */
+            wf_spin_lock(&shared->lock);
+            wf_shared_took_locked(shared, wf_context_current);
+            wf_spin_unlock(&shared->lock);
+            return;
+        }
+#ifdef WF_SHARED_TAKE_WITNESS
+        wf_shared_take_witness_missed(object, &claim);
+#endif
         /* A holder runs its block to the end, but a host may preempt its
          * thread, so after a while this one gives up its processor. */
         wf_shared_spin(&spins);
@@ -4037,10 +4246,11 @@ static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **
 static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
                                         wf_watch_chunk **dead, wf_context **ready) {
     wf_context *self = wf_context_current;
-    if (shared->reservation == NULL || shared->reservation != self) return 0u;
+    wf_context *owner = wf_shared_reservation(shared);
+    if (owner == NULL || owner != self) return 0u;
     wf_spin_lock(&wf_watch_lock);
     unsigned rescan = self->guard_rescan;
-    shared->reservation = NULL;
+    wf_shared_set_reservation(shared, NULL);
     self->shared_turn = NULL;
     self->guard_rescan = 0u;
     self->guard_reserved = 0u;
@@ -4051,7 +4261,7 @@ static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
         wf_watch_link *next = wf_wake_select(shared, self, self->guard_cutoff);
         if (next != NULL) {
             *ready = wf_wake_notify_locked(shared, next, self->guard_cutoff, rescan, dead, NULL);
-            if (shared->reservation != NULL) {
+            if (wf_shared_reservation(shared) != NULL) {
 #if WF_GUARD_COUNTERS
                 if (wf_watch_quiet()) WF_GUARD_COUNT(WF_GUARD_COUNT_FALSE_HANDOFF);
 #endif
@@ -4069,7 +4279,12 @@ static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
  * starting another one. Its existing failed-wake count eventually grants
  * the hold; a grant suppresses new reservations until that context takes
  * it. A live reservation admits only its owner and the lock-order/cancel
- * exemptions, never a newcomer. Thus renewal cannot defeat [WAIT-2]. */
+ * exemptions, never a newcomer. Thus renewal cannot defeat [WAIT-2]. A
+ * free unlock also grants waiting claims, in turn with the queue's hand-offs
+ * and whatever the reservation, after the releaser's own notification has
+ * passed on and before its write's sweep: a grant is a hold like any other,
+ * consumes no notification, and its holder's unlock sweeps or marks a
+ * rescan as every writer's does. */
 static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write,
                                             int wrote, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
@@ -4081,7 +4296,7 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write,
     }
     unsigned rescan = wf_guard_release_locked(shared, wrote, dead, &ready);
     if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u)
-        woken = wf_shared_wake_locked(shared);
+        woken = wf_shared_free_locked(shared);
     /* Cross-unit early notifications may also be in ready. A write by an
      * exempt holder merely marks the live reservation's notification. */
     wf_context *written = wrote ? wf_shared_written_locked(shared, dead) : NULL;

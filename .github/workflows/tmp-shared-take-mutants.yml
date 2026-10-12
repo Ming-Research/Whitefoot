@@ -1,0 +1,134 @@
+# Temporary claude/shared-take-fair-2 workflow; remove before ready.
+# Shows once that each shared-take arbitration case fails, with its own
+# message, under the mutant of the rule it guards: every case passes
+# unmutated, then each mutant is applied to bridge.c, the witness is rebuilt,
+# and the named case must fail with the named message.
+name: tmp-shared-take-mutants
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/shared-take-fair-2]
+permissions:
+  contents: read
+jobs:
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Controls and mutants
+        run: |
+          set -u
+          export WHITEFOOT_SCRATCH_ROOT="$RUNNER_TEMP/shared-take"
+          bin="$WHITEFOOT_SCRATCH_ROOT/whitefoot-completion-test/shared-take-witness"
+          bridge=compiler/src/backend/completion/bridge.c
+          out="$RUNNER_TEMP/out.txt"
+          status=0
+          build() {
+            make -C compiler -j2 "$WHITEFOOT_SCRATCH_ROOT/whitefoot-completion-test/shared-take-witness" \
+              CC=clang LLVM_CC=clang > "$RUNNER_TEMP/build.txt" 2>&1 || { tail -30 "$RUNNER_TEMP/build.txt"; return 1; }
+          }
+          run_case() {
+            ulimit -c 0
+            timeout 120s "$bin" --arbitration "$1" > "$out" 2>&1
+            code=$?
+            tail -3 "$out"
+            return $code
+          }
+          run_scheduled() {
+            ulimit -c 0
+            timeout 120s "$bin" 1 65 1 --scheduled > "$out" 2>&1
+            code=$?
+            tail -3 "$out"
+            return $code
+          }
+          expect_pass() {
+            if run_case "$1"; then echo "PASS control $1"; else echo "FAIL control $1 did not pass"; status=1; fi
+          }
+          # expect_fail NAME CASE MESSAGE: CASE is an arbitration case, or
+          # "scheduled" for the N=1, cap=65 scheduled count trial.
+          expect_fail() {
+            name=$1 case=$2 message=$3
+            if ! build; then echo "FAIL mutant $name: did not build"; status=1; return; fi
+            if [ "$case" = scheduled ]; then run_scheduled; else run_case "$case"; fi
+            code=$?
+            if [ $code -eq 0 ]; then
+              echo "FAIL mutant $name: case $case passed"; status=1
+            elif grep -qF "$message" "$out"; then
+              echo "PASS mutant $name: case $case failed with its message"
+            else
+              echo "FAIL mutant $name: case $case failed for another reason (exit $code)"; status=1
+            fi
+          }
+          mutate() {
+            perl -0pi -e "$1" "$bridge" || { echo "FAIL mutant $2 not applied"; status=1; return 1; }
+          }
+          build || exit 1
+          for case in order newcomer borrow reservation; do expect_pass "$case"; done
+          if run_scheduled; then echo "PASS control scheduled"; else echo "FAIL control scheduled did not pass"; status=1; fi
+          # No claim: a missed take never queues one.
+          if mutate 's/#define WF_SHARED_TAKE_ESCALATE 1u/#define WF_SHARED_TAKE_ESCALATE 4294967295u/ or die' no-claim; then
+            expect_fail no-claim order "a take that missed queued no claim"
+            expect_fail no-claim scheduled "bound_exceeded"
+          fi
+          git checkout -- "$bridge"
+          # Claims queue last in, first out.
+          if mutate 's/    wf_shared_set_claims\(shared, claim\);\n\}/    if (tail == NULL) wf_shared_set_claims(shared, claim);\n}/ or die' lifo; then
+            expect_fail lifo order "claims did not queue in arrival order"
+          fi
+          git checkout -- "$bridge"
+          # A newcomer's take borrows a handed hold ahead of a waiting claim.
+          if mutate 's/\} else if \(wf_shared_claims\(shared\) == NULL && wf_shared_lendable\(shared, 1\)\) \{/} else if (wf_shared_lendable(shared, 1)) {/ or die' newcomer-borrow; then
+            expect_fail newcomer-borrow newcomer "a newcomer take borrowed ahead of a waiting claim"
+          fi
+          git checkout -- "$bridge"
+          # A newcomer's take reads beside readers ahead of a waiting claim.
+          if mutate 's/\} else if \(wf_shared_claims\(shared\) == NULL && wf_shared_admits\(shared, write\)\) \{/} else if (wf_shared_admits(shared, write)) {/ or die' newcomer-read; then
+            expect_fail newcomer-read newcomer "a newcomer take read ahead of a waiting claim"
+          fi
+          git checkout -- "$bridge"
+          # Claims do not refuse a parking statement: a reader overtakes.
+          if mutate 's/    if \(wf_shared_claims\(shared\) != NULL\) \{\n        return 0;\n    \}\n    int refused/    int refused/ or die' reader; then
+            expect_fail reader order "a reader overtook a waiting claim"
+          fi
+          git checkout -- "$bridge"
+          # No alternation: a parked hand-off never yields the next free
+          # unlock to the oldest claim.
+          if mutate 's/if \(wf_shared_claims\(shared\) != NULL && shared->take_turn != 0u\)/if (0)/ or die' no-alternation; then
+            expect_fail no-alternation order "a parked context was handed the object again while a claim waited"
+          fi
+          git checkout -- "$bridge"
+          # Claims always go first: the parked head never gets its hand-off.
+          if mutate 's/if \(wf_shared_claims\(shared\) != NULL && shared->take_turn != 0u\)/if (wf_shared_claims(shared) != NULL)/ or die' claims-first; then
+            expect_fail claims-first order "a claim was granted ahead of the parked head's due hand-off"
+          fi
+          git checkout -- "$bridge"
+          # Borrowing removed: no take ever borrows a handed hold.
+          if mutate 's/(static int wf_shared_lendable\(wf_shared \*shared, int exact\) \{\n)/$1    return 0;\n/ or die' no-borrow; then
+            expect_fail no-borrow borrow "a take did not borrow the hold handed to a parked context"
+          fi
+          git checkout -- "$bridge"
+          # A queued claim never borrows, so claims wait for the parked context.
+          if mutate 's/\n                    wf_shared_grant_locked\(shared, 1\);\n                    held = 1;\n/\n/ or die' no-claim-borrow; then
+            expect_fail no-claim-borrow borrow "the oldest claim did not borrow the hold handed to a parked context"
+          fi
+          git checkout -- "$bridge"
+          # Any claim, not only the oldest, may start a borrow.
+          if mutate 's/ && wf_shared_claims\(shared\)->next == &claim//g or die' any-claim-borrows; then
+            expect_fail any-claim-borrows borrow "a later claim borrowed ahead of the oldest"
+          fi
+          git checkout -- "$bridge"
+          # Claims wait behind a guard's reservation.
+          if mutate 's/(    if \(wf_shared_claims\(shared\) != NULL\) \{\n        if \(atomic_load_explicit\(&shared->holders, memory_order_relaxed\) == 0u)\) \{/$1 \&\& !wf_shared_has_turn(shared)) {/ or die' behind-reservation; then
+            expect_fail behind-reservation reservation "a claim waited behind a guard's reservation"
+          fi
+          git checkout -- "$bridge"
+          # Queuing a claim drops the reservation the slot held.
+          if mutate 's/        tail->reservation = owner;\n        shared->arbiter = \(uintptr_t\)tail \| WF_SHARED_CLAIMS;/        shared->arbiter = (uintptr_t)tail | WF_SHARED_CLAIMS;/ or die' lost-reservation; then
+            expect_fail lost-reservation reservation "a claim's queue lost the object's reservation"
+          fi
+          git checkout -- "$bridge"
+          exit $status
