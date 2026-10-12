@@ -22,16 +22,20 @@ static int counted_thread_start(wf_prim_thread *, void (*)(void *), void *, size
 static int selected_runtime_init(wf_completion_runtime *);
 static int selected_ring_init(wf_linux_io_uring_adapter *, wf_completion_runtime *, size_t, size_t);
 static int selected_wake_callback(wf_completion_runtime *, wf_completion_wake_callback, void *);
+static unsigned selected_online_cpus(void);
+static int unknown_cpu_count;
 
 #define wf_prim_thread_start counted_thread_start
 #define wf_completion_runtime_init selected_runtime_init
 #define wf_linux_io_uring_init selected_ring_init
 #define wf_completion_set_wake_callback selected_wake_callback
+#define wf_prim_online_cpus selected_online_cpus
 #include "bridge.c"
 #undef wf_prim_thread_start
 #undef wf_completion_runtime_init
 #undef wf_linux_io_uring_init
 #undef wf_completion_set_wake_callback
+#undef wf_prim_online_cpus
 #include "../runtime_test_guard.h"
 
 #define CHECK(test) do { if (!(test)) { \
@@ -42,6 +46,10 @@ enum { REFUSE_NONE, REFUSE_WAKE, REFUSE_RING, REFUSE_CALLBACK };
 static unsigned refusal;
 static unsigned started_secondary_drivers;
 static unsigned started_bridge_threads;
+
+static unsigned selected_online_cpus(void) {
+    return unknown_cpu_count ? 0u : wf_prim_online_cpus();
+}
 
 static int counted_thread_start(wf_prim_thread *thread, void (*entry)(void *),
                                 void *argument, size_t stack_bytes) {
@@ -89,15 +97,20 @@ int main(int argc, char **argv) {
     CHECK(argc == 2);
     unsigned fail = REFUSE_NONE;
     int singleton = strcmp(argv[1], "singleton") == 0;
+    int unknown = strcmp(argv[1], "unknown-count") == 0;
     if (strcmp(argv[1], "wake-refused") == 0) fail = REFUSE_WAKE;
     else if (strcmp(argv[1], "ring-refused") == 0) fail = REFUSE_RING;
     else if (strcmp(argv[1], "callback-refused") == 0) fail = REFUSE_CALLBACK;
-    else CHECK(singleton || strcmp(argv[1], "frozen") == 0);
-    CHECK(setenv("WF_DRIVERS", "2", 1) == 0);
+    else CHECK(singleton || unknown || strcmp(argv[1], "frozen") == 0);
+    CHECK(setenv("WF_DRIVERS", unknown ? "0" : "2", 1) == 0);
     CHECK(setenv("WF_IO_HELPERS", "2", 1) == 0);
     if (singleton) CHECK(setenv("WF_IO_NO_NATIVE_RING", "1", 1) == 0);
     else CHECK(unsetenv("WF_IO_NO_NATIVE_RING") == 0);
     unsigned before = task_count();
+    /* A ready-ring default cannot publish one driver as though it knew the
+     * allowed CPU count. The old zero-to-one fallback reaches the failure
+     * below instead of stopping before entry with the runtime diagnostic. */
+    unknown_cpu_count = unknown;
     uint64_t selected = wf__context_driver_count();
     CHECK(task_count() == before);
     CHECK(started_bridge_threads == 0u);
@@ -108,6 +121,10 @@ int main(int argc, char **argv) {
         if (required != NULL && strcmp(required, "1") == 0) CHECK(wf_bridge_ring_ready());
         fputs("driver-count-test: io_uring qualification unavailable\n", stderr);
         return 77;
+    }
+    if (unknown) {
+        fputs("driver-count-test: unknown CPU count did not stop selection\n", stderr);
+        return 2;
     }
     CHECK(selected == (singleton ? 1u : 2u));
     /* Entry could observe a later host change; lazy driver startup must use

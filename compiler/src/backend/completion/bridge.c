@@ -4041,8 +4041,10 @@ static void wf_driver_select_count(void) {
     }
     if (!wf_bridge_ensure_ring())
         wf_bridge_fail("the completion bridge could not initialize");
-    if (wanted == 0u || !wf_bridge_ring_ready()) {
+    if (!wf_bridge_ring_ready()) {
         wanted = 1u;
+    } else if (wanted == 0u) {
+        wf_bridge_fail("cannot determine the available CPU count");
     }
     if (wanted > WF_DRIVER_LIMIT) {
         wanted = WF_DRIVER_LIMIT;

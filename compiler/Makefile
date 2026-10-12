@@ -390,6 +390,18 @@ sched-policy-test: sched-split-policy-cases $(COMPLETION_TMP)/sched-policy $(COM
 		WF_WORKERS=$$workers "$(COMPLETION_TMP)/sched-policy-clamped" budget 24; \
 	done
 
+# The Linux affinity probe shares the ordinary scheduler entry/core objects;
+# only its included host primitive substitutes the kernel/allocator answers.
+ifeq ($(shell uname -s),Linux)
+$(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o: $(SCHED_DIR)/prim_host.c
+$(COMPLETION_TMP)/cpu-affinity-probe: $(SCHED_PROBE_OBJECT_DIR)/entry.o $(SCHED_PROBE_OBJECT_DIR)/core.o $(SCHED_PROBE_OBJECT_DIR)/cpu_affinity_probe.o
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+.PHONY: cpu-affinity-test
+cpu-affinity-test: $(COMPLETION_TMP)/cpu-affinity-probe
+	"$(COMPLETION_TMP)/cpu-affinity-probe"
+sched-policy-test: cpu-affinity-test
+endif
+
 # Shared on POSIX and native Windows; each environment is a fresh process.
 SCHED_POLICY_EXE ?= $(COMPLETION_TMP)/sched-policy
 sched-split-policy-cases: $(SCHED_POLICY_EXE)
@@ -599,7 +611,7 @@ driver-count-test: $(COMPLETION_TMP)/driver-count-test
 		else exit $$status; fi
 	@# Install capture redirections inside the exec'd child: the recipe shell's
 	@# signal annotation belongs in the CI log, outside byte-exact runtime stderr.
-	@$(NO_CORE_DUMPS) for mode in wake-refused ring-refused callback-refused; do \
+	@$(NO_CORE_DUMPS) for mode in wake-refused ring-refused callback-refused unknown-count; do \
 		echo "driver-count-test: $$mode"; \
 		status=0; $(NATIVE_REQUIREMENT) sh -c 'exec "$$1" "$$2" > "$$3" 2> "$$4"' \
 			driver-count-refusal "$(COMPLETION_TMP)/driver-count-test" "$$mode" \
@@ -609,8 +621,13 @@ driver-count-test: $(COMPLETION_TMP)/driver-count-test
 		else \
 			cat "$(COMPLETION_TMP)/driver-count.err"; \
 			test $$status = 134 && test ! -s "$(COMPLETION_TMP)/driver-count.out" || exit 1; \
-			case $$mode in wake-refused) reason=wake;; ring-refused) reason=ring;; callback-refused) reason='ring wake';; esac; \
-			printf '%s\n' "whitefoot completion: cannot initialize a selected driver $$reason" | \
+			case $$mode in \
+				wake-refused) reason='cannot initialize a selected driver wake';; \
+				ring-refused) reason='cannot initialize a selected driver ring';; \
+				callback-refused) reason='cannot initialize a selected driver ring wake';; \
+				unknown-count) reason='cannot determine the available CPU count';; \
+			esac; \
+			printf '%s\n' "whitefoot completion: $$reason" | \
 				cmp - "$(COMPLETION_TMP)/driver-count.err" || exit 1; \
 		fi; \
 	done
@@ -633,6 +650,7 @@ COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-p
 	$(COMPLETION_TMP)/shared-object-test $(COMPLETION_TMP)/cancel-test $(COMPLETION_TMP)/driver-service-test \
 	$(COMPLETION_TMP)/driver-service-native-test $(COMPLETION_TMP)/driver-service-native-no-reap \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/driver-count-test) \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/cpu-affinity-probe) \
 	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe) \
 	$(addprefix $(COMPLETION_TMP)/,$(FORK_CAPSULE_IMAGES))
 completion-test-images: $(COMPLETION_TEST_IMAGES)
