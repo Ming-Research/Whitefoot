@@ -14,8 +14,6 @@
 name: import-limit-probe
 
 on:
-  push:
-    branches: [claude/small-accessor-inline]
   workflow_dispatch:
     inputs:
       rounds:
