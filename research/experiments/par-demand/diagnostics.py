@@ -153,8 +153,129 @@ def directional(values, threshold=0):
     return result
 
 
+def strongly_connected(edges, nodes):
+    """Mutual-reachability components of the subgraph on nodes."""
+    nodes, components = set(nodes), []
+    def within(start):
+        seen, todo = set(), [start]
+        while todo:
+            node = todo.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            todo.extend(successor for successor in edges.get(node, ()) if successor in nodes)
+        return seen
+    remaining = set(nodes)
+    while remaining:
+        at = min(remaining)
+        component = {node for node in within(at) if at in within(node)}
+        remaining -= component
+        components.append(component)
+    return components
+
+
+def innermost_loops(edges):
+    """Loops that contain no nested loop, each as sorted instruction indices.
+
+    A function-wide SCC also holds the enclosing output loop's tail and the
+    remainder loop, so it is not the hot loop itself. Each SCC with a cycle is
+    split by removing the edges into its headers (nodes entered from outside
+    the SCC, or its first node); an SCC whose remainder has no cycle is
+    innermost.
+    """
+    result, pending = [], [set(edges)]
+    while pending:
+        region = pending.pop()
+        for component in strongly_connected(edges, region):
+            if not any(successor in component for node in component for successor in edges.get(node, ())):
+                continue  # a single node without a self edge
+            headers = {node for node in component
+                       if any(node in edges.get(other, ()) for other in edges if other not in component)} or {min(component)}
+            inner = {node: [successor for successor in edges.get(node, ()) if successor not in headers]
+                     for node in component}
+            nested = [part for part in strongly_connected(inner, component)
+                      if any(successor in part for node in part for successor in inner[node])]
+            if nested:
+                pending.extend(nested)
+            else:
+                result.append(sorted(component))
+    return sorted(result)
+
+
+def operands(text):
+    parts, depth, start = [], 0, 0
+    for at, char in enumerate(text):
+        depth += (char == '(') - (char == ')')
+        if char == ',' and depth == 0:
+            parts.append(text[start:at].strip())
+            start = at + 1
+    parts.append(text[start:].strip())
+    return [part for part in parts if part]
+
+
+def ordered_tap_chain(instructions, loop, taps=4):
+    """The loop body's sequential scalar accumulation, read as register dataflow.
+
+    The body must be straight-line in address order. Each tap is a scalar
+    product of two loaded values, and the accumulator is one register's
+    loop-entry value with exactly `taps` products added one after another,
+    returned to that register for the next iteration. A reassociated sum, a
+    product that is not two loads, a different tap count or any other floating
+    work in the loop is not this shape.
+    """
+    body = [instructions[node] for node in loop]
+    if loop != list(range(loop[0], loop[-1] + 1)) or not body[-1].mnemonic.startswith('j'):
+        return None
+    if any(instruction.mnemonic.startswith('j') for instruction in body[:-1]):
+        return None
+    values, floating = {}, []
+    def value(operand):
+        if operand.startswith('%xmm'):
+            return values.get(operand, ('entry', operand))
+        if operand.startswith('%') or operand.startswith('$'):
+            return ('opaque', operand)
+        return ('load', operand)
+    for instruction in body:
+        mnemonic, parts = instruction.mnemonic, operands(instruction.operands)
+        written = parts[-1] if parts and parts[-1].startswith('%xmm') else None
+        if mnemonic in ('mulsd', 'addsd', 'vmulsd', 'vaddsd'):
+            if written is None or len(parts) != (3 if mnemonic.startswith('v') else 2):
+                return None
+            left, right = (value(parts[1]), value(parts[0]))
+            floating.append(mnemonic)
+            values[written] = ('mul' if 'mul' in mnemonic else 'add', left, right)
+        elif written is None:
+            continue  # integer/control work and stores leave every xmm value intact
+        elif mnemonic in ('movsd', 'vmovsd', 'movapd', 'vmovapd', 'movaps', 'vmovaps') and len(parts) == 2:
+            values[written] = value(parts[0])
+        elif mnemonic in ('xorpd', 'xorps', 'pxor', 'vxorpd', 'vxorps', 'vpxor') and len(set(parts)) == 1:
+            values[written] = ('zero',)
+        else:
+            values[written] = ('opaque', instruction.address)
+            if re.search(r'(?:add|sub|mul|div|fma|sqrt|min|max)[sp][sd]$', mnemonic):
+                return None  # other floating arithmetic in the hot loop
+    def tap(item):
+        return item[0] == 'mul' and item[1][0] == 'load' and item[2][0] == 'load'
+    for register, final in sorted(values.items()):
+        chain, current = [], final
+        while current[0] == 'add':
+            left, right = current[1], current[2]
+            if tap(right) and not tap(left):
+                chain.append(right); current = left
+            elif tap(left) and not tap(right):
+                chain.append(left); current = right
+            else:
+                break
+        if current == ('entry', register) and len(chain) == taps and len(floating) == 2 * taps:
+            loads = {tuple(sorted((item[1][1], item[2][1]))) for item in chain}
+            if len(loads) == taps:
+                return {'accumulator': register, 'taps': [list(item[1][1:] + item[2][1:]) for item in reversed(chain)],
+                        'ordered_operations': floating}
+    return None
+
+
 def selected_call_shapes(functions, root):
-    """The actual legacy tap SCC must survive, not just a suggestive name."""
+    """The actual legacy tap loop must survive, not just a suggestive name."""
     cycles = []
     pending, seen = [root], set()
     while pending:
@@ -169,21 +290,11 @@ def selected_call_shapes(functions, root):
                        if callee.startswith(('wf__par_seq_', 'wf_diagnostic_')))
         if any('fma' in instruction.mnemonic for instruction in instructions):
             raise ValueError(f'FMA/contraction in FIR computation {name}')
-        edges = assembly_edges(instructions)
-        components = set()
-        for at in edges:
-            if on_cycle(edges, at):
-                # SCC = mutual reachability. Keep each actual loop once.
-                from identity import reachable
-                component = tuple(sorted(node for node in reachable(edges, at) if at in reachable(edges, node)))
-                if component in components:
-                    continue
-                components.add(component)
-                floating = [instructions[node].mnemonic for node in component
-                            if instructions[node].mnemonic in ('mulsd', 'addsd', 'vmulsd', 'vaddsd')]
-                if floating == ['mulsd', 'addsd'] * 4 or floating == ['vmulsd', 'vaddsd'] * 4:
-                    cycles.append({'function': name, 'instruction_addresses': [instructions[node].address for node in component],
-                                   'ordered_operations': floating})
+        for loop in innermost_loops(assembly_edges(instructions)):
+            chain = ordered_tap_chain(instructions, loop)
+            if chain:
+                cycles.append({'function': name, 'instruction_addresses': [instructions[node].address for node in loop],
+                               **chain})
     if not cycles:
         raise ValueError('legacy ordered four-tap hot loop did not survive; diagnostic construction blocked')
     return cycles

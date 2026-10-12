@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import diagnostics as d
-from identity import Instruction
+from identity import Instruction, assembly_edges
 
 
 def sample(width=2, instrumented=False, trace=False):
@@ -33,6 +33,34 @@ def sample(width=2, instrumented=False, trace=False):
                                    after=observation.copy(), snapshot_before=before if instrumented else None,
                                    snapshot_after=after if instrumented else None))
     return row
+
+
+# Hosted 64/legacy-direct wf__par_seq_filter at 0x45c0..0x460d, as objdump printed it.
+FOUR_TAPS = [
+    (0x45c0, 'movsd', '-0x18(%r9),%xmm1'), (0x45c6, 'mulsd', '(%rsi,%r8,8),%xmm1'),
+    (0x45cc, 'movsd', '-0x10(%r9),%xmm2'), (0x45d2, 'addsd', '%xmm0,%xmm1'),
+    (0x45d6, 'mulsd', '-0x8(%rsi,%r8,8),%xmm2'), (0x45dd, 'addsd', '%xmm1,%xmm2'),
+    (0x45e1, 'movsd', '-0x8(%r9),%xmm1'), (0x45e7, 'mulsd', '-0x10(%rsi,%r8,8),%xmm1'),
+    (0x45ee, 'addsd', '%xmm2,%xmm1'), (0x45f2, 'movsd', '(%r9),%xmm0'),
+    (0x45f7, 'mulsd', '-0x18(%rsi,%r8,8),%xmm0'), (0x45fe, 'addsd', '%xmm1,%xmm0'),
+    (0x4602, 'add', '$0xfffffffffffffffc,%r8'), (0x4606, 'add', '$0x20,%r9'),
+    (0x460a, 'cmp', '%r8,%rcx'), (0x460d, 'jne', '45c0 <wf__par_seq_filter+0x100>')]
+
+
+def fir_loops(taps):
+    """The output loop around one tap body and its one-tap remainder loop."""
+    rows = [(0x4570, 'jmp', '4593 <f>'),
+            (0x4580, 'movsd', '%xmm0,0x8(%rax,%r15,8)'), (0x4587, 'inc', '%r15'),
+            (0x458e, 'cmp', '%rbp,%r15'), (0x4591, 'je', '4650 <f>'),
+            (0x4593, 'xorpd', '%xmm0,%xmm0'), (0x4597, 'cmp', '$0x3,%r13'), (0x459b, 'jae', '45b0 <f>'),
+            (0x459d, 'xor', '%r8d,%r8d'), (0x45a0, 'test', '%rdx,%rdx'), (0x45a3, 'jne', '461b <f>'),
+            (0x45a5, 'jmp', '4580 <f>'), (0x45b0, 'mov', '%rdi,%r9'), *taps,
+            (0x460f, 'neg', '%r8'), (0x4612, 'test', '%rdx,%rdx'), (0x4615, 'je', '4580 <f>'),
+            (0x461b, 'lea', '(%rbx,%r8,8),%r9'),
+            (0x4630, 'movsd', '(%r9,%r8,8),%xmm1'), (0x4636, 'mulsd', '(%r10),%xmm1'),
+            (0x463b, 'addsd', '%xmm1,%xmm0'), (0x463f, 'inc', '%r8'), (0x4646, 'cmp', '%r8,%rdx'),
+            (0x4649, 'jne', '4630 <f>'), (0x464b, 'jmp', '4580 <f>'), (0x4650, 'ret', '')]
+    return [Instruction(*row) for row in rows]
 
 
 class DiagnosticContracts(unittest.TestCase):
@@ -126,14 +154,45 @@ class DiagnosticContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'image changed'): d.validate_construction(build, 'spine')
 
     def test_unrelated_four_tap_function_is_not_selected_kernel_evidence(self):
-        functions = {'selected': [Instruction(0x100, 'ret', '')],
-                     'wf__par_seq_unused': [Instruction(0x200 + at * 4, operation, '%xmm1,%xmm0')
-                                           for at, operation in enumerate(['mulsd', 'addsd'] * 4)]
-                                           + [Instruction(0x220, 'jmp', '200 <wf__par_seq_unused>')]}
+        functions = {'selected': [Instruction(0x100, 'ret', '')], 'wf__par_seq_unused': fir_loops(FOUR_TAPS)}
         self.assertTrue(d.selected_call_shapes(functions, 'wf__par_seq_unused'))
         with self.assertRaisesRegex(ValueError, 'did not survive'): d.selected_call_shapes(functions, 'selected')
         functions['selected'] = [Instruction(0x100, 'vfmadd132sd', '%xmm0,%xmm1,%xmm2'), Instruction(0x104, 'ret', '')]
         with self.assertRaisesRegex(ValueError, 'FMA'): d.selected_call_shapes(functions, 'selected')
+
+    def test_four_taps_nested_in_output_loop_with_remainder_are_recognized(self):
+        # Hosted run 38198881733 (Ubuntu clang 18.1.3), 64/legacy-direct
+        # wf__par_seq_filter: the four-tap loop sits inside the output loop
+        # beside a one-tap remainder loop, so the whole-function SCC holds ten
+        # multiply/add operations and the earlier check refused a present loop.
+        [loop] = d.selected_call_shapes({'wf__par_seq_filter': fir_loops(FOUR_TAPS)}, 'wf__par_seq_filter')
+        self.assertEqual((loop['instruction_addresses'][0], loop['instruction_addresses'][-1]), (0x45c0, 0x460d))
+        self.assertEqual(len(loop['instruction_addresses']), 16)
+        self.assertEqual(loop['accumulator'], '%xmm0')
+        self.assertEqual([tap[1] for tap in loop['taps']],
+                         ['(%rsi,%r8,8)', '-0x8(%rsi,%r8,8)', '-0x10(%rsi,%r8,8)', '-0x18(%rsi,%r8,8)'])
+
+    def test_absent_or_unordered_taps_still_block_construction(self):
+        one_tap = [line for line in FOUR_TAPS if line[0] < 0x45d6 or line[0] >= 0x4602]
+        one_tap = [(0x45d2, 'addsd', '%xmm1,%xmm0') if line[0] == 0x45d2 else line for line in one_tap]
+        reassociated = [(0x45c0, 'movsd', '-0x18(%r9),%xmm1'), (0x45c6, 'mulsd', '(%rsi,%r8,8),%xmm1'),
+                        (0x45cc, 'movsd', '-0x10(%r9),%xmm2'), (0x45d2, 'mulsd', '-0x8(%rsi,%r8,8),%xmm2'),
+                        (0x45d6, 'addsd', '%xmm2,%xmm1'), (0x45da, 'movsd', '-0x8(%r9),%xmm2'),
+                        (0x45e0, 'mulsd', '-0x10(%rsi,%r8,8),%xmm2'), (0x45e6, 'movsd', '(%r9),%xmm3'),
+                        (0x45ea, 'mulsd', '-0x18(%rsi,%r8,8),%xmm3'), (0x45f0, 'addsd', '%xmm3,%xmm2'),
+                        (0x45f4, 'addsd', '%xmm2,%xmm1'), (0x45f8, 'addsd', '%xmm1,%xmm0'), *FOUR_TAPS[12:]]
+        not_carried = [(0x45fe, 'addsd', '%xmm1,%xmm3') if line[0] == 0x45fe else line for line in FOUR_TAPS]
+        mnemonics_only = [(0x45c0 + at * 4, operation, '%xmm1,%xmm0')
+                          for at, operation in enumerate(['mulsd', 'addsd'] * 4)] + [FOUR_TAPS[-1]]
+        for body in (one_tap, reassociated, not_carried, mnemonics_only):
+            with self.subTest(body=body):
+                instructions = fir_loops(body)
+                # The body is still found as an innermost loop; only its dataflow refuses it.
+                [loop] = [loop for loop in d.innermost_loops(assembly_edges(instructions))
+                          if instructions[loop[0]].address == 0x45c0]
+                self.assertIsNone(d.ordered_tap_chain(instructions, loop))
+                with self.assertRaisesRegex(ValueError, 'did not survive'):
+                    d.selected_call_shapes({'wf__par_seq_filter': instructions}, 'wf__par_seq_filter')
 
     def test_missing_smoke_matrix_blocks_native_use(self):
         with tempfile.TemporaryDirectory() as directory:
