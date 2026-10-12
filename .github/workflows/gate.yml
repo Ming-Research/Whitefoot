@@ -43,27 +43,27 @@ permissions:
   pull-requests: read
 
 # Pushes to one branch share a group, so a later push cancels the run of an
-# earlier head. The opening or reopening of a pull request joins its branch's
-# group, so a later push cancels its run too once its head is superseded. The
-# push run of the head it was opened on has almost always decided to skip,
-# because that push came before the pull request; in the rare run that checks
-# it, as when a pull request is reopened right after a push, the cancelled
-# run's last job is skipped rather than failed, and the opening's run checks
-# the same head on the same platforms. The event of marking a pull request
-# ready has a group of its own, and so does a manual run, each marked before
-# the ref so that no branch name can reach it: the ready run checks both
-# platforms on the head it was raised for, and cancelling the push run of
-# that same head, or being cancelled by it, would only leave a cancelled run
-# beside the successful one; a manual run was asked for, and a push that skips
-# must not cancel it. If a push run asks GitHub before the
-# ready state is visible, it runs Linux only and Gate on both platforms is
-# skipped, not passed, for that run; the ready run, a later push or a manual
-# run qualifies the head.
+# earlier head. The opening or reopening of a pull request, the event of
+# marking one ready and a manual run each have a group of their own, marked
+# before the ref so that no branch name can reach it. Were an opening in the
+# push group, its run, created a few seconds after the pull request, could
+# cancel the push run of a newer head pushed right after the opening, as
+# GitHub orders runs by creation time, and leave that head unchecked; the
+# opening's run instead decides to skip once the pull request's head has moved
+# (.github/gate-scope.sh), because that push run checks the new head. A pull
+# request reopened right after a push may be checked twice, once by each run.
+# The ready run checks both platforms on the head it was raised for, and
+# cancelling the push run of that same head, or being cancelled by it, would
+# only leave a cancelled run beside the successful one; a manual run was asked
+# for, and a push that skips must not cancel it. If a push run asks GitHub
+# before the ready state is visible, it runs Linux only and Gate on both
+# platforms is skipped, not passed, for that run; the ready run, a later push
+# or a manual run qualifies the head.
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
 concurrency:
-  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
@@ -310,9 +310,9 @@ jobs:
   # The merge precondition, read from the revision's own check runs rather
   # than from this run's matrix: every group green on both platforms. Draft
   # pushes and unchecked revisions skip it, so its success marks a revision
-  # that may be merged. A cancelled run skips it too: a later run in its
-  # concurrency group checks the same head or supersedes it, and a verdict
-  # read from cancelled jobs would only stand red beside that run's answer.
+  # that may be merged. A cancelled run skips it too: a later push in its
+  # concurrency group supersedes it, and a verdict read from cancelled jobs
+  # would only stand red beside that run's answer.
   platforms:
     name: Gate on both platforms
     needs: [groups, gate]

@@ -26,12 +26,14 @@ permissions:
   contents: read
   pull-requests: read
 
-# Pushes to one branch share a group, and the opening or reopening of a pull
-# request joins its branch's group, so a later push cancels the run of an
-# earlier head; a manual run has a group of its own, marked before the ref,
-# so that a push that skips never cancels it.
+# Pushes to one branch share a group, so a later push cancels the run of an
+# earlier head. The opening or reopening of a pull request and a manual run
+# each have a group of their own, marked before the ref so that no branch name
+# can reach it: an opening in the push group, created a few seconds after the
+# pull request, could cancel the push run of a newer head and leave it
+# unchecked, and a push that skips must not cancel a manual run.
 concurrency:
-  group: io-hosts-${{ github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: io-hosts-${{ github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
 
 env:

@@ -53,6 +53,12 @@ jobs:
           check 'a null creation time is accepted' \
             '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T' \
             'null|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T'
+          check 'an opening whose branch has moved still runs' \
+            'if [ "$tip" != "$head_sha" ]; then' 'if false; then'
+          check 'a list of pull requests reads only its first page' \
+            'gh api --method GET --paginate ' 'gh api --method GET '
+          check 'a list of pull requests sends its fields in the body' \
+            'gh api --method GET --paginate ' 'gh api --paginate '
           cat results.tsv
           wrong=0
           while IFS=$'\t' read -r name status; do

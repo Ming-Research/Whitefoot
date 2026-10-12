@@ -13,11 +13,21 @@
 # than twice. The comparison errs only toward checking twice: a run is created
 # after its push, so a pull request it treats as earlier really is.
 #
+# The run of an opening or reopening checks the head it was raised for only
+# while the pull request still has that head. It is created some seconds after
+# the pull request, and a push right after the opening has a run of its own
+# that counts the pull request as earlier and checks the new head, so the
+# opening's run decides run=false once the pull request's head has moved. That
+# run has a concurrency group apart from the pushes' (gate.yml, io-hosts.yml),
+# so it never cancels a push run. A pull request from a fork is not asked: no
+# push to the fork starts a run here, so its opening always runs.
+#
 # It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER and GITHUB_RUN_ID, as Actions
 # sets them, and queries GitHub with `gh` (GH_TOKEN) for a push to a branch
-# other than main. A failed query fails the step rather than quietly skipping
-# the gate or dropping macOS. .github/test-gate-scope.sh exercises it.
+# other than main and for the opening of a pull request from this repository.
+# A failed query fails the step rather than quietly skipping the gate or
+# dropping macOS. .github/test-gate-scope.sh exercises it.
 set -eu
 
 event() {
@@ -41,7 +51,21 @@ case "$GITHUB_EVENT_NAME" in
                 decide true true "pull request $number marked ready"
                 ;;
             opened | reopened)
-                if [ "$draft" = false ]; then
+                head_sha=$(event .pull_request.head.sha)
+                head_repo=$(event .pull_request.head.repo.full_name)
+                tip=$head_sha
+                if [ "$head_repo" = "$GITHUB_REPOSITORY" ]; then
+                    tip=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .head.sha)
+                    case "$tip" in
+                        '' | *[!0-9a-f]*)
+                            echo "unexpected head of pull request $number: $tip" >&2
+                            exit 1
+                            ;;
+                    esac
+                fi
+                if [ "$tip" != "$head_sha" ]; then
+                    decide false false "pull request $number $action at $(printf '%.12s' "$head_sha"), its branch has moved to $(printf '%.12s' "$tip"), whose push run checks it"
+                elif [ "$draft" = false ]; then
                     decide true true "pull request $number $action, ready"
                 else
                     decide true false "pull request $number $action as a draft"
@@ -67,8 +91,12 @@ case "$GITHUB_EVENT_NAME" in
                     exit 1
                     ;;
             esac
-            pulls=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME")
-            # --paginate prints one array per page; -s and add join them.
+            # With --method GET, gh sends each -f field as an encoded query
+            # parameter, so a branch name with `&`, `#`, `+` or `%` reaches
+            # GitHub as written. --paginate prints one array per page; -s and
+            # add join them.
+            pulls=$(gh api --method GET --paginate "repos/$GITHUB_REPOSITORY/pulls" \
+                -f state=open -f per_page=100 -f head="$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME")
             # GitHub writes both times as UTC seconds ending in Z, so string
             # order is time order.
             pulls_where() {
