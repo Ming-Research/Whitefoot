@@ -1,0 +1,5 @@
+fn denied() -> result: unit pure {
+  let held = frozen_new::<u8>(value: 7_u8);
+  set held.inner = 1_u8;
+  return unit;
+}

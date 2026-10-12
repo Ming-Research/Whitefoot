@@ -15,6 +15,9 @@ use crate::SourceInput;
 mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod floats;
+mod prelude_opaque;
+mod recursive_effects;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
@@ -49,6 +52,51 @@ struct RepairPair {
 }
 
 const REPAIRS: &[RepairPair] = &[
+    // [TYPE-9] an operand-supplied argument is refused at the complete call.
+    RepairPair {
+        name: "type9-neg-runtime-slots-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9, FN-2] a generic instance is refused at its complete written targ.
+    RepairPair {
+        name: "type9-neg-generic-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-generic-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: this type argument would place `Slots<u64>` as the exchange of a `swap`; swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-generic-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9] a function-kind actual is refused at its inner written targ.
+    RepairPair {
+        name: "type9-neg-function-actual-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-function-actual-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-function-actual-box-swap.wf"
+        )],
+    },
     RepairPair {
         name: "const2-neg-whole-nocopy-struct.wf",
         rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
@@ -1810,7 +1858,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "empty-run-release-over-a-parameter.wf",
-        rejected: br#"fn release(window: Box<Slots<u8>>) -> result: unit pure {
+        rejected: br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure {
   free_empty(window: move window);
   return unit;
 }
@@ -1822,9 +1870,9 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-14",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `release`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
+            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `finish`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
         ],
-        repaired: &[br#"fn release(window: Box<Slots<u8>>) -> result: unit pure contract {
+        repaired: &[br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure contract {
   requires window.inner.len == 0_u64;
 } {
   free_empty(window: move window);
@@ -2406,7 +2454,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2449,7 +2497,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2468,7 +2516,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2486,7 +2534,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2504,7 +2552,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
@@ -3723,8 +3771,11 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(recursive_effects::RECURSIVE_EFFECTS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
+        .chain(floats::FLOATS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {
@@ -3745,6 +3796,37 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
             "{}: {failure}",
             pair.name
         );
+        // [TYPE-9] semantic tests pin the complete call or written targ
+        // span. Pin its rendered start here with the existing repair run.
+        let citation = match pair.name {
+            "type9-neg-runtime-slots-content-swap.wf" => {
+                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+            }
+            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
+            "type9-neg-function-actual-runtime-content-swap.wf" => {
+                Some(("fn swap::<", "Slots<u64>"))
+            }
+            _ => None,
+        };
+        if let Some((prefix, cited)) = citation {
+            let source = std::str::from_utf8(pair.rejected).expect("source is text");
+            let start = source
+                .find(&format!("{prefix}{cited}"))
+                .expect("refused construct")
+                + prefix.len();
+            let before = &source[..start];
+            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+            let column = before
+                .rsplit('\n')
+                .next()
+                .expect("source line")
+                .chars()
+                .count() as u64
+                + 1;
+            let location = failure.location().expect("source location");
+            assert_eq!(location.path(), pair.name);
+            assert_eq!((location.line(), location.column()), (line, column));
+        }
         let rendered = format!("{failure}\n");
         for sentence in pair.sentences {
             assert!(
@@ -3785,7 +3867,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);

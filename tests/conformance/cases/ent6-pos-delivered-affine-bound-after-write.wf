@@ -1,0 +1,37 @@
+fn advance(base: u64, limit: u64) -> result: u64 pure contract {
+  requires base < 18446744073709551615_u64;
+  requires limit >= 1_u64;
+  ensures base <= result;
+  ensures result <= base + limit;
+} {
+  let next = base + 1_u64;
+  return next;
+}
+
+fn delivered(base: u64, limit: u64, choose: Bool) -> result: u64 pure contract {
+  requires base < 18446744073709551615_u64;
+  requires limit >= 1_u64;
+} {
+  let called = advance(base: base, limit: limit);
+  let selected = if choose {
+    give called;
+  } else {
+    give called;
+  }
+  let used = selected - base;
+  set selected = 0_u64;
+  return limit - used;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let yes = True();
+  let no = False();
+  let first = delivered(base: 18446744073709551614_u64, limit: 7_u64, choose: yes);
+  let second = delivered(base: 17_u64, limit: 7_u64, choose: no);
+  if first == 6_u64 {
+    if second == 6_u64 {
+      return std::process::exit_status(code: 42_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}

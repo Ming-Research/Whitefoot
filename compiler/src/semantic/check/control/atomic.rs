@@ -288,7 +288,9 @@ impl Checker<'_, '_> {
         // target's root that target's writes.
         let header_aliases = targets
             .iter()
-            .map(|target| targets_alias_declarations(&declarations, &block_bindings, target.binding))
+            .map(|target| {
+                targets_alias_declarations(&declarations, &block_bindings, target.binding)
+            })
             .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);

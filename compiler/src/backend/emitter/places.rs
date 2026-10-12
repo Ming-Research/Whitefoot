@@ -7,6 +7,40 @@
 
 use super::*;
 
+/// [REF-1, PRE-1, MSR-1, STOR-7] immutable target backing for type-fixed
+/// readonly fields, deduplicated by value in each emitted module.
+pub(super) fn emit_measure_constants(output: &mut Module, program: &IrProgram) {
+    // [REF-1, PRE-1, MSR-1, STOR-7] type-constant readonly fields share one
+    // immutable word per value. Record each symbol's function references at
+    // projection emission so whole-module and fragment rendering agree.
+    let mut measures = BTreeSet::new();
+    for function in program.functions() {
+        for instruction in function.blocks().iter().flat_map(IrBlock::instructions) {
+            if let IrInstruction::Define {
+                operation:
+                    IrOperation::ProjectAddress {
+                        address,
+                        projection: crate::IrPlaceStep::Measure { measure },
+                    },
+                ..
+            } = instruction
+                && let Some(IrType::Address(base)) = function.value_type(*address)
+                && let Some(value) = measure.type_constant(base.ty())
+            {
+                measures.insert(value);
+            }
+        }
+    }
+    for value in measures {
+        output.fragment_local_constant(
+            format!(".wf_measure.{value}"),
+            "i64".to_owned(),
+            value.to_string(),
+            Some(8),
+        );
+    }
+}
+
 pub(in crate::backend) fn returned_storage_slot(
     function: &IrFunction,
     storage: &FunctionStoragePlan,
@@ -40,8 +74,9 @@ pub(in crate::backend) fn returned_storage_slot(
         return Some(returned);
     };
     // All other indirect inputs reach private storage before this group's
-    // entry transfer writes the result or a field within it. The result may alias any consumed
-    // argument, not necessarily this parameter. Keep that last transfer:
+    // entry transfer writes the result or a field within it. Incoming lazy
+    // placement excludes this prologue-write case. The result may alias any
+    // consumed argument, not necessarily this parameter. Keep that last transfer:
     // the same ABI also admits an independent result destination.
     // Source roles, complete CFG interference and exposed-storage exclusion
     // remain independent prerequisites; a matching representation grants none.
@@ -97,7 +132,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     | IrIntegerOperation::AbsoluteChecked
                     | IrIntegerOperation::DivideChecked
                     | IrIntegerOperation::RemainderChecked
-            ) => {
+            ) =>
+            {
                 self.materialize_operands(arguments.iter().copied())?;
                 self.emit_integer(result, ty, *operation, *operand_type, arguments)?;
             }
@@ -116,6 +152,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     *destination_type,
                     *value,
                 )?;
+            }
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => {
+                let operands = [*table, *cursor, *count, *limit, *set];
+                self.materialize_operands(operands)?;
+                self.emit_keyed_table_scan_within(result, operands)?;
             }
             IrOperation::AddressOf { value, referent } => {
                 self.emit_address_of(result, ty, *value, *referent)?;
@@ -416,7 +463,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrNominalKind::Enum { variants } => {
                 fields.push((
                     IrType::Integer {
-                        width: 32,
+                        width: enum_tag_width(self.nominal(nominal)?)?,
                         signed: false,
                     },
                     false,
@@ -507,8 +554,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     /// Initializes a constructed value's slot and stores its tag, returning
-    /// the slot's address. Active window-bearing fields are supplied by the
-    /// caller's subsequent stores; inactive enum payload zeroing is retained.
+    /// the slot's address. A union writes its raw tag-and-common-padding
+    /// prefix with one ordinal store, zero-extending and locating the
+    /// physical tag according to target endianness. Physical tag reads and
+    /// product stores keep their count-sized width. Active window-bearing
+    /// fields are supplied by the caller's subsequent stores; inactive enum
+    /// payload zeroing is retained.
     fn begin_construction(
         &mut self,
         result: IrValueId,
@@ -518,8 +569,32 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let destination = self.value_place(result)?;
         self.initialize_construction(ty, &destination, tag)?;
         if let Some(tag) = tag {
+            let IrType::Nominal(nominal) = ty else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let (tag_ty, stored_tag) = if union_enums::is_union_enum(self.program, nominal)? {
+                let layout = crate::target::union_enum_layout(self.target, self.program, nominal)
+                    .map_err(BackendFailure::TargetLayout)?;
+                let prefix_bytes = layout.tag_prefix_bytes();
+                let physical_bytes = u64::from(enum_tag_width(self.nominal(nominal)?)?.div_ceil(8));
+                let padding_bytes = prefix_bytes
+                    .checked_sub(physical_bytes)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                // The raw prefix clears only common padding. Keep the
+                // physical discriminant at byte zero on either endianness;
+                // every currently admitted target takes the little-endian
+                // path, whose unsigned ordinal needs no shift.
+                let stored_tag = if self.target.data_layout().starts_with('E') {
+                    u64::from(tag) << (padding_bytes * 8)
+                } else {
+                    u64::from(tag)
+                };
+                (format!("i{}", prefix_bytes * 8), stored_tag)
+            } else {
+                (enum_tag_type(self.nominal(nominal)?)?, u64::from(tag))
+            };
             let address = self.aggregate_field_pointer(ty, &destination, 0)?;
-            writeln!(self.output, "  store i32 {tag}, ptr {address}")
+            writeln!(self.output, "  store {tag_ty} {stored_tag}, ptr {address}")
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(destination)
@@ -666,7 +741,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 transfers.push((*parameter, *ty, operand));
             }
         }
-        // A memory-only value moves by memmove (compiler/payload-enum-layout).
+        // Memory-only values use copy_storage (compiler/payload-enum-layout).
         // Every source is captured before any destination is written: a
         // source another transfer of this edge overwrites is first copied to
         // its own frame snapshot.
@@ -748,6 +823,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 self.aggregate_field_pointer(base.ty(), &self.value_name(address), *field as usize)?
             }
+            crate::IrPlaceStep::Measure { measure } => {
+                if referent.ty()
+                    != (IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+                {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                if let Some(value) = measure.type_constant(base.ty()) {
+                    let symbol = format!(".wf_measure.{value}");
+                    self.output.symbol(symbol.clone());
+                    return Ok(format!("@{symbol}"));
+                }
+                let field = measure
+                    .descriptor_field(base.ty())
+                    .ok_or(BackendFailure::InvalidIr)?;
+                self.aggregate_field_pointer(base.ty(), &self.value_name(address), field as usize)?
+            }
             crate::IrPlaceStep::BoxReferent { nominal } => {
                 let IrNominalKind::Box {
                     referent: boxed, ..
@@ -761,8 +855,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 let pointer = self.next_temporary()?;
                 writeln!(
                     self.output,
-                    "  %{pointer} = load ptr, ptr {}",
-                    self.value_name(address)
+                    "  %{pointer} = load ptr, ptr {}{}",
+                    self.value_name(address),
+                    storage_alias::Role::BoxOwner.attachment()
                 )
                 .map_err(|_| BackendFailure::TextEmission)?;
                 format!("%{pointer}")
@@ -895,6 +990,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
+        } else if let Some(backing) = self.incoming_backing.get(&slot) {
+            self.entry_slot(FunctionSlot::OwnedValue(*backing))
         } else if let Some(incoming) = self.incoming_places.get(&slot) {
             Ok(incoming.clone())
         } else {
@@ -902,14 +999,35 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
     }
 
-    /// Consume the planner's per-use copy schedule before evaluating any
-    /// operand or effect. A later operation starts from the captured address
-    /// again, so no emitted-block order becomes a runtime initialization fact.
+    /// Consume both copy schedules before evaluating any operand or effect.
+    /// Load backing is per-use; incoming backing persists exactly where the
+    /// CFG proof says it was captured on every path, never by emission order.
     pub(super) fn prepare_snapshot_use(
         &mut self,
         block: IrBlockId,
         at: usize,
     ) -> Result<(), BackendFailure> {
+        self.incoming_backing = self
+            .incoming_snapshots
+            .backing
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        let captures = self
+            .incoming_snapshots
+            .copies
+            .get(&(block.index(), at))
+            .cloned()
+            .unwrap_or_default();
+        for slot in captures {
+            let source = self
+                .incoming_places
+                .get(&slot)
+                .ok_or(BackendFailure::InvalidIr)?
+                .clone();
+            let destination = self.entry_slot(FunctionSlot::OwnedValue(slot))?;
+            self.copy_storage(self.storage.slots()[slot], &source, &destination)?;
+        }
         self.snapshot_copies.clear();
         for slot in self.storage.snapshot_copies(block.index(), at) {
             let address = self
@@ -943,8 +1061,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_0 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  %{temporary} = load {}, ptr {address}",
-                emitted_type_0
+                "  %{temporary} = load {}, ptr {address}{}",
+                emitted_type_0,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)?;
@@ -979,18 +1098,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if source == destination {
             return Ok(());
         }
+        // Producer fields can have been stored separately in another function.
+        // Retain the same layout boundaries for incoming and heap values as
+        // for local values. The host's inline cost charges this expansion;
+        // the in-place-parameters research record tracks its consequences.
+        if let Some(granules) = crate::target::bounded_transfer(self.target, self.program, ty)
+            .map_err(BackendFailure::TargetLayout)?
+        {
+            return self.copy_granules(&granules, source, destination);
+        }
         let llvm = self.output.type_name(self.program, ty)?;
-        // Keep the checked snapshot and its ordering, but do not expand an
-        // aggregate into SSA fields merely to copy it. The target's allocated
-        // type size includes representation padding and is not the source
-        // layout ceiling or a run's initialized length. The closed OP-11 body
-        // copies only between its equal-or-disjoint reference targets and its
-        // private snapshots. Ordinary llvm.memcpy permits equal pointers (the
-        // stricter memcpy.inline does not), so it preserves same-place swap
-        // without withholding the proved exclusion of partial overlap. This
-        // grants no noalias attribute to swap's reference parameters.
-        // Other bodies may reuse overlapping aggregate result storage and keep
-        // memmove's snapshot semantics.
+        // Whole storage retains overlap-safe byte transfer. Only the closed
+        // OP-11 row proves equal-or-disjoint targets and permits memcpy.
         let operation = if aliasing_admitted_row(self.function.name()) {
             self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
             "memcpy"
@@ -1004,6 +1123,88 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  call void @llvm.{operation}.p0.p0.i64(ptr {destination}, ptr {source}, i64 ptrtoint (ptr getelementptr ({llvm}, ptr null, i32 1) to i64), i1 false)"
         )
         .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Capture the entire source before writing the destination, including
+    /// byte-only intervals. This preserves memmove semantics for arbitrary
+    /// partial overlap and runtime-equal pointers. Alignment 1 is deliberate:
+    /// a caller can supply an interior place with no stronger retained fact.
+    fn copy_granules(
+        &mut self,
+        granules: &[crate::target::TransferGranule],
+        source: &str,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        use crate::target::TransferAccess;
+        writeln!(
+            self.output,
+            "  ; layout-bounded transfer from {source} to {destination}"
+        )?;
+        let mut captured = Vec::with_capacity(granules.len());
+        for granule in granules {
+            let pointer = self.transfer_pointer(source, granule.offset)?;
+            let llvm = match granule.access {
+                TransferAccess::Scalar(ty) => self.output.type_name(self.program, ty)?,
+                TransferAccess::Pointer => "ptr".to_owned(),
+                TransferAccess::Integer(width) => format!("i{width}"),
+                TransferAccess::Bytes => {
+                    let scratch = self.entry_slot(FunctionSlot::TransferScratch)?;
+                    let scratch = self.transfer_pointer(&scratch, granule.offset)?;
+                    self.copy_transfer_bytes(granule.size, &pointer, &scratch)?;
+                    captured.push((None, scratch));
+                    continue;
+                }
+            };
+            let value = format!("%{}", self.next_temporary()?);
+            writeln!(
+                self.output,
+                "  {value} = load {llvm}, ptr {pointer}, align 1"
+            )?;
+            captured.push((Some(llvm), value));
+        }
+        for (granule, (llvm, value)) in granules.iter().zip(captured) {
+            let pointer = self.transfer_pointer(destination, granule.offset)?;
+            if let Some(llvm) = llvm {
+                writeln!(
+                    self.output,
+                    "  store {llvm} {value}, ptr {pointer}, align 1"
+                )?;
+            } else {
+                self.copy_transfer_bytes(granule.size, &value, &pointer)?;
+            }
+        }
+        writeln!(
+            self.output,
+            "  ; end layout-bounded transfer from {source} to {destination}"
+        )?;
+        Ok(())
+    }
+
+    fn transfer_pointer(&mut self, base: &str, offset: u64) -> Result<String, BackendFailure> {
+        if offset == 0 {
+            return Ok(base.to_owned());
+        }
+        let pointer = format!("%{}", self.next_temporary()?);
+        writeln!(
+            self.output,
+            "  {pointer} = getelementptr inbounds i8, ptr {base}, i64 {offset}"
+        )?;
+        Ok(pointer)
+    }
+
+    fn copy_transfer_bytes(
+        &mut self,
+        size: u64,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+        self.output.symbol("llvm.memmove.p0.p0.i64");
+        writeln!(
+            self.output,
+            "  call void @llvm.memmove.p0.p0.i64(ptr {destination}, ptr {source}, i64 {size}, i1 false)"
+        )?;
+        Ok(())
     }
 
     pub(super) fn store_value_at(
@@ -1025,6 +1226,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.value_name(value)
             )
         }
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// An exact checked source store, rather than a constructor, result
+    /// placement or whole-value transfer that may change a storage role.
+    pub(super) fn store_source_value_at(
+        &mut self,
+        value: IrValueId,
+        destination: &str,
+    ) -> Result<(), BackendFailure> {
+        let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
+        let alias = storage_alias::source_write(self.program, ty);
+        if alias.is_empty() {
+            return self.store_value_at(value, destination);
+        }
+        let llvm = self.output.type_name(self.program, ty)?;
+        writeln!(
+            self.output,
+            "  store {llvm} {}, ptr {destination}{alias}",
+            self.value_name(value)
+        )
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -1085,9 +1307,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {address}",
+                "  {} = load {}, ptr {address}{}",
                 value_name(result),
-                emitted_type_1
+                emitted_type_1,
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)

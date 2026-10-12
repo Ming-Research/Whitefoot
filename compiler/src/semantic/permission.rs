@@ -97,8 +97,9 @@ use super::model::{
     CheckedStatement, FunctionId, expression_children,
 };
 use super::places::{
-    CaptureId, CapturedRange, CapturedValue, PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace,
-    SeparationOracle, UnprovedSeparations, named_place, places_overlap, range_separation_candidate,
+    CaptureId, CapturedRange, CapturedValue, NamingForm, PlaceMap, PlaceRoot, PlaceStep,
+    ResolvedPlace, SeparationOracle, UnprovedSeparations, named_place, places_overlap,
+    range_separation_candidate,
 };
 use crate::NodePath;
 
@@ -604,6 +605,7 @@ fn unconditional_argument(value: &CheckedExpression) -> bool {
                 step,
                 super::model::CheckedPlaceStep::Field(_)
                     | super::model::CheckedPlaceStep::BoxReferent(_)
+                    | super::model::CheckedPlaceStep::Measure(_)
             )
         }),
         _ => false,
@@ -955,6 +957,11 @@ impl<'check> Program<'check> {
         let expression = |value: &CheckedExpression| {
             expression_names(value, binding) || reaches(&self.value_footprint(places, value, site))
         };
+        let dispatch = |value: &CheckedExpression| {
+            let mut footprint = self.value_footprint(places, value, site);
+            collect_match_dispatch_reads(places, value, site, &mut footprint);
+            expression_names(value, binding) || reaches(&footprint)
+        };
         let block = |statements: &'check [CheckedStatement], inner: &mut InnerTargets| {
             statements.iter().any(|statement| {
                 self.requires_bound_result(places, binding, site, statement, inner)
@@ -963,7 +970,7 @@ impl<'check> Program<'check> {
         match statement {
             CheckedStatement::Match {
                 scrutinee, arms, ..
-            } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
+            } => dispatch(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
             // A `give` in an arm delivers to this statement, not out of the
             // block the context was started in.
             CheckedStatement::ValueMatchLet {
@@ -971,7 +978,7 @@ impl<'check> Program<'check> {
             } => {
                 inner.values += 1;
                 let requires =
-                    expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
+                    dispatch(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
                 inner.values -= 1;
                 requires
             }
@@ -1287,7 +1294,7 @@ impl<'check> Program<'check> {
                 ..
             } => {
                 let (footprint, effects) =
-                    self.member_effects(places, value, call, arms.iter().flat_map(|arm| &arm.body));
+                    self.match_effects(places, value, call, arms.iter().flat_map(|arm| &arm.body));
                 storage_effects = effects;
                 (
                     Some(call),
@@ -1299,7 +1306,7 @@ impl<'check> Program<'check> {
             }
             CheckedStatement::Match { .. } if conditional.is_some() => {
                 let conditional = conditional.as_ref().expect("matched conditional call");
-                let (footprint, effects) = self.member_effects(
+                let (footprint, effects) = self.match_effects(
                     places,
                     conditional.scrutinee,
                     conditional.site,
@@ -1427,6 +1434,23 @@ impl<'check> Program<'check> {
             }),
             footprint,
         }
+    }
+
+    /// Dispatch observes a borrowed scrutinee's tag separately from forming
+    /// its reference [EFF-2, OWN-13, PAR-1].
+    fn match_effects(
+        &self,
+        places: &PlaceMap,
+        value: &CheckedExpression,
+        node: &NodePath,
+        children: impl IntoIterator<Item = &'check CheckedStatement>,
+    ) -> (Result<Footprint, Refusal>, CallStorageEffects) {
+        let (footprint, effects) = self.member_effects(places, value, node, children);
+        let footprint = footprint.map(|mut footprint| {
+            collect_match_dispatch_reads(places, value, node, &mut footprint);
+            footprint
+        });
+        (footprint, effects)
     }
 
     /// Collect both boundaries from the same value and absorbed statements.
@@ -2532,6 +2556,43 @@ pub(super) fn collect_operand_reads(
     for child in expression_children(expression) {
         collect_operand_reads(places, child, node, footprint);
     }
+}
+
+/// The referents whose tags a borrowed dispatch observes [EFF-2, OWN-13].
+/// `None` is a value dispatch; an empty set is an unresolved reference and
+/// must deny permission. Keep reference formation itself free of this read.
+pub(super) fn match_referents(
+    places: &PlaceMap,
+    scrutinee: &CheckedExpression,
+) -> Option<Vec<ResolvedPlace>> {
+    let named = named_place(scrutinee)?;
+    match named.form {
+        NamingForm::Borrow => Some(named.resolve(places, false)),
+        NamingForm::Binding(binding) if places.is_reference(binding) => {
+            Some(named.resolve(places, false))
+        }
+        _ => None,
+    }
+}
+
+fn collect_match_dispatch_reads(
+    places: &PlaceMap,
+    scrutinee: &CheckedExpression,
+    node: &NodePath,
+    footprint: &mut Footprint,
+) {
+    let Some(referents) = match_referents(places, scrutinee) else {
+        return;
+    };
+    if referents.is_empty() {
+        footprint.unresolved.get_or_insert(node.clone());
+    }
+    footprint
+        .operand_reads
+        .extend(referents.into_iter().map(|place| Access {
+            place,
+            argument: node.clone(),
+        }));
 }
 
 /// Resolve storage for the lowering boundary. An empty reference inventory

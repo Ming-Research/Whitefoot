@@ -89,10 +89,13 @@ The five storage shapes have different invariants [TYPE-9, WIN-1]:
   built, stored as one contiguous run of elements. It has only the `Box`
   content form.
 
-`Paged<T>` is a prefix window whose elements stay in their pages when capacity
-grows; its home is `Box<Paged<T>>`. Choose `Slots<T>` when consumers need one
-contiguous `&[T]`, and `Paged<T>` when appending and growing must copy no
-earlier payload. Both use ordinary logical subscripts, length proofs and
+`Paged<T>` is a prefix window whose home is `Box<Paged<T>>`. Growth may
+replace its small first page, copying at most B - 1 initialized elements in
+total; once that page has space for B elements, later growth keeps every existing
+element
+address [OP-10, OP-13]. Choose `Slots<T>` when consumers need one contiguous
+`&[T]`, and `Paged<T>` for bounded initial copying followed by growth that
+appends pages. Both use ordinary logical subscripts, length proofs and
 element separation [OP-4, OWN-7]. A paged access reaches an element through
 the page directory; this is a representation cost, not a different index
 proof.
@@ -271,6 +274,25 @@ take their compiler-derived releases [WIN-3, STOR-3]. A direct
 runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>` cannot be moved out of
 its cell; leave it there, or empty a boxed window and consume it with
 `free_empty` [TYPE-9, OP-14].
+
+To end ownership before the enclosing function returns, pass the value to
+`release::<T>(value: move value)`. Its ordinary `T: drop` bound admits affine
+and copy values; a copy argument is passed bare [PRE-1, OWN-1, PROV-6].
+
+Struct destructuring uses the same copy/move spelling [GRAM-4, PROV-6]:
+
+```whitefoot
+struct ScanResult {
+  size: u64;
+  accepted: Bool;
+}
+
+fn result_size(input: ScanResult) -> result: u64 pure {
+  let ScanResult(size: count, accepted: built) = input;
+  let original = input.size;
+  return original;
+}
+```
 
 Use one `Box` for independently owned heap storage. Do not add a second
 descriptor object around a runtime-capacity shape; the cell already owns that
@@ -598,7 +620,7 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
 let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
 std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);

@@ -1,0 +1,14 @@
+fn present(slot: &Option<u8>) -> result: Bool reads(slot) {
+  match &slot^ {
+    None() => {
+      return False();
+    }
+    Some(value: inner) => {
+      return True();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

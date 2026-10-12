@@ -59,12 +59,26 @@ static _Atomic int64_t blocks_out;
 static _Atomic uint64_t allocations;
 static _Atomic int64_t mapped_bytes_out;
 static void *test_take(size_t bytes);
-static void test_give(void *block);
+static void test_give(void *block, size_t bytes);
+static size_t test_granted(size_t bytes);
+static _Atomic int64_t pool_bytes_out;
+static _Thread_local int measure_heap;
+static _Thread_local int64_t measured_peak;
+static void observe_heap(void) {
+    int64_t held = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (measure_heap && held > measured_peak)
+        measured_peak = held;
+}
+static void test_heap_change(int64_t delta) {
+    atomic_fetch_add_explicit(&mapped_bytes_out, delta, memory_order_relaxed);
+    observe_heap();
+}
 #define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
-#define WF_CMAP_GIVE(block, bytes) test_give(block)
+#define WF_CMAP_GIVE(block, bytes) test_give((block), (size_t)(bytes))
+#define WF_CMAP_GRANTED(bytes) test_granted((size_t)(bytes))
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
-#define WF_CMAP_HEAP_CHANGE(delta) atomic_fetch_add_explicit(&mapped_bytes_out, (delta), memory_order_relaxed)
+#define WF_CMAP_HEAP_CHANGE(delta) test_heap_change(delta)
 struct wf_cmap;
 static void finishing(struct wf_cmap *map);
 #define WF_CMAP_FINISHING(map) finishing(map)
@@ -119,14 +133,30 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 
 #include "keyed_table.c"
 
+/* The completion pool grants powers of two from 512 through 2 MiB, then
+ * 64 KiB multiples (completion/bridge.c). Count grants on take/give, plus
+ * the direct-map/entry deltas, exactly the two counters heap_in_use sums. */
+static size_t test_granted(size_t bytes) {
+    if (bytes > 2u * 1024u * 1024u)
+        return (bytes + 65535u) / 65536u * 65536u;
+    size_t granted = 512;
+    while (granted < bytes)
+        granted *= 2;
+    return granted;
+}
+
 static void *test_take(size_t bytes) {
     atomic_fetch_add(&allocations, 1);
     atomic_fetch_add(&blocks_out, 1);
-    return aligned_alloc(16, (bytes + 15) / 16 * 16);
+    size_t granted = test_granted(bytes);
+    atomic_fetch_add(&pool_bytes_out, (int64_t)granted);
+    observe_heap();
+    return aligned_alloc(16, granted);
 }
 
-static void test_give(void *block) {
+static void test_give(void *block, size_t bytes) {
     atomic_fetch_sub(&blocks_out, 1);
+    atomic_fetch_sub(&pool_bytes_out, (int64_t)test_granted(bytes));
     free(block);
 }
 
@@ -929,14 +959,18 @@ static void claim_yields(void) {
 }
 
 /* As another writer of claim_key that reused the cell of the key the writer
- * under test passed, removed meanwhile, and holds it a little longer: k's
- * cell, holding 7, locked there until a thread lets it go. */
+ * under test passed, removed meanwhile, and holds it until the impatient
+ * writer has closed the map's gate: k's cell, holding 7, locked there until
+ * a thread lets it go. Letting go after a fixed pause instead raced a slow
+ * (sanitized) claimer, which then found the cell free and never upgraded. */
 static pthread_t holding_thread;
 
 static void *let_go_later(void *arg) {
     cell *c = arg;
-    struct timespec pause = {0, 2000000};
-    nanosleep(&pause, NULL);
+    struct timespec pause = {0, 100000};
+    /* Bounded so a claimer that never upgrades fails its check, not the run. */
+    for (int waited = 0; waited < 100000 && atomic_load(&other_user->map->gate) == 0; waited++)
+        nanosleep(&pause, NULL);
     atomic_store(&c->key, atomic_load(&c->key) & ~LOCKED);
     return NULL;
 }
@@ -1036,9 +1070,11 @@ static _Atomic int move_done;
 static void *move_now(void *arg) {
     (void)arg;
     wf_cmap_user *u = wf_cmap_user_at(move_map, 1);
+    enter_keyed(u);
     table *t = use_current(u);
     start_move(move_map, t);
     finish_move(move_map, t);
+    atomic_store_explicit(&u->active, 0, memory_order_release);
     atomic_store(&move_done, 1);
     return NULL;
 }
@@ -2167,6 +2203,92 @@ static int key_is(const wf_key_set *set, uint64_t index, const char *bytes, uint
     return got == length && (length == 0 || memcmp(key, bytes, (size_t)length) == 0);
 }
 
+typedef uint64_t (*key_set_byte_reader)(const wf_key_set *set);
+
+static int64_t held_heap(void) {
+    return atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+}
+
+/* Read-only means the query changes neither the set nor its allocation
+ * lifetime. The independent oracle is the host's live-grant meter, not the
+ * scan preflight or the query's own store-size calculation. */
+static uint64_t read_key_set_bytes(const wf_key_set *set, key_set_byte_reader read) {
+    uint64_t len = set->len;
+    void *store = set->store;
+    uint64_t takes = atomic_load(&allocations);
+    int64_t heap = held_heap();
+    uint64_t bytes = read(set);
+    if (set->len != len || set->store != store || atomic_load(&allocations) != takes || held_heap() != heap)
+        fail("key_set_bytes changed its set or heap", bytes, len);
+    return bytes;
+}
+
+/* The deliberate wrong variant counts the arena but freezes the item/index
+ * grant at its initial minimum, omitting later storage growth. It runs the
+ * same meter oracle and must fail at the ninth distinct insertion. */
+static uint64_t key_set_bytes_omit_store_growth(const wf_key_set *set) {
+    const key_store *s = set->store;
+    if (s == NULL)
+        return 0;
+    return test_granted(store_bytes(KEY_SET_MIN_ROOM)) +
+           (s->bytes == NULL ? 0 : test_granted((size_t)s->bytes_room));
+}
+
+/* Guards the complete current holding, unused capacity, metadata and arena
+ * growth, duplicate insertion, and immediate source release. Today's code
+ * has no byte query and its source release caches small live grants, so the
+ * release assertion would report a zero decrease for a nonempty set. */
+static void key_set_retained_bytes(key_set_byte_reader read) {
+    int64_t before = held_heap();
+    wf_key_set set;
+    wf__key_set_new(&set, 0);
+    if (read_key_set_bytes(&set, read) != 0)
+        fail("a storeless KeySet reported retained bytes", read(&set), 0);
+    for (unsigned i = 0; i < 18; i++) {
+        unsigned char key[2] = {'k', (unsigned char)i};
+        wf__key_set_insert(&set, key, i == 0 ? 0 : sizeof key);
+        uint64_t reported = read_key_set_bytes(&set, read);
+        uint64_t actual = (uint64_t)(held_heap() - before);
+        if (reported != actual)
+            fail("key_set_bytes disagreed with the heap meter after insertion", reported, actual);
+    }
+    uint64_t bytes = read_key_set_bytes(&set, read);
+    uint64_t takes = atomic_load(&allocations);
+    wf__key_set_insert(&set, (const unsigned char *)"", 0);
+    if (read_key_set_bytes(&set, read) != bytes || atomic_load(&allocations) != takes)
+        fail("a duplicate insertion changed retained bytes", read(&set), bytes);
+    int64_t occupied = held_heap();
+    wf__key_set_free(set.store);
+    if ((uint64_t)(occupied - held_heap()) != bytes || held_heap() != before)
+        fail("a source KeySet release did not return key_set_bytes", (uint64_t)(occupied - held_heap()), bytes);
+
+    /* Empty reserved storage still belongs to the set. */
+    wf__key_set_new(&set, 64);
+    bytes = read_key_set_bytes(&set, read);
+    if (set.len != 0 || bytes == 0 || bytes != (uint64_t)(held_heap() - before))
+        fail("key_set_bytes omitted unused reserved capacity", bytes, (uint64_t)(held_heap() - before));
+    occupied = held_heap();
+    wf__key_set_free(set.store);
+    if ((uint64_t)(occupied - held_heap()) != bytes)
+        fail("an empty reserved KeySet release did not return key_set_bytes", (uint64_t)(occupied - held_heap()), bytes);
+
+    /* Cross arena grants independently of item/index growth. */
+    static unsigned char long_key[70000];
+    wf__key_set_new(&set, 1);
+    for (unsigned i = 0; i < 2; i++) {
+        memset(long_key, (int)i, sizeof long_key);
+        wf__key_set_insert(&set, long_key, i == 0 ? 40000 : sizeof long_key);
+        bytes = read_key_set_bytes(&set, read);
+        if (bytes != (uint64_t)(held_heap() - before))
+            fail("key_set_bytes omitted byte-arena growth", bytes, (uint64_t)(held_heap() - before));
+    }
+    occupied = held_heap();
+    wf__key_set_free(set.store);
+    if ((uint64_t)(occupied - held_heap()) != bytes || held_heap() != before)
+        fail("a large KeySet release did not return key_set_bytes", (uint64_t)(occupied - held_heap()), bytes);
+    wf__key_set_free(NULL);
+}
+
 static void key_sets(void) {
     static const struct {
         const char *bytes;
@@ -2196,71 +2318,8 @@ static void key_sets(void) {
         !key_is(&set, WORDS, "zz", 2) || !key_is(&set, 0, "b", 1))
         fail("a repeated key did not answer its first index (len, index of ab)", set.len, ab);
     wf_cmap_key_set_release(&set);
-    /* A released set's store and arena stay as the thread's spare, two
-     * blocks, which the next set reuses whole and a drop gives back. */
-    int64_t kept = atomic_load(&blocks_out) - before;
-    if (set.len != 0 || set.store != NULL || kept > 2)
-        fail("a released set kept more than its spare (len, blocks)", set.len, (uint64_t)kept);
-    wf_cmap_key_set_new(&set, 4);
-    wf_cmap_key_set_insert(&set, (const unsigned char *)"spare", 5);
-    wf_cmap_key_set_insert(&set, (const unsigned char *)"kept", 4);
-    if (atomic_load(&blocks_out) - before != kept || set.len != 2 || !key_is(&set, 0, "spare", 5) ||
-        !key_is(&set, 1, "kept", 4) || wf_cmap_key_set_insert(&set, (const unsigned char *)"spare", 5) != 0)
-        fail("a set built after a released one took memory or lost keys (blocks, len)",
-             (uint64_t)(atomic_load(&blocks_out) - before), set.len);
-    wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_drop_spare();
-    if (atomic_load(&blocks_out) != before)
-        fail("a dropped spare kept memory (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
-    /* A spare too small for a set is passed over, and the larger store that
-     * set leaves replaces it, so the next set of that size takes nothing. */
-    wf_cmap_key_set_new(&set, 1);
-    wf_cmap_key_set_insert(&set, (const unsigned char *)"a", 1);
-    wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_new(&set, 10);
-    for (unsigned i = 0; i < 10; i++) {
-        unsigned char key[2] = {'k', (unsigned char)('0' + i)};
-        wf_cmap_key_set_insert(&set, key, 2);
-    }
-    wf_cmap_key_set_release(&set);
-    int64_t larger = atomic_load(&blocks_out);
-    wf_cmap_key_set_new(&set, 10);
-    for (unsigned i = 0; i < 10; i++) {
-        unsigned char key[2] = {'k', (unsigned char)('0' + i)};
-        wf_cmap_key_set_insert(&set, key, 2);
-    }
-    if (atomic_load(&blocks_out) != larger || set.len != 10)
-        fail("a set after a larger one was freed took memory (blocks, len)",
-             (uint64_t)(atomic_load(&blocks_out) - larger), set.len);
-    wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_drop_spare();
-    /* A small set built in a large spare finds none of the spare's earlier
-     * keys: their index slots were cleared, not left to answer old indices. */
-    wf_cmap_key_set_new(&set, 100);
-    for (unsigned i = 0; i < 100; i++) {
-        unsigned char key[3] = {'s', (unsigned char)('0' + i / 10), (unsigned char)('0' + i % 10)};
-        wf_cmap_key_set_insert(&set, key, 3);
-    }
-    wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_new(&set, 2);
-    uint64_t reused_first = wf_cmap_key_set_insert(&set, (const unsigned char *)"s57", 3);
-    uint64_t reused_second = wf_cmap_key_set_insert(&set, (const unsigned char *)"s05", 3);
-    uint64_t reused_again = wf_cmap_key_set_insert(&set, (const unsigned char *)"s57", 3);
-    if (reused_first != 0 || reused_second != 1 || reused_again != 0 || set.len != 2)
-        fail("a set in a reused spare found an earlier set's key (first, second)", reused_first, reused_second);
-    wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_drop_spare();
-    /* A set whose bytes pass the spare's bound is given back whole. */
-    static unsigned char long_key[40000];
-    memset(long_key, 'x', sizeof long_key);
-    wf_cmap_key_set_new(&set, 2);
-    long_key[0] = 'a';
-    wf_cmap_key_set_insert(&set, long_key, sizeof long_key);
-    long_key[0] = 'b';
-    wf_cmap_key_set_insert(&set, long_key, sizeof long_key);
-    wf_cmap_key_set_release(&set);
-    if (atomic_load(&blocks_out) != before)
-        fail("a set past the spare's bytes was kept (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
+    if (set.len != 0 || set.store != NULL || atomic_load(&blocks_out) != before)
+        fail("a released set retained storage", (uint64_t)(atomic_load(&blocks_out) - before), 0);
     /* Many keys of many lengths, inserted in no order, some of them again,
      * against the index each first got. */
     enum { MANY = 1000 };
@@ -2291,11 +2350,9 @@ static void key_sets(void) {
             if (!key_is(&set, first_index[k], (const char *)bytes, length))
                 fail("a grown set's key is not at its index (key, index)", k, first_index[k]);
         }
-    /* Released through its memory alone, as compiled code does, with the
-     * spare it may leave. */
+    /* Released through its memory alone, as compiled code does. */
     wf_cmap_key_set_free_store(set.store);
     wf_cmap_key_set_free_store(NULL);
-    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("a set released through its memory kept some (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
     wf_cmap_key_set_new(&set, 1ull << 60);
@@ -2356,7 +2413,6 @@ static void holds_sort_a_set(void) {
             fail("a set's hold moved a key from its position (position, count)", i, hold.count);
     wf_cmap_hold_release(&hold, 0, 1, 0);
     wf_cmap_key_set_release(&set);
-    wf_cmap_key_set_drop_spare();
     wf_cmap_destroy(map);
 }
 
@@ -3000,7 +3056,6 @@ static void entries_huge_capacity(void) {
 /* Whole holds accept block-computed keys. Absent reads allocate nothing;
  * writes survive index growth and are counted before and after release. */
 static void tables_held_selection(void) {
-    wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
     wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
     const unsigned char absent[] = "absent";
@@ -3067,7 +3122,6 @@ static void tables_held_selection(void) {
         fail("a write did not survive a later whole hold", slot[1], 44);
     wf__table_hold_release(&hold, 0, 4, 0);
     wf__keyed_table_free(map);
-    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("whole-held selection leaked blocks", atomic_load(&blocks_out), before);
 }
@@ -3076,7 +3130,6 @@ static void tables_held_selection(void) {
  * Snapshot the map, concurrent index and shared descriptor independently of
  * the read's value; a descriptor publication would fail even on an absent key. */
 static void tables_read_selection(void) {
-    wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
     wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
     const unsigned char present[] = "present", absent[] = "absent";
@@ -3139,7 +3192,6 @@ static void tables_read_selection(void) {
     wf__table_hold_release(&outer, 0, 4, 0);
     wf__key_set_free(set.store);
     wf__keyed_table_free(map);
-    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("read selections leaked blocks", atomic_load(&blocks_out), before);
 }
@@ -3172,11 +3224,30 @@ static void shared_map_groups(void) {
             fail("an absent read group did not stabilize shared None", a != map->none, map->whole_hold == NULL);
         if (present && atomic_load(&map->gate) != 0)
             fail("a present read group took an exclusive whole hold", atomic_load(&map->gate), 0);
-        wf__atomic_group_release(group, 2);
-        if (wf_cmap_count_held(map, 0, 4, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
-            fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, 4, 0), present);
+        wf__atomic_group_release(group, 2, 0, sizeof *a, 0);
+        if (wf_cmap_count_held(map, 0, sizeof *a, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
+            fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, sizeof *a, 0), present);
     }
-    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object);
+    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
+
+    /* Only the first byte is the tag; dirty following bytes must not turn
+     * None into Some. A fixed four-byte release read fails the first round. */
+    object = wf__shared_map_new(4, 1, 2);
+    map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
+    group[0].object = object; group[1].object = object;
+    for (unsigned present = 0; present < 2; ++present) {
+        wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
+        wf__table_hold_key(&first, (const unsigned char *)"k", 1);
+        wf__table_hold_key(&second, (const unsigned char *)"k", 1);
+        wf__atomic_group_take(group, 2);
+        unsigned char *slot = wf__table_hold_slot(&first, 0);
+        memset(slot, 0xa5, 4);
+        slot[0] = (unsigned char)present;
+        wf__atomic_group_release(group, 2, 0, sizeof slot[0], 0);
+        if (wf_cmap_count(map) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
+            fail("a byte-tag group read padding or retained its hold", wf_cmap_count(map), present);
+    }
+    wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 }
 
 /* The k a counted key's bytes name. */
@@ -3273,7 +3344,254 @@ static void scans_resume(void) {
                 fail("a scan missed a key present throughout it (key, round)", k, round);
         wf_cmap_destroy(map);
     }
-    wf_cmap_key_set_drop_spare();
+}
+
+/* Every allocation peak is sampled at the same take/give and external
+ * storage hooks that feed PRE-2; checking only the final reading would miss
+ * old/new byte-arena and item-index overlap. These tests are single-threaded. */
+static int64_t begin_heap_measure(void) {
+    measured_peak = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    measure_heap = 1;
+    return measured_peak;
+}
+
+static uint64_t end_heap_measure(int64_t before) {
+    measure_heap = 0;
+    return (uint64_t)(measured_peak - before);
+}
+
+static uint64_t bounded_step(wf_cmap *map, uint64_t cursor, uint64_t count, uint64_t limit,
+                             wf_key_set *set, uint32_t *needs) {
+    uint64_t retained_before = read_key_set_bytes(set, wf__key_set_bytes);
+    int64_t before = begin_heap_measure();
+    uint64_t value = wf__keyed_table_scan_within(map, cursor, count, limit, set, needs, VALUE_TAG);
+    uint64_t peak = end_heap_measure(before);
+    if (peak > limit)
+        fail("bounded scan exceeded the PRE-2 heap peak (peak, limit)", peak, limit);
+    uint64_t retained_after = read_key_set_bytes(set, wf__key_set_bytes);
+    int64_t actual = held_heap() - before;
+    if (retained_after < retained_before || actual < 0 || retained_after - retained_before != (uint64_t)actual)
+        fail("key_set_bytes disagreed with the heap meter after bounded scan", retained_after - retained_before,
+             (uint64_t)actual);
+    if ((!*needs && retained_after - retained_before > limit) || (*needs && retained_after != retained_before))
+        fail("bounded scan violated its retained-byte postcondition", retained_after - retained_before, limit);
+    return value;
+}
+
+static void scan_within_one_long_key(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_key_set empty;
+    wf__key_set_new(&empty, 0);
+    uint32_t empty_needs;
+    uint64_t empty_next = bounded_step(map, 0, 0, 0, &empty, &empty_needs);
+    if (empty_needs || empty_next != 0 || empty.len != 0)
+        fail("an empty bounded scan needed bytes or moved to a nonterminal cursor", empty_next, empty.len);
+    unsigned char *key = malloc(65536);
+    if (key == NULL) abort();
+    for (unsigned i = 0; i < 65536; i++) key[i] = (unsigned char)i;
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(u, key, 65536, 0, &entry);
+    *slot = 1;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 0);
+    uint32_t needs;
+    /* A fresh eight-item store grants 512 bytes; the binary key 65536.
+     * This is an independent constant expectation, not the preflight. */
+    const uint64_t exact = 512 + 65536;
+    uint64_t value = bounded_step(map, 0, 1, 65535, &set, &needs);
+    if (!needs || value != exact || set.len != 0 || set.store != NULL)
+        fail("one long key did not report its exact Needs without insertion", value, exact);
+    value = bounded_step(map, 0, 1, exact - 1, &set, &needs);
+    if (!needs || value != exact || set.len != 0)
+        fail("one byte below Needs was admitted", value, exact);
+    value = bounded_step(map, 0, 1, exact, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("retrying the exact Needs made no progress", value, set.len);
+    uint64_t length;
+    const unsigned char *copied = wf_cmap_key_set_key(&set, 0, &length);
+    if (length != 65536 || memcmp(copied, key, 65536) != 0)
+        fail("bounded scan changed a long binary key", length, 65536);
+    value = bounded_step(map, 0, 0, 0, &set, &needs);
+    if (needs || value != 0 || set.len != 1)
+        fail("a duplicate key needed heap growth", value, set.len);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(key);
+}
+
+/* An existing destination's 60000-byte arena doubles twice on these keys.
+ * The independent grant expectations protect the take-before-give peak and
+ * retained delta when allocation starts from nonempty storage. Ignoring the
+ * destination arena in preflight would admit an insufficient byte limit. */
+static void scan_within_existing_arena_growth(void) {
+    unsigned char *keys[2] = {malloc(60000), malloc(30001)};
+    if (keys[0] == NULL || keys[1] == NULL) abort();
+    memset(keys[0], 0, 60000);
+    memset(keys[1], 1, 30001);
+    uint64_t nonce = 0;
+    do {
+        memcpy(keys[1] + 30001 - sizeof nonce, &nonce, sizeof nonce);
+        nonce++;
+    } while (SHARED_HASHES && tag_of(keys[1], 30001) != tag_of(keys[0], 30000));
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    const uint64_t lengths[2] = {30000, 30001};
+    for (unsigned k = 0; k < 2; k++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(u, keys[k], lengths[k], 0, &entry);
+        *slot = 1;
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+    }
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 1);
+    wf__key_set_insert(&set, keys[0], 60000);
+    const uint64_t initial_bytes = 512 + 65536;
+    if (wf__key_set_bytes(&set) != initial_bytes)
+        fail("an existing scan destination held unexpected bytes", wf__key_set_bytes(&set), initial_bytes);
+    uint32_t needs;
+    uint64_t value = bounded_step(map, 0, UINT64_MAX, 0, &set, &needs);
+    if (!needs || value == 0 || set.len != 1 || wf__key_set_bytes(&set) != initial_bytes)
+        fail("an existing destination refusal changed its storage", value, set.len);
+    value = bounded_step(map, 0, UINT64_MAX, 131071, &set, &needs);
+    if (!needs || value < 131072 || value > 327680 || set.len != 1 || wf__key_set_bytes(&set) != initial_bytes)
+        fail("an existing arena growth was admitted below its first grant", value, set.len);
+    /* The first replacement grants 131072 before returning 65536; the
+     * second grants 262144 before returning 131072, a 327680-byte peak
+     * above entry and a final retained increase of 196608 bytes. */
+    const uint64_t peak = 327680, retained = 512 + 262144;
+    value = bounded_step(map, 0, UINT64_MAX, peak, &set, &needs);
+    if (needs || value != 0 || set.len != 3 || wf__key_set_bytes(&set) != retained ||
+        !key_is(&set, 0, (const char *)keys[0], 60000))
+        fail("bounded scan lost existing storage or misreported growth", wf__key_set_bytes(&set), retained);
+    unsigned first = scan_before(keys[0], lengths[0], keys[1], lengths[1]) ? 0 : 1;
+    for (unsigned i = 0; i < 2; i++) {
+        unsigned k = i == 0 ? first : 1 - first;
+        uint64_t length;
+        const unsigned char *copied = wf_cmap_key_set_key(&set, i + 1, &length);
+        if (length != lengths[k] || memcmp(copied, keys[k], (size_t)length) != 0)
+            fail("an existing bounded scan changed its keys or order", length, lengths[k]);
+    }
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(keys[0]);
+    free(keys[1]);
+}
+
+/* A plain array of every inserted byte string is the completeness oracle.
+ * Its insertion sort is independent of the runtime's scan sort. Narrowed
+ * hash builds deliberately put all forty keys at one position, crossing
+ * the inline-sort threshold and forbidding every partial group. */
+static void scans_within_resume(void) {
+    enum { KEYS = 40, BYTES = 65536 };
+    unsigned char (*oracle)[BYTES] = malloc((size_t)KEYS * BYTES);
+    if (oracle == NULL) abort();
+    unsigned order[KEYS];
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    for (unsigned k = 0; k < KEYS; k++) {
+        memset(oracle[k], 0, BYTES);
+        oracle[k][0] = (unsigned char)k;
+        oracle[k][1] = 255;
+        uint64_t nonce = 0;
+        do {
+            memcpy(oracle[k] + BYTES - sizeof nonce, &nonce, sizeof nonce);
+            nonce++;
+        } while (SHARED_HASHES && tag_of(oracle[k], BYTES) != tag_of(oracle[0], BYTES));
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(u, oracle[k], BYTES, 0, &entry);
+        *slot = k + 1;
+        wf_cmap_unlock_entry(u, &entry, 0, 1);
+        unsigned j = k;
+        while (j != 0 && scan_before(oracle[k], BYTES, oracle[order[j - 1]], BYTES)) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = k;
+    }
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    const unsigned prefixes[] = {1, 2, 8, 9, 32, 33, KEYS};
+    for (unsigned trial = 0; trial < sizeof prefixes / sizeof prefixes[0]; trial++) {
+        unsigned prefix = SHARED_HASHES ? KEYS : prefixes[trial];
+        /* Measure ordinary insertions of this oracle prefix, with exactly
+         * its sort workspace held. This oracle does not use scan_growth. */
+        wf_key_set reference;
+        wf__key_set_new(&reference, 0);
+        int64_t before = begin_heap_measure();
+        size_t workspace = prefix > 32 ? (size_t)prefix * sizeof(scanned) : 0;
+        void *scratch = workspace ? test_take(workspace) : NULL;
+        for (unsigned j = 0; j < prefix; j++)
+            wf_cmap_key_set_insert(&reference, oracle[order[j]], BYTES);
+        uint64_t limit = end_heap_measure(before);
+        if (scratch) test_give(scratch, workspace);
+        wf__key_set_free(reference.store);
+        wf_key_set set;
+        wf__key_set_new(&set, 0);
+        uint32_t needs;
+        if (SHARED_HASHES) {
+            uint64_t n = bounded_step(map, 0, UINT64_MAX, limit - 1, &set, &needs);
+            if (!needs || n != limit || set.len != 0)
+                fail("a colliding position was split or Needs was inexact", n, set.len);
+        }
+        uint64_t cursor = bounded_step(map, 0, UINT64_MAX, limit, &set, &needs);
+        if (needs || set.len < prefix)
+            fail("a fitting complete prefix was not inserted", set.len, prefix);
+        if (!SHARED_HASHES && prefix == 2 && set.len != 2)
+            fail("the two-key byte limit admitted a third key", set.len, 2);
+        unsigned char seen[KEYS] = {0};
+        uint64_t consumed = 0;
+        for (unsigned steps = 0;; steps++) {
+            for (; consumed < set.len; consumed++) {
+                uint64_t length;
+                const unsigned char *key = wf_cmap_key_set_key(&set, consumed, &length);
+                unsigned k = 0;
+                while (k < KEYS && (length != BYTES || memcmp(key, oracle[k], BYTES) != 0)) k++;
+                if (k == KEYS || seen[k] || k != order[consumed])
+                    fail("bounded scan lost order, duplicated or invented a key", k, consumed);
+                seen[k] = 1;
+            }
+            if (cursor == 0) break;
+            if (steps > KEYS) fail("bounded scan failed to terminate", steps, cursor);
+            uint64_t old_cursor = cursor;
+            uint64_t value = bounded_step(map, cursor, UINT64_MAX, limit, &set, &needs);
+            if (needs) {
+                uint64_t required = value;
+                value = bounded_step(map, cursor, UINT64_MAX, required, &set, &needs);
+                if (needs) fail("retrying Needs did not advance", value, required);
+            }
+            if (value != 0 && value <= old_cursor)
+                fail("bounded scan cursor failed to advance", value, old_cursor);
+            cursor = value;
+        }
+        for (unsigned k = 0; k < KEYS; k++)
+            if (!seen[k]) fail("bounded scan missed an oracle key", k, trial);
+        wf__key_set_free(set.store);
+        if (SHARED_HASHES) break;
+    }
+    /* A cursor after the final occupied position ends even with zero budget. */
+    wf_key_set empty;
+    wf__key_set_new(&empty, 0);
+    uint32_t needs;
+    uint64_t end = bounded_step(map, UINT64_MAX, 0, 0, &empty, &needs);
+    if (needs || end != 0 || empty.len != 0)
+        fail("a bounded empty tail did not end", end, empty.len);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    free(oracle);
 }
 
 /* A scan reads the map and writes none of it: under a hold whose own
@@ -3319,7 +3637,6 @@ static void scans_write_nothing(void) {
     wf__key_set_free(set.store);
     wf__table_hold_release(&hold, VALUE_TAG);
     wf_cmap_destroy(map);
-    wf_cmap_key_set_drop_spare();
 }
 
 /* What clears handed to their release: how many runs, entries and the sum
@@ -3379,10 +3696,153 @@ static void spares_match_the_current_size(void) {
     wf_cmap_destroy(map);
 }
 
-/* A clear under a whole hold empties the map at once, its own entries
- * included, keeps what the statement writes after it, and hands the old
- * entries to their release only once the hold is given up, leaking no
- * block. */
+/* Two persistent executor users, with no scheduling or later table access
+ * to advance reclamation: B's read ends on T, then A's whole statement
+ * inserts nine entries, whose release completes T -> U. The first reserve
+ * release must collect T itself (header and cells); further calls free
+ * nothing. With WF_CMAP_IGNORE_ACTIVITY, both users still pin T and the
+ * counted-byte assertion fails, reproducing the old repeated-zero result. */
+static void reserves_collect_retired(void) {
+    test_driver = 0;
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *a = wf_cmap_user_at(map, 0);
+    wf_cmap_user *b = wf_cmap_user_at(map, 1);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    wf_cmap_entry entry;
+    wf_cmap_read_entry(b, (const unsigned char *)"absent", 6, 0, &entry);
+    wf_cmap_unread_entry(b, &entry, 0);
+
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_take(a, &hold);
+    for (unsigned char key = 0; key < 9; key++)
+        *(uint64_t *)wf_cmap_held_entry(map, &key, 1, 1) = (uint64_t)key + 1;
+    wf_cmap_hold_release(&hold, VALUE_TAG);
+    if (atomic_load(&map->current) == old || atomic_load(&map->retired) != old || map->spare != NULL)
+        fail("whole statement did not leave its moved table retired", atomic_load(&map->current) == old,
+             atomic_load(&map->retired) == old);
+
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    atomic_store(&map->lock, 1);
+    uint64_t locked = wf_cmap_release_reserve(map);
+    if (locked != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("busy reserve release changed retired storage", locked, 0);
+    atomic_store(&map->lock, 0);
+    uint64_t released = 0;
+    for (unsigned attempt = 0; attempt < 3; attempt++) {
+        uint64_t freed = wf_cmap_release_reserve(map);
+        int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+        if (freed != (uint64_t)(before - after))
+            fail("retired reserve release disagrees with heap drop", freed, (uint64_t)(before - after));
+        released += freed;
+        before = after;
+        if (attempt != 0 && freed != 0)
+            fail("repeated retired reserve release freed more storage", freed, 0);
+    }
+    if (released != bytes)
+        fail("retired reserve release did not collect the exited users' table", released, bytes);
+    if (atomic_load(&map->retired) != NULL || map->spare != NULL || wf_cmap_count(map) != 9)
+        fail("retired reserve release retained storage or changed entries", wf_cmap_count(map), 9);
+    for (unsigned char key = 0; key < 9; key++) {
+        const uint64_t *slot = wf_cmap_read_entry(a, &key, 1, 0, &entry);
+        if (*slot != (uint64_t)key + 1)
+            fail("retired reserve release lost an entry", *slot, (uint64_t)key + 1);
+        wf_cmap_unread_entry(a, &entry, 0);
+    }
+    wf_cmap_destroy(map);
+}
+
+/* A release neither helps a move still under way nor reclaims a completed
+ * move while a read still publishes its old table. Once that read exits,
+ * the next release collects the table without another map operation. */
+static void reserves_keep_active_tables(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_entry entry;
+    wf_cmap_read_entry(u, (const unsigned char *)"missing", 7, 0, &entry);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    start_move(map, old);
+    table *next = atomic_load(&old->next);
+    if (next == NULL)
+        fail("active reserve test did not start a move", 0, 1);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->current) != old || atomic_load(&old->next) != next)
+        fail("reserve release helped an active move", freed, 0);
+    finish_move(map, old);
+    freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("reserve release collected an active reader's table", freed, 0);
+    wf_cmap_unread_entry(u, &entry, 0);
+    freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after its reader exited", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
+/* A whole hold protects all retired tables even without a matching user
+ * publication. Inject a second nonzero gate value as well: checking only
+ * gate == 1 would not implement the gate's closed/nonzero contract. */
+static void reserves_keep_whole_tables(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    wf_cmap_hold(u);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    start_move(map, old);
+    finish_move(map, old);
+    if (atomic_load(&u->in) != 0 || atomic_load(&u->active) != 0)
+        fail("whole reserve test unexpectedly published a table or became active", atomic_load(&u->in),
+             atomic_load(&u->active));
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    for (int closed = 1; closed <= 2; closed++) {
+        atomic_store_explicit(&map->gate, closed, memory_order_seq_cst);
+        uint64_t freed = wf_cmap_release_reserve(map);
+        if (freed != 0 || atomic_load(&map->retired) != old ||
+            atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+            fail("reserve release collected behind a closed whole gate", freed, (uint64_t)closed);
+    }
+    wf_cmap_unhold(u);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after the whole gate opened", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
+/* Word-map users have no keyed activity mark: enter/leave, rather than
+ * statement completion, bounds the lifetime of their publication. */
+static void reserves_keep_word_tables(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *u = wf_cmap_enter(map);
+    uint64_t value;
+    wf_cmap_get(u, key_of(0), &value);
+    table *old = atomic_load(&map->current);
+    uint64_t bytes = test_granted((size_t)old->capacity * sizeof(cell)) + test_granted(sizeof *old);
+    if (atomic_load(&u->in) != (uintptr_t)old || atomic_load(&u->active) != 0)
+        fail("word reserve test lacks an inactive publication", atomic_load(&u->in) == (uintptr_t)old,
+             atomic_load(&u->active));
+    start_move(map, old);
+    finish_move(map, old);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    uint64_t freed = wf_cmap_release_reserve(map);
+    if (freed != 0 || atomic_load(&map->retired) != old ||
+        atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out) != before)
+        fail("reserve release collected a word user's published table", freed, 0);
+    wf_cmap_leave(u);
+    freed = wf_cmap_release_reserve(map);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != bytes || freed != (uint64_t)(before - after) || atomic_load(&map->retired) != NULL)
+        fail("reserve release did not collect after the word user left", freed, bytes);
+    wf_cmap_destroy(map);
+}
+
 /* A map's reserve, the cells it keeps for the next move of their size, goes
  * on request: the release answers its bytes and changes no entry, a second
  * answers 0, one made while the map's own lock is held answers 0 and leaves
@@ -3401,14 +3861,19 @@ static void reserves_release_on_request(void) {
     if (map->spare == NULL)
         fail("a steady map never kept a reserve (keys inserted)", next, 0);
     uint64_t bytes = map->spare_capacity * sizeof(cell);
+    if (bytes < 2u * 1024u * 1024u) bytes = test_granted((size_t)bytes);
     atomic_store(&map->lock, 1);
     uint64_t locked = wf_cmap_release_reserve(map);
     if (locked != 0 || map->spare == NULL)
         fail("a release while the map's lock was held took the reserve (freed, kept)", locked, map->spare != NULL);
     atomic_store(&map->lock, 0);
+    int64_t before = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
     uint64_t freed = wf_cmap_release_reserve(map);
     if (freed != bytes || map->spare != NULL)
         fail("a release did not free the reserve (freed, reserve bytes)", freed, bytes);
+    int64_t after = atomic_load(&pool_bytes_out) + atomic_load(&mapped_bytes_out);
+    if (freed != (uint64_t)(before - after))
+        fail("spare release disagrees with heap drop", freed, (uint64_t)(before - after));
     uint64_t again = wf_cmap_release_reserve(map);
     if (again != 0)
         fail("a second release freed bytes (freed, expected)", again, 0);
@@ -3478,8 +3943,11 @@ static void reserves_release_beside_swaps(void) {
     }
 }
 
+/* A clear under a whole hold empties the map at once, its own entries
+ * included, keeps what the statement writes after it, and hands the old
+ * entries to their release only once the hold is given up, leaking no
+ * block. */
 static void maps_clear(void) {
-    wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
     wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
     unsigned char bytes[16];
@@ -3510,7 +3978,6 @@ static void maps_clear(void) {
     if (wf_cmap_count(map) != 1 || counted_value(map, 400) != 11 || counted_value(map, 3) != 0)
         fail("a write after a clear was not kept (count, value)", wf_cmap_count(map), counted_value(map, 400));
     wf_cmap_destroy(map);
-    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("clears leaked blocks (out, before)", atomic_load(&blocks_out), before);
 }
@@ -3587,7 +4054,6 @@ static void scans_sparse(void) {
     wf__key_set_free(set.store);
     wf__table_hold_release(&hold, VALUE_TAG);
     wf_cmap_destroy(map);
-    wf_cmap_key_set_drop_spare();
 }
 
 /* A hold's keys are the node's bytes from its take on: the statement may
@@ -3753,6 +4219,9 @@ static void heap_accounting(void) {
     if (atomic_load(&mapped_bytes_out) != before + 2 * mib + 32)
         fail("a pool node was also counted outside the pool", atomic_load(&mapped_bytes_out) - before, 2 * mib + 32);
 
+    /* These direct move steps form one entry statement: unlike word-map
+     * enter/leave users, an entry user's idle publication does not pin. */
+    enter_keyed(u);
     table *old = use_current(u);
     start_move_for(map, old, 65536);
     finish_move(map, old);
@@ -3772,6 +4241,7 @@ static void heap_accounting(void) {
         if (atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
             fail("replacing or reusing a spare miscounted its request", atomic_load(&mapped_bytes_out) - before, 8 * mib + 32);
     }
+    atomic_store_explicit(&u->active, 0, memory_order_release);
     int64_t live_blocks = atomic_load(&blocks_out);
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;) {
         if (slot == small && atomic_load(&mapped_bytes_out) != before + 8 * mib + 32)
@@ -3802,6 +4272,20 @@ int main(int argc, char **argv) {
      * than at the gate's limit. */
     alarm(120);
     set_patience(PATIENCE, PATIENCE);
+    if (argc == 2 && strcmp(argv[1], "key-set-bytes") == 0) {
+        key_set_retained_bytes(wf__key_set_bytes);
+        puts("concurrent-map-test: retained-byte checks passed");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "key-set-bytes-omit-store-growth") == 0) {
+        key_set_retained_bytes(key_set_bytes_omit_store_growth);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "reserve-retired") == 0) {
+        reserves_collect_retired();
+        puts("concurrent-map-test: retired reserve checks passed");
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
@@ -3838,6 +4322,7 @@ int main(int argc, char **argv) {
         entries_shared_reads(0);
         entries_shared_reads(1);
         key_sets();
+        key_set_retained_bytes(wf__key_set_bytes);
         holds_sequential();
         holds_sort_a_set();
         holds_positions();
@@ -3850,6 +4335,9 @@ int main(int argc, char **argv) {
         holds_wait_out_moves();
         maps_swap();
         maps_clear();
+        scan_within_one_long_key();
+        scan_within_existing_arena_growth();
+        scans_within_resume();
         scans_resume();
         scans_sparse();
         scans_write_nothing();
@@ -3876,6 +4364,10 @@ int main(int argc, char **argv) {
         concurrent(1);
         histories(20);
     }
+    reserves_keep_active_tables();
+    reserves_keep_whole_tables();
+    reserves_keep_word_tables();
+    reserves_collect_retired();
     reserves_release_on_request();
     reserves_release_beside_swaps();
     spares_match_the_current_size();

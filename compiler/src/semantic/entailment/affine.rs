@@ -193,6 +193,170 @@ pub(crate) struct AffineInequality {
     upper: i128,
 }
 
+/// A borrowed canonical inequality. Only owned canonical inequalities and
+/// successful scratch formations construct this view; its terms remain sorted,
+/// unique and nonzero. It carries no retained proof or query result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AffineInequalityView<'a> {
+    terms: &'a [AffineCoefficient],
+    upper: i128,
+}
+
+impl<'a> AffineInequalityView<'a> {
+    pub(crate) fn terms(self) -> &'a [AffineCoefficient] {
+        self.terms
+    }
+
+    pub(crate) const fn upper(self) -> i128 {
+        self.upper
+    }
+}
+
+impl<'a> From<&'a AffineInequality> for AffineInequalityView<'a> {
+    fn from(inequality: &'a AffineInequality) -> Self {
+        Self {
+            terms: inequality.terms(),
+            upper: inequality.upper(),
+        }
+    }
+}
+
+/// Reused only within one traversal of the fixed unordered-pair family.
+#[derive(Default)]
+pub(crate) struct AffineSumScratch {
+    terms: Vec<AffineCoefficient>,
+    merged: Vec<AffineCoefficient>,
+}
+
+impl AffineSumScratch {
+    pub(crate) fn sum<'a>(
+        &'a mut self,
+        premises: &[&AffineInequality],
+        check: &mut AffineCheckState,
+    ) -> Result<AffineInequalityView<'a>, AffineCheckError> {
+        if premises.len() > check.limits.max_certificate_premises {
+            return Err(AffineCheckError::LimitExceeded(
+                AffineCheckLimit::CertificatePremises,
+            ));
+        }
+        self.terms.clear();
+        let mut upper = 0_i128;
+        for premise in premises {
+            // Keep the empty + first premise formation too: each merge's
+            // checked multiplications, additions and capacity checks matter.
+            merge_scaled_into(&self.terms, premise.terms(), 1, &mut self.merged, check)?;
+            std::mem::swap(&mut self.terms, &mut self.merged);
+            upper = checked_add(upper, premise.upper())?;
+        }
+        Ok(AffineInequalityView {
+            terms: &self.terms,
+            upper,
+        })
+    }
+}
+
+/// Candidate-local values in query-local storage. Failed formations never
+/// expose a view; the next attempt clears its output before reusing capacity.
+#[derive(Default)]
+pub(crate) struct AffineResidualScratch {
+    residual: Vec<AffineCoefficient>,
+    divided: Vec<(AffineTermId, i128)>,
+    tightenings: [Vec<AffineCoefficient>; 2],
+}
+
+impl AffineResidualScratch {
+    pub(crate) fn prove<T>(
+        &mut self,
+        target: &AffineInequality,
+        candidate: AffineInequalityView<'_>,
+        check: &mut AffineCheckState,
+        mut prove: impl FnMut(AffineInequalityView<'_>, &mut AffineCheckState) -> Option<T>,
+    ) -> Option<T> {
+        // As before, derive both factors and form both tightenings before
+        // attempting even the untightened residual.
+        let multiple = target_multiple_factor(candidate, target, check)
+            .ok()
+            .flatten();
+        let divisor = coefficient_gcd(candidate, check)
+            .ok()
+            .flatten()
+            .filter(|factor| Some(*factor) != multiple);
+        let mut tightened = [None; 2];
+        for ((slot, terms), factor) in tightened
+            .iter_mut()
+            .zip(&mut self.tightenings)
+            .zip([multiple, divisor])
+        {
+            let Some(factor) = factor else { continue };
+            if let Ok(Some(upper)) =
+                integer_tightening_into(candidate, factor, &mut self.divided, terms, check)
+            {
+                *slot = Some(AffineInequalityView { terms, upper });
+            }
+        }
+        for accumulated in std::iter::once(candidate).chain(tightened.into_iter().flatten()) {
+            let upper = (|| {
+                merge_scaled_into(
+                    target.terms(),
+                    accumulated.terms(),
+                    checked_neg(1)?,
+                    &mut self.residual,
+                    check,
+                )?;
+                // Do not regroup target - premise: multiplying a MIN
+                // coefficient by -1 must still fail before cancellation.
+                checked_sub(target.upper(), checked_mul(accumulated.upper(), 1)?)
+            })();
+            let Ok(upper) = upper else { continue };
+            let residual = AffineInequalityView {
+                terms: &self.residual,
+                upper,
+            };
+            if let Some(proof) = prove(residual, check) {
+                return Some(proof);
+            }
+        }
+        None
+    }
+}
+
+fn integer_tightening_into(
+    inequality: AffineInequalityView<'_>,
+    factor: i128,
+    divided: &mut Vec<(AffineTermId, i128)>,
+    terms: &mut Vec<AffineCoefficient>,
+    check: &mut AffineCheckState,
+) -> Result<Option<i128>, AffineCheckError> {
+    if factor <= 1 || inequality.terms().is_empty() {
+        return Ok(None);
+    }
+    divided.clear();
+    for coefficient in inequality.terms() {
+        check.charge(1)?;
+        if coefficient.coefficient() % factor != 0 {
+            return Ok(None);
+        }
+        divided.push((coefficient.term(), coefficient.coefficient() / factor));
+    }
+    let upper = inequality
+        .upper()
+        .checked_div_euclid(factor)
+        .ok_or(AffineCheckError::ArithmeticOverflow)?;
+    // Retain from_terms' input limit and canonicalization after division,
+    // including the original operation/limit order, using retained storage.
+    if divided.len() > check.limits.max_input_terms {
+        return Err(AffineCheckError::LimitExceeded(
+            AffineCheckLimit::InputTerms,
+        ));
+    }
+    terms.clear();
+    for &(term, coefficient) in divided.iter() {
+        check.charge(1)?;
+        insert_coefficient(terms, term, coefficient, check)?;
+    }
+    Ok(Some(upper))
+}
+
 impl AffineInequality {
     pub(crate) fn from_terms(
         terms: &[(AffineTermId, i128)],
@@ -265,9 +429,9 @@ impl AffineInequality {
     /// proves `target`. The semantic checker deliberately performs no
     /// coefficient search: if this fixed coefficient-one rule does not close
     /// the target, this route has not proved it.
-    pub(crate) fn residual_after(
+    pub(crate) fn residual_after<'a>(
         target: &Self,
-        premise: &Self,
+        premise: impl Into<AffineInequalityView<'a>>,
         check: &mut AffineCheckState,
     ) -> Result<Self, AffineCheckError> {
         Self::residual_after_scaled(target, premise, 1, check)
@@ -275,16 +439,17 @@ impl AffineInequality {
 
     /// Removes one already-established premise multiplied by the written
     /// mathematical factor selected by the deterministic residual rule.
-    pub(crate) fn residual_after_scaled(
+    pub(crate) fn residual_after_scaled<'a>(
         target: &Self,
-        premise: &Self,
+        premise: impl Into<AffineInequalityView<'a>>,
         factor: i128,
         check: &mut AffineCheckState,
     ) -> Result<Self, AffineCheckError> {
+        let premise = premise.into();
         Ok(Self {
             terms: merge_scaled(target.terms(), premise.terms(), checked_neg(factor)?, check)?
                 .into_boxed_slice(),
-            upper: checked_sub(target.upper, checked_mul(premise.upper, factor)?)?,
+            upper: checked_sub(target.upper, checked_mul(premise.upper(), factor)?)?,
         })
     }
 }
@@ -299,6 +464,7 @@ impl AffineInequality {
 /// integer consequence; `i128` truncation toward zero would weaken it for a
 /// negative bound. `None` means this factor does not divide the coefficient
 /// vector and therefore tightens nothing.
+#[cfg(test)]
 pub(crate) fn integer_tightening(
     inequality: &AffineInequality,
     factor: i128,
@@ -337,6 +503,7 @@ pub(crate) fn integer_tightening(
 /// and cannot suppress the other factor, which may still be representable.
 /// This function therefore reports no failure of its own, and the fixed order
 /// of the surviving candidates is independent of which were skipped.
+#[cfg(test)]
 pub(crate) fn integer_tightenings(
     candidate: &AffineInequality,
     target: &AffineInequality,
@@ -364,11 +531,12 @@ pub(crate) fn integer_tightenings(
 ///
 /// The factor is read from the first coefficient pair and then verified
 /// against every remaining pair, so it is decided rather than searched for.
-fn target_multiple_factor(
-    candidate: &AffineInequality,
+fn target_multiple_factor<'a>(
+    candidate: impl Into<AffineInequalityView<'a>>,
     target: &AffineInequality,
     check: &mut AffineCheckState,
 ) -> Result<Option<i128>, AffineCheckError> {
+    let candidate = candidate.into();
     if candidate.terms().len() != target.terms().len() {
         return Ok(None);
     }
@@ -400,10 +568,11 @@ fn target_multiple_factor(
 ///
 /// `None` means there is no such positive `i128` value: the inequality has no
 /// term, or its divisor is the magnitude of `i128::MIN` and is unrepresentable.
-fn coefficient_gcd(
-    inequality: &AffineInequality,
+fn coefficient_gcd<'a>(
+    inequality: impl Into<AffineInequalityView<'a>>,
     check: &mut AffineCheckState,
 ) -> Result<Option<i128>, AffineCheckError> {
+    let inequality = inequality.into();
     let mut divisor = 0_u128;
     for coefficient in inequality.terms() {
         check.charge(1)?;
@@ -428,6 +597,7 @@ fn coefficient_gcd(
 /// The caller is responsible for proving every written premise independently.
 /// This core only forms the canonical mathematical sum; it neither selects an
 /// additional premise nor searches for coefficients.
+#[cfg(test)]
 pub(crate) fn sum_explicit_inequalities(
     premises: &[AffineInequality],
     check: &mut AffineCheckState,
@@ -441,7 +611,7 @@ pub(crate) fn sum_explicit_inequalities(
     let mut terms = Vec::new();
     let mut upper = 0_i128;
     for premise in premises {
-        terms = merge_scaled(&terms, premise.terms(), 1, check)?;
+        terms = reference_merge_scaled(&terms, premise.terms(), 1, check)?;
         upper = checked_add(upper, premise.upper())?;
     }
     Ok(AffineInequality {
@@ -502,11 +672,12 @@ pub(crate) fn sum_explicit_scaled_inequalities(
 /// negative coefficients select the lower endpoint.  `false` means only that
 /// this rule did not prove the proposition; it never means the proposition is
 /// false.
-pub(crate) fn interval_proves(
-    inequality: &AffineInequality,
+pub(crate) fn interval_proves<'a>(
+    inequality: impl Into<AffineInequalityView<'a>>,
     interval: impl FnMut(AffineTermId) -> Option<(i128, i128)>,
     check: &mut AffineCheckState,
 ) -> Result<bool, AffineCheckError> {
+    let inequality = inequality.into();
     let Some(maximum) = interval_maximum(inequality.terms(), interval, check)? else {
         return Ok(false);
     };
@@ -771,6 +942,108 @@ fn merge_scaled(
     factor: i128,
     check: &mut AffineCheckState,
 ) -> Result<Vec<AffineCoefficient>, AffineCheckError> {
+    let mut merged = Vec::new();
+    merge_scaled_into(current, parent, factor, &mut merged, check)?;
+    Ok(merged)
+}
+
+fn merge_scaled_into(
+    current: &[AffineCoefficient],
+    parent: &[AffineCoefficient],
+    factor: i128,
+    merged: &mut Vec<AffineCoefficient>,
+    check: &mut AffineCheckState,
+) -> Result<(), AffineCheckError> {
+    merged.clear();
+    merged.reserve_exact(
+        current
+            .len()
+            .checked_add(parent.len())
+            .ok_or(AffineCheckError::LimitExceeded(
+                AffineCheckLimit::ResultTerms,
+            ))?
+            .min(check.limits.max_terms),
+    );
+    let mut current_index = 0_usize;
+    let mut parent_index = 0_usize;
+    while current_index < current.len() || parent_index < parent.len() {
+        check.charge(1)?;
+        let coefficient = match (current.get(current_index), parent.get(parent_index)) {
+            (Some(current_term), Some(parent_term)) if current_term.term < parent_term.term => {
+                current_index += 1;
+                *current_term
+            }
+            (Some(current_term), Some(parent_term)) if parent_term.term < current_term.term => {
+                parent_index += 1;
+                AffineCoefficient {
+                    term: parent_term.term,
+                    coefficient: checked_mul(parent_term.coefficient, factor)?,
+                }
+            }
+            (Some(current_term), Some(parent_term)) => {
+                current_index += 1;
+                parent_index += 1;
+                AffineCoefficient {
+                    term: current_term.term,
+                    coefficient: checked_add(
+                        current_term.coefficient,
+                        checked_mul(parent_term.coefficient, factor)?,
+                    )?,
+                }
+            }
+            (Some(current_term), None) => {
+                current_index += 1;
+                *current_term
+            }
+            (None, Some(parent_term)) => {
+                parent_index += 1;
+                AffineCoefficient {
+                    term: parent_term.term,
+                    coefficient: checked_mul(parent_term.coefficient, factor)?,
+                }
+            }
+            (None, None) => break,
+        };
+        if coefficient.coefficient != 0 {
+            if merged.len() >= check.limits.max_terms {
+                return Err(AffineCheckError::LimitExceeded(
+                    AffineCheckLimit::ResultTerms,
+                ));
+            }
+            merged.push(coefficient);
+        }
+    }
+    Ok(())
+}
+
+fn checked_add(left: i128, right: i128) -> Result<i128, AffineCheckError> {
+    left.checked_add(right)
+        .ok_or(AffineCheckError::ArithmeticOverflow)
+}
+
+fn checked_sub(left: i128, right: i128) -> Result<i128, AffineCheckError> {
+    left.checked_sub(right)
+        .ok_or(AffineCheckError::ArithmeticOverflow)
+}
+
+fn checked_mul(left: i128, right: i128) -> Result<i128, AffineCheckError> {
+    left.checked_mul(right)
+        .ok_or(AffineCheckError::ArithmeticOverflow)
+}
+
+fn checked_neg(value: i128) -> Result<i128, AffineCheckError> {
+    value
+        .checked_neg()
+        .ok_or(AffineCheckError::ArithmeticOverflow)
+}
+
+#[cfg(test)]
+fn reference_merge_scaled(
+    current: &[AffineCoefficient],
+    parent: &[AffineCoefficient],
+    factor: i128,
+    check: &mut AffineCheckState,
+) -> Result<Vec<AffineCoefficient>, AffineCheckError> {
     let mut merged = Vec::with_capacity(
         current
             .len()
@@ -832,25 +1105,17 @@ fn merge_scaled(
     Ok(merged)
 }
 
-fn checked_add(left: i128, right: i128) -> Result<i128, AffineCheckError> {
-    left.checked_add(right)
-        .ok_or(AffineCheckError::ArithmeticOverflow)
-}
-
-fn checked_sub(left: i128, right: i128) -> Result<i128, AffineCheckError> {
-    left.checked_sub(right)
-        .ok_or(AffineCheckError::ArithmeticOverflow)
-}
-
-fn checked_mul(left: i128, right: i128) -> Result<i128, AffineCheckError> {
-    left.checked_mul(right)
-        .ok_or(AffineCheckError::ArithmeticOverflow)
-}
-
-fn checked_neg(value: i128) -> Result<i128, AffineCheckError> {
-    value
-        .checked_neg()
-        .ok_or(AffineCheckError::ArithmeticOverflow)
+#[cfg(test)]
+pub(crate) fn reference_residual_after(
+    target: &AffineInequality,
+    premise: &AffineInequality,
+    check: &mut AffineCheckState,
+) -> Result<AffineInequality, AffineCheckError> {
+    Ok(AffineInequality {
+        terms: reference_merge_scaled(target.terms(), premise.terms(), checked_neg(1)?, check)?
+            .into_boxed_slice(),
+        upper: checked_sub(target.upper(), checked_mul(premise.upper(), 1)?)?,
+    })
 }
 
 #[cfg(test)]
@@ -895,6 +1160,172 @@ mod tests {
             .collect::<Vec<_>>();
         AffineInequality::from_terms(&terms, upper, &mut AffineCheckState::new())
             .expect("test inequality")
+    }
+
+    #[test]
+    fn borrowed_sums_match_allocating_sums_across_failures_and_limits() {
+        let cases = [
+            vec![inequality(&[(0, i128::MAX)], 0), inequality(&[(0, 1)], 0)],
+            vec![inequality(&[(0, 1)], i128::MAX), inequality(&[(1, 1)], 1)],
+            vec![
+                inequality(&[(0, i128::MIN)], 0),
+                inequality(&[(0, i128::MAX)], 0),
+            ],
+            vec![inequality(&[(1, 3)], 7), inequality(&[(1, -3)], -7)],
+            vec![inequality(&[(0, 1), (1, 1)], 0), inequality(&[(1, -1)], 0)],
+            vec![inequality(&[(1, 2)], 3), inequality(&[(0, 1)], 4)],
+            vec![],
+        ];
+        let mut scratch = AffineSumScratch::default();
+        for limits in [
+            AFFINE_CHECK_LIMITS,
+            AffineCheckLimits {
+                max_terms: 1,
+                ..AFFINE_CHECK_LIMITS
+            },
+            AffineCheckLimits {
+                max_certificate_premises: 1,
+                ..AFFINE_CHECK_LIMITS
+            },
+        ] {
+            // Reuse the same buffers after arithmetic and capacity failures;
+            // failure to clear a partial merge poisons a later successful sum.
+            for premises in &cases {
+                let mut old_check = AffineCheckState::with_limits(limits);
+                let expected = sum_explicit_inequalities(premises, &mut old_check);
+                let mut check = AffineCheckState::with_limits(limits);
+                let borrowed = premises.iter().collect::<Vec<_>>();
+                let actual = scratch.sum(&borrowed, &mut check);
+                assert_eq!(
+                    actual,
+                    expected
+                        .as_ref()
+                        .map(AffineInequalityView::from)
+                        .map_err(|e| *e)
+                );
+                assert_eq!(
+                    check, old_check,
+                    "the same formations and checked operations run"
+                );
+            }
+        }
+        assert_eq!(
+            sum_explicit_inequalities(&cases[0], &mut AffineCheckState::new()),
+            Err(AffineCheckError::ArithmeticOverflow)
+        );
+        assert_eq!(
+            sum_explicit_inequalities(&cases[3], &mut AffineCheckState::new()),
+            Ok(inequality(&[], 0))
+        );
+    }
+
+    #[test]
+    fn scratch_residuals_keep_every_candidate_in_allocating_order() {
+        let cases = [
+            // Both tightenings differ; their order is observable in the trace.
+            (
+                inequality(&[(0, 2), (1, -2)], 3),
+                inequality(&[(0, 4), (1, -4)], 7),
+            ),
+            // Cancellation must not bypass checked negation of MIN.
+            (
+                inequality(&[(0, i128::MIN)], 0),
+                inequality(&[(0, i128::MIN)], 0),
+            ),
+            (inequality(&[(0, 1)], i128::MAX), inequality(&[(0, 1)], -1)),
+            (inequality(&[(0, 1), (1, 1)], 0), inequality(&[(1, 1)], 0)),
+            (inequality(&[(0, 1)], 4), inequality(&[(0, 1)], 4)),
+            // MIN / -1 and unrepresentable gcd: neither yields a tightening.
+            (inequality(&[(0, -1)], 0), inequality(&[(0, i128::MIN)], 0)),
+            (inequality(&[(0, 1)], -2), inequality(&[(0, 3)], -4)),
+            (inequality(&[], 0), inequality(&[], 0)),
+            // The target multiple overflows while the divisor tightening is
+            // representable; the divisor candidate must still be visited.
+            (
+                inequality(&[(0, 3), (1, 6 * (i128::MAX / 8))], 5),
+                inequality(&[(0, 6), (1, 6 * (i128::MAX / 8))], 13),
+            ),
+        ];
+        let mut scratch = AffineResidualScratch::default();
+        for limits in [
+            AFFINE_CHECK_LIMITS,
+            AffineCheckLimits {
+                max_terms: 1,
+                ..AFFINE_CHECK_LIMITS
+            },
+            AffineCheckLimits {
+                max_input_terms: 1,
+                ..AFFINE_CHECK_LIMITS
+            },
+        ] {
+            for (target, candidate) in &cases {
+                // None exhausts every candidate; each index then observes the
+                // same early-return point and work count as the old traversal.
+                for stop in [None, Some(0), Some(1), Some(2)] {
+                    let mut expected = Vec::new();
+                    let mut old_check = AffineCheckState::with_limits(limits);
+                    let tightenings = integer_tightenings(candidate, target, &mut old_check);
+                    let mut selected = None;
+                    for accumulated in std::iter::once(candidate).chain(tightenings.iter()) {
+                        let Ok(residual) =
+                            reference_residual_after(target, accumulated, &mut old_check)
+                        else {
+                            continue;
+                        };
+                        expected.push(residual);
+                        if stop == Some(expected.len() - 1) {
+                            selected = stop;
+                            break;
+                        }
+                    }
+                    let mut observed = Vec::new();
+                    let mut check = AffineCheckState::with_limits(limits);
+                    let actual =
+                        scratch.prove(target, candidate.into(), &mut check, |residual, _| {
+                            observed.push(AffineInequality {
+                                terms: residual.terms().into(),
+                                upper: residual.upper(),
+                            });
+                            stop.filter(|index| *index == observed.len() - 1)
+                        });
+                    assert_eq!(observed, expected, "{target:?} - {candidate:?}");
+                    assert_eq!(actual, selected);
+                    assert_eq!(check, old_check);
+                }
+            }
+        }
+        assert_eq!(
+            reference_residual_after(&cases[1].0, &cases[1].1, &mut AffineCheckState::new()),
+            Err(AffineCheckError::ArithmeticOverflow),
+            "MIN cancellation cannot be regrouped into a successful subtraction"
+        );
+        // Independently of the reference traversal: production visits the
+        // candidate's own residual and then the divisor tightening's.
+        let (target, candidate) = &cases[8];
+        let wide = i128::MAX / 8;
+        let mut observed = Vec::new();
+        let mut check = AffineCheckState::new();
+        let selected = scratch.prove(target, candidate.into(), &mut check, |residual, _| {
+            observed.push(AffineInequality {
+                terms: residual.terms().into(),
+                upper: residual.upper(),
+            });
+            None::<usize>
+        });
+        assert_eq!(selected, None);
+        assert_eq!(
+            observed.len(),
+            2,
+            "the skipped multiple leaves the representable divisor candidate"
+        );
+        assert_eq!(
+            Ok(observed[1].clone()),
+            reference_residual_after(
+                target,
+                &inequality(&[(0, 1), (1, wide)], 2),
+                &mut AffineCheckState::new()
+            )
+        );
     }
 
     #[test]

@@ -1,0 +1,11 @@
+fn update(value: &u8) -> result: unit writes(value) {
+  set value^ = 1_u8;
+  return unit;
+}
+
+fn denied() -> result: unit pure {
+  let held = frozen_new::<u8>(value: 7_u8);
+  let view = &held.inner;
+  update(value: view);
+  return unit;
+}

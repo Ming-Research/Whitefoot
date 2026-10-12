@@ -117,36 +117,48 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn a_written_push_proves_entry_and_exit_and_publishes_without_result() {
-    assert_complete(PUSH);
-    with_semantics(PUSH.as_bytes(), |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("{outcome:?}");
-        };
-        for function in &checked.data.functions {
-            super::entailment::validate_derivations(&function.entailment);
-            let mut state_clauses = std::collections::HashSet::new();
-            for root in &function.entailment.derivations.roots {
-                if matches!(
-                    root.kind,
-                    super::super::entailment::DerivationRootKind::PostconditionState { .. }
-                ) {
-                    let super::super::entailment::DerivationNode::PostconditionCall { detail } =
-                        &function.entailment.derivations.nodes[root.node.0 as usize]
-                    else {
-                        panic!("a state root retains its call evidence");
-                    };
-                    assert!(
-                        state_clauses.insert((
-                            detail.call.clone(),
-                            detail.summary.clone(),
-                            detail.relation.clone()
-                        )),
-                        "binding a take result must not republish its state clauses"
-                    );
+    // Guards both selected-type and elaborated-place checking of [MSR-3]'s
+    // entry projection and the ordinary retained call evidence below.
+    // Previously the projected forms rejected their pbase children as
+    // Unsupported(CompositeValues), including the map_scan_within prelude.
+    for (length, capacity) in [
+        ("entry(values^.len)", "entry(values^.cap)"),
+        ("entry(values^).len", "entry(values^).cap"),
+        ("entry(values)^.len", "entry(values)^.cap"),
+    ] {
+        let source = PUSH
+            .replace("entry(values)^.len", length)
+            .replace("entry(values)^.cap", capacity);
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("{outcome:?}");
+            };
+            for function in &checked.data.functions {
+                super::entailment::validate_derivations(&function.entailment);
+                let mut state_clauses = std::collections::HashSet::new();
+                for root in &function.entailment.derivations.roots {
+                    if matches!(
+                        root.kind,
+                        super::super::entailment::DerivationRootKind::PostconditionState { .. }
+                    ) {
+                        let super::super::entailment::DerivationNode::PostconditionCall { detail } =
+                            &function.entailment.derivations.nodes[root.node.0 as usize]
+                        else {
+                            panic!("a state root retains its call evidence");
+                        };
+                        assert!(
+                            state_clauses.insert((
+                                detail.call.clone(),
+                                detail.summary.clone(),
+                                detail.relation.clone()
+                            )),
+                            "binding a take result must not republish its state clauses"
+                        );
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 }
 
 #[test]
@@ -162,6 +174,13 @@ fn entry_former_rejects_body_and_read_only_parameter() {
         "let size = entry(values)^.len;\n  return unit;",
     );
     assert_rule(body.as_bytes(), SemanticRule::Msr3);
+    // A projected former must retain the same position judgment, rather
+    // than acquire an executable-value path while fixing its type walk.
+    assert_rule(
+        body.replace("entry(values)^.len", "entry(values^.len)")
+            .as_bytes(),
+        SemanticRule::Msr3,
+    );
     // A reference parameter whose row declares no write of the path has no
     // exit state, so `entry` names nothing it could be distinguished from.
     let read_only = r#"fn observe(values: &Slots<u64, 4>) -> result: u64 reads(values) contract {
@@ -175,6 +194,12 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     assert_rule(read_only.as_bytes(), SemanticRule::Msr3);
+    assert_rule(
+        read_only
+            .replace("entry(values)^.len", "entry(values^.len)")
+            .as_bytes(),
+        SemanticRule::Msr3,
+    );
 }
 
 #[test]

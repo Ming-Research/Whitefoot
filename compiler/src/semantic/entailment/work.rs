@@ -330,7 +330,10 @@ impl FunctionWork {
                 self.affine.left_candidates_scanned,
             ),
             ("affine_promotions", self.affine.promotions),
-            ("affine_final_family_starts", self.affine.final_family_starts),
+            (
+                "affine_final_family_starts",
+                self.affine.final_family_starts,
+            ),
             (
                 "affine_final_family_exhaustions",
                 self.affine.final_family_exhaustions,

@@ -4,6 +4,14 @@
 
 use super::*;
 
+struct ProjectionEndpoint {
+    ty: CheckedType,
+    run: bool,
+    indexed: bool,
+    readonly: bool,
+    represented: bool,
+}
+
 impl Input<'_, '_> {
     /// CONST-2's total field selection substitutes the immutable initializer.
     /// Preserve that known scalar while reads still carry the constant's
@@ -95,6 +103,320 @@ impl Input<'_, '_> {
                 Some(place.proof_place())
             }
             _ => None,
+        }
+    }
+
+    /// Integer data must be terms at the written destination followed by
+    /// its projections [CALL-4, MSR-3, ENT-2]. Resolving a reference alias
+    /// to indexed storage does not add a subscript to its written spelling.
+    pub(super) fn set_integer_place_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        projections: &[PlaceStep],
+    ) -> bool {
+        self.written_integer_place_admitted(target, false, projections)
+    }
+
+    pub(super) fn goal_integer_place_admitted(&self, admission: &GoalAdmission) -> bool {
+        let projections = admission
+            .projections
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        if let Some(target) = admission.written.as_deref() {
+            return self.written_integer_place_admitted(
+                target,
+                admission.root_is_range,
+                &projections,
+            );
+        }
+        let Some(ty) = admission.root_type else {
+            // This endpoint was already admitted. Any extension records its
+            // prior type, so an untyped default cannot hide a new subscript.
+            return projections.is_empty();
+        };
+        self.typed_integer_place_admitted(
+            ty,
+            admission.root_is_range,
+            false,
+            true,
+            false,
+            &projections,
+        )
+    }
+
+    fn written_integer_place_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        root_is_range: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let (indexed, offsets, readonly) = match target {
+            CheckedSetTarget::Place(_) => (false, None, None),
+            CheckedSetTarget::Storage(place) => (
+                place
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
+            CheckedSetTarget::RangeIndex(place) => (
+                true,
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
+        };
+        self.typed_integer_place_admitted(
+            target.ty(),
+            root_is_range,
+            indexed,
+            !indexed || offsets == Some(SubscriptedTerm::Represented),
+            readonly == Some(SubscriptedTerm::Represented),
+            projections,
+        )
+    }
+
+    /// The written type and run kind survive proof-path alias resolution.
+    /// A Page/Range selects a run image; the next Index selects its element,
+    /// even when that element itself is an indexed container [ENT-2, REF-4].
+    fn typed_integer_place_admitted(
+        &self,
+        ty: CheckedType,
+        run: bool,
+        indexed: bool,
+        represented: bool,
+        base_readonly: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let Some(endpoint) = self.projection_endpoint(
+            ProjectionEndpoint {
+                ty,
+                run,
+                indexed,
+                readonly: base_readonly,
+                represented,
+            },
+            projections,
+        ) else {
+            return false;
+        };
+        endpoint.represented
+            && (!endpoint.indexed || (endpoint.readonly && fragment_type(endpoint.ty).is_some()))
+    }
+
+    pub(super) fn goal_expression_projection_type(
+        &self,
+        expression: &GoalExpression,
+        projection: GoalProjection,
+    ) -> Option<CheckedType> {
+        let GoalExpression::Datum(datum) = expression else {
+            return None;
+        };
+        let mut endpoint = ProjectionEndpoint {
+            ty: datum.ty(),
+            run: false,
+            indexed: false,
+            readonly: false,
+            represented: true,
+        };
+        if let Some(admission) = datum.admission() {
+            endpoint = self.goal_admission_projection_endpoint(
+                admission,
+                datum.ty(),
+                &admission.projections,
+            )?;
+        }
+        if endpoint.ty != datum.ty() {
+            return None;
+        }
+        self.projection_endpoint(endpoint, &[projection.place_step()])
+            .map(|endpoint| endpoint.ty)
+    }
+
+    fn goal_admission_projection_endpoint(
+        &self,
+        admission: &GoalAdmission,
+        default_type: CheckedType,
+        projections: &[GoalProjection],
+    ) -> Option<ProjectionEndpoint> {
+        let suffix = projections
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        self.projection_endpoint(
+            ProjectionEndpoint {
+                ty: admission
+                    .written
+                    .as_deref()
+                    .map(CheckedSetTarget::ty)
+                    .or(admission.root_type)
+                    .unwrap_or(default_type),
+                run: admission.root_is_range,
+                indexed: false,
+                readonly: false,
+                represented: true,
+            },
+            &suffix,
+        )
+    }
+
+    /// A measure's row is selected by its written container. Alias resolution
+    /// supplies its identity, but cannot recover that container's type.
+    pub(super) fn goal_measure_base_type(&self, datum: &GoalDatum) -> Option<(CheckedType, bool)> {
+        let admission = datum.admission()?;
+        if let Some((GoalProjection::Measure(_), prefix)) = admission.projections.split_last() {
+            let endpoint =
+                self.goal_admission_projection_endpoint(admission, datum.ty(), prefix)?;
+            return Some((endpoint.ty, endpoint.run));
+        }
+        if !admission.projections.is_empty() {
+            return None;
+        }
+        self.written_measure_base_type(admission.written.as_deref()?)
+            .map(|ty| (ty, false))
+    }
+
+    fn read_measure_base_type(
+        &self,
+        expression: &CheckedExpression,
+    ) -> Option<(CheckedType, bool)> {
+        let ty = match expression {
+            CheckedExpression::ReadStorage { root, .. } => {
+                let (CheckedPlaceStep::Measure(_), prefix) = root.path.split_last()? else {
+                    return None;
+                };
+                self.written_projection_type(self.written_root_type(root.root)?, prefix)?
+            }
+            CheckedExpression::RangeIndex { place, .. } => {
+                let (CheckedPlaceStep::Measure(_), prefix) = place.path.split_last()? else {
+                    return None;
+                };
+                self.written_projection_type(place.root.element_type, prefix)?
+            }
+            // A scalar holder may resolve to a measure, but its checked read
+            // retains only the scalar type, not the written container.
+            _ => return None,
+        };
+        Some((ty, false))
+    }
+
+    fn written_measure_base_type(&self, target: &CheckedSetTarget) -> Option<CheckedType> {
+        let (ty, steps) = match target {
+            CheckedSetTarget::Storage(root) => (self.written_root_type(root.root)?, &root.path),
+            CheckedSetTarget::RangeIndex(place) => (place.root.element_type, &place.path),
+            CheckedSetTarget::Place(_) => return None,
+        };
+        let (CheckedPlaceStep::Measure(_), prefix) = steps.split_last()? else {
+            return None;
+        };
+        self.written_projection_type(ty, prefix)
+    }
+
+    fn written_root_type(&self, root: PlaceRoot) -> Option<CheckedType> {
+        match root {
+            PlaceRoot::Binding(binding) => self.summary(binding)?.ty,
+            PlaceRoot::Constant(constant) => {
+                Some(self.context.constants.get(constant.0 as usize)?.ty)
+            }
+        }
+    }
+
+    /// Checked subscripts record the selected type, including whether the
+    /// written root was a range or a single reborrow of one [REF-4, TYPE-8].
+    fn written_projection_type(
+        &self,
+        mut ty: CheckedType,
+        steps: &[CheckedPlaceStep],
+    ) -> Option<CheckedType> {
+        for step in steps {
+            ty = match step {
+                CheckedPlaceStep::Subscript(index) => index.element_type,
+                CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Field(_) => {
+                    self.owned_path_type(ty, &[step.place_step()])?
+                }
+                CheckedPlaceStep::Measure(_) => return None,
+            };
+        }
+        Some(ty)
+    }
+
+    fn projection_endpoint(
+        &self,
+        mut endpoint: ProjectionEndpoint,
+        projections: &[PlaceStep],
+    ) -> Option<ProjectionEndpoint> {
+        let represented = |offset: &CapturedValue| {
+            matches!(
+                offset.term,
+                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+            )
+        };
+        for step in projections {
+            endpoint.readonly = false;
+            match step {
+                PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
+                    endpoint.indexed = true;
+                    endpoint.represented &= represented(offset);
+                    let segment =
+                        !endpoint.run && matches!(endpoint.ty, CheckedType::Segments { .. });
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = segment || matches!(step, PlaceStep::Page(_));
+                }
+                PlaceStep::Range(range) => {
+                    endpoint.represented &= represented(&range.start) && represented(&range.end);
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = true;
+                }
+                PlaceStep::Field(field) => {
+                    let CheckedType::Nominal(nominal) = endpoint.ty else {
+                        return None;
+                    };
+                    let CheckedNominalKind::Struct { fields } =
+                        &self.context.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    let field = fields.get(*field as usize)?;
+                    endpoint.ty = field.ty;
+                    endpoint.readonly = field.readonly;
+                    endpoint.run = false;
+                }
+                PlaceStep::Deref => {
+                    if let Some(next) = self.owned_path_type(endpoint.ty, &[*step]) {
+                        endpoint.ty = next;
+                        endpoint.run = false;
+                    }
+                    // Borrow images already carry their referent type.
+                }
+                PlaceStep::Payload { .. } => {
+                    endpoint.ty = self.owned_path_type(endpoint.ty, &[*step])?;
+                    endpoint.run = false;
+                }
+                // [OP-15, MSR-1] a measure is a readonly u64 field of the
+                // selected descriptor, so ENT-2(b) admits it below a
+                // subscript as it admits `table[i].len`.
+                PlaceStep::Measure(_) => {
+                    endpoint.ty = CheckedType::Integer(IntegerType::U64);
+                    endpoint.readonly = true;
+                    endpoint.run = false;
+                }
+                _ => return None,
+            }
+        }
+        Some(endpoint)
+    }
+
+    fn integer_projection_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        match ty {
+            CheckedType::Segments { element } | CheckedType::Entries { element } => {
+                self.context.elements.get(element.index()).copied()
+            }
+            _ => element_type(ty, self.context.elements),
         }
     }
 
@@ -265,6 +587,11 @@ impl Vocabulary {
         state: &AffineFlowState,
     ) -> Option<AffineForm> {
         match self.terms.kind(term).clone() {
+            TermKind::Sum(left, right) => {
+                let left = self.affine_term_value(left, state)?;
+                let right = self.affine_term_value(right, state)?;
+                left.add(&right, &mut AffineCheckState::new()).ok()
+            }
             TermKind::Zero => Some(AffineForm::constant(0)),
             TermKind::Constant(value) => Some(AffineForm::constant(value)),
             TermKind::Place(place, _) if place.path.is_empty() => match place.root {
@@ -278,23 +605,14 @@ impl Vocabulary {
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
             | TermKind::TargetMeasure { .. }
-            | TermKind::EntryDatum {
-                measure: Some(_), ..
-            }
-            | TermKind::MeasureDatum {
-                measure: Some(_), ..
-            }
-            | TermKind::CallDatum {
-                measure: Some(_), ..
-            } => Some(self.measure_atom(term, state)),
+            | TermKind::EntryDatum { .. }
+            | TermKind::MeasureDatum { .. }
+            | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
-            | TermKind::CommitValue { .. }
-            | TermKind::EntryDatum { .. }
-            | TermKind::MeasureDatum { .. }
-            | TermKind::CallDatum { .. } => None,
+            | TermKind::CommitValue { .. } => None,
         }
     }
 
@@ -408,17 +726,46 @@ impl Reasoning<'_, '_, '_> {
         }
         let fragment = fragment_type(expression.ty())?;
         let path = self.input.read_place_path(expression)?;
-        let kind = match path.path.as_slice() {
-            projections
-                if projections
-                    .iter()
-                    .all(|projection| matches!(projection, PlaceStep::Field(_))) =>
-            {
-                TermKind::Place(path, fragment)
-            }
-            _ => TermKind::Place(path, fragment),
-        };
-        Some(self.vocabulary.terms.intern(kind))
+        let measure_base = self.input.read_measure_base_type(expression);
+        self.place_operand(path, fragment, measure_base)
+    }
+
+    /// [ENT-2, MSR-2] scalar places formed by reads and instantiated
+    /// contracts use one term and the same descriptor standing bounds.
+    pub(super) fn place_operand(
+        &mut self,
+        path: ResolvedPlace,
+        fragment: IntegerType,
+        measure_base: Option<(CheckedType, bool)>,
+    ) -> Option<TermId> {
+        // [ENT-2, MSR-2] an exact scalar reference to a descriptor field
+        // retains that field's standing bounds as well as its term identity.
+        if fragment == IntegerType::U64
+            && let Some(PlaceStep::Measure(measure)) = path.path.last().copied()
+        {
+            let mut base = path.clone();
+            base.path.pop();
+            // Alias resolution fixes the measure's identity; only its
+            // standing bound needs the written container's type.
+            let Some((ty, run)) = measure_base else {
+                return Some(self.vocabulary.intern_measure(measure, &base));
+            };
+            return Some(self.place_measure_term(
+                measure,
+                base,
+                if run {
+                    MeasuredKind::Range
+                } else {
+                    measured_kind(ty)?
+                },
+                if run { None } else { type_constant(ty) },
+            ));
+        }
+        Some(
+            self.vocabulary
+                .terms
+                .intern(TermKind::Place(path, fragment)),
+        )
     }
 
     /// Files one [REF-4] formation's endpoint images under its start capture,

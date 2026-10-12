@@ -2,7 +2,7 @@
 //!
 //! Construction functions [OP-13], window operations [OP-10],
 //! `swap` [OP-11], `free_empty` [OP-14], the shared-object functions and
-//! the map's five and key set's three [SHARE-1] are declared body-less
+//! the map's five and key set's four [SHARE-1] are declared body-less
 //! exactly as a host function is [PRE-2], but no trusted-base object defines
 //! them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
@@ -45,7 +45,7 @@ impl IrBuilder<'_> {
         element: Option<crate::semantic::CheckedElement>,
     ) -> Result<(), LoweringFailure> {
         match name {
-            "box_new" => self.row_box_new(),
+            "box_new" | "frozen_new" => self.row_box_new(),
             "array_filled" => self.row_array_filled(),
             "slots_new" | "ring_new" => self.row_window_new(),
             "slots_from_array" | "slots_into_array" => self.row_full_array_conversion(),
@@ -67,13 +67,17 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
-            "shared_share" | "shared_read" | "shared_read_share" => self.row_shared_share(),
+            "shared_share" | "shared_read" | "shared_read_share" | "frozen_share" => {
+                self.row_shared_share()
+            }
             "shared_map_new" => self.row_shared_map_new(),
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
+            "map_scan_within" => self.row_map_scan_within(),
             "map_clear" => self.row_map_clear(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
+            "key_set_bytes" => self.row_key_set_bytes(),
             "key_set_read_key" => self.row_key_set_read_key(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
@@ -147,7 +151,8 @@ impl IrBuilder<'_> {
 
     // ---- [OP-13] construction ------------------------------------------
 
-    /// `box_new<T>(value: T) -> Box<T>`: one cell holding the value.
+    /// `box_new` and `frozen_new`: one pointer to the moved value. The
+    /// result nominal's release class selects allocation and reclamation.
     fn row_box_new(&mut self) -> Result<(), LoweringFailure> {
         let [value] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
@@ -233,6 +238,26 @@ impl IrBuilder<'_> {
         self.return_value(next)
     }
 
+    /// The bounded scan returns the ordinary PRE-1 payload enum.
+    fn row_map_scan_within(&mut self) -> Result<(), LoweringFailure> {
+        let [map, cursor, count, limit, set] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let table = self.row_table(map)?;
+        let step = self.define(
+            self.result,
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            },
+        )?;
+        self.return_value(step)
+    }
+
     /// `map_clear<V>(map: &ConcurrentHashMap<V>)`: every entry `None`, the
     /// values released [SHARE-1].
     fn row_map_clear(&mut self) -> Result<(), LoweringFailure> {
@@ -282,8 +307,19 @@ impl IrBuilder<'_> {
         self.return_value(index)
     }
 
-    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle
-    /// to the object the argument names [SHARE-1].
+    /// `key_set_bytes(keys: &KeySet) -> u64`: the heap bytes the set's
+    /// storage holds, including unused allocated capacity [SHARE-1].
+    fn row_key_set_bytes(&mut self) -> Result<(), LoweringFailure> {
+        let [set] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) || self.result != U64 {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let bytes = self.define(U64, IrOperation::KeySetBytes { set })?;
+        self.return_value(bytes)
+    }
+
+    /// The shared and frozen share rows: retain the object the argument
+    /// names and return its one-pointer handle [SHARE-1].
     fn row_shared_share(&mut self) -> Result<(), LoweringFailure> {
         let [shared] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {

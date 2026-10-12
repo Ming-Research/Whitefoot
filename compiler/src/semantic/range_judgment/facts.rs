@@ -1405,11 +1405,7 @@ mod aggregate_tests {
             &[],
         )
         .unwrap();
-        let expected = BTreeSet::from([Literal::new(
-            length,
-            Relation::Equal,
-            Linear::constant(1),
-        )]);
+        let expected = BTreeSet::from([Literal::new(length, Relation::Equal, Linear::constant(1))]);
         assert_eq!(formed.type_facts, expected);
         assert_eq!(
             formed.premises,
@@ -1484,7 +1480,10 @@ mod aggregate_tests {
             Linear::constant(1),
         )]);
         assert_eq!(formed.type_facts, expected);
-        assert_eq!(formed.conclusions[0].conclusions[0].left, Linear::constant(1));
+        assert_eq!(
+            formed.conclusions[0].conclusions[0].left,
+            Linear::constant(1)
+        );
 
         fact.clause.conclusions[0].left = CheckedRangeTerm::Read {
             place: place.clone(),

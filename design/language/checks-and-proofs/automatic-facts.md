@@ -22,7 +22,13 @@ Decision: Ordinary and delivery joins use ENT-5's finite disequality candidates,
 
 Decision: A proved header or local invariant also establishes its exact normalized source-term difference bounds as ordinary L0 facts, both directions of an equality together, with ordinary term support, kills, joins and snapshots, because an equality-sentinel loop needs its proved header bound and the false guard's disequality in the same closure to prove its increment preserves the header, instead of a query-local composition rule or projecting general affine premises into L0; conclusions with three or more normalized terms or scaled coefficients remain affine premises only.
 
+Decision: A normal-return relation may add one own integer parameter with coefficient one to one side's existing datum and constant, with ordinary immutable entry capture, effect invalidation and the fixed affine derivation, because option A of the [retained-byte ruling](../../../research/investigations/map-enumeration/DESIGN.md#retained-bytes-and-the-contract-language-gap) lets callers prove both subtractions of reservation accounting through an ordinary contract and also applies to user functions, instead of an operation-specific fact or a runtime check.
+
+Decision: Growing a boxed Slots or Paged window preserves facts supported by its length and filled elements, including owned descendants, while capacity support and invalidated reference support die under the ordinary lifetime rules; the whole-cell writes row and reference invalidation remain, because growth changes storage location without changing those logical values and a whole-cell permission still excludes reads while relocation frees the former block, instead of discarding unchanged element facts or weakening the effect row. Derived measures, live origins, current affine images, conditional evidence and range versions use the same support classification.
+
 Rejected:
+- Option B, the runtime keeping the reservation account: rejected because it only solves this one interface and reverses the shape just chosen.
+- Option C, a runtime check in firn: rejected because it routes around a language gap with a runtime check.
 - Keeping constant disequalities outside L0: rejected because the false edge of an equality sentinel test then cannot tighten the loop's existing upper bound.
 - A branch-entry special case for a constant comparison: rejected because it misses a weak bound established after the test and splits one arithmetic closure rule by its source event.
 - One more row per demanded idiom, such as bounding a right shift by a written amount: rejected because it repairs only the idiom it names, while five further sweep idioms need an interval that no single row would state.
@@ -34,3 +40,6 @@ Rejected:
 - Requiring identical written bounds at a conditional-value join: rejected because the existing difference-bound join already retains the weakest common bound without introducing a new inference family.
 - Delivering the receiver equality by closure without the substitution: rejected because the closure has no rule carrying a disequality through an equality, so relations delivered today would be lost.
 - A success route for every enum with one integer-payload variant: rejected because Option is the one reported consumer and, like Result, has one fixed success and one fixed failure variant.
+- Per-element equality postconditions for growth: rejected because non-comparable element types and enum payload fields still need their existing facts preserved.
+- A capacity-only effect row for growth: rejected because parallel element reads could overlap relocation freeing their block.
+- Re-proving filled-element facts in a loop after growth: rejected because this hides the language gap and adds writer work for unchanged values.

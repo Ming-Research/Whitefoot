@@ -1,0 +1,5 @@
+public fn overwrite_identity(number: &u64) -> result: unit writes(number) doc "Replaces the referenced number.";
+
+public fn update_packets(entries: &Entries<pkg::packets::Packet>) -> result: unit writes(entries) doc "Attempts to replace a readonly packet identity below Entries.";
+
+public fn main() -> status: std::process::ExitStatus pure doc "Runs the program.";

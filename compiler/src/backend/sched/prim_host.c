@@ -17,7 +17,9 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "prim.h"
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
@@ -25,6 +27,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
 #endif
@@ -81,22 +86,74 @@ int wf_prim_thread_start(
     return error != 0 ? 1 : 0;
 }
 
-/* How many CPUs this process may actually run on. The affinity mask is the
- * honest answer where it is cheap to read, because a process confined to two
- * of a machine's four CPUs is oversubscribed at four lanes however many CPUs
- * are online; sysconf answers the rest. Zero means the count is unknown, and
- * a caller must then choose the behaviour that assumes nothing about it. */
+#if defined(__linux__)
+/* A kernel affinity mask can exceed libc's fixed cpu_set_t even when this
+ * process may use only a few CPUs. EINVAL asks for more space, not a count
+ * of the machine's online CPUs. Bound this probe at one million CPU bits
+ * (128 KiB); failure within that bound is an unknown answer, not permission
+ * to substitute a wider CPU set. The initial 8192 bits live in the caller's
+ * stack; larger masks use host mappings, keeping these queries independent
+ * of the program's allocator. Count and performance-level queries share the
+ * same reader and release a successful mapping after using it. */
+#define WF_PRIM_AFFINITY_INITIAL_CPUS 8192u
+#define WF_PRIM_AFFINITY_CPU_LIMIT (1u << 20)
+typedef struct {
+    _Alignas(cpu_set_t) unsigned long local[WF_PRIM_AFFINITY_INITIAL_CPUS
+                                          / (CHAR_BIT * sizeof(unsigned long))];
+    cpu_set_t *cpus;
+    size_t bytes;
+    unsigned width;
+    int mapped;
+} wf_prim_affinity;
+
+static void wf_prim_release_affinity(wf_prim_affinity *affinity) {
+    if (affinity->mapped) {
+        (void)munmap(affinity->cpus, affinity->bytes);
+        affinity->mapped = 0;
+    }
+}
+
+/* 1 supplies a mask, 0 means affinity is unavailable, -1 means this probe
+ * could not read it. Only unavailable affinity admits the sysconf route. */
+static int wf_prim_read_affinity(wf_prim_affinity *affinity) {
+    affinity->cpus = (cpu_set_t *)(void *)affinity->local;
+    affinity->bytes = sizeof(affinity->local);
+    affinity->width = WF_PRIM_AFFINITY_INITIAL_CPUS;
+    affinity->mapped = 0;
+    for (;;) {
+        CPU_ZERO_S(affinity->bytes, affinity->cpus);
+        if (sched_getaffinity(0, affinity->bytes, affinity->cpus) == 0) return 1;
+        int error = errno;
+        wf_prim_release_affinity(affinity);
+        if (error == ENOSYS || error == ENOTSUP) return 0;
+        if (error != EINVAL || affinity->width > WF_PRIM_AFFINITY_CPU_LIMIT / 2u) return -1;
+        affinity->width *= 2u;
+        affinity->bytes = CPU_ALLOC_SIZE(affinity->width);
+        void *cpus = mmap(NULL, affinity->bytes, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (cpus == MAP_FAILED) return -1;
+        affinity->cpus = cpus;
+        affinity->mapped = 1;
+    }
+}
+#endif
+
+/* How many CPUs this process may actually run on. A restricted affinity
+ * count takes precedence over the machine's online count. Linux uses the
+ * online-count route only when affinity is genuinely unavailable; a failed
+ * affinity read returns unknown. Zero means the count is unknown, and a
+ * caller must choose the behaviour that assumes nothing about it. */
 unsigned wf_prim_online_cpus(void) {
     long online;
 #if defined(__linux__)
-    cpu_set_t affinity;
-    CPU_ZERO(&affinity);
-    if (sched_getaffinity(0, sizeof affinity, &affinity) == 0) {
-        int permitted = CPU_COUNT(&affinity);
-        if (permitted > 0) {
-            return (unsigned)permitted;
-        }
+    wf_prim_affinity affinity;
+    int state = wf_prim_read_affinity(&affinity);
+    if (state > 0) {
+        int permitted = CPU_COUNT_S(affinity.bytes, affinity.cpus);
+        wf_prim_release_affinity(&affinity);
+        return permitted > 0 ? (unsigned)permitted : 0u;
     }
+    if (state < 0) return 0u;
 #endif
 #if defined(__APPLE__)
     int logical = 0;
@@ -107,7 +164,7 @@ unsigned wf_prim_online_cpus(void) {
     }
 #endif
     online = sysconf(_SC_NPROCESSORS_ONLN);
-    return online > 0 ? (unsigned)online : 0u;
+    return online > 0 && (unsigned long)online <= UINT_MAX ? (unsigned)online : 0u;
 }
 
 /* The most distinct performance levels this probe will name before it stops
@@ -193,21 +250,21 @@ unsigned wf_prim_cpu_levels(void) {
     }
     return 1u;
 #elif defined(__linux__)
-    cpu_set_t affinity;
+    wf_prim_affinity affinity;
     unsigned long seen[WF_PRIM_CPU_LEVEL_CEILING];
     unsigned levels = 0;
     unsigned cpu;
-    CPU_ZERO(&affinity);
-    if (sched_getaffinity(0, sizeof affinity, &affinity) != 0) {
+    if (wf_prim_read_affinity(&affinity) <= 0) {
         return 1u;
     }
-    for (cpu = 0; cpu < (unsigned)CPU_SETSIZE; cpu += 1u) {
+    for (cpu = 0; cpu < affinity.width; cpu += 1u) {
         unsigned long capacity = 0ul;
         unsigned index;
-        if (!CPU_ISSET((int)cpu, &affinity)) {
+        if (!CPU_ISSET_S(cpu, affinity.bytes, affinity.cpus)) {
             continue;
         }
         if (!wf_prim_cpu_capacity(cpu, &capacity)) {
+            wf_prim_release_affinity(&affinity);
             return 1u;
         }
         for (index = 0; index < levels; index += 1u) {
@@ -219,11 +276,13 @@ unsigned wf_prim_cpu_levels(void) {
             continue;
         }
         if (levels == WF_PRIM_CPU_LEVEL_CEILING) {
+            wf_prim_release_affinity(&affinity);
             return WF_PRIM_CPU_LEVEL_CEILING;
         }
         seen[levels] = capacity;
         levels += 1u;
     }
+    wf_prim_release_affinity(&affinity);
     return levels > 0u ? levels : 1u;
 #else
     return 1u;

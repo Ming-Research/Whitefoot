@@ -75,7 +75,7 @@ impl Checker<'_, '_> {
         } else {
             Vec::new()
         };
-        let shared_new = signature.name == "shared_new"
+        let shared_new = matches!(signature.name.as_str(), "shared_new" | "frozen_new")
             && self
                 .types
                 .declarations

@@ -1,0 +1,15 @@
+fn fill(value: &Frozen<Array<u8, 1>>, out: &Array<u8, 1>) -> result: unit reads(value), writes(out) contract {
+  ensures forall filled(k in 0_u64..out^.len): out^[k] == value^.inner[k];
+} {
+  set out^[0_u64] = value^.inner[0_u64];
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = array_filled::<u8, 1>(value: 7_u8);
+  let held = frozen_new::<Array<u8, 1>>(value: bytes);
+  let output = array_filled::<u8, 1>(value: 0_u8);
+  fill(value: &held, out: &output);
+  let byte = output[0_u64];
+  return std::process::exit_status(code: byte);
+}

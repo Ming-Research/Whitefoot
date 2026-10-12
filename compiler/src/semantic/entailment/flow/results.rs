@@ -252,9 +252,11 @@ impl Vocabulary {
             // valid witness can win an equal-bound tie.
             let conditional = result.facts.l0_candidates();
             result.facts = ordinary.numeric_snapshot();
-            result
-                .facts
-                .kill(|term| matches!(self.terms.kind(term), TermKind::ResultPayload { .. }));
+            result.facts.kill(|term| {
+                self.terms.any_leaf(term, &|leaf| {
+                    matches!(self.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
+            });
             for (relation, parent) in conditional {
                 result
                     .facts
@@ -263,11 +265,11 @@ impl Vocabulary {
             return;
         }
         for (relation, parent) in ordinary.l0_candidates() {
-            if relation
-                .terms()
-                .iter()
-                .any(|term| matches!(self.terms.kind(*term), TermKind::ResultPayload { .. }))
-            {
+            if relation.terms().iter().any(|term| {
+                self.terms.any_leaf(*term, &|leaf| {
+                    matches!(self.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
+            }) {
                 continue;
             }
             result
@@ -284,6 +286,7 @@ impl Vocabulary {
         source: &FactState,
         pairs: &[(TermId, TermId)],
     ) -> FactState {
+        let pairs = self.terms.expand_substitutions(pairs);
         let mut closed = source.clone();
         materialize_closure_before_kill(
             &mut closed,
@@ -303,7 +306,7 @@ impl Vocabulary {
             }
             let mut substituted = relation;
             let mut parent = parent;
-            for (from, to) in pairs {
+            for (from, to) in &pairs {
                 if !substituted.terms().contains(from) {
                     continue;
                 }
@@ -616,16 +619,17 @@ impl Reasoning<'_, '_, '_> {
         }
         for (relation, parent) in selected.l0_candidates() {
             if relation.terms().iter().any(|term| {
-                matches!(
-                    self.vocabulary.terms.kind(*term),
-                    TermKind::ResultPayload { .. }
-                )
+                self.vocabulary.terms.any_leaf(*term, &|leaf| {
+                    matches!(self.vocabulary.terms.kind(leaf), TermKind::ResultPayload { .. })
+                })
             }) {
                 continue;
             }
             state
                 .facts
                 .establish_from_proof(&relation, parent, &self.vocabulary.derivations);
+            self.vocabulary
+                .establish_postcondition_affine(&relation, parent, &mut state.affine);
         }
     }
 }
@@ -649,10 +653,18 @@ impl Reasoning<'_, '_, '_> {
                 | KillEvent::EntryImageHolderConsume {
                     binding: source, ..
                 } => binding == source,
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => self
+                KillEvent::Write {
+                    place: written,
+                    relocation,
+                    ..
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place: written,
+                    relocation,
+                    ..
+                } => self
                     .input
-                    .resolved_places_overlap(&state.separations, &place, written),
+                    .write_kills_support(&state.separations, &place, written, *relocation),
             }) {
                 return false;
             }
@@ -796,6 +808,7 @@ mod tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),

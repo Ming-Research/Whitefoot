@@ -374,6 +374,7 @@ pub(crate) struct DescendantTarget {
     pub(crate) ty: CheckedType,
     pub(crate) range: bool,
     pub(crate) readonly: bool,
+    pub(crate) frozen_content: bool,
 }
 
 /// What one step pair establishes about the two places below it.
@@ -1721,6 +1722,7 @@ mod tests {
                 ty: CheckedType::Unit,
                 range: false,
                 readonly: false,
+                frozen_content: false,
             })],
         );
         assert!(!cover.is_exact_path());
@@ -2134,6 +2136,17 @@ mod tests {
             &place(0, &[PlaceStep::Part(WindowPart::Filled)]),
         ));
         assert!(map.overlaps(&denied, &length, &length));
+        assert!(!map.overlaps(
+            &denied,
+            &length,
+            &place(0, &[PlaceStep::Measure(CheckedMeasure::Capacity)]),
+        ));
+        assert!(!map.overlaps(
+            &denied,
+            &length,
+            &place(0, &[PlaceStep::Measure(CheckedMeasure::Head)]),
+        ));
+        assert!(map.overlaps(&denied, &length, &place(0, &[])));
     }
 
     /// [REF-2] writing the storage at a reference's path or below it is a
@@ -2243,6 +2256,7 @@ mod tests {
                 root: BindingId(0),
                 projections: vec![GoalProjection::Page(offset)],
                 ty,
+                admission: Default::default(),
             })
         };
         assert_ne!(goal(literal(0, 0)), goal(literal(1, 0)));

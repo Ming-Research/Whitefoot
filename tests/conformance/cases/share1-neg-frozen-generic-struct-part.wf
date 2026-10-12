@@ -1,0 +1,11 @@
+struct W<T: drop> {
+  f: Frozen<T>;
+}
+
+fn denied(w: W<SharedRead<u8>>) -> result: W<SharedRead<u8>> pure {
+  return move w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

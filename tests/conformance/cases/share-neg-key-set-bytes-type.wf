@@ -1,0 +1,4 @@
+fn forbidden(keys: &Array<u8, 1>) -> bytes: u64 reads(keys) {
+  doc "A byte array reference cannot stand in for a KeySet reference.";
+  return key_set_bytes(keys: keys);
+}

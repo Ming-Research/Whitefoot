@@ -54,6 +54,15 @@ pub(super) fn value_equality_repair(ty: &str, part: &str) -> String {
 
 /// [FN-6] repair the changed argument under the callee's ordinary kind and
 /// bound requirements, or move its construction outside the cycle.
+/// [FORM-7] a non-canonical float literal: write its canonical spelling, or,
+/// when it denotes no finite value of its type, one that does.
+pub(super) fn float_literal_repair(canonical_spelling: Option<&str>) -> String {
+    match canonical_spelling {
+        Some(spelling) => format!("write the literal as `{spelling}`"),
+        None => "replace the literal with a canonical spelling of a finite value representable in its stated type".to_owned(),
+    }
+}
+
 pub(super) const fn instantiation_cycle_repair() -> &'static str {
     "use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle"
 }
@@ -1326,11 +1335,19 @@ pub(super) fn call_separation(
 /// names comes from, which selects the repair of its refusal [TYPE-2].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OpaqueStruct {
+    /// Prelude handles and collections are formed by prelude functions;
+    /// their declarations are not editable program declarations [PRE-1].
+    Frozen,
+    Shared,
+    SharedRead,
+    ConcurrentHashMap,
     /// A host handle: a standard library module declares it with no fields,
     /// and only a host function forms one [PRE-2]. `linear` when its
     /// declaration writes `nodrop`, so that it leaves a scope only by moving
     /// out [PROV-6].
-    HostHandle { linear: bool },
+    HostHandle {
+        linear: bool,
+    },
     /// A host module's opaque struct with fields, `Instant`: only a host
     /// function forms one, and its fields are private to a module no program
     /// writes in [PRE-2, MOD-6].
@@ -1351,6 +1368,18 @@ const PROGRAM_OPAQUE_STRUCT: &str = "no value of an opaque struct the program de
 /// names both sources.
 pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
     match opaque {
+        OpaqueStruct::Frozen => {
+            "replace this construction with `frozen_new::<T>(value: v)`, passing a copy value bare or an affine value with `move` [SHARE-1]"
+        }
+        OpaqueStruct::Shared => {
+            "replace this construction with `shared_new::<T>(value: v)`, passing a copy value bare or an affine value with `move` [SHARE-1]"
+        }
+        OpaqueStruct::SharedRead => {
+            "replace this construction with `shared_read::<T>(shared: &h)` for an existing Shared<T> handle [SHARE-1]"
+        }
+        OpaqueStruct::ConcurrentHashMap => {
+            "replace this construction with `shared_map_new::<V>(capacity: n)` and reach the map through an atomic target in a function marked `waits` [SHARE-1, SHARE-2]"
+        }
         OpaqueStruct::HostHandle { .. } => {
             "a host handle is formed only by a host function [PRE-2]: replace this construction with a handle that a function of its module returns or that the program's entry receives"
         }
@@ -1368,6 +1397,18 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
 /// nothing makes through a reference or an element [OWN-1, WIN-3].
 pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'static str {
     match opaque {
+        OpaqueStruct::Frozen => {
+            "keep the handle formed by `frozen_new` intact; replace this destructuring with reads of copy-typed parts through `h.inner` or borrows into `&h.inner`, adapting uses of the destructured bindings to those reads or references [SHARE-1]"
+        }
+        OpaqueStruct::Shared => {
+            "keep the handle formed by `shared_new` intact; replace this destructuring with an atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
+        }
+        OpaqueStruct::SharedRead => {
+            "keep the readonly handle formed by `shared_read` intact; replace this destructuring with a readonly atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
+        }
+        OpaqueStruct::ConcurrentHashMap => {
+            "remove this destructuring statement and reach the map through an atomic target over a handle formed by `shared_map_new` [SHARE-1, SHARE-2]"
+        }
         OpaqueStruct::HostHandle { linear: true } if owned => {
             "a host handle has no fields to take apart [PRE-2], and a `nodrop` one leaves its scope only by moving out [PROV-6]: replace this statement with a call to the function of its module that closes the handle, which also takes a `HandleFactory` reference"
         }

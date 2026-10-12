@@ -1,0 +1,14 @@
+struct Pair {
+  left: Box<u8>;
+  right: u8;
+}
+
+fn denied() -> result: u8 pure {
+  let cell = box_new::<u8>(value: 7_u8);
+  let pair = Pair(left: move cell, right: 1_u8);
+  let held = frozen_new::<Pair>(value: move pair);
+  let Pair(left: taken, right: count) = move held.inner;
+  let first = taken.inner;
+  let sum = first +wrap count;
+  return sum;
+}

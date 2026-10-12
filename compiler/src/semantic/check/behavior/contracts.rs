@@ -535,6 +535,7 @@ fn expanded_contract_goal(
             declaration: *declaration,
             projections: projections.clone(),
             ty: *ty,
+            admission: Default::default(),
         }),
         ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, .. }) => {
             GoalExpression::Datum(GoalDatum::Literal(value.clone()))
@@ -627,6 +628,7 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         Ok(CheckedFunction {
             formal_hypothesis: true,
+            summary_source: None,
             prelude_element: None,
             id: signature.id,
             declaration: signature.declaration,

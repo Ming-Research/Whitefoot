@@ -1,0 +1,3 @@
+fn denied() -> result: Frozen<u8> pure {
+  return Frozen<u8>(inner: 7_u8);
+}

@@ -32,7 +32,7 @@ enum AccessKind {
     Move,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::semantic::check) enum PlaceUseContext {
     Ordinary,
     /// The caller judges a referent without taking its owned value.
@@ -838,6 +838,19 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(node, Production::Psuffix)?;
+        if options.explicit_move
+            || options.context == PlaceUseContext::Ordinary
+            || !self.types.declarations.tree.place_has_dereference(node)?
+        {
+            self.reject_frozen_consume(
+                check_context,
+                node,
+                pbase,
+                &suffixes,
+                bindings,
+                options.explicit_move,
+            )?;
+        }
         if !suffixes.is_empty()
             && self.types.declarations.tree.children(pbase)?.is_empty()
             && let ResolvedTarget::Source {
@@ -883,19 +896,12 @@ impl<'unit> Checker<'_, 'unit> {
                 context, use_node, node, &suffixes, subscript, bindings, options,
             );
         }
-        // [OP-15] a measure is read as a member of the measured place, so
-        // `a.len` is a place form and not a call. The written base decides
-        // nothing about that read: the explicit-place walker resolves a bare
-        // IDENT base exactly as it resolves a `^` path, so routing every
-        // measure member there keeps one implementation of [MSR-1]'s rows,
-        // [MSR-2]'s descriptor-only support and [EFF-2]'s attribution.
-        if self.types.declarations.tree.place_has_dereference(node)?
-            || self
-                .types
-                .declarations
-                .trailing_measure_member(&suffixes)?
-                .is_some()
-        {
+        // [TYPE-7] explicit reference paths use the addressed-place reader.
+        // An ordinary local path is elaborated below before choosing its
+        // reader: [TYPE-10] measure spellings may also name owned fields,
+        // whose moves consume their whole owner under [WIN-3]. A real
+        // measure has no plain field path and reaches that same reader.
+        if self.types.declarations.tree.place_has_dereference(node)? {
             return self.check_dereferenced_place_use(
                 check_context,
                 use_node,
@@ -995,7 +1001,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1139,7 +1145,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1181,7 +1187,7 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Own1,
                         use_node,
                         SemanticIssueKind::MoveOfCopy {
-                            mechanical_fix: "use the copy place without `move`",
+                            mechanical_fix: self.copy_move_repair(use_node)?,
                         },
                     );
                 }
@@ -1370,8 +1376,20 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
-    /// [PROV-6] the operand of a destructuring consume: an ordinary consuming place use, judged by [OWN-1] exactly as
-    /// every other consuming position is.
+    /// [OWN-1, DIAG-1] struct destructuring uses the same copy spelling as
+    /// every other place use; name the complete repaired form at that site.
+    fn copy_move_repair(&self, use_node: NodeId) -> Result<&'static str, CheckStop> {
+        Ok(
+            if self.types.declarations.tree.production(use_node)? == Production::LetStmt {
+                "remove `move` from the destructuring: let N(f: a, ...) = p;"
+            } else {
+                "use the copy place without `move`"
+            },
+        )
+    }
+
+    /// [PROV-6] the operand of struct destructuring, judged by [OWN-1]
+    /// as an ordinary copying or consuming place use.
     pub(super) fn check_consumed_place(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -1388,7 +1406,7 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
             PlaceUseOptions {
                 explicit_move,
-                context: PlaceUseContext::InspectReferent,
+                context: PlaceUseContext::Ordinary,
                 loop_depth,
             },
         )
@@ -1726,6 +1744,10 @@ impl<'unit> Checker<'_, 'unit> {
                         variant: u32::from(id == crate::BuiltinPreludeId::DIV_OVERFLOW),
                     }
                 }
+                crate::BuiltinPreludeId::NEXT | crate::BuiltinPreludeId::NEEDS => Constructor::Enum {
+                    nominal: self.types.prelude_nominal(super::PreludeType::ScanStep)?,
+                    variant: u32::from(id == crate::BuiltinPreludeId::NEEDS),
+                },
                 crate::BuiltinPreludeId::NARROW_ERROR => Constructor::Enum {
                     nominal: self
                         .types
@@ -2119,8 +2141,16 @@ impl<'unit> TypeContext<'unit> {
             // that list, so the two sides of a [TYPE-5] mismatch between
             // `BlockPool<'a>` and `BlockPool<'b>` are not the same word twice.
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominal(id)?.kind {
-                    return Ok(format!("Box<{}>", self.checked_type_name(referent)?));
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominal(id)?.kind
+                {
+                    let name = if release == super::super::model::CheckedReleaseClass::Frozen {
+                        "Frozen"
+                    } else {
+                        "Box"
+                    };
+                    return Ok(format!("{name}<{}>", self.checked_type_name(referent)?));
                 }
                 let written = match self.source_nominal_instance_entry(id)? {
                     Some((template, substitution)) if substitution.len() > 0 => {

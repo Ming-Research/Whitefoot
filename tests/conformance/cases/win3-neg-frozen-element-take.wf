@@ -1,0 +1,6 @@
+fn denied(cells: Array<Box<u8>, 2>) -> result: u8 pure {
+  let held = frozen_new::<Array<Box<u8>, 2>>(value: move cells);
+  let taken = move held.inner[0_u64];
+  let byte = taken.inner;
+  return byte;
+}

@@ -148,6 +148,7 @@ macro_rules! operation_operands {
                 position: value, ..
             }
             | IrOperation::KeySetNew { capacity: value }
+            | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
             // A wake test reads its state, field addresses and captured
             // operands where the watch registers.
@@ -176,6 +177,19 @@ macro_rules! operation_operands {
                 count,
                 set,
             } => vec![$value(table), $value(cursor), $value(count), $value(set)],
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => vec![
+                $value(table),
+                $value(cursor),
+                $value(count),
+                $value(limit),
+                $value(set),
+            ],
             IrOperation::KeySetReadKey { set, index, out } => {
                 vec![$value(set), $value(index), $value(out)]
             }
@@ -269,6 +283,7 @@ macro_rules! operation_operands {
                 projection,
             } => match projection {
                 super::IrPlaceStep::Field { .. }
+                | super::IrPlaceStep::Measure { .. }
                 | super::IrPlaceStep::BoxReferent { .. }
                 | super::IrPlaceStep::EnumVariant { .. } => vec![$value(address)],
                 super::IrPlaceStep::RunElement { offset, .. }

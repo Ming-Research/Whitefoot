@@ -175,6 +175,8 @@ impl IrAddressed {
 /// rediscovers it, and no lowering may infer one action from a type shape.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IrReleaseClass {
+    /// [SHARE-1] release a frozen handle; the last handle releases the value.
+    Frozen,
     /// A free to the general store the run was taken from.
     General,
 }
@@ -319,14 +321,13 @@ pub(crate) fn type_derives_release(
             } => {
                 pending.push(*elements.get(element.index())?);
             }
-            // S39 a cell needs a release exactly when its own storage or
-            // its referent does: a bump extent's cell whose referent derives
-            // nothing needs no walk at all.
+            // [PROV-6] an owned cell or frozen handle has a non-empty
+            // release action even when its content has none.
             IrType::Nominal(id)
                 if matches!(
                     nominal_kind(id),
                     Some(IrNominalKind::Box {
-                        release: IrReleaseClass::General,
+                        release: IrReleaseClass::General | IrReleaseClass::Frozen,
                         ..
                     })
                 ) =>
@@ -418,10 +419,8 @@ pub enum IrNominalKind {
     },
     Box {
         referent: IrType,
-        /// [PROV-6, S39] which release action this cell's own reclamation is.
-        /// The ambient-heap `box<T>` [STOR-1] and a `Box<'s, T>` at a general
-        /// store both free their cell; a `Box<'s, T>` at a bump extent is
-        /// reclaimed by its region's own reset and has no action of its own.
+        /// [PROV-6, STOR-3, SHARE-1] owned-cell or frozen-handle release.
+        /// Frozen content is immutable and released only by its last handle.
         release: IrReleaseClass,
     },
     /// An ordinary opaque nominal supplied by PRE-1.
@@ -768,11 +767,60 @@ impl IrRuntimeTargetObligations {
 /// The [MSR-1] measure one reader row loads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrMeasure {
+    /// Heap bytes retained by a KeySet.
+    Bytes,
     /// Number of pages holding initialized elements.
     Pages,
     Length,
     Capacity,
     Head,
+}
+
+impl IrMeasure {
+    /// A declared [PRE-1, MSR-1] measure fixed by the source type.
+    /// Its readonly reference may share immutable target storage [STOR-7].
+    pub(crate) const fn type_constant(self, ty: IrType) -> Option<u64> {
+        match (self, ty) {
+            (Self::Length, IrType::Array { length, .. }) => Some(length),
+            (
+                Self::Capacity,
+                IrType::Window {
+                    capacity: Some(capacity),
+                    ..
+                },
+            ) => Some(capacity),
+            _ => None,
+        }
+    }
+
+    /// The actual descriptor word of a declared [PRE-1, MSR-2] measure.
+    /// Type-constant fields use immutable target storage instead, and
+    /// [MSR-1] derived observations never name addressable descriptor storage.
+    pub(crate) const fn descriptor_field(self, ty: IrType) -> Option<u32> {
+        match (self, ty) {
+            (Self::Length, IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeySet)
+            | (Self::Length, IrType::Window { .. }) => Some(0),
+            (Self::Length, IrType::Entries { .. }) => Some(2),
+            (Self::Capacity, IrType::Window { capacity: None, .. }) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: Some(_),
+                    ..
+                },
+            ) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: None,
+                    ..
+                },
+            ) => Some(2),
+            _ => None,
+        }
+    }
 }
 
 /// Which of [BLK-3]'s four boundary operations one run operation is.
@@ -803,6 +851,9 @@ impl IrBoundary {
 pub enum IrPlaceStep {
     /// A field of directly stored nominal content.
     Field { nominal: IrNominalId, field: u32 },
+    /// A declared readonly [PRE-1, MSR-2] field, using immutable target
+    /// storage when its value is fixed by the source type.
+    Measure { measure: IrMeasure },
     /// The allocation payload reached through a stored Box owner slot.
     BoxReferent { nominal: IrNominalId },
     /// One payload field of an enum in directly addressed storage.
@@ -1336,6 +1387,15 @@ pub enum IrOperation {
         count: IrValueId,
         set: IrValueId,
     },
+    /// [SHARE-1] a scan whose peak heap growth is at most `limit`.
+    /// Defines the prelude `ScanStep` enum, Next(cursor) or Needs(bytes).
+    ConcurrentHashMapScanWithin {
+        table: IrValueId,
+        cursor: IrValueId,
+        count: IrValueId,
+        limit: IrValueId,
+        set: IrValueId,
+    },
     /// [SHARE-1] makes every entry of the table `table` `None`; the values
     /// they held are released once the statement holding the table gives
     /// its hold up. Defines `Unit`.
@@ -1452,6 +1512,11 @@ pub enum IrOperation {
     KeySetInsert {
         set: IrValueId,
         key: IrValueId,
+    },
+    /// [SHARE-1] reads the heap bytes held by the set's storage, including
+    /// unused allocated capacity. Defines `u64`, an execution input [WAIT-2].
+    KeySetBytes {
+        set: IrValueId,
     },
     /// [SHARE-1] copies the first bytes of the key at `index` of the set
     /// `set` addresses into the range `out`, as many as both lengths allow.
@@ -1983,6 +2048,16 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `reads` entry.
+    /// EFF-1 covers their complete supplied state, including every descendant
+    /// header word; absence of writes is a separate fact above. Narrow rows
+    /// need not cover every implicit descriptor access.
+    pub(crate) whole_read_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `writes` entry.
+    /// Together with another formal's complete read coverage, EFF-5 separates
+    /// each actual header store from every read carrying that formal's scope.
+    /// Compiler-synthesized functions receive neither complete-state fact.
+    pub(crate) whole_write_reference_parameters: Vec<IrValueId>,
     /// Original reference formals whose every declared write lies below the
     /// referent's `Box` content (a path starting with `.inner`), copied from
     /// checked effects, so a call cannot replace the box the formal reaches.

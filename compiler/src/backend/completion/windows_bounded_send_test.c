@@ -33,6 +33,9 @@ static wf_host_operation *operation(void) {
 static void finish_operation(int state) {
     CHECK(state == 1 || state == 2);
     if (state == 2 && wf__context_wait(operation(), &frame)) {
+        /* This handwritten frame has now unwound to its service owner. */
+        wf_context_adopt_wait(&wf_driver_root, &wf_context_root);
+        wf_context_current = NULL;
         while (wf_context_root.record != NULL) {
             wf_driver_reap(&wf_driver_root);
             if (wf_context_root.record == NULL) break;
@@ -43,6 +46,7 @@ static void finish_operation(int state) {
         }
         CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
         CHECK(wf_run_take(&wf_driver_root) == NULL);
+        wf_context_current = &wf_context_root;
     }
     CHECK(wf_driver_root.cancel_waits == NULL);
     CHECK(wf_context_root.timer_slot == 0);

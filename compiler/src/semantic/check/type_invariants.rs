@@ -368,10 +368,12 @@ impl<'unit> Checker<'_, 'unit> {
                 ));
             }
         }
-        // [SHARE-1] the prelude's `shared_new` moves its argument into the
-        // object's state, where every atomic statement assumes the state's
-        // invariants [TYPE-11].
-        if signature.name == "shared_new"
+        // [SHARE-1] the prelude's `shared_new` and `frozen_new` move their
+        // argument into an object that holds it from then on, so the
+        // argument owes its invariants [TYPE-11]; atomic targets establish
+        // a shared state's, and no read of a frozen value establishes them
+        // yet (board item `proof-bl-frozen-invariant-reads`).
+        if matches!(signature.name.as_str(), "shared_new" | "frozen_new")
             && self.types.declarations.tree.is_body_less(signature.node)?
             && let Some(CheckedType::Nominal(nominal)) =
                 signature.parameters.first().map(|parameter| parameter.ty)
@@ -905,6 +907,12 @@ impl TypeContext<'_> {
                 TYPE11_ONE_DATUM_A_SIDE,
             );
         };
+        if left.parameter.is_some() || right.parameter.is_some() {
+            return invalid(
+                "a side is not one datum displaced by a constant",
+                TYPE11_ONE_DATUM_A_SIDE,
+            );
+        }
         if !left.datum.is_exit_state() && !right.datum.is_exit_state() {
             return invalid(
                 "no side names a field or measure of its binder",
@@ -1009,6 +1017,7 @@ fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalEx
             root: binding,
             projections: projections.clone(),
             ty: *ty,
+            admission: Default::default(),
         })),
         GoalExpression::Datum(GoalDatum::Parameter { .. }) => None,
         GoalExpression::Datum(datum) => Some(GoalExpression::Datum(datum.clone())),
@@ -1049,6 +1058,10 @@ pub(super) fn substitute_relation(
     let term = |term: &RelationTerm| RelationTerm {
         datum: substitute_relation_datum(&term.datum, subject),
         displacement: term.displacement,
+        parameter: term
+            .parameter
+            .as_ref()
+            .map(|datum| substitute_relation_datum(datum, subject)),
     };
     RelationTemplate {
         operation: relation.operation,

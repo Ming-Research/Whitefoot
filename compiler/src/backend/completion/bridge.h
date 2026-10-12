@@ -310,6 +310,11 @@ int wf__completion_pending(const void *record);
 
 /* ------------------------------------------------------ waiting contexts */
 
+/* The execution's driver count, fixed before the entry receives Inputs.
+ * Establishes root-ring availability without starting a helper or executor;
+ * later lazy context startup must start exactly this many driver roles. */
+uint64_t wf__context_driver_count(void);
+
 /* Contexts [WAIT-2], each a chain of resumable frames
  * (design/compiler/waiting-contexts.md).  The emitted code of a
  * waiting function allocates its frame with `wf__context_frame_allocate` and
@@ -363,6 +368,14 @@ int wf__context_join_wait(uint64_t *group, void *frame);
  * `wf__shared_release` removes one, returning nonzero when it was the last,
  * after which the emitted code drops the state and calls `wf__shared_free`. */
 #define WF_SHARED_STATE_OFFSET 64u
+/* Frozen handles point directly at aligned, immutable value storage. The
+ * header contains only a count and the allocator extent, with no object lock.
+ * The last acq_rel release precedes the emitted value release and free. */
+void *wf__frozen_new(uint64_t value_bytes);
+void wf__frozen_share(void *value);
+int wf__frozen_release(void *value);
+void wf__frozen_free(void *value);
+
 void *wf__shared_new(uint64_t state_bytes);
 void wf__shared_share(void *object);
 int wf__shared_release(void *object);
@@ -414,9 +427,11 @@ void wf__shared_seen(unsigned moment);
 struct wf_key_set;
 struct wf_table_entry;
 void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
+uint64_t wf__key_set_bytes(const struct wf_key_set *set);
 uint64_t wf__key_set_insert(struct wf_key_set *set, const unsigned char *key, uint64_t length);
-/* Gives a set's memory back, taking the set's `store` alone, NULL for none,
- * as the emitted code holds a set in two registers. */
+/* Returns all a source set's grants to the heap, without retaining a spare,
+ * taking the set's `store` alone, NULL for none, as emitted code holds a set
+ * in two registers. */
 void wf__key_set_free(void *store);
 /* The length of the set's key at `index`, below its count, after copying as
  * many of its first bytes as `room` allows to `out`. */
@@ -437,7 +452,9 @@ uint64_t wf__key_set_read_key(const struct wf_key_set *set, uint64_t index, unsi
  * `wf__keyed_table_scan` is one step of a scan [SHARE-1] by a statement
  * holding or reading the table whole: it inserts into `set` the present
  * keys whose positions lie from `cursor` to its answer, 0 for the last
- * position, and writes nothing of the table.  `wf__keyed_table_clear`
+ * position, and writes nothing of the table. Its `scan_within` counterpart
+ * bounds peak heap growth by limit and returns the ScanStep payload with
+ * its tag in *needs (Next = 0, Needs = 1). `wf__keyed_table_clear`
  * empties a table its caller's hold holds whole; the entries go to a table
  * of their own, which `release`, the table's drop helper, drains and frees
  * when that hold is given up (`wf__table_hold_release`). */
@@ -446,14 +463,19 @@ uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_wi
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
 void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+uint64_t wf__keyed_table_scan_within(void *table, uint64_t cursor, uint64_t count, uint64_t limit,
+                                    struct wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                                    uint32_t tag_width, uint64_t none_tag);
+
 uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, struct wf_key_set *set,
                               uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *));
-/* Releases the cells a table keeps as its reserve for the next move of its
- * size and returns their bytes, or 0 when it keeps none or another thread
- * holds the table's own lock; it changes no entry and needs no hold
- * [SHARE-1]. */
+/* Releases spare cells and retired tables protected by neither an active
+ * user's publication nor the whole-map gate, returning their counted heap
+ * bytes including table headers, or 0 when nothing is reclaimable or the
+ * short lock is busy. It changes no entry, waits for no holder, helps no
+ * move, and needs no hold [SHARE-1]. */
 uint64_t wf__keyed_table_release_reserve(void *table);
 
 /* One key: locks the entry, or reads it beside other readers when `read`
@@ -480,7 +502,9 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
 void wf__atomic_group_take(void *record, uint64_t count);
-void wf__atomic_group_release(void *record, uint64_t count);
+/* Each group has one entry layout; object-only groups consume no metadata. */
+void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
 void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);
@@ -606,6 +630,7 @@ uint64_t wf__guard_clock_ns(void);
 /* Emitted heap storage uses the optional heap.c unit; accounting and reads
  * are always available without allocator references. Resident observation
  * returns 1 with bytes written, or 0 when the host cannot report it. */
+extern const unsigned char wf__empty_window[64];
 void *wf__heap_take(uint64_t bytes);
 void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes);
 void wf__heap_give(void *block, uint64_t bytes);
@@ -614,7 +639,7 @@ uint64_t wf__heap_in_use(void);
 int wf__resident_bytes(uint64_t *bytes);
 
 /* What the runtime's concurrent maps take from this runtime: the number of
- * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a
+ * the physical executor running the caller, below WF_CMAP_MAX_USERS, which numbers a
  * map's users; blocks from the context pool, never from the program's
  * allocator [STOR-8]; a yield of the processor; and the end a frame no
  * memory can hold brings. */

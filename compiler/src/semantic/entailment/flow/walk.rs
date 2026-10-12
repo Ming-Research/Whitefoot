@@ -71,6 +71,11 @@ impl Reasoning<'_, '_, '_> {
                 proof,
                 &self.vocabulary.derivations,
             );
+            self.vocabulary.establish_postcondition_affine(
+                &instantiated.relation,
+                proof,
+                &mut state.affine,
+            );
         }
     }
 }
@@ -105,6 +110,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Positive,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -120,6 +126,7 @@ impl Judging<'_, '_, '_> {
                 state.establish_goal(
                     *goal,
                     GoalSign::Negative,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -250,6 +257,7 @@ impl Analyzer<'_, '_> {
         // right-hand side; both are judged at this point, then the commit
         // kill applies.
         let target_reached = self.judge_set_target(target, state);
+        let destination = set_target_place(target);
         let mut result = self.capture_result(node_path, value, state);
         let affine_value = self
             .reasoning()
@@ -344,6 +352,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_measure_datums(
                 node_path,
                 destination,
+                Some((target, &[])),
                 carry,
                 &mut state.facts,
             );
@@ -371,6 +380,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_construct_placements(
                 node_path,
                 &base,
+                Some(target),
                 &constructed,
                 &mut state.facts,
             );
@@ -385,17 +395,46 @@ impl Analyzer<'_, '_> {
         // target's own kills the events every substitution must survive.
         if commit_reached
             && let Some(prepared) = prepared.as_ref()
-            && let CheckedSetTarget::Place(place) = target
+            && let Some(mut place) = destination
         {
-            let destinations = vec![Some((
-                place.binding,
-                place
-                    .fields
-                    .iter()
-                    .map(|field| GoalProjection::Field(*field))
-                    .collect::<Vec<_>>(),
-                place.ty,
-            ))];
+            // [SET-1, ENT-2] this place captured its offsets before the RHS.
+            // A write of an offset binding ends that spelling as a name for
+            // the captured value, just as it does for a pre-existing reference.
+            // Keep the evaluation capture so publication cannot reach a later
+            // access through the binding's new value.
+            let bindings = place.spelled_indices().collect::<Vec<_>>();
+            let mut identity_preserved = true;
+            for (capture, binding) in bindings {
+                if prepared.kills.iter().any(|event| {
+                    self.input.affine_event_kills_binding(
+                        &prepared.entry_separations(&state.separations),
+                        binding,
+                        event,
+                    )
+                }) || target_kills.iter().any(|event| {
+                    self.input
+                        .affine_event_kills_binding(&state.separations, binding, event)
+                }) {
+                    // A direct page selection can already have discarded its
+                    // occurrence in favor of current spelling. That spelling
+                    // cannot name the old value after this write, and minting
+                    // a replacement capture would assert an invented identity.
+                    if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
+                        identity_preserved = false;
+                        break;
+                    }
+                    place.supersede_binding(binding);
+                }
+            }
+            let destinations = vec![identity_preserved.then(|| {
+                (
+                    target.binding(),
+                    ResultDestination::SetTarget {
+                        target: target.clone(),
+                        place,
+                    },
+                )
+            })];
             self.reasoning().establish_result_list_destinations(
                 node_path,
                 &destinations,
@@ -582,6 +621,7 @@ impl Analyzer<'_, '_> {
                     self.reasoning().establish_construct_placements(
                         node_path,
                         &base,
+                        None,
                         &constructed,
                         &mut state.facts,
                     );
@@ -691,7 +731,10 @@ impl Analyzer<'_, '_> {
                     {
                         state.affine.values.insert(*binding, value);
                     }
-                    destinations.push(Some((*binding, Vec::new(), *ty)));
+                    destinations.push(Some((
+                        *binding,
+                        ResultDestination::Place(PlaceRoot::Binding(*binding), Vec::new()),
+                    )));
                 }
                 if judgment.reached {
                     for (ordinal, carry) in &taken {
@@ -702,6 +745,7 @@ impl Analyzer<'_, '_> {
                         self.reasoning().establish_measure_datums(
                             node_path,
                             destination,
+                            None,
                             carry,
                             &mut state.facts,
                         );
@@ -1705,6 +1749,7 @@ impl Analyzer<'_, '_> {
                         },
                         element: false,
                         source: node_path.clone(),
+                        relocation: false,
                         narrowed: None,
                     }]);
                     kills.set_bindings.insert(*binder);
@@ -1910,6 +1955,7 @@ impl Analyzer<'_, '_> {
                 self.reasoning().establish_measure_datums(
                     &binder.node_path,
                     destination,
+                    None,
                     carry,
                     &mut state.facts,
                 );

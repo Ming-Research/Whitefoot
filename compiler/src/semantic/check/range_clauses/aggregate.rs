@@ -1,11 +1,12 @@
-//! Value equality in generic and nongeneric range clauses [RANGE-1].
+//! Value equality and bare Bool guards in range clauses [RANGE-1].
 
 use super::*;
 use crate::semantic::range_facts::MAX_RANGE_ATOMS;
 
 /// A noninteger operand survives until its enclosing comparison decides
-/// whether to expand it. Other uses leave a concrete generic clause unformed
-/// and reject a nongeneric clause under RANGE-1.
+/// whether to expand it, or a bare guard selects its Bool tag. Other uses
+/// leave a concrete generic clause unformed and reject a nongeneric clause
+/// under RANGE-1.
 pub(super) struct RangeOperand {
     term: CheckedRangeTerm,
     aggregate: Option<CheckedType>,
@@ -21,6 +22,39 @@ impl From<CheckedRangeTerm> for RangeOperand {
 }
 
 impl RangeOperand {
+    /// [RANGE-1, PRE-1] Bool is True first, False second. Reuse the tag
+    /// projection of value equality, with the ordinary read domain retained.
+    pub(super) fn bool_guard(
+        self,
+        checker: &Checker<'_, '_>,
+        node: NodeId,
+    ) -> Result<Vec<CheckedRangeRelation>, CheckStop> {
+        if self.aggregate != Some(CheckedType::Bool)
+            || !matches!(
+                self.term,
+                CheckedRangeTerm::Read { .. } | CheckedRangeTerm::Value(_)
+            )
+        {
+            return checker.invalid_range(
+                SemanticRule::Range1,
+                node,
+                "a bare range guard is not a Bool element projection or live own-mode Bool binding",
+                "write one Bool element projection or own-mode binding, or compare integer range terms",
+            );
+        }
+        Ok(vec![CheckedRangeRelation {
+            node: checker.types.declarations.tree.path(node)?.clone(),
+            left: projected(
+                self.term,
+                Some(CheckedRangeProjection::Tag(2)),
+                IntegerType::U64,
+            ),
+            comparison: RangeComparison::Equal,
+            right: CheckedRangeTerm::Constant(0),
+            projected: false,
+        }])
+    }
+
     pub(super) fn typed(term: CheckedRangeTerm, ty: CheckedType, names: &RangeNames) -> Self {
         Self {
             term,

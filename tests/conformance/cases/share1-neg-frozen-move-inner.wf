@@ -1,0 +1,6 @@
+fn denied() -> result: Box<u8> pure {
+  let cell = box_new::<u8>(value: 7_u8);
+  let held = frozen_new::<Box<u8>>(value: move cell);
+  let taken = move held.inner;
+  return move taken;
+}

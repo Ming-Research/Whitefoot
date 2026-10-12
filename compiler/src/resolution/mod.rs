@@ -13,6 +13,9 @@ mod scopes;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use tests::with_each_declaration_role;
+
 use crate::syntax::NodeId;
 use crate::{CanonicalSyntaxUnit, NodePath, SyntaxCoordinate};
 
@@ -167,6 +170,12 @@ impl BuiltinPreludeId {
     pub(crate) const FLOAT: Self = Self(23);
     pub(crate) const EQ: Self = Self(24);
     pub(crate) const RUN: Self = Self(25);
+
+    pub(crate) const SCAN_STEP: Self = Self(26);
+    pub(crate) const NEXT: Self = Self(27);
+    pub(crate) const NEXT_CURSOR: Self = Self(28);
+    pub(crate) const NEEDS: Self = Self(29);
+    pub(crate) const NEEDS_BYTES: Self = Self(30);
 
     /// Returns the internal built-in record index.
     #[must_use]

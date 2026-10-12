@@ -160,74 +160,100 @@ fn record_reading(bytes: &[u8], limits: CompilerLimits) -> Option<Reading> {
     Some(Reading { digests, meaning })
 }
 
-/// The declarations of other modules that one check of `target` reached:
-/// every declaration its own records name, and every declaration the items
-/// of reached declarations name, by module, role and spelling. Items are
-/// followed by the keys resolution minted for them. PRE-1 declarations are
-/// the compiler's own and belong to no module.
-pub(super) fn read_declarations(
-    resolved: &crate::ResolvedSyntaxUnit,
-    target: crate::ModuleId,
-) -> Option<BTreeSet<(crate::ModuleId, ItemName)>> {
-    let bundle = resolved.syntax().classified_bundle().source_bundle();
-    let module_of = |key: &crate::ItemKey| match key {
-        crate::ItemKey::Declared {
-            home: crate::ItemHome::Module { package, path, .. },
-            ..
-        } => bundle
-            .modules()
-            .iter()
-            .position(|module| module.package_key() == *package && module.path() == path),
-        _ => None,
-    };
-    let item_of = |node: &crate::NodePath| resolved.item_key(*node.components().first()?);
-    // The items each item's uses name.
-    let mut named = BTreeMap::<&crate::ItemKey, BTreeSet<&crate::ItemKey>>::new();
-    let uses = resolved.lexical_uses().iter().chain(
-        resolved
-            .postconditions()
-            .iter()
-            .flat_map(|record| &record.provisional_uses),
-    );
-    for record in uses {
-        let ResolvedTarget::Source { declaration, .. } = record.target() else {
-            continue;
+/// Immutable adjacency and module roots shared by every declaration-read
+/// query over one resolved unit. No semantic judgment is retained here.
+pub(super) struct DeclarationReads<'unit> {
+    named: BTreeMap<&'unit crate::ItemKey, BTreeSet<&'unit crate::ItemKey>>,
+    roots: BTreeMap<crate::ModuleId, Vec<&'unit crate::ItemKey>>,
+    modules: BTreeMap<&'unit crate::ItemKey, crate::ModuleId>,
+}
+
+impl<'unit> DeclarationReads<'unit> {
+    pub(super) fn new(resolved: &'unit crate::ResolvedSyntaxUnit) -> Option<Self> {
+        let bundle = resolved.syntax().classified_bundle().source_bundle();
+        let module_of = |key: &crate::ItemKey| match key {
+            crate::ItemKey::Declared {
+                home: crate::ItemHome::Module { package, path, .. },
+                ..
+            } => bundle
+                .modules()
+                .iter()
+                .position(|module| module.package_key() == *package && module.path() == path)
+                .and_then(crate::ModuleId::from_index),
+            _ => None,
         };
-        let Some(from) = item_of(record.origin().node()) else {
-            continue;
-        };
-        let to = resolved.declaration(declaration)?.key().item();
-        if from != to {
-            named.entry(from).or_default().insert(to);
-        }
-    }
-    let view = SyntaxView::new(resolved.syntax()).ok()?;
-    let items = view.items().ok()?.len();
-    let mut pending = (0..items)
-        .filter_map(|ordinal| resolved.item_key(u32::try_from(ordinal).ok()?))
-        .filter(|key| module_of(key) == Some(target.index()))
-        .collect::<Vec<_>>();
-    let mut visited = pending.iter().copied().collect::<BTreeSet<_>>();
-    let mut reached = BTreeSet::new();
-    while let Some(item) = pending.pop() {
-        for next in named.get(item).into_iter().flatten().copied() {
-            if !visited.insert(next) {
+        let item_of = |node: &crate::NodePath| resolved.item_key(*node.components().first()?);
+        // The items each item's uses name, including provisional contract uses.
+        let mut named = BTreeMap::<&crate::ItemKey, BTreeSet<&crate::ItemKey>>::new();
+        let uses = resolved.lexical_uses().iter().chain(
+            resolved
+                .postconditions()
+                .iter()
+                .flat_map(|record| &record.provisional_uses),
+        );
+        for record in uses {
+            let ResolvedTarget::Source { declaration, .. } = record.target() else {
                 continue;
+            };
+            let Some(from) = item_of(record.origin().node()) else {
+                continue;
+            };
+            let to = resolved.declaration(declaration)?.key().item();
+            if from != to {
+                named.entry(from).or_default().insert(to);
             }
-            // A PRE-1 item is the compiler's own; its meaning is the
-            // compiler's identity, which scopes every record.
-            let Some(module) = module_of(next) else {
-                continue;
-            };
-            let crate::ItemKey::Declared { role, spelling, .. } = next else {
-                return None;
-            };
-            reached.insert((
-                crate::ModuleId::from_index(module)?,
-                (declaration_role(*role)?.to_owned(), spelling.clone()),
-            ));
-            pending.push(next);
         }
+        let view = SyntaxView::new(resolved.syntax()).ok()?;
+        let items = view.items().ok()?.len();
+        let mut roots = BTreeMap::<_, Vec<_>>::new();
+        let mut modules = BTreeMap::new();
+        for key in
+            (0..items).filter_map(|ordinal| resolved.item_key(u32::try_from(ordinal).ok()?))
+        {
+            if let Some(module) = module_of(key) {
+                roots.entry(module).or_default().push(key);
+                modules.insert(key, module);
+            }
+        }
+        Some(Self {
+            named,
+            roots,
+            modules,
+        })
     }
-    Some(reached)
+
+    /// The declarations of other modules that one check of `target` reached:
+    /// every declaration its own records name, and every declaration the items
+    /// of reached declarations name, by module, role and spelling. Items are
+    /// followed by the keys resolution minted for them. PRE-1 declarations are
+    /// the compiler's own and belong to no module.
+    pub(super) fn read_declarations(
+        &self,
+        target: crate::ModuleId,
+    ) -> Option<BTreeSet<(crate::ModuleId, ItemName)>> {
+        let mut pending = self.roots.get(&target).cloned().unwrap_or_default();
+        let mut visited = pending.iter().copied().collect::<BTreeSet<_>>();
+        let mut reached = BTreeSet::new();
+        while let Some(item) = pending.pop() {
+            for next in self.named.get(item).into_iter().flatten().copied() {
+                if !visited.insert(next) {
+                    continue;
+                }
+                // A PRE-1 item is the compiler's own; its meaning is the
+                // compiler's identity, which scopes every record.
+                let Some(&module) = self.modules.get(next) else {
+                    continue;
+                };
+                let crate::ItemKey::Declared { role, spelling, .. } = next else {
+                    return None;
+                };
+                reached.insert((
+                    module,
+                    (declaration_role(*role)?.to_owned(), spelling.clone()),
+                ));
+                pending.push(next);
+            }
+        }
+        Some(reached)
+    }
 }

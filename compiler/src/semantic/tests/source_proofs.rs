@@ -568,7 +568,8 @@ fn combine(flag: Bool, a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit: u
         };
         assert!(super::entailment::root_has_invariant_source(
             &combine.entailment,
-            call.derivation.expect("the common bound discharges the call"),
+            call.derivation
+                .expect("the common bound discharges the call"),
             &proof.node_path,
         ));
     });

@@ -215,6 +215,96 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn borrowed_conditional_dispatch_conflicts_with_a_write_to_its_guard() {
+    use super::super::permission::{PermissionSignature, analyze_permission};
+    use crate::semantic::{CheckedExpression, CheckedStatement};
+
+    let source = br#"fn write_flag(flag: &Bool) -> result: unit writes(flag) {
+  set flag^ = True();
+  return unit;
+}
+
+fn touch(out: &u64) -> result: unit writes(out) {
+  set out^ = 1_u64;
+  return unit;
+}
+
+fn both(flag: &Bool, other: &Bool, out: &u64) -> result: unit writes(flag), writes(out) {
+  let guard = &flag^;
+  write_flag(flag: flag);
+  if flag^ {
+    touch(out: out);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for independent in [false, true] {
+        let source = if independent {
+            std::str::from_utf8(source)
+                .unwrap()
+                .replace("write_flag(flag: flag);", "write_flag(flag: other);")
+                .replace(
+                    "writes(flag), writes(out)",
+                    "reads(flag), writes(other), writes(out)",
+                )
+        } else {
+            std::str::from_utf8(source).unwrap().to_owned()
+        };
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(mut checked) = outcome else {
+                panic!("permission fixture must check: {outcome:?}");
+            };
+            let functions = &mut checked.data.functions;
+            let function = functions.iter_mut().find(|f| f.name == "both").unwrap();
+            let body = function.body.as_mut().unwrap();
+            let CheckedStatement::Let { value: guard, .. } = &body[0] else {
+                panic!("guard reference formation");
+            };
+            assert!(matches!(guard, CheckedExpression::BorrowAddressed { .. }));
+            let guard = guard.clone();
+            let CheckedStatement::Match { scrutinee, .. } = &mut body[2] else {
+                panic!("if lowers to match");
+            };
+            // GRAM-6 admits only an own Bool condition. Exercise the borrowed
+            // checked-dispatch footprint without inventing invalid WF syntax.
+            *scrutinee = guard;
+            let signatures = functions
+                .iter()
+                .map(|function| PermissionSignature {
+                    name: function.name.clone(),
+                    parameter_declarations: function
+                        .parameters
+                        .iter()
+                        .map(|p| p.declaration)
+                        .collect(),
+                    parameter_modes: function.parameters.iter().map(|p| p.mode).collect(),
+                    parameter_releases: vec![false; function.parameters.len()],
+                    reads: function.declared_state_reads.clone(),
+                    writes: function.declared_state_writes.clone(),
+                })
+                .collect::<Vec<_>>();
+            let table = analyze_permission(functions, &signatures, &vec![true; functions.len()]);
+            let formation = pair_of(&table, "both", "a let statement", "write_flag");
+            assert!(formation.verdict.is_eligible(), "{formation:?}");
+            let pair = pair_of(&table, "both", "write_flag", "a conditional call");
+            if independent {
+                assert!(pair.verdict.is_eligible(), "{pair:?}");
+            } else {
+                let Denial::Footprint { kind, sides, .. } = denial(pair, 1) else {
+                    panic!("expected a dispatch read conflict, got {:?}", pair.verdict);
+                };
+                assert_eq!(kind.halves(), ("write", "operand read"));
+                assert_eq!(*sides, (PairSide::First, PairSide::Second));
+            }
+        });
+    }
+}
+
+#[test]
 fn conditional_call_separation_uses_the_state_before_the_condition() {
     let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;
@@ -2834,7 +2924,7 @@ fn bound_await(body: &str) -> Option<u32> {
          fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
          std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
          fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &handles, directory: move cwd_write);\n  \
          let factory = std::io::factory_share(factory: &handles);\n  \
@@ -3149,7 +3239,7 @@ fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let factory = std::io::factory_share(factory: &handles);

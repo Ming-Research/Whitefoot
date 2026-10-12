@@ -13,15 +13,38 @@ fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
 }
 
 #[test]
-fn heap_reading_tracks_boxes_grown_cells_and_shared_map_storage() {
+fn heap_reading_tracks_boxes_release_grown_cells_maps_and_key_set_storage() {
+    // PRE-1: release returns a nonempty boxed window and its boxed element,
+    // an empty window (whose header STOR-1 does not count), and a struct
+    // owning two cells to the baseline.
+    // STOR-1: status 15 catches counted empty headers, zero growth or
+    // wrong growth extents (48 bytes for u64, 16 for zero-byte elements);
+    // status 16 catches release imbalance after those owners leave scope.
     // PRE-2: the map's two waves distinguish newly carved and reused nodes.
     // A presized table avoids moves masking node deltas: on the unfixed
     // runtime insertion contributes zero bytes and exits with status 8.
     // Status 9 independently catches missing host-mapped cell accounting;
     // 11 catches retained free nodes, and 14 catches drain/drop imbalance.
+    // SHARE-1: key_set_bytes includes unused capacity, insertion and scan
+    // growth, and answers exactly the bytes explicit release returns. The
+    // prior compiler refuses that operation; omitting growth from its answer
+    // yields 29 or 33, and retaining a released grant yields 40 or 42.
     let program = build_program(&compile_program("memory_statistics.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+fn paged_small_owners_count_only_their_actual_page_extent_and_release_to_baseline() {
+    // Zero capacity and empty release count nothing. U64 capacities 1, 2,
+    // 3 and 4 use 8, 16, 32 and 32 page bytes plus the 32-byte cell.
+    // The program checks sparse page-zero replacement, growth past B,
+    // every retained element, small/full cleanup and zero-stride bytes.
+    let program = build_program(&compile_program("paged_small_owners.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]
@@ -29,7 +52,7 @@ fn owned_element_assignments_release_displaced_boxes_at_commit_and_scope_exit() 
     let program = build_program(&compile_program("element_assignment_release.wf"));
     // args_count includes argv[0]. Each case runs in a fresh process so a
     // failure in one target shape cannot hide the other shapes' observations.
-    // Capacities zero and sixteen check header-only and nonempty allocations.
+    // Capacities zero and sixteen check shared empty headers and nonempty allocations.
     let failures = [
         "direct Slots Box field control",
         "direct Slots payload struct",
@@ -75,7 +98,11 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
     let program = build_program(&compile_program("memory_contexts.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
     }
 }
 

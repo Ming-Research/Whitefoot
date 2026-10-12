@@ -144,8 +144,8 @@ use super::model::{
 };
 use super::permission::{
     CallProjection, Footprint, Program, argument_places, binding_read_projection, call_projection,
-    collect_consumed_places, collect_operand_reads, container_steps, field_steps, set_target_place,
-    visit_read_bindings,
+    collect_consumed_places, collect_operand_reads, container_steps, field_steps, match_referents,
+    set_target_place, visit_read_bindings,
 };
 use super::places::{PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations};
 use super::range_facts::CheckedCertifiedLoop;
@@ -1762,7 +1762,10 @@ impl<'check, 'run> Survey<'check, 'run> {
                 }
             }
             CheckedStatement::Match { scrutinee, .. }
-            | CheckedStatement::ValueMatchLet { scrutinee, .. } => self.expression(scrutinee),
+            | CheckedStatement::ValueMatchLet { scrutinee, .. } => {
+                self.expression(scrutinee);
+                self.record_match_dispatch_reads(scrutinee);
+            }
             // A nested loop is judged on its own terms elsewhere; here its
             // endpoint atoms are two ordinary reads this iteration performs.
             // No rule joins two index ranges into one iteration space.
@@ -2402,6 +2405,37 @@ impl<'check, 'run> Survey<'check, 'run> {
         }
     }
 
+    /// Dispatch reads every resolved referent's tag, including its element
+    /// map when the borrowed selection carries one [EFF-2, OWN-13, PAR-2].
+    fn record_match_dispatch_reads(&mut self, scrutinee: &CheckedExpression) {
+        let Some(referents) = match_referents(self.places, scrutinee) else {
+            return;
+        };
+        if referents.is_empty() {
+            self.unresolved.get_or_insert(self.cite.clone());
+        }
+        for element in self.element_arguments(std::slice::from_ref(scrutinee)) {
+            self.element_reads.push(ProvenElementRead {
+                root: element.root,
+                map: element.map,
+                page: element.page,
+            });
+        }
+        for place in referents {
+            let PlaceRoot::Binding(binding) = place.root else {
+                continue;
+            };
+            self.reads.push(ReadOccurrence {
+                binding,
+                places: vec![place],
+                carrier: scrutinee.carrier().cloned(),
+                measure: false,
+                page_descriptor: false,
+                element_measure: false,
+            });
+        }
+    }
+
     /// One proved element read per resolved place, when a subscript of the
     /// read carries a map affine in this loop's binder.
     fn record_element_reads(
@@ -3024,7 +3058,9 @@ fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
             CheckedPlaceStep::Subscript(index) => {
                 Some((&index.obligation, checked_type_is_ring(index.base_type)))
             }
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
         })
         .collect()
 }

@@ -1231,7 +1231,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next()
         .expect("element store")
         .strip_prefix(&store_text)
-        .expect("element address operand");
+        .expect("element address operand")
+        .split(", !tbaa !")
+        .next()
+        .expect("element address before optional metadata");
     let prepared = main
         .find(&format!("{address} = getelementptr "))
         .expect("the complete element address is prepared once");
@@ -1540,10 +1543,11 @@ fn main() -> status: std::process::ExitStatus pure {
     let module = retain_calls(&compile(source))
         .replace("@wf__heap_take(", "@wf_test_allocate(")
         .replace("@wf__heap_give(", "@wf_test_release(");
-    let observer = super::owned_places::allocation_observer(3, 0);
+    // STOR-1: the capacity-zero array now allocates nothing.
+    let observer = super::owned_places::allocation_observer(2, 0);
     let output = super::compile_link_and_run(&module, Some(&observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert_eq!(output.stdout, b"A1;A2;A3;F3;F2;F1;", "{output:?}");
+    assert_eq!(output.stdout, b"A1;A2;F2;F1;", "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 

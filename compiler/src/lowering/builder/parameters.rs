@@ -137,6 +137,8 @@ mod tests {
             name: "forwarding_cycles".into(),
             parameters: parameters(0..8),
             readonly_reference_parameters: vec![value(2)],
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
             box_keeping_reference_parameters: Vec::new(),
             source_signature: None,
             source_calls: Vec::new(),

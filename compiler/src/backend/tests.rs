@@ -27,6 +27,7 @@ mod exhaustion;
 mod float_conversion;
 mod floating;
 mod frames;
+mod frozen;
 mod generics;
 mod heap_programs;
 mod indexed_reductions;
@@ -34,6 +35,7 @@ mod integer_absolute;
 mod integer_conversion;
 mod integer_extended;
 mod integer_negation;
+mod layout_transfers;
 mod loop_split;
 mod match_dispatch;
 mod owned_places;
@@ -73,6 +75,7 @@ mod resource_enums;
 mod result_abi;
 mod shared_maps;
 mod stack_ledger;
+mod storage_alias;
 mod system;
 mod tail_calls;
 mod target_frame;
@@ -383,6 +386,7 @@ fn append_runtime_units_with_library_defines(
     command: &mut Command,
     directory: &Path,
     library_defines: &[String],
+    library_fixture: &str,
     needs_heap: bool,
 ) -> Option<Vec<&'static str>> {
     let units = [
@@ -415,7 +419,10 @@ fn append_runtime_units_with_library_defines(
         ("completion/file_adapter.c", COMPLETION_FILE_ADAPTER_SOURCE),
         ("completion/file_posix.c", COMPLETION_FILE_POSIX_SOURCE),
         ("completion/completion_bridge.c", COMPLETION_BRIDGE_SOURCE),
-        ("completion/stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
+        (
+            "completion/stop_signals.c",
+            crate::COMPLETION_STOP_SIGNALS_SOURCE,
+        ),
         (
             "completion/linux_io_uring.c",
             COMPLETION_LINUX_IO_URING_SOURCE,
@@ -427,8 +434,12 @@ fn append_runtime_units_with_library_defines(
     std::fs::create_dir_all(directory.join("completion")).expect("stage completion directory");
     std::fs::create_dir_all(directory.join("sched")).expect("stage scheduler directory");
     for (name, source) in units {
-        std::fs::write(directory.join(name), source).expect("write ordinary library unit");
+        let fixture_source = (name == "ordinary_values.c" && !library_fixture.is_empty())
+            .then(|| format!("{source}\n{library_fixture}\n"));
+        std::fs::write(directory.join(name), fixture_source.as_deref().unwrap_or(source))
+            .expect("write ordinary library unit");
     }
+    let custom_library = !library_defines.is_empty() || !library_fixture.is_empty();
     let mut artifacts: Vec<_> = units.into_iter().map(|(name, _)| name).collect();
     command
         .arg("-I")
@@ -440,7 +451,7 @@ fn append_runtime_units_with_library_defines(
         if name.ends_with(".h")
             || name == "concurrent_map.c"
             || (name == "heap.c" && !needs_heap)
-            || (name == "ordinary_values.c" && !library_defines.is_empty())
+            || (name == "ordinary_values.c" && custom_library)
         {
             continue;
         }
@@ -449,7 +460,7 @@ fn append_runtime_units_with_library_defines(
             .arg(if name.ends_with(".ll") { "ir" } else { "c" })
             .arg(directory.join(name));
     }
-    if !library_defines.is_empty() {
+    if custom_library {
         // A scripted linked body interposes this library translation unit's
         // private dependencies. The WF module and native engine stay unchanged.
         let mut library = Command::new(crate::clang_executable());
@@ -508,8 +519,28 @@ pub(super) fn build_linked_executable_with_library_defines(
     library_defines: &[String],
     directory: &Path,
 ) -> PathBuf {
+    build_linked_executable_with_library_fixture(llvm, host, defines, library_defines, "", directory)
+}
+
+/// Appends a test-only fixture to the staged ordinary library translation unit,
+/// so its call sites receive exactly the runtime's facility substitutions.
+pub(super) fn build_linked_executable_with_library_fixture(
+    llvm: &str,
+    host: Option<&str>,
+    defines: &[String],
+    library_defines: &[String],
+    library_fixture: &str,
+    directory: &Path,
+) -> PathBuf {
     crate::native_test_support::timed("native-build", || {
-        build_linked_executable_inner(llvm, host, defines, library_defines, directory)
+        build_linked_executable_inner(
+            llvm,
+            host,
+            defines,
+            library_defines,
+            library_fixture,
+            directory,
+        )
     })
 }
 
@@ -518,6 +549,7 @@ fn build_linked_executable_inner(
     host: Option<&str>,
     defines: &[String],
     library_defines: &[String],
+    library_fixture: &str,
     directory: &Path,
 ) -> PathBuf {
     let module = directory.join("program.ll");
@@ -547,15 +579,14 @@ fn build_linked_executable_inner(
     // dependencies, using the same build inputs as the driver. Source
     // classification never selects a second linkage or callable ABI.
     let mut staged_units = Vec::new();
-    let needs_heap = llvm.contains("@wf__heap_take(")
-        || llvm.contains("@wf__heap_give(")
-        || llvm.contains("@wf__heap_retake(")
-        || host.is_some_and(|source| {
+    let needs_heap = crate::module_requires_heap_runtime(llvm)
+        || host.into_iter().chain([library_fixture]).any(|source| {
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")
                 || source.contains("wf__heap_retake(")
+                || source.contains("wf__empty_window")
         });
-    if defines.is_empty() && library_defines.is_empty() {
+    if defines.is_empty() && library_defines.is_empty() && library_fixture.is_empty() {
         // These inputs and options are immutable for this test executable.
         // Keep each program and observer fresh, but compile the ordinary
         // library once. Macro-interposed cases retain their own C build below.
@@ -577,6 +608,7 @@ fn build_linked_executable_inner(
             &mut command,
             directory,
             library_defines,
+            library_fixture,
             needs_heap,
         ) {
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
@@ -998,7 +1030,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let llvm = emit(source);
     assert!(llvm.contains("switch i1"));
-    assert!(llvm.contains("switch i32"));
+    assert!(llvm.contains("switch i8"));
     // compiler/payload-enum-layout: `Payload`'s product, the tag and four
     // payload leaves, does not return in registers, so it is a union of
     // variant views; `Compact`'s tag and two leaves do, so it keeps the
@@ -1013,7 +1045,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "{llvm}"
     );
     assert!(
-        llvm.contains(&format!("{compact} = type {{ i32, i32, i64 }}")),
+        llvm.contains(&format!("{compact} = type {{ i8, i32, i64 }}")),
         "{llvm}"
     );
     // The address one `getelementptr inbounds` into `ty` at `field` defines.
@@ -1026,8 +1058,10 @@ fn main() -> status: std::process::ExitStatus pure {
         })
     };
     // Every constructor initializes the complete result, then stores its
-    // `i32` tag at field 0 and each selected payload field with its own type.
-    let initialized = |body: &str, ty: &str, tag: u32, fields: &[(String, &str)]| {
+    // tag at field 0 and each selected payload field with its own type.
+    // Payload's union has three common padding bytes after its byte tag;
+    // Compact's register-returned product keeps its byte tag store.
+    let initialized = |body: &str, ty: &str, tag: u32, prefix_width: u8, fields: &[(String, &str)]| {
         assert!(
             body.contains(&format!("store {ty} zeroinitializer, ptr %wf.result")),
             "the baseline constructor initializes the complete result: {body}"
@@ -1037,8 +1071,8 @@ fn main() -> status: std::process::ExitStatus pure {
         let tag_address = field_address(body, ty, 0).expect("the tag has a destination at field 0");
         assert!(
             body.lines()
-                .any(|line| line.trim() == format!("store i32 {tag}, ptr {tag_address}")),
-            "the tag is initialized with its width: {body}"
+                .any(|line| line.trim() == format!("store i{prefix_width} {tag}, ptr {tag_address}")),
+            "the tag uses the expected union prefix or product leaf width: {body}"
         );
         for (address, field_type) in fields {
             assert!(
@@ -1079,7 +1113,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 (address, *field_type)
             })
             .collect();
-        initialized(body, &payload, tag, &fields);
+        initialized(body, &payload, tag, 32, &fields);
     }
     // A register-returned product is constructed by its destination-form
     // body, each selected field at its flattened position after the tag and
@@ -1098,7 +1132,7 @@ fn main() -> status: std::process::ExitStatus pure {
         }
         let address = field_address(body, &compact, selected)
             .expect("each selected payload field has a destination");
-        initialized(body, &compact, tag, &[(address, field_type)]);
+        initialized(body, &compact, tag, 8, &[(address, field_type)]);
     }
     // compiler/backend-facts: a match's default is unreachable, since every
     // enum value carries a declared tag.

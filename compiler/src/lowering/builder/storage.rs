@@ -120,7 +120,8 @@ fn collect_borrowed_place_expression(
             bindings.extend(root.binding());
             collect_place(root, bindings);
         }
-        CheckedExpression::BorrowRangeIndex { place, .. } => {
+        CheckedExpression::RangeIndex { place, .. }
+        | CheckedExpression::BorrowRangeIndex { place, .. } => {
             if let Some(formation) = place.root.formation.as_deref() {
                 collect_expression(formation, bindings);
             }
@@ -289,7 +290,8 @@ fn collect_steps(
             crate::semantic::CheckedPlaceStep::Subscript(subscript) => {
                 collect_expression(&subscript.offset, bindings);
             }
-            crate::semantic::CheckedPlaceStep::Field(_) => {}
+            crate::semantic::CheckedPlaceStep::Field(_)
+            | crate::semantic::CheckedPlaceStep::Measure(_) => {}
         }
     }
 }
@@ -498,7 +500,12 @@ impl IrBuilder<'_> {
                 let write = self.borrow_may_write(*writable, write_places);
                 self.lower_place_address_access(root, write)?
             }
-            CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(
+            // A dereferenced match derives reference-mode payload binders
+            // [OWN-13] even when its checked scrutinee is an ordinary read.
+            // Retain the element's source address just as an explicit borrow
+            // does, including every checked step after the subscript.
+            CheckedExpression::RangeIndex { place, .. }
+            | CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(
                 &place.root,
                 &place.offset,
                 &place.path,
@@ -621,6 +628,21 @@ impl IrBuilder<'_> {
                             field: *field,
                         },
                         ty,
+                    )
+                }
+                crate::semantic::CheckedPlaceStep::Measure(measure) => {
+                    let measure = super::runs::lower_measure(*measure);
+                    if measure.descriptor_field(base.ty()).is_none()
+                        && measure.type_constant(base.ty()).is_none()
+                    {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    }
+                    (
+                        IrPlaceStep::Measure { measure },
+                        IrType::Integer {
+                            width: 64,
+                            signed: false,
+                        },
                     )
                 }
                 crate::semantic::CheckedPlaceStep::BoxReferent(checked_nominal) => {

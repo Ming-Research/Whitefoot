@@ -74,6 +74,101 @@ const ROOT_INTERFACE: &[u8] =
     b"public fn main() -> status: std::process::ExitStatus pure doc \"Runs the program.\";\n";
 const ROOT_BODY: &[u8] = b"fn main() -> status: std::process::ExitStatus pure {\n  let code = pkg::user::use_half();\n  return std::process::exit_status(code: code);\n}\n";
 
+/// One resolved unit serves every module query without sharing traversal
+/// state. The expected sets distinguish direct uses, transitive result-type
+/// uses, an unused declaration and a module with no declarations.
+#[test]
+fn shared_declaration_reads_preserve_each_modules_reached_items() {
+    // Use the complete program from
+    // `a_declaration_reached_through_a_result_type_is_read`, adding an empty
+    // module and a repeated call to exercise independent query traversal.
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::leaf: [];\npkg::base: [pkg::leaf];\npkg::user: [pkg::base, pkg::leaf];\npkg::empty: [];\npkg: [pkg::user, std::fs, std::io, std::process, std::text];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .unwrap();
+    let records: Vec<(&str, &[u8])> = vec![
+        (
+            "leaf/module.wfm",
+            b"public enum Shade {\n  Dark();\n  Light();\n}\n\npublic fn first() -> shade: Shade pure doc \"The first shade.\";\n",
+        ),
+        (
+            "leaf/first.wf",
+            b"fn first() -> shade: Shade pure {\n  return Shade::Dark();\n}\n",
+        ),
+        (
+            "base/module.wfm",
+            b"public fn pick() -> shade: pkg::leaf::Shade pure doc \"Picks a shade.\";\n",
+        ),
+        (
+            "base/pick.wf",
+            b"fn pick() -> shade: pkg::leaf::Shade pure {\n  return pkg::leaf::Shade::Light();\n}\n",
+        ),
+        (
+            "user/module.wfm",
+            b"public fn tone() -> result: u8 pure doc \"Tells the picked shade apart.\";\n",
+        ),
+        (
+            "user/tone.wf",
+            b"fn tone() -> result: u8 pure {\n  let shade = pkg::base::pick();\n  let second = pkg::base::pick();\n  match shade {\n    Dark() => {\n      return 1_u8;\n    }\n    Light() => {\n      return 2_u8;\n    }\n  }\n}\n",
+        ),
+        ("empty/module.wfm", b"\n"),
+        ("module.wfm", ROOT_INTERFACE),
+        (
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let code = pkg::user::tone();\n  return std::process::exit_status(code: code);\n}\n",
+        ),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let inputs = super::with_library_records(&graph, &inputs);
+    let limits = CompilerLimits::default();
+    let bundle = crate::SourceBundle::with_prelude_and_modules(
+        &inputs,
+        graph.modules().to_vec(),
+        limits.source,
+    )
+    .unwrap();
+    let canonical = super::canonical_syntax(&bundle, limits, false).unwrap();
+    let crate::ResolutionOutcome::Complete(resolved) = crate::resolve(canonical) else {
+        panic!("the multi-module fixture resolves");
+    };
+    let reads = super::reads::DeclarationReads::new(&resolved).unwrap();
+    let module = |path: &[&str]| {
+        graph
+            .modules()
+            .iter()
+            .position(|module| module.package() == crate::Package::Program && module.path() == path)
+            .and_then(crate::ModuleId::from_index)
+            .unwrap()
+    };
+    let (leaf, base, user, empty) = (
+        module(&["leaf"]),
+        module(&["base"]),
+        module(&["user"]),
+        module(&["empty"]),
+    );
+    let item = |module, role: &str, name: &str| (module, (role.to_owned(), name.to_owned()));
+    let expected = [
+        (
+            user,
+            [item(base, "fn", "pick"), item(leaf, "enum", "Shade")].into(),
+        ),
+        (base, [item(leaf, "enum", "Shade")].into()),
+        (leaf, std::collections::BTreeSet::new()),
+        (empty, std::collections::BTreeSet::new()),
+    ];
+    // Reordered and repeated queries must retain exactly each target's roots.
+    for index in [0, 1, 2, 3, 3, 2, 1, 0] {
+        let (target, expected) = &expected[index];
+        assert_eq!(reads.read_declarations(*target).as_ref(), Some(expected));
+        let fresh = super::reads::DeclarationReads::new(&resolved).unwrap();
+        assert_eq!(fresh.read_declarations(*target).as_ref(), Some(expected));
+    }
+}
+
 /// Every module's verdict and every entry's composition verdict, with
 /// and without the cache; the two must agree apart from reuse.
 fn verdicts(
@@ -861,6 +956,86 @@ fn a_proof_receipt_is_reused_exactly_while_its_analysis_inputs_are_unchanged() {
         (Ok(()), 0),
         "reverting reuses every receipt"
     );
+}
+
+/// [MOD-8, RANGE-2, ENT-3.S7] a reused receipt retains the ordinary operand
+/// intervals a later range walk needs. Warm and fresh checks agree, including
+/// after a callee's range requirement becomes stronger than the caller's fact.
+#[test]
+fn range_operation_facts_have_the_same_verdict_with_and_without_receipts() {
+    let directory = CacheDirectory::new("range-operation-receipts");
+    let cache = directory.open();
+    let source = r#"struct Row {
+  values: Box<Array<u64>>;
+}
+
+fn need(rows: &Slots<Row>) -> result: unit pure contract {
+  requires forall sizes(k in 0_u64..rows^.len): rows^[k].values.inner.len == NEEDED_u64;
+} {
+  return unit;
+}
+
+fn masked(rows: &Slots<Row>, x: u64) -> result: unit reads(rows) contract {
+  requires 0_u64 < rows^.len;
+  requires forall lengths(k in 0_u64..rows^.len): rows^[k].values.inner.len == 8_u64;
+} {
+  let m = iand(x, 7_u64);
+  let value = rows^[0_u64].values.inner[m];
+  need(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let analyzed = |source: &str| {
+        let inputs = [SourceInput::new("range-operations.wf", source.as_bytes())];
+        let fresh =
+            super::check(&inputs, CompilerLimits::default()).map_err(|failure| failure.to_string());
+        let before = cache.receipt_counts();
+        let cached = super::check_with_cache(&inputs, CompilerLimits::default(), &cache)
+            .map_err(|failure| failure.to_string());
+        assert_eq!(cached, fresh, "receipts change no range verdict");
+        let after = cache.receipt_counts();
+        (cached, (after.0 - before.0, after.1 - before.1))
+    };
+    let original = source.replace("NEEDED", "8");
+    let (cold, (_, recorded)) = analyzed(&original);
+    assert_eq!(cold, Ok(()));
+    assert!(recorded >= 3, "the cold check records all three functions");
+    let (warm, (reused, recorded)) = analyzed(&original);
+    assert_eq!(warm, Ok(()));
+    assert!(reused >= 3, "the warm check reuses the range participants");
+    assert_eq!(recorded, 0, "the warm check analyzes nothing afresh");
+    let moved =
+        format!("fn unrelated() -> result: unit pure {{\n  return unit;\n}}\n\n{original}");
+    let (relocated, (reused, recorded)) = analyzed(&moved);
+    assert_eq!(relocated, Ok(()));
+    assert!(reused >= 3, "moving items preserves the original receipts");
+    assert_eq!(recorded, 1, "only the unrelated function is analyzed");
+    let edited = original.replace(
+        "let m = iand(x, 7_u64);",
+        "let mask = 7_u64;\n  let m = iand(x, mask);",
+    );
+    let (edited_verdict, (_, recorded)) = analyzed(&edited);
+    assert_eq!(edited_verdict, Ok(()));
+    assert_eq!(recorded, 1, "the edited range participant gets a receipt");
+    let (edited_warm, (reused, recorded)) = analyzed(&edited);
+    assert_eq!(edited_warm, Ok(()));
+    assert!(reused >= 3, "the edited range participant's receipt is reused");
+    assert_eq!(recorded, 0, "the edited warm check analyzes nothing afresh");
+    let (changed, _) = analyzed(&source.replace("NEEDED", "9"));
+    assert!(
+        changed
+            .as_ref()
+            .is_err_and(|failure| failure.contains("[RANGE-3]")),
+        "{changed:?}"
+    );
+    let (reverted, (reused, recorded)) = analyzed(&original);
+    assert_eq!(reverted, Ok(()));
+    assert!(reused >= 3, "reverting reuses the original receipts");
+    assert_eq!(recorded, 0, "reverting analyzes nothing afresh");
 }
 
 /// [MOD-9] an entry build is reused for an unchanged composition and

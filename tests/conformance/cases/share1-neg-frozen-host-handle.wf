@@ -1,0 +1,7 @@
+struct HostPart {
+  meter: std::process::MemoryMeter;
+}
+
+fn denied(value: HostPart) -> result: Frozen<HostPart> pure {
+  return frozen_new::<HostPart>(value: move value);
+}

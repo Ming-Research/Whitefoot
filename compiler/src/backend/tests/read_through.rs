@@ -3,7 +3,7 @@
 
 use super::system::with_ir;
 use super::{compile_and_run, emit, emitted_function, host_optimized_module};
-use crate::{IrInstruction, IrOperation, IrProgram, IrType, IrValueId};
+use crate::{IrInstruction, IrOperation, IrProgram, IrTerminator, IrType, IrValueId};
 
 const VALUES: &str = r#"enum Value {
   Number(n: u64);
@@ -303,10 +303,9 @@ fn snapshot(program: &IrProgram, name: &str) -> IrValueId {
 }
 
 fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     assert_eq!(
-        body.lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(&source)),
+        body.lines().any(|line| copy_from(line, &source)),
         copied,
         "{body}"
     );
@@ -314,7 +313,9 @@ fn assert_snapshot_copy(body: &str, address: IrValueId, copied: bool) {
 
 fn assert_no_copy(body: &str) {
     assert!(
-        !body.contains("@llvm.memmove.") && !body.contains("@llvm.memcpy."),
+        !body.contains("@llvm.memmove.")
+            && !body.contains("@llvm.memcpy.")
+            && !body.contains("; layout-bounded transfer "),
         "{body}"
     );
 }
@@ -358,7 +359,7 @@ fn assert_tag_through(body: &str, address: &str) {
     }
     assert!(
         body.lines().any(|line| {
-            line.split_once("load i32, ptr ")
+            line.split_once("load i8, ptr ")
                 .is_some_and(|(_, source)| {
                     let pointer = source.split([',', ' ']).next().expect("load pointer");
                     tags.iter().any(|tag| tag == pointer)
@@ -1048,7 +1049,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "only the true/cold successor copies: {lazy}"
     );
     assert_eq!(
-        lazy.matches("@llvm.memmove.").count(),
+        lazy.lines().filter(|line| is_copy_end(line)).count(),
         1,
         "no other path copies: {lazy}"
     );
@@ -1081,7 +1082,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let copy = snapshot_copy_line(returned, addresses[3]);
     let lines: Vec<_> = returned.lines().collect();
     assert!(
-        lines[copy].contains("(ptr %wf.result,"),
+        lines[copy].contains("(ptr %wf.result,") || lines[copy].ends_with(" to %wf.result"),
         "copy directly to the result: {returned}"
     );
     assert_eq!(
@@ -1115,13 +1116,11 @@ fn main() -> status: std::process::ExitStatus pure {
         cold_read.contains("@wf_classify(ptr %wf.arg.v0)"),
         "{cold_read}"
     );
-    // The callee's entry capture stays: its general ABI admits input/result
-    // aliasing at other call sites. Removing a caller copy is independent.
+    // All input reads precede the result write, so neither the caller's
+    // Load nor the destination-result callee needs an entry capture.
     let callee = emitted_function(&module, "destination_result");
     assert!(
-        callee
-            .lines()
-            .any(|line| line.contains("@llvm.memmove.") && line.contains(", ptr %wf.arg.v0,")),
+        !callee.lines().any(|line| copy_from(line, "%wf.arg.v0")),
         "{callee}"
     );
     let output = compile_and_run(&module);
@@ -1133,11 +1132,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn snapshot_copy_line(body: &str, address: IrValueId) -> usize {
-    let source = format!(", ptr %v{}, i64 ", address.ordinal());
+    let source = format!("%v{}", address.ordinal());
     let copies: Vec<_> = body
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.contains("@llvm.memmove.") && line.contains(&source))
+        .filter(|(_, line)| copy_from(line, &source))
         .map(|(line, _)| line)
         .collect();
     assert_eq!(copies.len(), 1, "one snapshot copy: {body}");
@@ -1150,4 +1149,621 @@ fn llvm_block_at(body: &str, line: usize) -> &str {
         .filter_map(|line| line.strip_suffix(':'))
         .last()
         .expect("instruction in an LLVM block")
+}
+
+/// One module/native image covers three placements. Main's consumed inputs
+/// explicitly exercise equal result/input pointers; retained calls keep LLVM
+/// from hiding an ABI error by inlining. This is backend evidence, not a new
+/// source-language acceptance requirement.
+#[test]
+fn destination_parameters_capture_before_invalidation_only_on_paths_that_need_it() {
+    let source = br#"nocopy enum Value {
+  Number(n: u64);
+  Function(id: u64);
+  Native(id: u64);
+  Empty();
+}
+
+fn classify(v: Value) -> result: u64 pure {
+  match move v {
+    Number(n: number) => {
+      return number;
+    }
+    Function(id: function_id) => {
+      return function_id;
+    }
+    Native(id: native_id) => {
+      return native_id;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn read_first(v: Value) -> result: Value pure {
+  let old = classify(v: move v);
+  return Value::Function(id: old);
+}
+
+fn write_then_read(v: Value, observed: &u64) -> result: Value writes(observed) {
+  let out = Value::Function(id: 99_u64);
+  let old = classify(v: move v);
+  set observed^ = old;
+  return move out;
+}
+
+fn make_result() -> result: Value pure {
+  return Value::Function(id: 99_u64);
+}
+
+fn hot_cold(v: Value, cold: Bool, observed: &u64) -> result: Value writes(observed) {
+  if cold {
+    let out = make_result();
+    let old = classify(v: move v);
+    set observed^ = old;
+    return move out;
+  }
+  match move v {
+    Number(..) => {
+      return Value::Number(n: 1_u64);
+    }
+    Function(..) => {
+      return Value::Function(id: 2_u64);
+    }
+    Native(..) => {
+      return Value::Native(id: 3_u64);
+    }
+    Empty() => {
+      return Value::Empty();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first_input = Value::Number(n: 7_u64);
+  let first = read_first(v: move first_input);
+  let first_value = classify(v: move first);
+  if first_value != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let second_input = Value::Number(n: 7_u64);
+  let second_observed = 0_u64;
+  let second = write_then_read(v: move second_input, observed: &second_observed);
+  if second_observed != 7_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let second_value = classify(v: move second);
+  if second_value != 99_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let hot_input = Value::Number(n: 7_u64);
+  let hot_flag = False();
+  let hot_observed = 0_u64;
+  let hot = hot_cold(v: move hot_input, cold: hot_flag, observed: &hot_observed);
+  if hot_observed != 0_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let hot_value = classify(v: move hot);
+  if hot_value != 1_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let cold_input = Value::Number(n: 7_u64);
+  let cold_flag = True();
+  let cold_observed = 0_u64;
+  let cold = hot_cold(v: move cold_input, cold: cold_flag, observed: &cold_observed);
+  if cold_observed != 7_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let cold_value = classify(v: move cold);
+  if cold_value != 99_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    let first = emitted_function(&module, "read_first");
+    // Current main copies at entry solely because the result is a destination;
+    // it fails both the no-copy and direct-argument assertions.
+    assert!(incoming_copy_lines(first).is_empty(), "{first}");
+    assert!(first.contains("@wf_classify(ptr %wf.arg.v0)"), "{first}");
+
+    // Report the observed input through a separate scalar reference. An early
+    // error return here would keep `out` live for cleanup beside that return's
+    // value, preventing their slots from sharing the caller's destination.
+    // The stores below must really target that destination before the read.
+    let second = emitted_function(&module, "write_then_read");
+    let copies = incoming_copy_lines(second);
+    assert_eq!(copies.len(), 1, "one persistent capture: {second}");
+    let write = second
+        .lines()
+        .position(|line| {
+            line.trim_start().starts_with("store ") && line.contains(", ptr %wf.result")
+        })
+        .expect("construct directly in the caller's result");
+    let read = second
+        .lines()
+        .position(|line| line.contains("@wf_classify("))
+        .expect("observe original input after result construction");
+    assert!(copies[0] < write && write < read, "{second}");
+    assert!(!second.contains("@wf_classify(ptr %wf.arg.v0)"), "{second}");
+    // Omitting the result barrier, or recopying at the later call, observes 99
+    // instead of 7 through `observed` when the result aliases v.
+
+    let split = emitted_function(&module, "hot_cold");
+    let copies = incoming_copy_lines(split);
+    assert_eq!(copies.len(), 1, "only the cold path captures: {split}");
+    let write = split
+        .lines()
+        .position(|line| line.contains("@wf_make_result(ptr %wf.result)"))
+        .expect("cold call writes directly through the result pointer");
+    let read = split
+        .lines()
+        .position(|line| line.contains("@wf_classify("))
+        .expect("cold whole-parameter use");
+    assert!(copies[0] < write && write < read, "{split}");
+    assert_eq!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, write),
+        "{split}"
+    );
+    assert_eq!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, read),
+        "{split}"
+    );
+    let entry = split
+        .lines()
+        .position(|line| line.ends_with(':'))
+        .expect("entry block");
+    assert_ne!(
+        llvm_block_at(split, copies[0]),
+        llvm_block_at(split, entry),
+        "{split}"
+    );
+    let branch = split
+        .lines()
+        .position(|line| line.contains("switch i1 "))
+        .expect("hot/cold branch");
+    assert!(
+        split
+            .lines()
+            .skip(branch + 1)
+            .take_while(|line| line.trim() != "]")
+            .any(|line| line.trim() == format!("i1 1, label %{}", llvm_block_at(split, copies[0]))),
+        "capture belongs to the true/cold successor: {split}"
+    );
+    assert!(
+        split.lines().any(|line| {
+            line.contains("getelementptr") && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
+        }),
+        "hot tag reads through the incoming pointer: {split}"
+    );
+    // Main's unconditional entry copy fails the cold-block assertions. A copy
+    // after make_result fails ordering and native old-value observation.
+
+    let main = super::emitted_body(&module, "main");
+    for (callee, expected_calls) in [("read_first", 1), ("write_then_read", 1), ("hot_cold", 2)] {
+        let call_head = format!("@wf_{callee}(");
+        let calls: Vec<_> = main
+            .lines()
+            .filter(|line| line.contains(&call_head))
+            .collect();
+        assert_eq!(calls.len(), expected_calls, "{main}");
+        for call in calls {
+            let args = call.split_once(&call_head).expect("call arguments").1;
+            let pointers: Vec<_> = args
+                .split(')')
+                .next()
+                .expect("argument list")
+                .split(", ")
+                .take(2)
+                .collect();
+            assert_eq!(pointers.len(), 2, "{call}");
+            assert_eq!(
+                pointers[0], pointers[1],
+                "result must reuse the consumed input: {call}"
+            );
+        }
+    }
+    let output = compile_and_run(&super::owned_places::retain_calls(&module));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn destination_parameters_read_through_ordinary_loop_consumers() {
+    let source = br#"enum Value {
+  Number(n: u64);
+  Function(id: u64);
+  Native(id: u64);
+  Empty();
+}
+
+enum Command {
+  Again();
+  Read();
+}
+
+fn classify(v: Value) -> result: u64 pure {
+  match v {
+    Number(n: number) => {
+      return number;
+    }
+    Function(id: function_id) => {
+      return function_id;
+    }
+    Native(id: native_id) => {
+      return native_id;
+    }
+    Empty() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn loop_reader(v: Value, count: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in 0_u64..count) {
+    let observed = classify(v: v);
+    set total = total +wrap observed;
+  }
+  return total;
+}
+
+fn mutating_loop(v: Value, count: u64) -> result: u64 pure {
+  let address = &v;
+  let total = 0_u64;
+  for (i in 0_u64..count) {
+    set address^ = Value::Number(n: 37_u64);
+    let observed = classify(v: v);
+    set total = total +wrap observed;
+  }
+  return total;
+}
+
+fn split_reader(v: Value, command: Command) -> result: u64 pure {
+  loop {
+    match command {
+      Again() => {
+        set command = Command::Read();
+        continue;
+      }
+      Read() => {
+        return classify(v: v);
+      }
+    }
+  }
+}
+
+fn destination(v: Value, cold: Bool, count: u64) -> result: Value pure {
+  let hot = classify(v: v);
+  if cold {
+    let observed = loop_reader(v: v, count: count);
+    let combined = hot +wrap observed;
+    return Value::Number(n: combined);
+  }
+  return Value::Number(n: hot);
+}
+
+fn mutation_boundary(v: Value, count: u64) -> result: Value pure {
+  let hot = classify(v: v);
+  let observed = mutating_loop(v: v, count: count);
+  let combined = hot +wrap observed;
+  return Value::Number(n: combined);
+}
+
+fn split_boundary(v: Value) -> result: Value pure {
+  let hot = classify(v: v);
+  let again = Command::Again();
+  let observed = split_reader(v: v, command: again);
+  let combined = hot +wrap observed;
+  return Value::Number(n: combined);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let input = Value::Number(n: 7_u64);
+  let cold = True();
+  let hot = False();
+  let cold_result = destination(v: input, cold: cold, count: 3_u64);
+  let cold_value = classify(v: cold_result);
+  if cold_value != 28_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let hot_result = destination(v: input, cold: hot, count: 3_u64);
+  let hot_value = classify(v: hot_result);
+  if hot_value != 7_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let empty_result = destination(v: input, cold: cold, count: 0_u64);
+  let empty_value = classify(v: empty_result);
+  if empty_value != 7_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let mutated = mutation_boundary(v: input, count: 3_u64);
+  let mutated_value = classify(v: mutated);
+  if mutated_value != 118_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let split = split_boundary(v: input);
+  let split_value = classify(v: split);
+  if split_value != 14_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let original = classify(v: input);
+  if original != 7_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let destination = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "destination")
+            .expect("destination-result caller");
+        assert!(
+            crate::backend::abi::FunctionAbi::build(program, destination)
+                .expect("caller ABI")
+                .result()
+                .uses_destination(),
+            "the regression must exercise incoming destination-result snapshots"
+        );
+        let reader = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "loop_reader")
+            .expect("ordinary-loop consumer");
+        let successors = |block: usize| match reader.blocks()[block].terminator() {
+            IrTerminator::Jump { target, .. } => vec![target.index()],
+            IrTerminator::Match { targets, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
+        };
+        assert!(
+            (0..reader.blocks().len()).any(|block| {
+                let mut pending = successors(block);
+                let mut seen = vec![false; reader.blocks().len()];
+                while let Some(next) = pending.pop() {
+                    if next == block {
+                        return true;
+                    }
+                    if !seen[next] {
+                        seen[next] = true;
+                        pending.extend(successors(next));
+                    }
+                }
+                false
+            }),
+            "the regression must exercise a real CFG cycle"
+        );
+        let parts = crate::backend::emitter::dispatch::storage_parts(reader)
+            .expect("consumer storage parts");
+        assert!(parts.iter().all(|part| *part == Some(0)));
+        let storage = crate::backend::storage::FunctionStoragePlan::build(program, reader)
+            .expect("consumer storage plan");
+        assert!(storage.holds_only(reader.parameters()[0].0));
+
+        let split = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "split_reader")
+            .expect("possible split consumer");
+        assert!(
+            crate::backend::emitter::dispatch::storage_parts(split)
+                .expect("split storage parts")
+                .iter()
+                .any(|part| *part != Some(0))
+        );
+    });
+    let module = emit(source);
+    let destination = emitted_function(&module, "destination");
+    assert!(incoming_copy_lines(destination).is_empty(), "{destination}");
+    assert!(
+        destination.contains("@wf_classify(ptr %wf.arg.v0)"),
+        "{destination}"
+    );
+    assert!(
+        destination.contains("@wf_loop_reader(ptr %wf.arg.v0, i64 "),
+        "the later consumer must receive the same incoming pointer: {destination}"
+    );
+    let reader = emitted_function(&module, "loop_reader");
+    assert!(incoming_copy_lines(reader).is_empty(), "{reader}");
+    assert!(reader.contains("@wf_classify(ptr %wf.arg.v0)"), "{reader}");
+    for (caller, callee) in [
+        ("mutation_boundary", "mutating_loop"),
+        ("split_boundary", "split_reader"),
+    ] {
+        let body = emitted_function(&module, caller);
+        let copies = incoming_copy_lines(body);
+        assert_eq!(copies.len(), 1, "retain the conservative capture: {body}");
+        let call_head = format!("@wf_{callee}(");
+        let call = body
+            .lines()
+            .position(|line| line.contains(&call_head))
+            .expect("boundary consumer call");
+        assert!(copies[0] < call, "{body}");
+        assert!(
+            !body.contains(&format!("@wf_{callee}(ptr %wf.arg.v0,")),
+            "{body}"
+        );
+    }
+    // Before this change the blanket cyclic-body exclusion requests a private
+    // key at loop_reader, failing both destination no-copy/direct-pointer checks.
+    // Dropping all loop exclusions also fails split_boundary; ignoring exposure
+    // fails mutation_boundary. Existing destination-parameter cases separately
+    // require original observations when a result overwrites an aliased input.
+    let retained = super::owned_places::retain_calls(&module);
+    for callee in ["classify", "loop_reader", "mutating_loop", "split_reader"] {
+        let header = emitted_function(&retained, callee)
+            .lines()
+            .next()
+            .expect("retained consumer header");
+        assert!(
+            header.split_whitespace().any(|word| word == "noinline"),
+            "{header}"
+        );
+    }
+    let output = compile_and_run(&retained);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn looping_destination_result_preserves_its_aliased_read_through_input() {
+    let source = br#"nocopy struct Row {
+  value: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn destination(v: Row, count: u64, observed: &u64) -> result: Row writes(observed) {
+  let total = 0_u64;
+  for (i in 0_u64..count) {
+    let old = v.value;
+    set total = total +wrap old;
+  }
+  let out = Row(value: 99_u64, b: 101_u64, c: 103_u64, d: 107_u64);
+  for (i in 0_u64..count) {
+    let old = v.value;
+    set total = total +wrap old;
+  }
+  set observed^ = total;
+  return move out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (round in 0_u64..32_u64) {
+    let seed = round +wrap 7_u64;
+    let input = Row(value: seed, b: 1_u64, c: 2_u64, d: 3_u64);
+    let observed = 0_u64;
+    let result = destination(v: move input, count: 3_u64, observed: &observed);
+    let expected = seed *wrap 6_u64;
+    if observed != expected {
+      return std::process::exit_status(code: 1_u8);
+    }
+    if result.value != 99_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if result.b != 101_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    if result.c != 103_u64 {
+      return std::process::exit_status(code: 4_u8);
+    }
+    if result.d != 107_u64 {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    let destination = emitted_function(&module, "destination");
+    let copies = incoming_copy_lines(destination);
+    assert_eq!(copies.len(), 1, "one persistent capture: {destination}");
+    let early_read = destination
+        .lines()
+        .position(|line| {
+            line.contains("getelementptr ") && line.contains("ptr %wf.arg.v0, i32 0, i32 0")
+        })
+        .expect("the first loop reads through the original input");
+    let row_gep = destination
+        .lines()
+        .nth(early_read)
+        .unwrap()
+        .split_once("getelementptr ")
+        .unwrap()
+        .1
+        .split_once(", ptr ")
+        .unwrap()
+        .0;
+    let write = destination
+        .lines()
+        .position(|line| {
+            line.trim_start().starts_with("store ") && line.contains(", ptr %wf.result")
+        })
+        .expect("the middle construction writes the caller's result");
+    let later_read = destination
+        .lines()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            (line.contains("getelementptr ")
+                && line.contains(&format!("getelementptr {row_gep}, ptr "))
+                && line.ends_with(", i32 0, i32 0"))
+            .then_some(at)
+        })
+        .last()
+        .expect("the second loop observes the input after construction");
+    assert!(
+        early_read < copies[0] && copies[0] < write && write < later_read,
+        "capture must separate the two loops at the result write: {destination}"
+    );
+    assert!(
+        !destination
+            .lines()
+            .nth(later_read)
+            .unwrap()
+            .contains("ptr %wf.arg.v0"),
+        "the second loop reads the persistent snapshot: {destination}"
+    );
+    let main = super::emitted_body(&module, "main");
+    let call = main
+        .lines()
+        .find(|line| line.contains("@wf_destination("))
+        .expect("main calls the looping destination-result callee");
+    let arguments = call
+        .split_once("@wf_destination(")
+        .unwrap()
+        .1
+        .split(')')
+        .next()
+        .unwrap()
+        .split(", ")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arguments[0], arguments[1],
+        "the result really aliases the consumed input: {call}"
+    );
+    // A missing/late capture makes the second loop read 99, so the first
+    // iteration reports 3*7 + 3*99 = 318 rather than 6*7 = 42 (code 1).
+    // Run both optimized inlining and retained ABI boundaries: inlining must
+    // not hide an incorrect result/input snapshot, or manufacture one for us.
+    for native in [module.clone(), super::owned_places::retain_calls(&module)] {
+        let output = compile_and_run(&native);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
+
+fn incoming_copy_lines(body: &str) -> Vec<usize> {
+    body.lines()
+        .enumerate()
+        .filter_map(|(at, line)| copy_from(line, "%wf.arg.v0").then_some(at))
+        .collect()
+}
+
+// Placement tests count complete copies, regardless of their transfer form.
+// End markers keep the original immediately-before-consumer assertions; the
+// layout_transfers tests independently check every enclosed load and store.
+fn is_copy_end(line: &str) -> bool {
+    line.contains("@llvm.memmove.")
+        || line.contains("@llvm.memcpy.")
+        || line.contains("; end layout-bounded transfer ")
+}
+
+fn copy_from(line: &str, source: &str) -> bool {
+    (line.contains("@llvm.memmove.") || line.contains("@llvm.memcpy."))
+        && line.contains(&format!(", ptr {source}, i64 "))
+        || line.contains(&format!("; end layout-bounded transfer from {source} to "))
 }

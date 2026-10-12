@@ -84,11 +84,35 @@ fn retains_the_complete_direct_float_operation_family() {
 
 #[test]
 fn float_literal_and_operation_failures_keep_their_rule_owners() {
-    assert_rule(
-        b"fn main() -> status: std::process::ExitStatus pure {\n  let value = 1.00_f64;\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Form7,
-        SemanticIssueKind::InvalidFloatLiteral,
-    );
+    // FORM-5 minimizes bytes, then ASCII lexicographic order: 500.0 and
+    // 5.0e2 tie, so 5.0e2 wins; 1.0 is shortest; 1.0e-5 beats 0.00001.
+    for (literal, canonical) in [
+        ("0.5e3_f64", Some("5.0e2_f64")),
+        ("1.00_f64", Some("1.0_f64")),
+        ("0.00001_f64", Some("1.0e-5_f64")),
+        ("1.0e999_f64", None),
+        ("1.0e99_f32", None),
+    ] {
+        let source = format!(
+            "fn value() -> result: {} pure {{\n  return {literal};\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n",
+            if literal.ends_with("_f32") {
+                "f32"
+            } else {
+                "f64"
+            },
+        );
+        assert_rule(
+            source.as_bytes(),
+            SemanticRule::Form7,
+            SemanticIssueKind::InvalidFloatLiteral {
+                canonical_spelling: canonical.map(str::to_owned),
+                mechanical_fix: match canonical {
+                    Some(spelling) => format!("write the literal as `{spelling}`"),
+                    None => "replace the literal with a canonical spelling of a finite value representable in its stated type".to_owned(),
+                },
+            },
+        );
+    }
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = fadd.strict(1_i32, 2_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,

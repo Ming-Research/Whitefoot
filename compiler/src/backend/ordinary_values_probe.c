@@ -2,7 +2,11 @@
  * launcher values as a native caller would, then exercises ownership transfer,
  * refusal, ranges and explicit close. View operations enter their private
  * pointer-parameter C bodies; separate WF executions check the LLVM ABI. */
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32)
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -36,7 +40,11 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <locale.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #define wf_chdir chdir
 #define wf_getcwd getcwd
 #define wf_mkdir(path) mkdir(path, 0700)
@@ -163,6 +171,173 @@ static void text_probe(void) {
     assert(value.tag == 0 && value.ok.value.words[1] == 0);
     wf__body_arg_get(&value, &args, 4);
     assert(value.tag == 1 && value.err.error == 0);
+}
+
+typedef void (*wf_probe_description)(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+extern void wf_test_public_error_copy_description(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+
+/* The independent host oracle supplies bytes, never runtime-generated text.
+ * Exact, short and empty windows distinguish whole-copy behavior from a
+ * truncating formatter; the whole destination also observes a stray NUL.
+ * Before this addition both entry points are absent, so this probe cannot
+ * link; a stub or tag-only description fails the byte comparison. */
+static void description_window_probe(wf_probe_description copy,
+                                     const wf_io_error *error, const char *text) {
+    size_t length = strlen(text);
+    assert(length > 0);
+    unsigned char *bytes = malloc(length + 8);
+    unsigned char *expected = malloc(length + 8);
+    assert(bytes != NULL && expected != NULL);
+    wf_view view = {bytes, length + 8};
+    wf_copy_result copied;
+    memset(bytes, 90, length + 8);
+    memset(expected, 90, length + 8);
+    copy(&copied, error, &view, 3, 3 + length - 1);
+    assert(copied.tag == 1 && copied.err.error.tag == 0);
+    assert(copied.err.error.required == length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    copy(&copied, error, &view, 3, 3);
+    assert(copied.tag == 1 && copied.err.error.tag == 0);
+    assert(copied.err.error.required == length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    copy(&copied, error, &view, 3, 3 + length);
+    assert(copied.tag == 0 && copied.ok.value == 3 + length);
+    memcpy(expected + 3, text, length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    free(expected);
+    free(bytes);
+}
+
+static void description_probe(wf_probe_description copy) {
+    static const struct { uint32_t tag; const char *text; } fixed[] = {
+        {WF_IO_NOT_FOUND, "Not found"},
+        {WF_IO_PERMISSION_DENIED, "Permission denied"},
+        {WF_IO_ALREADY_EXISTS, "Already exists"},
+        {WF_IO_NOT_DIRECTORY, "Not a directory"},
+        {WF_IO_IS_DIRECTORY, "Is a directory"},
+        {WF_IO_DIRECTORY_NOT_EMPTY, "Directory not empty"},
+        {WF_IO_READ_ONLY, "Read-only resource"},
+        {WF_IO_RESOURCE_BUSY, "Resource busy"},
+        {WF_IO_INVALID_INPUT, "Invalid input"},
+        {WF_IO_INVALID_PATH, "Invalid path"},
+        {WF_IO_UNSUPPORTED, "Unsupported operation"},
+        {WF_IO_TIMED_OUT, "Timed out"},
+        {WF_IO_DEADLINE_PASSED, "Deadline passed"},
+        {WF_IO_CANCELLED, "Cancelled"},
+        {WF_IO_BROKEN_PIPE, "Broken pipe"},
+        {WF_IO_WRITE_ZERO, "Write returned zero bytes"},
+        {WF_IO_UNEXPECTED_END, "Unexpected end of input"},
+        {WF_IO_CONNECTION_REFUSED, "Connection refused"},
+        {WF_IO_CONNECTION_RESET, "Connection reset"},
+        {WF_IO_CONNECTION_ABORTED, "Connection aborted"},
+        {WF_IO_NOT_CONNECTED, "Not connected"},
+        {WF_IO_ADDRESS_IN_USE, "Address in use"},
+        {WF_IO_ADDRESS_UNAVAILABLE, "Address unavailable"},
+        {WF_IO_RESOURCE_EXHAUSTED, "Resource exhausted"},
+        {WF_IO_FILE_TOO_LARGE, "File too large"},
+        {WF_IO_NO_SPACE, "No space left"},
+        {WF_IO_QUOTA_EXCEEDED, "Quota exceeded"},
+        {WF_IO_CROSS_DEVICE, "Cross-device operation"},
+        {WF_IO_DEVICE_FAILURE, "Device failure"},
+        {WF_IO_OTHER, "Other I/O error"}
+    };
+    for (size_t index = 0; index < sizeof(fixed) / sizeof(fixed[0]); ++index) {
+        wf_io_error error = {fixed[index].tag, 0, 0};
+        description_window_probe(copy, &error, fixed[index].text);
+        if (error.tag == WF_IO_DEADLINE_PASSED || error.tag == WF_IO_CANCELLED) {
+            /* These variants own no payload. Poison spare representation
+             * bytes so a mistaken code/origin read cannot pass as code zero. */
+            error.code = UINT32_MAX;
+            error.origin = 255;
+            description_window_probe(copy, &error, fixed[index].text);
+        }
+    }
+#if defined(_WIN32)
+    static const struct { uint32_t tag; DWORD code; } host[] = {
+        {WF_IO_NO_SPACE, ERROR_DISK_FULL},
+        {WF_IO_DEVICE_FAILURE, ERROR_IO_DEVICE},
+        {WF_IO_PERMISSION_DENIED, ERROR_ACCESS_DENIED},
+        {WF_IO_READ_ONLY, ERROR_WRITE_PROTECT},
+        {WF_IO_FILE_TOO_LARGE, ERROR_FILE_TOO_LARGE}
+    };
+    for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
+        WCHAR *wide = NULL;
+        DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                     | FORMAT_MESSAGE_FROM_SYSTEM
+                                     | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                     NULL, host[index].code, 0x0409,
+                                     (LPWSTR)&wide, 0, NULL);
+        assert(length > 0 && wide != NULL);
+        while (length > 0 && (wide[length - 1] == L'\r' || wide[length - 1] == L'\n')) --length;
+        int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                       (int)length, NULL, 0, NULL, NULL);
+        assert(count > 0);
+        char *text = malloc((size_t)count + 1);
+        assert(text != NULL);
+        assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                  (int)length, text, count, NULL, NULL) == count);
+        text[count] = 0;
+        wf_io_error error = {host[index].tag, host[index].code, 3};
+        description_window_probe(copy, &error, text);
+        error.origin = 9;
+        description_window_probe(copy, &error, text);
+        free(text);
+        LocalFree(wide);
+    }
+#else
+    static const struct { uint32_t tag; int code; } host[] = {
+        {WF_IO_NO_SPACE, ENOSPC},
+        {WF_IO_DEVICE_FAILURE, EIO},
+        {WF_IO_QUOTA_EXCEEDED, EDQUOT},
+        {WF_IO_READ_ONLY, EROFS},
+        {WF_IO_FILE_TOO_LARGE, EFBIG}
+    };
+    locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    assert(locale != (locale_t)0);
+    for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
+#if defined(__APPLE__)
+        /* Darwin has no strerror_l symbol. Snapshot its ordinary strerror
+         * text under the private C locale, independently of the runtime's
+         * grow-and-retry strerror_r implementation. */
+        locale_t previous = uselocale(locale);
+        assert(previous != (locale_t)0);
+        const char *oracle = strerror(host[index].code);
+#else
+        const char *oracle = strerror_l(host[index].code, locale);
+#endif
+        assert(oracle != NULL);
+        size_t length = strlen(oracle);
+        char *text = malloc(length + 1);
+        assert(text != NULL);
+        memcpy(text, oracle, length + 1);
+#if defined(__APPLE__)
+        assert(uselocale(previous) != (locale_t)0);
+#endif
+        wf_io_error error = {host[index].tag, (uint32_t)host[index].code, 3};
+        description_window_probe(copy, &error, text);
+        error.origin = 9;
+        description_window_probe(copy, &error, text);
+        free(text);
+    }
+    freelocale(locale);
+#endif
+    /* A host's unknown-code prose is not a successful description. Both an
+     * ample and empty window must refuse it without touching any sentinel. */
+    static const uint32_t unknown_codes[] = {INT32_MAX, UINT32_MAX};
+    unsigned char bytes[32], expected[32];
+    wf_view view = {bytes, sizeof(bytes)};
+    wf_copy_result copied;
+    memset(bytes, 90, sizeof(bytes));
+    memset(expected, 90, sizeof(expected));
+    for (size_t index = 0; index < sizeof(unknown_codes) / sizeof(unknown_codes[0]); ++index) {
+        wf_io_error unknown = {WF_IO_OTHER, unknown_codes[index], 3};
+        copy(&copied, &unknown, &view, 3, sizeof(bytes));
+        assert(copied.tag == 1 && copied.err.error.tag == 1);
+        assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+        copy(&copied, &unknown, &view, 3, 3);
+        assert(copied.tag == 1 && copied.err.error.tag == 1);
+        assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+    }
 }
 
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
@@ -1062,7 +1237,12 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     int directory = all || strcmp(group, "directory") == 0;
     int tcp = all || strcmp(group, "tcp") == 0;
     assert(text || files || directory || tcp);
-    if (text) { text_probe(); puts("ordinary text: PASS"); }
+    if (text) {
+        text_probe();
+        description_probe(wf__body_error_copy_description);
+        description_probe(wf_test_public_error_copy_description);
+        puts("ordinary text: PASS");
+    }
     if (!files && !directory && !tcp) return 0;
     char previous[4096], fixture[64];
     assert(wf_getcwd(previous, sizeof(previous)) != NULL);

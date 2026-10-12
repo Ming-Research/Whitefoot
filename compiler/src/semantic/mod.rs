@@ -91,6 +91,9 @@ pub enum SemanticRule {
     Mod6,
     /// Spawns: their position and their callee's conditions.
     Wait3,
+    /// Frozen objects: a type argument's parts and consuming uses of a path
+    /// through `inner` [SHARE-1].
+    Share1,
     /// Atomic statements: the target's type, and a guard or block free of
     /// waiting calls, nested atomic statements and guard writes.
     Share2,
@@ -291,6 +294,7 @@ impl SemanticRule {
             Self::Fn10 => "FN-10",
             Self::Wait1 => "WAIT-1",
             Self::Wait3 => "WAIT-3",
+            Self::Share1 => "SHARE-1",
             Self::Share2 => "SHARE-2",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
@@ -383,7 +387,8 @@ impl SemanticRule {
             Self::Err3 => Self::Mod5,
             Self::Mod5 => Self::Mod6,
             Self::Mod6 => Self::Wait3,
-            Self::Wait3 => Self::Share2,
+            Self::Wait3 => Self::Share1,
+            Self::Share1 => Self::Share2,
             Self::Share2 => Self::Ent2,
             Self::Ent2 => Self::Msr3,
             Self::Msr3 => Self::Call6,
@@ -464,16 +469,17 @@ impl SemanticRule {
             Self::Mod5 => 53,
             Self::Mod6 => 54,
             Self::Wait3 => 55,
-            Self::Share2 => 56,
-            Self::Ent2 => 57,
-            Self::Msr3 => 58,
-            Self::Call6 => 59,
-            Self::Inv1 => 60,
-            Self::Prf1 => 61,
-            Self::Range1 => 62,
-            Self::Range3 => 63,
-            Self::Range4 => 64,
-            Self::Range5 => 65,
+            Self::Share1 => 56,
+            Self::Share2 => 57,
+            Self::Ent2 => 58,
+            Self::Msr3 => 59,
+            Self::Call6 => 60,
+            Self::Inv1 => 61,
+            Self::Prf1 => 62,
+            Self::Range1 => 63,
+            Self::Range3 => 64,
+            Self::Range4 => 65,
+            Self::Range5 => 66,
         }
     }
 }
@@ -619,7 +625,13 @@ pub enum SemanticIssueKind {
     /// A literal is not the unique in-range FORM-7 spelling.
     InvalidIntegerLiteral,
     /// A float literal is not FORM-5's unique finite canonical spelling.
-    InvalidFloatLiteral,
+    InvalidFloatLiteral {
+        /// The finite value's unique canonical literal, including its suffix;
+        /// absent when the candidate has no finite representable value.
+        canonical_spelling: Option<String>,
+        /// A source change repairing the rejected literal.
+        mechanical_fix: String,
+    },
     /// [FORM-7] a text item of a character literal or STRING is not its
     /// value's one spelling, or denotes no Unicode scalar value.
     InvalidTextItem {
@@ -840,9 +852,19 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by TYPE-10.
         mechanical_fix: &'static str,
     },
-    /// [TYPE-2] a path that ends at or passes through a readonly field was
-    /// written as a write target: a `set` target, or an argument at a
-    /// reference parameter whose callee row writes that parameter.
+    /// [SHARE-1] a frozen content argument owns a mutable shared or host part.
+    FrozenForbiddenPart {
+        /// First mutable shared or host-handle part, in declaration order.
+        part: String,
+        /// Repair naming that part.
+        mechanical_fix: String,
+    },
+    /// [SHARE-1] frozen content cannot be moved or consumed.
+    FrozenContentConsume {
+        /// Read or retain the content instead of consuming it.
+        mechanical_fix: &'static str,
+    },
+    /// [TYPE-2] a readonly path cannot be written.
     ReadonlyWriteTarget {
         /// The readonly field's spelling as the declaration writes it.
         spelling: String,
@@ -922,6 +944,11 @@ pub enum SemanticIssueKind {
     /// A borrow holder was used without the required explicit dereference.
     MissingDereference {
         /// Exact mechanical repair selected by TYPE-7.
+        mechanical_fix: &'static str,
+    },
+    /// [TYPE-7] a range referent was used without an admitted projection.
+    RangeReferentUse {
+        /// [DIAG-1] alias the reference, borrow an element or borrow a subrange.
         mechanical_fix: &'static str,
     },
     /// [OWN-11] a loop body left a binding declared outside it in a
@@ -1362,19 +1389,19 @@ pub enum SemanticIssueKind {
     },
     /// The written effect row differs from syntactically exhibited effects.
     EffectMismatch {
-        /// The exhibited row without the entries another of its entries
-        /// covers, in EFF-1 canonical spelling: EFF-2 admits it for the body,
-        /// EFF-1 admits it as written, and every entry is an exhibited path.
-        expected_row: String,
+        /// A validated EFF-1/EFF-2 row repair, absent when recursive closure
+        /// or the substituted component's call checks refuse the candidate.
+        expected_row: Option<String>,
         /// The row the declaration writes, in the same spelling.
         found_row: String,
-        /// The entries of `expected_row` that cover an exhibited access the
-        /// declaration does not cover.
+        /// Canonical entries covering exhibited accesses the declaration
+        /// does not cover, retained even when no repair row is validated.
         missing: Vec<String>,
         /// Declared categories and paths the body does not exhibit.
         extra: Vec<String>,
-        /// The repair [DIAG-1]: declare `expected_row`.
-        mechanical_fix: String,
+        /// The repair [DIAG-1]: declare the validated component rows.
+        /// EFF-2 does not require a repair when no row-only edit is validated.
+        mechanical_fix: Option<String>,
     },
     /// A generic type parameter named a source contract as its bound.
     SourceContractGenericBound,
@@ -1492,6 +1519,9 @@ pub enum UnsupportedSemanticFeature {
     /// A selected ordinary goal whose site the range walk cannot represent or
     /// reach. Goals outside RANGE-2's range-term shape keep their ordinary verdict.
     RangeOrdinaryGoal,
+    /// A live operation in the range walk has no operand intervals from the
+    /// preceding ordinary judgment [RANGE-2, ENT-3.S7].
+    RangeOperationIntervals,
     /// A range judgment that left a fact unproved after a loop header forgot
     /// everything, because the loop nest was deeper, or the header's
     /// written set took more walks to settle, than the checker follows;

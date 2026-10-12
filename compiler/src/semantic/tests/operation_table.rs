@@ -561,7 +561,7 @@ fn measure_rows() -> Vec<MeasureRow> {
             .split('|')
             .map(str::trim)
             .collect::<Vec<_>>(),
-        vec!["measured type", "len", "cap", "head"],
+        vec!["measured type", "len", "cap", "head", "bytes"],
         "the first row of a wf-measures fence is its column schema"
     );
     lines
@@ -572,7 +572,7 @@ fn measure_rows() -> Vec<MeasureRow> {
                 .split('|')
                 .map(|cell| cell.trim().to_owned())
                 .collect::<Vec<_>>();
-            assert_eq!(cells.len(), 4, "a wf-measures row has exactly four cells");
+            assert_eq!(cells.len(), 5, "a wf-measures row has exactly five cells");
             let measured = cells.remove(0);
             MeasureRow { measured, cells }
         })
@@ -618,9 +618,9 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         CheckedMeasure::Length,
         CheckedMeasure::Capacity,
         CheckedMeasure::Head,
+        CheckedMeasure::Bytes,
     ];
-    // [MSR-1]: exactly two cell classes are *bounded*: the one cell the two
-    // `Ring` rows share, and a `KeySet`'s `len`.
+    // [MSR-1]: Ring head and KeySet len and bytes are bounded cells.
     let mut bounded = 0_usize;
     for (row, (measured, name)) in rows.iter().zip(expected) {
         for (cell, measure) in row.cells.iter().zip(measures) {
@@ -669,12 +669,14 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                     bounded += 1;
                     assert_eq!(
                         written,
-                        if measured == MeasuredKind::KeySet {
+                        if measure == CheckedMeasure::Bytes {
+                            "retained heap bytes"
+                        } else if measured == MeasuredKind::KeySet {
                             "keys"
                         } else {
                             "window origin"
                         },
-                        "the bounded cell classes are a Ring's window origin and a key set's keys"
+                        "the bounded cells name a Ring origin, key count, or retained heap bytes"
                     );
                 }
                 MeasureCell::Absent => assert_eq!(
@@ -687,7 +689,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         }
     }
     assert_eq!(
-        bounded, 3,
-        "the two Ring rows share one bounded cell, a key set's len is the other, and nothing else is bounded"
+        bounded, 4,
+        "the two Ring rows and the KeySet len and bytes cells are bounded"
     );
 }

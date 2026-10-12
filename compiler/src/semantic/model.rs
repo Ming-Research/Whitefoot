@@ -538,11 +538,13 @@ impl CheckedNumericType {
 
 /// [STOR-1, STOR-3] which release action a compiler-owned cell performs.
 ///
-/// The active language has one heap and therefore one represented action:
-/// free the cell after releasing its content. The checked class travels into
-/// the IR so lowering preserves that decision rather than rederiving it.
+/// An owned Box frees its cell after releasing its content; a frozen handle
+/// counts out one share and the last release releases its content and block.
+/// This class travels into the IR without rediscovering the action.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CheckedReleaseClass {
+    /// [SHARE-1] release a frozen handle; the last handle releases the value.
+    Frozen,
     /// Release the cell to the language's one heap.
     General,
 }
@@ -641,6 +643,26 @@ impl WindowShape {
 }
 
 impl CheckedType {
+    /// The checked element stored by an indexable shape [TYPE-9, SHARE-2].
+    /// Entries already stores its instantiated Option<V>, not V itself.
+    pub(crate) const fn storage_element(self) -> Option<CheckedElement> {
+        match self {
+            Self::Array { element, .. }
+            | Self::Buffer { element }
+            | Self::Window { element, .. }
+            | Self::Segments { element }
+            | Self::Entries { element } => Some(element),
+            Self::Unit
+            | Self::Bool
+            | Self::Integer(_)
+            | Self::Float(_)
+            | Self::Generic(_)
+            | Self::GenericInt(_)
+            | Self::GenericFloat(_)
+            | Self::Nominal(_)
+            | Self::KeySet => None,
+        }
+    }
     pub(crate) fn is_concrete(self, elements: &[CheckedType]) -> bool {
         match self {
             Self::Generic(_) | Self::GenericInt(_) | Self::GenericFloat(_) => false,
@@ -710,7 +732,7 @@ impl CheckedType {
     }
 }
 
-/// One of [MSR-1]'s three measures of a measured value.
+/// One of [MSR-1]'s measures of a measured value.
 ///
 /// The spelling and the [ENT-2] term are the same quantity read two ways, so
 /// one enum keys both the [OP-1] reader row and the measure term.
@@ -721,6 +743,8 @@ pub(crate) enum CheckedMeasure {
     Head,
     /// Initialized page count, supported by the same word as len.
     Pages,
+    /// Heap bytes retained by a KeySet, including unused capacity.
+    Bytes,
 }
 
 /// One cell of [MSR-1]'s measure table.
@@ -744,7 +768,7 @@ pub(crate) enum MeasureCell {
     /// `cap` [WIN-1].
     ExactRuntime,
     /// The measure is only two-sidedly published by some writing operation:
-    /// a Ring's `head` and a key set's `len` are the measures of this class
+    /// a Ring's `head` and a key set's `len` and `bytes` are measures of this class
     /// [MSR-1].
     Bounded,
     /// The type has no such measure.
@@ -785,6 +809,7 @@ impl CheckedMeasure {
             Self::Capacity => "cap",
             Self::Head => "head",
             Self::Pages => "pages.len",
+            Self::Bytes => "bytes",
         }
     }
 
@@ -794,6 +819,8 @@ impl CheckedMeasure {
     /// a member's spelling alone cannot establish either.
     pub(crate) const fn cell(self, measured: MeasuredKind) -> MeasureCell {
         match (measured, self) {
+            (MeasuredKind::KeySet, Self::Bytes) => MeasureCell::Bounded,
+            (_, Self::Bytes) => MeasureCell::Absent,
             (MeasuredKind::Paged, Self::Pages) => MeasureCell::ExactRuntime,
             (_, Self::Pages) => MeasureCell::Absent,
             // `Array<T, N>`: `len` is the type constant and every slot always
@@ -831,10 +858,8 @@ impl CheckedMeasure {
                 MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::Entries,
                 Self::Length,
             ) => MeasureCell::ExactRuntime,
-            // The two *bounded* cell classes of the table: the two
-            // front-moving operations publish a `Ring`'s window origin
-            // two-sidedly and no operation re-establishes it exactly
-            // [MSR-1, OP-10], and the key-set additions publish a set's `len`
+            // Front-moving operations publish a Ring's window origin
+            // two-sidedly [MSR-1, OP-10]. Key-set additions publish len
             // two-sidedly, a key already held adding none [SHARE-1].
             (MeasuredKind::ConstantRing | MeasuredKind::RuntimeRing, Self::Head)
             | (MeasuredKind::KeySet, Self::Length) => MeasureCell::Bounded,
@@ -1002,17 +1027,14 @@ pub(crate) enum CheckedNominalKind {
     Enum {
         variants: Vec<CheckedVariant>,
     },
-    /// One boxed cell. `region` is `None` for the ambient-heap `box<T>`
-    /// [STOR-2] and `Some(store)` for the store-branded `Box<'s, T>` S39,
-    /// whose region is a component of its type exactly as a run's is
-    /// [PROV-1] and whose release class that region decides [PROV-6].
+    /// One pointer whose `inner` lives outside the binding: an owned Box
+    /// cell or a Frozen handle. The release class distinguishes ownership and
+    /// immutable shared storage; both use the ordinary content path support.
     Box {
         referent: CheckedType,
         region: Option<DeclarationId>,
-        /// [PROV-6] which release action this cell's own reclamation is, read
-        /// off `region` at the moment the nominal is interned. The ambient
-        /// heap's `box<T>` and a general store's cell both free; a bump
-        /// extent's cell is reclaimed by its region's own reset.
+        /// [PROV-6, STOR-3, SHARE-1] release an owned cell or count out a
+        /// frozen handle; only its last handle releases the immutable value.
         release: CheckedReleaseClass,
     },
     /// An ordinary opaque nominal has no fields or constructor.
@@ -1923,7 +1945,9 @@ impl CheckedRangeElementPlace {
             .chain(std::iter::once(&self.offset))
             .chain(self.path.iter().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+                CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Measure(_) => None,
             }))
     }
 
@@ -1935,7 +1959,9 @@ impl CheckedRangeElementPlace {
             .chain(std::iter::once(&mut self.offset))
             .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
-                CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+                CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Measure(_) => None,
             }))
     }
 
@@ -2044,6 +2070,8 @@ pub(crate) struct CheckedContainerRoot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
+    /// A declared readonly descriptor field [TYPE-2, OP-15, MSR-2].
+    Measure(CheckedMeasure),
     /// One `Box.inner` selection [TYPE-9]. It is an ordinary path step
     /// whose position is preserved in the resolved place [REF-1].
     BoxReferent(NominalId),
@@ -2097,14 +2125,18 @@ impl CheckedContainerRoot {
     /// terminal operation only takes an address or reads a measure.
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
         self.path.iter().filter_map(|step| match step {
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&index.offset),
         })
     }
 
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
         self.path.iter_mut().filter_map(|step| match step {
-            CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+            CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
         })
     }
@@ -2178,7 +2210,9 @@ fn subscript_offsets(
 ) -> impl Iterator<Item = (&CheckedExpression, super::places::CapturedValue)> {
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
-        CheckedPlaceStep::Field(_) | CheckedPlaceStep::BoxReferent(_) => None,
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
     })
 }
 
@@ -2233,13 +2267,14 @@ fn selects_readonly_fragment_field(
         };
         fields.get(field as usize)
     };
-    let Some((CheckedPlaceStep::Field(last), prefix)) = steps.split_last() else {
+    let Some((last, prefix)) = steps.split_last() else {
         return false;
     };
     let mut ty = start;
     for step in prefix {
         ty = match step {
             CheckedPlaceStep::Subscript(index) => index.element_type,
+            CheckedPlaceStep::Measure(_) => return false,
             CheckedPlaceStep::Field(field) => match struct_field(ty, *field) {
                 Some(field) => field.ty,
                 None => return false,
@@ -2255,8 +2290,14 @@ fn selects_readonly_fragment_field(
             }
         };
     }
-    struct_field(ty, *last)
-        .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_)))
+    match last {
+        CheckedPlaceStep::Field(field) => struct_field(ty, *field)
+            .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_))),
+        CheckedPlaceStep::Measure(measure) => ty
+            .measured()
+            .is_some_and(|measured| !matches!(measure.cell(measured), MeasureCell::Absent)),
+        _ => false,
+    }
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
@@ -2289,6 +2330,7 @@ impl CheckedPlaceStep {
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
         match self {
             Self::Field(field) => super::goal::GoalProjection::Field(*field),
+            Self::Measure(measure) => super::goal::GoalProjection::Measure(*measure),
             Self::BoxReferent(_) => super::goal::GoalProjection::Deref,
             Self::Subscript(index) => {
                 super::goal::GoalProjection::Subscript(index.captured.goal_identity())
@@ -2299,6 +2341,7 @@ impl CheckedPlaceStep {
     pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         match self {
             Self::Field(field) => super::places::PlaceStep::Field(*field),
+            Self::Measure(measure) => super::places::PlaceStep::Measure(*measure),
             Self::BoxReferent(_) => super::places::PlaceStep::Deref,
             Self::Subscript(index) => super::places::PlaceStep::Index(index.captured),
         }
@@ -2816,9 +2859,8 @@ pub(crate) enum CheckedStatement {
         value: CheckedExpression,
     },
     /// [GRAM-4, CALL-4] `let (a, b) = f(...);`. One evaluation of a call whose
-    /// callee declares an ordered result list, or the source consumes a
-    /// struct or cell. Binders follow field order for products; a cell's
-    /// sole binder receives its referent.
+    /// callee declares an ordered result list, or struct destructuring
+    /// copies or consumes a struct [PROV-6]. Binders retain field ordinals.
     DestructuringLet {
         node_path: NodePath,
         /// Each binder, its selected value type, and the field or result
@@ -2828,9 +2870,9 @@ pub(crate) enum CheckedStatement {
         bindings: Vec<(BindingId, CheckedType, u32)>,
         /// [WIN-3, STOR-3] the compiler-derived release of every field a
         /// final `..` covers, in declaration order, rooted at the consumed
-        /// value. A result list covers nothing and carries none.
+        /// value. Copy destructuring and result lists carry no releases.
         covered: Vec<CheckedProjectedDrop>,
-        /// The consumed product or cell nominal [CALL-4, TYPE-6, S39].
+        /// The destructured struct or result-list nominal [PROV-6, CALL-4].
         nominal: NominalId,
         value: CheckedExpression,
     },
@@ -3037,7 +3079,7 @@ pub(crate) enum CheckedEffectStep {
     },
     /// `.next`, `.last`, `.filled`, or `.free` [WIN-2, TYPE-10].
     Part(super::places::WindowPart),
-    /// `.len`, `.cap`, or `.head` [MSR-1, OP-15, TYPE-2].
+    /// `.len`, `.cap`, `.head`, or `.bytes` [MSR-1, OP-15, TYPE-2].
     Measure(CheckedMeasure),
 }
 
@@ -3046,6 +3088,11 @@ pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
     pub(crate) formal_hypothesis: bool,
+    /// [FN-2] the canonical symbolic instance of this function's declaration,
+    /// when this is another symbolic instance whose arguments rename that
+    /// instance's parameters one to one: its body is neither checked nor
+    /// analyzed, and it takes that instance's outcomes. `None` otherwise.
+    pub(crate) summary_source: Option<FunctionId>,
     /// Element layout queried by paged_page_len, absent on other functions.
     pub(crate) prelude_element: Option<CheckedElement>,
     pub(crate) id: FunctionId,
@@ -3674,7 +3721,7 @@ impl FunctionMentions {
     fn steps(&mut self, steps: &[CheckedPlaceStep]) {
         for step in steps {
             match step {
-                CheckedPlaceStep::Field(_) => {}
+                CheckedPlaceStep::Field(_) | CheckedPlaceStep::Measure(_) => {}
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     self.types.push(CheckedType::Nominal(*nominal));
                 }

@@ -1,0 +1,13 @@
+struct Row {
+  field: Array<u64, 2>;
+}
+
+fn probe(r: &[Row]) -> result: unit pure contract {
+  requires r^.field[0_u64] == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -66,7 +66,11 @@ pub(super) fn emit_resource_drop_helpers(
             IrNominalKind::Shared {
                 state,
                 shape: IrShared::Object,
-            } => emit_shared_drop_helper(program, &mut module, nominal, *state)?,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *state, false)?,
+            IrNominalKind::Box {
+                referent,
+                release: IrReleaseClass::Frozen,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *referent, true)?,
             IrNominalKind::Shared {
                 shape: IrShared::Map { entry },
                 ..
@@ -133,22 +137,36 @@ fn emit_shared_drop_helper(
     module: &mut Module,
     nominal: &crate::IrNominal,
     state: IrType,
+    frozen: bool,
 ) -> Result<(), BackendFailure> {
     let mut output = FunctionBody::default();
     let symbol = drop_helper_symbol(nominal);
     let mut signature = Signature::new(symbol, "void", vec![Parameter::named("ptr", "%value")]);
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    output.instructions(
-        "  %last = call i32 @wf__shared_release(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done\n",
-        &["wf__shared_release"],
-    );
+    let release = if frozen {
+        "wf__frozen_release"
+    } else {
+        "wf__shared_release"
+    };
+    let free = if frozen {
+        "wf__frozen_free"
+    } else {
+        "wf__shared_free"
+    };
+    output.symbol(release);
+    writeln!(output, "  %last = call i32 @{release}(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %state, label %done")
+        .map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("state".to_owned());
     if type_requires_cleanup(program, state)? {
         writeln!(
             output,
             "  %state.address = getelementptr inbounds i8, ptr %value, i64 {}",
-            crate::backend::SHARED_STATE_OFFSET
+            if frozen {
+                0
+            } else {
+                crate::backend::SHARED_STATE_OFFSET
+            }
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         // The state is released in place: a memory-only state is never
@@ -165,10 +183,9 @@ fn emit_shared_drop_helper(
             }],
         )?;
     }
-    output.instructions(
-        "  call void @wf__shared_free(ptr %value)\n  br label %done\n",
-        &["wf__shared_free"],
-    );
+    output.symbol(free);
+    writeln!(output, "  call void @{free}(ptr %value)\n  br label %done")
+        .map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();
@@ -177,14 +194,21 @@ fn emit_shared_drop_helper(
     Ok(())
 }
 
-/// Whether any type of this program is a shared-object handle, a keyed table
-/// or a key set [SHARE-1], and so names the runtime's entries for them.
+/// Whether any type of this program is a shared or frozen handle, a keyed
+/// table or a key set [SHARE-1], and so names the runtime's entries for them.
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
     Ok(program_types(program)?.into_iter().any(|ty| match ty {
         IrType::KeySet | IrType::Entries { .. } => true,
-        IrType::Nominal(id) => program
-            .nominal(id)
-            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })),
+        IrType::Nominal(id) => program.nominal(id).is_some_and(|nominal| {
+            matches!(
+                nominal.kind(),
+                IrNominalKind::Shared { .. }
+                    | IrNominalKind::Box {
+                        release: IrReleaseClass::Frozen,
+                        ..
+                    }
+            )
+        }),
         _ => false,
     }))
 }
@@ -192,7 +216,11 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 38] = [
+    let declarations: [(&str, &str, &[&str]); 44] = [
+        ("wf__frozen_new", "ptr", &["i64"]),
+        ("wf__frozen_share", "void", &["ptr"]),
+        ("wf__frozen_release", "i32", &["ptr"]),
+        ("wf__frozen_free", "void", &["ptr"]),
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
@@ -221,6 +249,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "i64", "i64", "ptr", "i64", "i32", "i64"],
         ),
         (
+            "wf__keyed_table_scan_within",
+            "i64",
+            &["ptr", "i64", "i64", "i64", "ptr", "ptr", "i64", "i32", "i64"],
+        ),
+        (
             "wf__keyed_table_clear",
             "void",
             &["ptr", "i64", "i32", "i64", "ptr"],
@@ -232,7 +265,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_release", "void", &["ptr", "i64"]),
+        (
+            "wf__atomic_group_release",
+            "void",
+            &["ptr", "i64", "i64", "i32", "i64"],
+        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (
@@ -253,6 +290,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ),
         ("wf__key_set_new", "void", &["ptr", "i64"]),
         ("wf__key_set_insert", "i64", &["ptr", "ptr", "i64"]),
+        ("wf__key_set_bytes", "i64", &["ptr"]),
         ("wf__key_set_free", "void", &["ptr"]),
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),
@@ -928,7 +966,11 @@ fn emit_cleanup_jobs(
                         IrNominalKind::Opaque => {}
                         // [SHARE-1] release one handle; its helper releases
                         // the state with the last one.
-                        IrNominalKind::Shared { .. } => {
+                        IrNominalKind::Shared { .. }
+                        | IrNominalKind::Box {
+                            release: IrReleaseClass::Frozen,
+                            ..
+                        } => {
                             let symbol = drop_helper_symbol(nominal);
                             output.symbol(symbol.clone());
                             writeln!(output, "  call void @{symbol}(ptr {operand})")
@@ -939,11 +981,12 @@ fn emit_cleanup_jobs(
                         IrNominalKind::Box { referent, release } => {
                             // A boxed runtime-capacity shape is thin: the
                             // cell pointer is the block, whose header and
-                            // elements are the same allocation
-                            // (compiler/storage-representation), which is
-                            // what [TYPE-9]'s "exactly one heap object" and
-                            // [STOR-3]'s "one compiler-derived heap free"
-                            // say. Loading the block would read past its
+                            // elements are one allocation, or the shared
+                            // empty header at capacity 0 [STOR-1], which
+                            // `wf__heap_give` recognizes and does not free
+                            // (compiler/storage-representation); [STOR-3]
+                            // frees each allocation the content occupies.
+                            // Loading the block would read past its
                             // declared zero-length element array, so its
                             // walk takes the pointer and the cell's own free
                             // is the block's.
@@ -1093,22 +1136,23 @@ fn emit_enum_cleanup_body(
     aggregate_ty: &str,
 ) -> Result<(), BackendFailure> {
     let ty = IrType::Nominal(nominal);
+    let tag_ty = super::enum_tag_type(program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?)?;
     {
         output.open_block("entry".to_string());
         // The tag is at offset 0 in every enum layout.
         if by_address {
-            writeln!(output, "  %tag = load i32, ptr %value")
+            writeln!(output, "  %tag = load {tag_ty}, ptr %value")
         } else {
             writeln!(output, "  %tag = extractvalue {aggregate_ty} %value, 0")
         }
         .map_err(|_| BackendFailure::TextEmission)?;
     };
-    writeln!(output, "  switch i32 %tag, label %invalid [")
+    writeln!(output, "  switch {tag_ty} %tag, label %invalid [")
         .map_err(|_| BackendFailure::TextEmission)?;
     for variant in variants {
         writeln!(
             output,
-            "    i32 {}, label %variant.{}",
+            "    {tag_ty} {}, label %variant.{}",
             variant.tag(),
             variant.tag()
         )
@@ -1204,6 +1248,17 @@ fn emit_paged_drop_helper(
         output.push_str("  br label %pages.start\n");
     }
     output.open_block("pages.start".to_owned());
+    let first_extent = super::paged::first_page_extent(&mut output, "%cap", b, "first")?;
+    let first_bytes = if stride == 0 {
+        "1".to_owned()
+    } else {
+        writeln!(
+            output,
+            "  %first.bytes = mul nuw i64 {first_extent}, {stride}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        "%first.bytes".to_owned()
+    };
     writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("pages".to_owned());
     output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
@@ -1213,7 +1268,7 @@ fn emit_paged_drop_helper(
         .ok_or(BackendFailure::InvalidIr)?
         .max(1);
     output.symbol("wf__heap_give");
-    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @wf__heap_give(ptr %allocation, i64 {page_bytes})\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %is.first = icmp eq i64 %p, 0\n  %page.bytes = select i1 %is.first, i64 {first_bytes}, i64 {page_bytes}\n  call void @wf__heap_give(ptr %allocation, i64 %page.bytes)\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();
