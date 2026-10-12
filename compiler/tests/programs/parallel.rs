@@ -1,6 +1,8 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
+use std::process::Output;
+
 use super::support::{
     build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
 };
@@ -508,6 +510,91 @@ fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
 #[test]
 fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_lock_order.wf", 2);
+}
+
+/// The status `meta_commit_overlap.wf` and `meta_commit_held.wf` give a run
+/// whose state checks passed and whose duration missed their criterion. It
+/// is the only status a repeat can change; every other nonzero status is a
+/// wrong log or table and fails the case at once.
+const META_COMMIT_DURATION_MISSED: i32 = 4;
+
+/// The nanoseconds a meta-commit program printed, as the first line of its
+/// standard output.
+fn meta_commit_elapsed(output: &Output) -> u64 {
+    let text = std::str::from_utf8(&output.stdout).expect("decimal duration output");
+    let line = text
+        .strip_suffix('\n')
+        .expect("duration line ends in a newline");
+    line.parse().expect("a decimal duration")
+}
+
+/// [SHARE-1, SHARE-2, SHARE-3] two atomic statements that name different keys
+/// of one shared map and the same Meta object, and reach Meta only after a
+/// ten-millisecond computation, finish within fifteen milliseconds on two
+/// drivers: their computations overlap and the statements exclude one another
+/// only at the commit to Meta (compiler/waiting-contexts/state-locks, which
+/// takes a shared object at its first use in the block). Two computations one
+/// after the other need twenty. The program also fails a log whose sequence
+/// numbers are not 0 and 1 in log order, a replayed log that differs from the
+/// final table (statuses 1 to 3), and a run shorter than one computation
+/// (status 5), which a skipped computation would give.
+///
+/// The duration bound is the best of three runs: a run that only missed it
+/// (status 4) is repeated, up to three runs in all, because a loaded hosted
+/// runner can delay the start of the second context. A repeat cannot hide a
+/// lock held through the computation, which makes every run take twenty.
+#[test]
+fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commit() {
+    let program = build_program(&compile_program("meta_commit_overlap.wf"));
+    let mut runs = Vec::new();
+    for _ in 0..3 {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        let status = output.status.code();
+        assert!(
+            status == Some(0) || status == Some(META_COMMIT_DURATION_MISSED),
+            "meta_commit_overlap.wf: {output:?}"
+        );
+        let elapsed = meta_commit_elapsed(&output);
+        runs.push(elapsed);
+        if status == Some(0) {
+            assert!(
+                (10_000_000..=15_000_000).contains(&elapsed),
+                "status 0 with {elapsed} ns: {output:?}"
+            );
+            return;
+        }
+        assert!(
+            elapsed > 15_000_000,
+            "status 4 with {elapsed} ns: {output:?}"
+        );
+    }
+    panic!("no run of three finished within 15 ms: {runs:?} ns");
+}
+
+/// The control of the case above: the same statements, but each takes its
+/// sequence number from Meta before its computation, so Meta is held through
+/// it. Two computations of ten milliseconds that exclude one another need
+/// twenty, so every run must take at least eighteen. The control shows that
+/// the criterion of the case above separates the two lock timings: the same
+/// statements with Meta reached first end above the eighteen-millisecond floor
+/// and so above the fifteen-millisecond bound. It needs no repeat, because a
+/// lock held through the computation can only lengthen a run.
+#[test]
+fn statements_that_take_meta_before_computing_run_one_after_the_other() {
+    let program = build_program(&compile_program("meta_commit_held.wf"));
+    for round in 0..3 {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "meta_commit_held.wf, round {round}: {output:?}"
+        );
+        let elapsed = meta_commit_elapsed(&output);
+        assert!(
+            elapsed >= 18_000_000,
+            "round {round}, {elapsed} ns: {output:?}"
+        );
+    }
 }
 
 /// Requested overlap must preserve the histogram and signed-extrema oracle.
