@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 the owner's agent instructions own the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-12 Bool range guards, operation relations and `take_back` images
+
+Nodes: compiler/range-judgment, language/checks-and-proofs/range-facts
+
+Owner-approved: On the shared status board on 2026-10-12, the owner chose option A, "approve" (translated), on the card proof-bl-range-v0128-approve, "approve the specification amendment v0.131 and the added design tree decisions in Ming-Research/Whitefoot#366 (head 4f881b446)?" (translated), whose background summarized every added and changed decision and the refused alternatives.
+
+Summary: range-facts adds three decisions: a range guard may be one Bool datum, because writers guard on the same field and its tag is already a versioned integer read; an S7 operation the walk does not name exactly carries its S7 row's relations, because both judgments share one table and v2h's jump-table index needs it; `take_back` hands over the removed element's image, because moving a prepared element must keep its proved facts. range-judgment adds that ordinary entailment records the operand intervals S7 read at each operation in the proof receipt (proof-receipt 3), which the walk uses to build those relations, instead of the walk computing its own intervals, receiving derived relations or rerunning entailment; its first decision now says the walk retains only those intervals beyond the ordinary evidence.
+
 ## 2026-10-12 Paged shares the empty header and grows a small first page
 
 Nodes: compiler/storage-representation, language/data-model/storage-shapes

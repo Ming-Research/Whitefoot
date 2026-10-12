@@ -1,0 +1,14 @@
+fn transfer_tag(source: &Slots<Bool, 1>, destination: &Slots<Bool, 1>, expected: Bool) -> result: unit writes(source), writes(destination) contract {
+  requires source^.len == 1_u64;
+  requires destination^.len == 0_u64;
+  requires forall old_tag(k in 0_u64..source^.len): source^[k] == expected;
+  ensures forall new_tag(k in 0_u64..destination^.len): destination^[k] == expected;
+} {
+  let taken = take_back(window: source);
+  place_back(window: destination, value: taken);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
