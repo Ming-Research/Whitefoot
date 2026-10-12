@@ -40,21 +40,21 @@ fn collect(job: Job, factory: &HandleFactory, output: &OutputStream, publish: Bo
   }
   let outcome = std::snapshot::finish(job: move job);
   match outcome.child {
-    SnapshotExportComplete(bytes: total, records: records) => {
+    SnapshotExportComplete(bytes: total, records: record_count) => {
       if total != used {
         return 5_u8;
       }
-      if records != 2_u64 {
+      if record_count != 2_u64 {
         return 6_u8;
       }
     }
     SnapshotExportFailed(error: problem) => {
       return 7_u8;
     }
-    SnapshotChildExited(code: code) => {
+    SnapshotChildExited(code: exit_code) => {
       return 8_u8;
     }
-    SnapshotChildSignalled(signal: signal) => {
+    SnapshotChildSignalled(signal: signal_number) => {
       return 9_u8;
     }
     SnapshotProtocolFailed(error: problem) => {
@@ -67,10 +67,10 @@ fn collect(job: Job, factory: &HandleFactory, output: &OutputStream, publish: Bo
         return 11_u8;
       }
     }
-    SnapshotDiscarded(delivered: delivered, discarded: discarded) => {
+    SnapshotDiscarded(delivered: delivered_bytes, discarded: discarded_bytes) => {
       return 12_u8;
     }
-    SnapshotCollectionFailed(error: problem, delivered: delivered) => {
+    SnapshotCollectionFailed(error: problem, delivered: delivered_bytes) => {
       return 13_u8;
     }
   }
