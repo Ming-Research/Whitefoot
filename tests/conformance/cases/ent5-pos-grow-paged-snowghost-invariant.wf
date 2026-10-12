@@ -1,0 +1,25 @@
+struct Block {
+  entry_slot: u32;
+  normal_y: i32;
+}
+
+enum Flow {
+  Open(block: u32);
+}
+
+struct Context {
+  order: Box<Paged<Flow>>;
+  targets: Box<Slots<Block>>;
+  invariant(c): forall inv(k in 0_u64..c^.order.inner.len) when c^.order.inner[k].Open.block < c^.targets.inner.len: c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k;
+}
+
+fn reserve_order(c: &Context, capacity: u64) -> result: unit writes(c.order) contract {
+  requires capacity >= c^.order.inner.cap;
+} {
+  grow_paged(cell: &c^.order, capacity: capacity);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
