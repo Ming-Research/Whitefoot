@@ -5813,7 +5813,14 @@ fn main() -> status: std::process::ExitStatus pure {
                 DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
                 _ => return true,
             };
-            !matches!(relation, Relation::Bound { right: ZERO, bound: 255, .. })
+            !matches!(
+                relation,
+                Relation::Bound {
+                    right: ZERO,
+                    bound: 255,
+                    ..
+                }
+            )
         }),
         "the directly established type bound needs no delivery root"
     );

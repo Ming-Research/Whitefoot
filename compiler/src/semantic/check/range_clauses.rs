@@ -951,7 +951,10 @@ impl Checker<'_, '_> {
         let operand = self.range_place(context, place, bindings, names)?;
         // Preserve the already-typed place before range_sum can cancel it
         // or multiply it by zero. Clause erasure changes no alias premise.
-        names.contract_reads.borrow_mut().push(operand.term().clone());
+        names
+            .contract_reads
+            .borrow_mut()
+            .push(operand.term().clone());
         Ok(operand)
     }
 

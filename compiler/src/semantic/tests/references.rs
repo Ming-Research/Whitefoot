@@ -2192,45 +2192,77 @@ fn nested_contract_index_rejects_the_resolved_equal_position() {
     let positive = include_str!(
         "../../../../tests/conformance/cases/eff5-pos-contract-nested-index-separate.wf"
     );
-    let negative = include_str!(
-        "../../../../tests/conformance/cases/eff5-neg-contract-nested-index-alias.wf"
-    );
+    let negative =
+        include_str!("../../../../tests/conformance/cases/eff5-neg-contract-nested-index-alias.wf");
     assert_eq!(positive.replace("j: 2_u64", "j: 1_u64"), negative);
     let resolved_position = with_semantics(positive.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("nested readonly length must separate positions one and two: {outcome:?}");
         };
-        let caller = program.data.functions.iter()
+        let caller = program
+            .data
+            .functions
+            .iter()
             .find(|function| function.name == "caller")
             .expect("caller is checked");
         let entailment = &caller.entailment;
         super::entailment::validate_derivations(entailment);
-        let (query, separation) = caller.call_separations.iter().enumerate()
+        let (query, separation) = caller
+            .call_separations
+            .iter()
+            .enumerate()
             .find(|(_, separation)| !separation.contract_indices.is_empty())
             .expect("nested position participates in the call comparison");
         let [(capture, expression)] = separation.contract_indices.as_slice() else {
             panic!("only the outer readonly measure needs a capture");
         };
-        assert!(entailment.obligations.iter().any(|outcome| {
-            matches!(outcome.family, ObligationFamily::CallSeparation(id)
-                if id as usize == query) && outcome.discharged && outcome.derivation.is_some()
-        }), "the nested position must retain its separation proof");
-        let capture_kind = TermKind::IndexCapture { capture: capture.capture };
-        let capture_term = TermId(u32::try_from(entailment.inventory.terms.iter()
-            .position(|term| *term == capture_kind)
-            .expect("the compared capture has a term")).expect("term id fits u32"));
-        assert!(entailment.derivations.nodes.iter().any(|node| {
-            let DerivationNode::SourceBound {
-                relation: Relation::Equal { left, right, difference: 0 }, ..
-            } = node else {
-                return false;
-            };
-            *left == capture_term
-                && matches!(entailment.inventory.terms.get(right.0 as usize),
-                    Some(TermKind::Measure(CheckedMeasure::Length, _)))
-                && entailment.inventory.measure_bounds.get(right.0 as usize)
-                    == Some(&Some(MeasureBound::Constant(1)))
-        }), "the compared position must equal the standing Array length one");
+        assert!(
+            entailment.obligations.iter().any(|outcome| {
+                matches!(outcome.family, ObligationFamily::CallSeparation(id)
+                if id as usize == query)
+                    && outcome.discharged
+                    && outcome.derivation.is_some()
+            }),
+            "the nested position must retain its separation proof"
+        );
+        let capture_kind = TermKind::IndexCapture {
+            capture: capture.capture,
+        };
+        let capture_term = TermId(
+            u32::try_from(
+                entailment
+                    .inventory
+                    .terms
+                    .iter()
+                    .position(|term| *term == capture_kind)
+                    .expect("the compared capture has a term"),
+            )
+            .expect("term id fits u32"),
+        );
+        assert!(
+            entailment.derivations.nodes.iter().any(|node| {
+                let DerivationNode::SourceBound {
+                    relation:
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: 0,
+                        },
+                    ..
+                } = node
+                else {
+                    return false;
+                };
+                *left == capture_term
+                    && matches!(
+                        entailment.inventory.terms.get(right.0 as usize),
+                        Some(TermKind::Measure(CheckedMeasure::Length, _))
+                    )
+                    && entailment.inventory.measure_bounds.get(right.0 as usize)
+                        == Some(&Some(MeasureBound::Constant(1)))
+            }),
+            "the compared position must equal the standing Array length one"
+        );
         expression.clone()
     });
     // A failed separation has no retained proof root. Compare its exact
@@ -2240,27 +2272,40 @@ fn nested_contract_index_rejects_the_resolved_equal_position() {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("nested-index witness must reach entailment: {outcome:?}");
         };
-        let caller = program.data.functions.iter()
+        let caller = program
+            .data
+            .functions
+            .iter()
             .find(|function| function.name == "caller")
             .expect("caller is checked");
         let entailment = &caller.entailment;
         super::entailment::validate_derivations(entailment);
-        let (query, separation) = caller.call_separations.iter().enumerate()
+        let (query, separation) = caller
+            .call_separations
+            .iter()
+            .enumerate()
             .find(|(_, separation)| !separation.contract_indices.is_empty())
             .expect("nested position participates in the call comparison");
         let [(capture, expression)] = separation.contract_indices.as_slice() else {
             panic!("the same readonly measure needs the same one capture");
         };
         assert_eq!(*expression, resolved_position);
-        assert!(separation.positions.iter().any(|positions| {
-            matches!(positions, CheckedCallSeparationPositions::Indices(left, right)
+        assert!(
+            separation.positions.iter().any(|positions| {
+                matches!(positions, CheckedCallSeparationPositions::Indices(left, right)
                 if (*left == *capture && right.term == CapturedTerm::Literal(1))
                     || (*right == *capture && left.term == CapturedTerm::Literal(1)))
-        }), "the resolved position one is compared with written position one");
-        assert!(entailment.obligations.iter().any(|outcome| {
-            matches!(outcome.family, ObligationFamily::CallSeparation(id)
-                if id as usize == query) && !outcome.discharged
-        }), "equal positions must fail separation");
+            }),
+            "the resolved position one is compared with written position one"
+        );
+        assert!(
+            entailment.obligations.iter().any(|outcome| {
+                matches!(outcome.family, ObligationFamily::CallSeparation(id)
+                if id as usize == query)
+                    && !outcome.discharged
+            }),
+            "equal positions must fail separation"
+        );
     });
 }
 

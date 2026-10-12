@@ -569,12 +569,16 @@ impl<'unit> Checker<'_, 'unit> {
             }
             requirement_places.push(places);
         }
-        let definitions = definitions.into_iter().map(|definition| {
-            let expression = expanded_bindings.remove(&definition.binding)
-                .and_then(ExpandedClauseExpression::into_goal_expression)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            Ok((definition.binding, expression))
-        }).collect::<Result<Vec<_>, CheckStop>>()?;
+        let definitions = definitions
+            .into_iter()
+            .map(|definition| {
+                let expression = expanded_bindings
+                    .remove(&definition.binding)
+                    .and_then(ExpandedClauseExpression::into_goal_expression)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Ok((definition.binding, expression))
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
             definitions,
             requirements,

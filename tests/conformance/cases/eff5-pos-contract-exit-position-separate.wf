@@ -1,0 +1,17 @@
+fn helper(source: &[u64], target: &[u64], j: u64) -> result: unit writes(target[j]) contract {
+  requires target^.len == 3_u64;
+  requires source^.len == 3_u64;
+  requires j == 0_u64;
+  requires forall two(k in 0_u64..1_u64): target^[0_u64] == 2_u64;
+  ensures forall same(k in 0_u64..1_u64): source^[target^[0_u64]] == source^[target^[0_u64]];
+} {
+  set target^[j] = 0_u64;
+  return unit;
+}
+
+fn caller() -> result: unit pure {
+  let values = array_filled::<u64, 3>(value: 2_u64);
+  let others = array_filled::<u64, 3>(value: 2_u64);
+  helper(source: &others[0_u64..3_u64], target: &values[0_u64..3_u64], j: 0_u64);
+  return unit;
+}

@@ -1582,7 +1582,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => live_holders.iter().any(|holder| {
                 if *relocation {
-                    self.input.relocation_kills_holder(separations, *holder, place)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, place)
                 } else {
                     self.input.write_replaces_live_holder(*holder, place)
                 }

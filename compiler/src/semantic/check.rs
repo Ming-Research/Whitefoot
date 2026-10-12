@@ -1,8 +1,8 @@
 mod acceptance;
 mod behavior;
 mod cleanup;
-mod control;
 mod contract_reads;
+mod control;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;

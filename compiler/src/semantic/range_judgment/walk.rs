@@ -17,8 +17,8 @@ use super::super::obligations::ObligationSubject;
 use crate::NodePath;
 
 mod aggregate;
-mod ordinary;
 mod operations;
+mod ordinary;
 #[cfg(test)]
 mod tests;
 mod type_invariants;
@@ -3033,7 +3033,8 @@ impl<'program> Walker<'program> {
                 .insert(*container, self.world.new_generation());
         }
         for container in &modified.capacities {
-            if !modified.containers.contains(container) && !modified.descriptors.contains(container) {
+            if !modified.containers.contains(container) && !modified.descriptors.contains(container)
+            {
                 header.relocate_container(&mut self.world, *container);
             }
         }

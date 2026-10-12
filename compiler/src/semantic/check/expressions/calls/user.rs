@@ -23,6 +23,7 @@ use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
     SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
+use super::super::super::contract_reads::{ContractReadStep, range_term_goal};
 use super::super::super::generics::{
     GenericArgument, GenericParameterKey, HEAP_ALLOCATING_PRELUDE_FUNCTIONS,
 };
@@ -531,52 +532,74 @@ impl<'unit> Checker<'_, 'unit> {
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
         let contract_reads = self.contract_read_footprint(check_context, signature)?;
         let mut compared = substituted.clone();
-        let origin_start = substituted.iter().map(|entry| entry.origin).max()
+        let origin_start = substituted
+            .iter()
+            .map(|entry| entry.origin)
+            .max()
             .map_or(Some(0), |origin| origin.checked_add(1))
             .ok_or(SemanticCompilerFailure::CounterOverflow)?;
         let mut contract_position = 0_u32;
         for (ordinal, read) in contract_reads.iter().enumerate() {
-            let argument = signature.parameters.iter()
+            let argument = signature
+                .parameters
+                .iter()
                 .position(|parameter| parameter.declaration == read.root)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let mut suffix = Vec::new();
             let mut contract_indices = Vec::new();
             for step in &read.steps {
                 match step {
-                    super::super::super::contract_reads::ContractReadStep::Row(step) => {
-                        suffix.extend(Checker::substitute_effect_steps(signature,
-                            &CheckedStatePath { root: read.root, steps: vec![*step] },
-                            &actual_captures)?);
+                    ContractReadStep::Row(step) => {
+                        suffix.extend(Checker::substitute_effect_steps(
+                            signature,
+                            &CheckedStatePath {
+                                root: read.root,
+                                steps: vec![*step],
+                            },
+                            &actual_captures,
+                        )?);
                     }
-                    super::super::super::contract_reads::ContractReadStep::Captured(step) =>
-                        suffix.push(*step),
-                    super::super::super::contract_reads::ContractReadStep::Computed(term, definitions) => {
+                    ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
-                        let call_id = u32::try_from(node.index())
-                            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                        match super::super::super::contract_reads::range_term_goal(term, signature,
-                            definitions, call_id, &mut contract_position, &mut pending) {
-                            Some(goal) => {
-                                for (capture, template) in pending {
-                                    let image = self.instantiate_goal_expression(check_context,
-                                        &template, signature, &signature.region_parameters,
-                                        &goal_arguments)?;
-                                    contract_indices.push((capture, image));
-                                }
-                                let goal = self.instantiate_goal_expression(check_context, &goal,
-                                    signature, &signature.region_parameters, &goal_arguments)?;
-                                let captured = CapturedValue::new(CaptureId::ContractRead {
-                                    call: u32::try_from(node.index())
-                                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                                    position: contract_position,
-                                }, CapturedTerm::Opaque);
-                                contract_position = contract_position.checked_add(1)
-                                    .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-                                suffix.push(PlaceStep::Index(captured));
-                                contract_indices.push((captured, goal));
-                            }
-                            None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                        let goal = range_term_goal(
+                            term,
+                            signature,
+                            definitions,
+                            node,
+                            &mut contract_position,
+                            &mut pending,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        for (capture, template) in pending {
+                            let image = self.instantiate_goal_expression(
+                                check_context,
+                                &template,
+                                signature,
+                                &signature.region_parameters,
+                                &goal_arguments,
+                            )?;
+                            contract_indices.push((capture, image));
                         }
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &goal,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(PlaceStep::Index(captured));
+                        contract_indices.push((captured, goal));
                     }
                 }
             }
@@ -587,8 +610,13 @@ impl<'unit> Checker<'_, 'unit> {
                 compared.push(SubstitutedEntry {
                     contract_read: true,
                     contract_indices: contract_indices.clone(),
-                    place, formed, write: false, consuming: false, argument,
-                    origin: origin_start.checked_add(ordinal)
+                    place,
+                    formed,
+                    write: false,
+                    consuming: false,
+                    argument,
+                    origin: origin_start
+                        .checked_add(ordinal)
                         .ok_or(SemanticCompilerFailure::CounterOverflow)?,
                 });
             }
@@ -853,9 +881,7 @@ impl<'unit> Checker<'_, 'unit> {
         let formal = Checker::formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
-                if (left.contract_read || right.contract_read)
-                    && left.argument == right.argument
-                {
+                if (left.contract_read || right.contract_read) && left.argument == right.argument {
                     continue;
                 }
                 if left.origin == right.origin || !(left.write || right.write) {
@@ -911,8 +937,12 @@ impl<'unit> Checker<'_, 'unit> {
                         exchange,
                         reference_use: None,
                         positions,
-                        contract_indices: left.contract_indices.iter()
-                            .chain(&right.contract_indices).cloned().collect(),
+                        contract_indices: left
+                            .contract_indices
+                            .iter()
+                            .chain(&right.contract_indices)
+                            .cloned()
+                            .collect(),
                         window,
                         left_spelling: self
                             .types

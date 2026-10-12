@@ -90,9 +90,9 @@ impl Input<'_, '_> {
         targets.is_empty()
             || writes.is_empty()
             || targets.iter().any(|target| {
-                writes.iter().any(|write| {
-                    write.may_be_prefix_of(separations, target, false)
-                })
+                writes
+                    .iter()
+                    .any(|write| write.may_be_prefix_of(separations, target, false))
             })
     }
 
@@ -141,12 +141,11 @@ impl Input<'_, '_> {
                 // of an already filled selection remain the same value.
                 !matches!(
                     suffix,
-                    []
-                    | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
-                    | [PlaceStep::Deref, PlaceStep::Index(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Range(_), ..]
-                    | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
-                    | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+                    [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                        | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                        | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                        | [PlaceStep::Deref, PlaceStep::Page(_), ..]
                 )
             })
         })
@@ -913,7 +912,9 @@ impl Reasoning<'_, '_, '_> {
                     ..
                 } = event
                     && let PlaceRoot::Binding(binding) = place.root
-                    && self.input.relocation_kills_holder(separations, binding, written)
+                    && self
+                        .input
+                        .relocation_kills_holder(separations, binding, written)
                 {
                     return true;
                 }
@@ -946,7 +947,8 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } = event
                 && holders.iter().any(|holder| {
-                    self.input.relocation_kills_holder(separations, *holder, written)
+                    self.input
+                        .relocation_kills_holder(separations, *holder, written)
                 })
             {
                 return true;

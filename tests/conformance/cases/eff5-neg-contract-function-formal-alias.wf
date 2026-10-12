@@ -9,7 +9,7 @@ fn apply<fn op(frame: &Pair, other: &Pair) -> result: unit writes(frame.marker),
 }>(f: &Pair) -> result: unit writes(f) contract {
   requires f^.value == 0_u64;
 } {
-  doc "EFF-5, FN-2: the function formal supplies its own contract read before any actual function is selected.";
+  doc "EFF-5, FN-5: the function formal supplies its own contract read before any actual function is selected.";
   op(frame: f, other: f);
   return unit;
 }
