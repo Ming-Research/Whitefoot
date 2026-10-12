@@ -846,7 +846,7 @@ impl Vocabulary {
         range_path: &[u32],
     ) {
         self.promote_flow_contradiction(states);
-        for result in states.results.values_mut() {
+        for result in states.results.values_mut().flatten() {
             self.refresh_result(result, &states.facts);
             materialize_closure_before_kill(
                 &mut result.facts,

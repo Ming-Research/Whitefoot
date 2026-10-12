@@ -1010,6 +1010,9 @@ pub(crate) struct FunctionPostconditionProof {
     /// function-local derivation IDs.
     pub(crate) summary: Option<VerifiedPostconditionSummary>,
     pub(crate) exits: Vec<PostconditionExit>,
+    /// [TYPE-11] whether the relation is a routed one a type invariant
+    /// generated, which holds vacuously where no exit selects it.
+    pub(crate) vacuous: bool,
     pub(crate) aggregate: PostconditionAggregate,
 }
 

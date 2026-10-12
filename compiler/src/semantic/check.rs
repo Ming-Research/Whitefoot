@@ -1936,6 +1936,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirements.push(requirement);
             requirement_places.push(Vec::new());
         }
+        let routed_requirements = self.routed_type_invariant_requirements(signature)?;
 
         let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -2263,6 +2264,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             allocates: exhibited.allocates,
             requirements,
             requirement_places,
+            routed_requirements,
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only || supplied_release).then_some(checked.statements),
@@ -2354,7 +2356,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<(), CheckStop> {
         let requirements = functions
             .iter()
-            .map(|checked| checked.function.requirements.clone())
+            .map(|checked| {
+                (
+                    checked.function.requirements.clone(),
+                    checked.function.routed_requirements.clone(),
+                )
+            })
             .collect::<Vec<_>>();
         for checked in functions {
             if !self.types.view.contains_function(checked.function.id) {
@@ -2371,7 +2378,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         statements: &mut [CheckedStatement],
-        requirements: &[Vec<CheckedRequirement>],
+        requirements: &[CalleeRequirements],
     ) -> Result<(), CheckStop> {
         for statement in statements {
             match statement {
@@ -2479,7 +2486,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         expression: &mut CheckedExpression,
-        requirements: &[Vec<CheckedRequirement>],
+        requirements: &[CalleeRequirements],
     ) -> Result<(), CheckStop> {
         match expression {
             CheckedExpression::UserCall {
@@ -2490,9 +2497,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 goal_regions,
                 formal_contract,
                 requirements: call_requirements,
+                routed_requirements: call_routed_requirements,
                 ..
             } => {
-                for argument in arguments {
+                for argument in arguments.iter_mut() {
                     self.install_expression_call_requirements(
                         check_context,
                         argument,
@@ -2508,11 +2516,28 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 if let Some(effects) = formal_effects {
                     effects.allocates = signature.declared_effects.allocates;
                 }
+                let (callee_requirements, callee_routed) = requirements
+                    .get(function.0 as usize)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                // [TYPE-11] the routed requirements are the selected actual's
+                // own: a formal's parameter types equal its actual's, so the
+                // two carry the same ones.
+                *call_routed_requirements = callee_routed
+                    .iter()
+                    .filter(|requirement| {
+                        !matches!(
+                            arguments.get(requirement.subject as usize),
+                            Some(
+                                CheckedExpression::Constant(_)
+                                    | CheckedExpression::NamedConstant { .. }
+                            )
+                        )
+                    })
+                    .cloned()
+                    .collect();
                 let boundary = match formal_contract {
                     Some(boundary) => boundary.requirements.as_slice(),
-                    None => requirements
-                        .get(function.0 as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    None => callee_requirements.as_slice(),
                 };
                 *call_requirements = boundary
                     .iter()
@@ -3887,3 +3912,10 @@ impl<'unit> TypeContext<'unit> {
         }
     }
 }
+
+/// One callee's requirement templates: its written and type-invariant
+/// requirements, and its routed type-invariant requirements [FN-8, TYPE-11].
+type CalleeRequirements = (
+    Vec<CheckedRequirement>,
+    Vec<super::postcondition::CheckedRoutedRequirement>,
+);

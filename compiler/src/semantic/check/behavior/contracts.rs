@@ -448,13 +448,17 @@ fn contract_query_discharged(proof: &FunctionEntailment) -> bool {
 /// unrouted actual clause holds on every normal return, including an Ok route;
 /// a routed clause holds only on that exact result ordinal and route.
 fn ensures_available_on_route(published: &InterfaceEnsures, promised: &InterfaceEnsures) -> bool {
-    match (published.variant, promised.variant) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(published_variant), Some(promised_variant)) => {
+    match (
+        published.selector.is_routed(),
+        promised.selector.is_routed(),
+    ) {
+        (false, _) => true,
+        (true, false) => false,
+        (true, true) => {
             published.ordinal == promised.ordinal
-                && published_variant == promised_variant
+                && published.variant == promised.variant
                 && published.field == promised.field
+                && published.selector.route == promised.selector.route
         }
     }
 }
@@ -480,7 +484,7 @@ fn contract_postcondition_variables(
                     mode: result.mode,
                     // A routed ordinal's datum is the Ok payload, not the
                     // whole Result value declared at that ordinal [FN-9].
-                    ty: if selector.variant.is_some()
+                    ty: if selector.selector.is_routed()
                         && usize::try_from(selector.ordinal).ok() == Some(ordinal)
                     {
                         selector.result_type
@@ -648,6 +652,7 @@ impl<'unit> DeclarationInventory<'unit> {
             declared_state_reads: Vec::new(),
             requirements,
             requirement_places,
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

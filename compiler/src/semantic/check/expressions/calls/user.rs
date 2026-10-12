@@ -603,6 +603,7 @@ impl<'unit> Checker<'_, 'unit> {
                 goal_arguments,
                 goal_regions: Vec::new(),
                 requirements: Vec::new(),
+                routed_requirements: Vec::new(),
                 result,
                 result_borrow: None,
             },

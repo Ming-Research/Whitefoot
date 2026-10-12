@@ -15,8 +15,9 @@ use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
 use crate::semantic::postcondition::{
-    CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
+    CheckedPostcondition, CheckedPostconditionSelector, CheckedRoutedRequirement,
+    NormalizedRelation, ParameterDenotation, PayloadRoute, PostconditionPlace,
+    PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
 use crate::{DeclarationClass, FixedTerminal, LexicalUseRole, ResolvedTarget};
 
@@ -172,6 +173,11 @@ impl<'unit> Checker<'_, 'unit> {
                     name,
                     nominal,
                 )?);
+            }
+            if !formed.is_empty()
+                && let Some(record) = self.types.nominals.get_mut(nominal.0 as usize)
+            {
+                record.type_invariant = true;
             }
             self.types.type_invariants.insert(nominal, formed);
         }
@@ -408,10 +414,95 @@ impl<'unit> Checker<'_, 'unit> {
             .collect()
     }
 
+    /// [TYPE-11] each variant field of an own enum type that holds a struct
+    /// with type invariants, with that struct, in variant and then field
+    /// declaration order. The type is a parameter's or result's after the
+    /// function instance's substitution [FN-2], so a payload written as a
+    /// type parameter that the instance binds to such a struct is one.
+    pub(super) fn invariant_payload_routes(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Vec<(PayloadRoute, NominalId)>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return Ok(Vec::new());
+        };
+        let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind else {
+            return Ok(Vec::new());
+        };
+        let mut routes = Vec::new();
+        for (variant_index, variant) in variants.iter().enumerate() {
+            for (field_index, field) in variant.fields.iter().enumerate() {
+                let CheckedType::Nominal(payload) = field.ty else {
+                    continue;
+                };
+                if self
+                    .types
+                    .type_invariants
+                    .get(&payload)
+                    .is_some_and(|invariants| !invariants.is_empty())
+                {
+                    routes.push((
+                        PayloadRoute {
+                            variant: u32::try_from(variant_index)
+                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                            field: u32::try_from(field_index)
+                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                            tag: variant.tag,
+                        },
+                        payload,
+                    ));
+                }
+            }
+        }
+        Ok(routes)
+    }
+
+    /// [TYPE-11] the requirements an own parameter of enum type adds: each
+    /// type invariant of each struct one of its variant fields holds,
+    /// restricted to a value holding that variant [FN-8], in parameter
+    /// order and then route and declaration order.
+    pub(super) fn routed_type_invariant_requirements(
+        &self,
+        signature: &FunctionSignature,
+    ) -> Result<Vec<CheckedRoutedRequirement>, CheckStop> {
+        let mut requirements = Vec::new();
+        for (ordinal, parameter) in signature.parameters.iter().enumerate() {
+            if parameter.mode != CheckedMode::Own {
+                continue;
+            }
+            let subject =
+                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            for (route, payload) in self.invariant_payload_routes(parameter.ty)? {
+                for invariant in self
+                    .types
+                    .type_invariants
+                    .get(&payload)
+                    .into_iter()
+                    .flatten()
+                {
+                    requirements.push(CheckedRoutedRequirement {
+                        clause: invariant.clause.clone(),
+                        subject,
+                        route,
+                        payload: CheckedType::Nominal(payload),
+                        goal: invariant.goal.clone(),
+                        relation: substitute_relation(
+                            &invariant.relation,
+                            InvariantSubject::Result(0),
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(requirements)
+    }
+
     /// [TYPE-11] each type invariant over the exit state of a reference
     /// parameter whose row writes it, and over each result ordinal whose
     /// declared type is the struct, as that callable's postcondition after
-    /// its written ones [FN-9], selecting every explicit return.
+    /// its written ones [FN-9], selecting every explicit return; then each
+    /// over a variant field of an own result ordinal of enum type, routed by
+    /// that variant field.
     pub(super) fn type_invariant_postconditions(
         &self,
         context: FunctionContext<'_, '_>,
@@ -460,7 +551,7 @@ impl<'unit> Checker<'_, 'unit> {
             if let Some(nominal) = self.declared_invariant_struct(check_context, parameter)? {
                 let ordinal =
                     u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                subjects.push((nominal, InvariantSubject::ExitParameter(ordinal), 0));
+                subjects.push((nominal, InvariantSubject::ExitParameter(ordinal), 0, None));
             }
         }
         for (ordinal, result) in function.results.iter().enumerate() {
@@ -486,11 +577,26 @@ impl<'unit> Checker<'_, 'unit> {
             {
                 let ordinal =
                     u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal));
+                subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal, None));
+            }
+        }
+        for (ordinal, result) in function.results.iter().enumerate() {
+            if result.mode != CheckedMode::Own {
+                continue;
+            }
+            let ordinal =
+                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            for (route, payload) in self.invariant_payload_routes(result.ty)? {
+                subjects.push((
+                    payload,
+                    InvariantSubject::Result(ordinal),
+                    ordinal,
+                    Some(route),
+                ));
             }
         }
         let mut selectors = Vec::new();
-        for (nominal, subject, result_ordinal) in subjects {
+        for (nominal, subject, result_ordinal, route) in subjects {
             for invariant in self
                 .types
                 .type_invariants
@@ -506,10 +612,17 @@ impl<'unit> Checker<'_, 'unit> {
                     ordinal: result_ordinal,
                     variant: None,
                     field: None,
-                    result_type: function
-                        .results
-                        .get(result_ordinal as usize)
-                        .map_or(function.result, |result| result.ty),
+                    route,
+                    generated: true,
+                    // A routed ordinal's datum is the routed field's value.
+                    result_type: if route.is_some() {
+                        CheckedType::Nominal(nominal)
+                    } else {
+                        function
+                            .results
+                            .get(result_ordinal as usize)
+                            .map_or(function.result, |result| result.ty)
+                    },
                 };
                 selectors.push((invariant.clone(), subject, selector));
             }

@@ -370,6 +370,7 @@ impl Records<'_> {
                 call,
                 arguments,
                 requirements,
+                routed_requirements,
                 ..
             } => {
                 for argument in arguments {
@@ -388,6 +389,17 @@ impl Records<'_> {
                             callee: *function,
                             requires_clause: requirement.requires_clause.clone(),
                             subject: requirement.subject,
+                        },
+                    );
+                }
+                for requirement in routed_requirements {
+                    self.push(
+                        rule,
+                        call.clone(),
+                        ObligationSubject::CallRequirement {
+                            callee: *function,
+                            requires_clause: requirement.clause.clone(),
+                            subject: Some(requirement.subject),
                         },
                     );
                 }

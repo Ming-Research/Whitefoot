@@ -325,7 +325,7 @@ struct DeliveryJoinContext<'a> {
 #[derive(Clone, Debug, Default)]
 struct ProofFlowState {
     facts: FactState,
-    results: BTreeMap<BindingId, ResultEvidence>,
+    results: BTreeMap<BindingId, Vec<ResultEvidence>>,
     /// Proof-carrying [OWN-7] separations available on this edge. Captured
     /// positions are immutable, but a proof about them is available only
     /// where the judgment that established it dominates this state.
@@ -983,7 +983,17 @@ struct AvailablePostcondition {
     relation: RelationTemplate,
     variant: Option<crate::BuiltinPreludeId>,
     field: Option<crate::BuiltinPreludeId>,
+    /// The variant field a routed relation is restricted to [FN-9, TYPE-11].
+    route: Option<super::super::postcondition::PayloadRoute>,
     authority: super::RelationProvenance,
+}
+
+impl AvailablePostcondition {
+    /// Whether the relation is restricted to one variant field of its
+    /// result, a written success route or a generated one.
+    const fn routed(&self) -> bool {
+        self.variant.is_some() || self.route.is_some()
+    }
 }
 
 /// [MSR-3] one payload placement's datums, held between the mint before the
@@ -1276,6 +1286,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
+    analyzer.establish_routed_requirements(&mut state);
     let body_disposition = {
         let closed = close(
             &state.facts,
@@ -2037,6 +2048,7 @@ mod indexed_goal_kill_tests {
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2276,6 +2288,7 @@ mod range_argument_kill_tests {
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

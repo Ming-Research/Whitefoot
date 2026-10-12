@@ -24,7 +24,7 @@ impl Reasoning<'_, '_, '_> {
             return;
         };
         for available in prepared.postconditions.iter().cloned() {
-            if available.variant.is_some()
+            if available.routed()
                 || available
                     .relation
                     .operands
@@ -329,14 +329,16 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if let Some(result) = &mut result {
+        if !result.is_empty() {
             let live = self.reasoning().event_live_bounds(state, &target_kills);
             let separations = EventSeparations {
                 ledger: &state.separations,
                 live: &live,
             };
-            self.reasoning()
-                .apply_kills_one(&separations, &mut result.facts, &target_kills);
+            for result in &mut result {
+                self.reasoning()
+                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
+            }
         }
         if let Some(target_event) = target_event {
             self.apply_kills_each(state, &target_kills, |_, _| target_event);
@@ -494,7 +496,7 @@ impl Analyzer<'_, '_> {
             }
         }
         if commit_reached
-            && let Some(result) = result
+            && !result.is_empty()
             && let CheckedSetTarget::Place(place) = target
             && place.fields.is_empty()
             && !is_holder(place.binding)
@@ -564,7 +566,7 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
-                if let Some(result) = result {
+                if !result.is_empty() {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
@@ -779,18 +781,20 @@ impl Analyzer<'_, '_> {
                 // [TYPE-11] the error edge returns, leaving any atomic block.
                 self.judge_atomic_exit(node_path, state);
                 // [FN-9] and it is a selected return of every unrouted
-                // clause, judged over the state that edge leaves with.
+                // clause, judged over the state that edge leaves with, and of
+                // every route a type invariant generates over the `Err`
+                // field, judged in the operand's own context for that field.
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
                     None,
                     judgment.reached,
-                    &[],
+                    std::slice::from_ref(&result),
                 );
                 self.declare(*binding);
-                if let Some(result) = result {
+                if let Some(success) = result.iter().find(|result| result.success) {
                     self.reasoning()
-                        .select_result(node_path, &result, *binding, state);
+                        .select_result(node_path, success, *binding, state);
                 }
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*ok_type)
@@ -1242,7 +1246,7 @@ impl Analyzer<'_, '_> {
                         ProofFlowState::default()
                     });
                     let mut exit = state.clone();
-                    if let Some(result) = result {
+                    if !result.is_empty() {
                         exit.results.insert(binding, result);
                     }
                     self.exit_scopes_to(&mut exit, scope_depth);
@@ -1463,7 +1467,8 @@ impl Analyzer<'_, '_> {
                     .mint_payload_placements(scrutinee, *enum_type, state);
                 let mut result = expression_node_path(scrutinee)
                     .cloned()
-                    .and_then(|site| self.capture_result(&site, scrutinee, state));
+                    .map(|site| self.capture_result(&site, scrutinee, state))
+                    .unwrap_or_default();
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
@@ -1476,7 +1481,7 @@ impl Analyzer<'_, '_> {
                 let mut exits = Vec::new();
                 for arm in arms {
                     let payload = payload.iter().find(|payload| payload.tag == arm.tag);
-                    exits.extend(self.walk_arm(arm, state, &facts, payload, result.as_ref()));
+                    exits.extend(self.walk_arm(arm, state, &facts, payload, &result));
                 }
                 if exits.is_empty() {
                     false
@@ -1525,7 +1530,7 @@ impl Analyzer<'_, '_> {
                     // Every delivering path leaves by `give`; an arm's
                     // fall-through state contributes nothing [GIVE-1].
                     let payload = payload.iter().find(|payload| payload.tag == arm.tag);
-                    let _ = self.walk_arm(arm, state, &facts, payload, result.as_ref());
+                    let _ = self.walk_arm(arm, state, &facts, payload, &result);
                 }
                 let frame = self
                     .frames
@@ -1932,7 +1937,7 @@ impl Analyzer<'_, '_> {
         entry: &ProofFlowState,
         facts: &ArmFacts,
         payload: Option<&PayloadPlacement>,
-        result: Option<&ResultEvidence>,
+        results: &[ResultEvidence],
     ) -> Vec<FlowEdge> {
         let mut state = entry.clone();
         let mut frontier = Vec::new();
@@ -1961,15 +1966,18 @@ impl Analyzer<'_, '_> {
                 );
             }
         }
-        if let Some(result) = result
-            && arm.tag == result.success_tag
-            && let Some(binder) = arm
-                .binders
-                .iter()
-                .find(|binder| binder.field == 0 && binder.mode == CheckedMode::Own)
-        {
-            self.reasoning()
-                .select_result(&binder.node_path, result, binder.binding, &mut state);
+        // [ENT-5] the arm for a route's variant selects that route's
+        // context onto the own binder of the routed field.
+        for result in results {
+            if arm.tag != result.route.tag {
+                continue;
+            }
+            if let Some(binder) = arm.binders.iter().find(|binder| {
+                binder.field == result.route.field && binder.mode == CheckedMode::Own
+            }) {
+                self.reasoning()
+                    .select_result(&binder.node_path, result, binder.binding, &mut state);
+            }
         }
         self.frames
             .scopes
