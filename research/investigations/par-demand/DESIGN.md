@@ -3731,3 +3731,241 @@ schedule test before adopting a repair. The trace diagnostic establishes
 whether this static defect actually explains the saved twin behavior, not
 whether the schedule is possible. The defect goes to the owner independently
 of the experiment; no strategy change or retry is made in this stage.
+
+#### Spine diagnostic results
+
+[Compute-bench run 38200095633](https://github.com/Ming-Research/Whitefoot/actions/runs/38200095633)
+ran `par_demand_experiment=diagnostic-spine` at revision
+`2f5d5be091528bea00d39a5770c88d26f57da737`; its i9-14900K job ran
+03:37:12-03:38:47 UTC (run record supplied with the artifact). Evidence is that
+run's `par-demand-results-14900k` artifact: `diagnostic-spine.json` (cited as
+`ds.`), `identity.json`, `measurement-host.txt` and the images and disassembly
+under `diagnostics/spine/`. `diagnostic-spine-smoke.json` is the hosted,
+unqualified smoke; it is used only for the binding check below. Every interval
+was recomputed from the raw rows with `summarize.median_interval` (paired
+second calls, median, 10,000 bootstrap draws, seed 20261010, 95%) and agrees
+with the saved `ds.reports[]` to every printed digit. No build, native
+execution or retiming was performed for this reading. Each statement is marked
+**registered reading** or **exploratory**; exploratory figures add no criterion
+and establish no cause.
+
+**Validity: complete and valid as a diagnostic; not an adoption result.**
+
+- `ds.status` is `complete`, `ds.smoke` is false and `ds.qualification` is
+  "diagnostic only; no E6 adoption verdict"; every `ds.reports[].qualified` is
+  false. The native mode refuses to run without `14900K` in `/proc/cpuinfo` and
+  without a validated hosted smoke (`diagnostics.py` `run_diagnostic`), and
+  `measurement-host.txt` names an Intel Core i9-14900K. This is the registered
+  native diagnostic, not an E6 performance cell.
+- Binding: `ds.hosted_smoke_sha256` equals the SHA-256 of the transferred
+  `diagnostic-spine-smoke.json`, whose `construction` equals `ds.construction`;
+  `ds.construction.runtime_source_sha256` (`e17236ba...`) equals
+  `compiler/src/backend/sched/core.c` at 2f5d5be09; `identity.json.revision` is
+  2f5d5be09 with empty `dirty`. The branch's next commit, 5f9c84978, changes only
+  the FIR part of `diagnostics.py` and its tests, so this reading uses the run's
+  spine reduction unchanged.
+- Construction: each twin is byte-identical to its image
+  (`ds.construction.images[].sha256`). A policy's shipped and zero images differ
+  only in `diagnostic-shipped-core.o` versus `diagnostic-zero-core.o`; eager and
+  requested images, uninstrumented and counter alike, differ only in
+  `demand/spine.o` versus `previous/spine.o`; both counter images link the same
+  `diagnostic-counter-core.o` (`ds.construction.link_inputs`). In
+  `diagnostics/spine/eager-shipped.disassembly`, `wf__par_budget_spine` (0x3a80)
+  acquires unconditionally at 0x3aaf and publishes the recursive child
+  (`wf__par_thunk_spine.0`, frame n-1, v+1, budget-1) at 0x3ad1, doing only the
+  `rol` at 0x3ad6 before its join at 0x3add; `requested-shipped.disassembly`
+  tests the request word at 0x3aa3-0x3ab1 before its acquire at 0x3abe. The
+  discriminating code described under "After experiment 6" is unchanged in
+  these objects.
+- Matrix, order and inputs: 162 pilot and 810 decisive uninstrumented rows (nine
+  arms, W1/4/8, six and 30 rounds) and 36/180 counter rows, without duplicates.
+  In the decisive block every compared pair (eager/requested at each window,
+  each image/twin) runs first in exactly 15 of 30 rounds at every width, and so
+  does the counter pair. All rows passed `validate_sample` (oracle pass, one
+  comparison extent, snapshots bracketing the timed call). `ds.placement` is the
+  registered W1 {2}, W4 {2,4,6,8}, W8 {2,4,6,8,10,12,14,1}, with the CPU-1
+  sharing caveat; `ds.settings` has `WF_PAR_DEMAND=on`, `WF_SPLIT_WORK` unset
+  and `WF_SCHED_REPORT=0`; every counter row used 10,000 repetitions of extent
+  4,000 (`ds.counter_decisive[].inputs`).
+- Deadline: six pilot rounds took 13.06 s (`ds.pilot_elapsed_seconds`), the
+  projection was 78.37 s (`ds.duration_projection_seconds`) and the mode
+  finished in 78.75 s (`ds.elapsed_seconds`), within the 300-second bound.
+- Void and exclusion conditions: all twelve twin intervals include 1 (table
+  below), so no comparison is void. Every W4/W8 counter row has a complete pool
+  before and after its second call (4 lanes/3 ready or 8/7, owner word
+  registered; `ds.reports[].counter_pool_complete` is true), so the
+  partial-startup exclusion does not apply. The idle-window treatment is real:
+  `samples[].after.idle_window_us` is 1000 in every shipped and counter W4/W8
+  row and 0 in every zero row. This removes the earlier caveat that x86 level
+  detection could leave the shipped window at zero on this placement. At W1 no
+  pool starts (lane count 0 in every observation), so W1 is a no-pool control.
+
+**Q1, acquisitions and publications (registered reading: supported at W4 and
+W8).** Step 2 predicted a positive paired eager-minus-requested acquire-attempt
+difference per completed invocation, and the same for successful publications
+if they are claimed.
+
+| Width (threads; baseline = n/a; ideal = n/a) | Eager minus requested acquire attempts per completed invocation (count; baseline = requested counter image, same width and round; supporting ideal = lower CI > 0) | Eager minus requested publications per completed invocation (count; baseline = requested counter image, same width and round; supporting ideal = lower CI > 0) | Complete pool in every counter row (yes/no; baseline = width lanes, width-1 ready, owner word registered; ideal = yes) | Registered reading (category; baseline = step-2 rule; ideal = supported) |
+| --- | --- | --- | --- | --- |
+| W1 | 0 [0, 0] | 0 [0, 0] | yes (no pool) | rejected by the literal rule; neither arm reaches an acquire without a pool |
+| W4 | 2.7182 [2.62185, 2.75265] | 2.7182 [2.62185, 2.75265] | yes | supported, both claims |
+| W8 | 1.7201 [1.68365, 1.73430] | 1.7201 [1.68365, 1.73430] | yes | supported, both claims |
+
+Source: `ds.reports[width].counter_differences_per_completed_invocation.{acquire_attempts,publications}.{median,interval,status}` and `.counter_pool_complete`; underlying second-call deltas of `ds.counter_decisive[].samples[1].snapshot_{before,after}.counters`, divided by the 10,000 completed `spine(n: 4000, ...)` invocations of each call.
+
+Eager attempts and publishes more than requested at W4 and W8. Neither arm
+refused an acquire, so each extra attempt became a publication. As registered,
+these counts identify the handoff mechanism, not its wall-time cost. The
+reducer applies the same directional rule to steals, requests, parks and spin
+time; those statuses are not registered claims and are read below as
+exploratory.
+
+**Q2, idle-window interaction (registered reading: idle-window contribution
+rejected at W4 and W8; idle-window removal alone rejected as the repair).**
+
+| Width (threads; baseline = n/a; ideal = n/a) | Interaction: (eager/requested wall, shipped window) / (eager/requested wall, zero window) (ratio; baseline = zero-window pair; supporting ideal = lower CI > 1) | Eager / requested wall, zero window (ratio; baseline = requested-zero image; repair ideal = upper CI <= 1.05) | Eager / requested wall, shipped window (ratio; baseline = requested-shipped image; ideal = upper CI <= 1.05; context, no rule) | Registered reading (category; baseline = step-2 rules; ideal = n/a) |
+| --- | --- | --- | --- | --- |
+| W1 | 1.001127 [0.997822, 1.005194] | 0.998920 [0.996293, 1.001268] | 1.000584 [0.998566, 1.002357] | interaction undecided (straddle); repair not rejected; no pool |
+| W4 | 0.903564 [0.888411, 0.914298] | 1.412615 [1.399840, 1.429482] | 1.267530 [1.259611, 1.277800] | contribution rejected (upper <= 1); removal alone rejected (lower > 1.05) |
+| W8 | 0.945064 [0.931991, 0.951734] | 1.358977 [1.349093, 1.377072] | 1.287400 [1.276887, 1.300072] | contribution rejected (upper <= 1); removal alone rejected (lower > 1.05) |
+
+Source: `ds.reports[width].{idle_interaction,zero_idle_eager_over_requested,zero_idle_repair_rejected}`; the shipped ratio is recomputed from `ds.decisive[]` second-call `wall_ns` with the same estimator.
+
+The shipped 1,000 us window does not amplify eager's relative cost: the
+eager/requested ratio is larger without it. Removing the window lowers both
+arms' wall (exploratory, below) but leaves eager 36-41% slower than requested.
+
+**Twin validity (registered void rule: no comparison void).**
+
+| Width (threads; baseline = n/a; ideal = n/a) | Eager-shipped twin / image wall (ratio; baseline = same image, same round; ideal = CI includes 1) | Eager-zero twin / image wall (ratio; same baseline; ideal = CI includes 1) | Requested-shipped twin / image wall (ratio; same baseline; ideal = CI includes 1) | Requested-zero twin / image wall (ratio; same baseline; ideal = CI includes 1) |
+| --- | --- | --- | --- | --- |
+| W1 | 1.000698 [0.996547, 1.002477] | 1.000143 [0.999053, 1.001884] | 1.001174 [0.999767, 1.003177] | 0.998578 [0.997314, 1.000581] |
+| W4 | 1.002928 [0.992289, 1.011531] | 1.002592 [0.994118, 1.008820] | 0.999524 [0.984604, 1.006578] | 0.995590 [0.969107, 1.038155] |
+| W8 | 0.997513 [0.994260, 1.005000] | 0.997103 [0.991382, 1.002085] | 0.994210 [0.988629, 1.008392] | 1.005597 [0.992486, 1.012933] |
+
+Source: `ds.reports[width].twins[arm].{median,interval}`, `.twin_valid` (true at every width).
+
+**Exploratory: what the counters show about spine's grain at W4 and W8.**
+
+| Arm / width (counter image / threads; baseline = n/a; ideal = n/a) | Acquire attempts per invocation (count; baseline = configured budget, 8 at W4 and 9 at W8; ideal = n/a) | Publications per invocation (count; baseline = budget; ideal = only grain-worthy offers) | Steals per invocation (count; baseline = publications; ideal = n/a) | Requests posted per invocation (count; baseline = 0; ideal = n/a) | Parks per invocation (count; baseline = 0; ideal = n/a) | Scan and spin time per invocation, all lanes (ns; baseline = 0; ideal = 0) | Scan and spin share of lane time (fraction; baseline = 0; ideal = 0) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| eager W4 | 8.0000 [8, 8] | 8.0000 [8, 8] | 6.2865 [6.21405, 6.36335] | 7.1401 [7.11445, 7.17310] | 0 [0, 0] | 9159.3 [9140.8, 9189.8] | 0.564 |
+| requested W4 | 5.2818 [5.24735, 5.37815] | 5.2818 [5.24735, 5.37815] | 4.3418 [4.28360, 4.43780] | 5.3678 [5.32745, 5.46895] | 0 [0, 0] | 6977.6 [6946.8, 7004.7] | 0.568 |
+| eager W8 | 9.0000 [9, 9] | 9.0000 [9, 9] | 8.5304 [8.50850, 8.55905] | 8.7652 [8.74840, 8.77325] | 0 [0, 0] | 28138.7 [28044.6, 28191.6] | 0.665 |
+| requested W8 | 7.2799 [7.26570, 7.31635] | 7.2799 [7.26570, 7.31635] | 6.9467 [6.92270, 6.98185] | 7.4342 [7.41265, 7.46285] | 0 [0, 0] | 23386.9 [23360.7, 23500.2] | 0.666 |
+
+Source: second-call deltas of `ds.counter_decisive[label, width].samples[1].snapshot_{before,after}.counters.{acquire_attempts,publications,steals,requests_posted,parks,spin_ns}` divided by 10,000, median [95% bootstrap] of the 30 rounds. Share = median `spin_ns` / (median counter-image `samples[1].wall_ns` x width); `spin_ns` covers scans and spin/yield policy calls of idle and joining lanes, excluding callbacks and sleeps (`core.c` 1143-1158, 1384-1392). Refusals are 0 in every row.
+
+- Eager acquires and publishes exactly its configured budget, 8 at W4 and 9 at
+  W8, in all 30 rounds (minimum equals maximum). By the disassembly above, each
+  published frame is the rest of the recursive chain, at least 3,991 of 4,000
+  levels, and the publisher's only work before its join is one `rol`.
+  Publications are mostly stolen (ratio of medians 0.786 at W4, 0.948 at W8), so
+  the chain moves from lane to lane up to the budget per invocation while the
+  publisher waits; no publication creates overlapping work.
+- Requested is not a no-offer baseline here. Idle helpers keep the owner's
+  word requested (`owner_request` is 1 before the second call in 479 of the 480
+  W4/W8 policy rows, `ds.decisive[].samples[1].before`), and requested publishes 5.28 of 8
+  (W4) and 7.28 of 9 (W8) budget slots per invocation, 82% and 95% of them
+  stolen. Requested itself is 2.917767 [2.887273, 2.934173] (W4) and 3.482447
+  [3.465364, 3.516830] (W8) times seq's wall (`ds.decisive[]`, second calls,
+  same estimator). Most of spine's loss against seq is therefore common to both
+  policies; eager's extra 2.72/1.72 publications per invocation add the
+  remaining 1.27-1.29 factor.
+- Work per split against the split's cost, combining counts from the counter
+  images with walls from the uninstrumented images (cross-phase arithmetic, not
+  a performance comparison): seq takes 1.0487 us per invocation at W4 and
+  1.0501 us at W8 (median second-call `wall_ns` / 10,000), which is the whole
+  chain a publication can carry. (arm wall - seq wall) / publications is 0.356
+  us (eager W4), 0.381 us (requested W4), 0.408 us (eager W8) and 0.361 us
+  (requested W8) per publication: each handoff costs roughly a third of the
+  invocation's entire sequential work and buys no overlap. This run has no
+  per-split size or latency counter, so the figure is an estimate.
+- Helper idle behaviour: no lane parked during any eager counter call, and only
+  one requested counter call parked at all (4 parks, W8 round 3). Lanes spend
+  56-57% (W4) and 66-67% (W8) of their time scanning or spinning in both
+  arms. Uninstrumented CPU/wall is 3.99-4.03 at W4 and 7.97-8.06 at W8 in all
+  four policy and window images (ratio of median `cpu_ns` to median `wall_ns`),
+  so lanes stay hot through every call under either window. The zero window's
+  lower wall (requested shipped/zero 1.242302 [1.212359, 1.258647] at W4,
+  1.147034 [1.138163, 1.159778] at W8; eager 1.114008 [1.107521, 1.129656] and
+  1.084949 [1.076907, 1.091969]) is not explained by parking. A candidate is
+  that a zero window scans every round (`core.c` 1285-1287) while the shipped
+  window scans only after an epoch change; the registration put counters only
+  on the shipped window, so this run cannot test it.
+- Replication of E6: eager-shipped/seq is 3.706134 [3.680189, 3.728036] (W4)
+  and 4.493759 [4.470422, 4.537311] (W8), against E6's demand/seq 3.694303 and
+  4.491429; eager/requested under the shipped window is 1.267530 and 1.287400,
+  against E6's demand/previous 1.289710 and 1.279648 (E6 values from
+  `summary.json` of run 38179220701 as tabulated above). The diagnostic images
+  reproduce E6's spine regression.
+
+**Startup exposure defect: not tested by this run (registered); one process
+shows its whole-call signature (exploratory).** The spine registration
+contains no startup test. The registered test is the twin/startup
+diagnostic's large_helper W8 trace, which this run does not include: spine
+counter rows request no trace (`ds.counter_decisive[].startup_trace` is null),
+so helper-ready, word-registration, scan and park order and the time to the
+first steal are unobserved.
+
+| Process (arm, width, decisive round; baseline = n/a; ideal = n/a) | First call wall / CPU (ms; baseline = same-round seq 10.480 / 10.480; ideal for a request-gated arm = parallel work exposed) | Second call wall / CPU (ms; baseline = same-round seq 10.478 / 10.478; ideal = parallel work exposed) | Before and after second call: lanes / ready / owner word registered / owner request (values; baseline = 8 / 7 / true / 1 in the other 119 shipped-window W8 policy rows; ideal = same) |
+| --- | --- | --- | --- |
+| requested-shipped-twin, W8, round 5 | 12.184 / 19.646 | 10.751 / 10.758 | 8 / 7 / true / 0, both times |
+| requested-shipped, W8, round 5 (same image bytes) | 36.416 / 290.241 | 35.753 / 280.744 | 8 / 7 / true / 1, both times |
+
+Source: `ds.decisive[width=8, round=5, label].samples[0,1].{wall_ns,cpu_ns,before,after}`; ns divided by 1,000,000. The other 119 rows are the W8 eager-shipped, eager-shipped-twin, requested-shipped and requested-shipped-twin decisive rows.
+
+The pool was complete and the owner's word registered, yet no request was
+pending at either observation, second-call CPU equals wall (no helper ran) and
+the wall is seq's: the request-gated owner computed the whole call alone. The
+first call's CPU exceeds its wall by 7.462 ms, about 1.07 ms for each of seven
+helpers, consistent with every helper spinning through its 1,000 us window
+without work and then parking. The pattern occurred in 1 of 60 decisive
+requested-shipped processes at W8 (image and twin), 0 of 60 at W4, 0 of 120
+requested-zero processes, 0 of 60 requested counter processes, and in no
+eager process, which publishes without a request. It does not void the cell:
+its round ratio is 0.300714, but the requested-shipped W8 twin interval still
+includes 1, and the registered interaction uses only the non-twin images.
+
+Reading the measured runtime (`core.c` at 2f5d5be09) gives a schedule that
+produces this pattern without requiring helpers to park before registration.
+Once a helper's first 1,024 rounds pass, a nonzero window lets it scan only
+after an epoch change (`wf__par_should_scan` 1283-1300; `entered` set at 1366).
+Each failed scan posts one request to one seeded random victim (`wf__par_find`
+1105-1139), and the scan before parking (1533) posts one more. The epoch moves
+only on a push, a steal or a signal (1093, 1035, 1001). Lane 0 registers its
+word only in `wf__par_attach`, after `wf__par_start`'s ready wait (1662,
+1686). An owner that registers after the helpers' scanning has stopped, with
+no later request landing on lane 0, therefore never publishes, and nothing
+bumps the epoch or wakes a parked helper. This is the registered defect
+family, widened: helpers need only stop scanning before registration, not
+park. A zero window scans every round (1285-1287), consistent with no
+zero-window occurrence, though 120 processes do not establish a rate. The
+observation shows that the static defect is reachable on the 14900K with a
+complete eight-lane pool and can hold for an entire 10.75 ms call. It does not
+show the event order, does not attribute E6's seven voids and is no
+performance claim; in spine the unexposed call was faster than the parallel
+ones.
+
+**Ambiguities in the registration.** (1) At W1 the step-2 rule reads
+"rejected" because neither arm can reach an acquire without a pool; read
+literally it rejects the claim, read by its purpose (concurrent widths) it is
+not applicable. Neither reading affects W4/W8. (2) "Per completed spine
+invocation" is implemented as per completed outer `spine(4000)` call (10,000
+per timed call), not per recursive call; the sign and the readings are the
+same under either denominator. (3) The reducer gives every counter a
+directional status, but only acquire attempts and publications have a
+registered claim; the other statuses are exploratory. (4) The shipped-window
+eager/requested ratio has no registered rule and is shown only as context.
+
+**Proposed consequence, not selected here.** Step 2's registered order now
+allows the demand-only grain refinement to be proposed: the counters show
+spine's offers are budget-length chain handoffs whose complementary work is a
+single `rol`, and the idle window is rejected as the explanation and as the
+repair. Because requested also publishes most of its budget and is itself
+2.9-3.5 times slower than seq, a candidate that only restores request gating
+cannot meet the never-slower aim on spine; the refinement must remove offers
+without grain-worthy complementary work under either policy. Separately, the
+startup observation supports bringing the owner-registration exposure repair
+to the owner and running the registered twin/startup trace; this run alone
+selects neither.
